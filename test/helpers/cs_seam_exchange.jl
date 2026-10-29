@@ -52,7 +52,7 @@ function reference_cs_group(rm, m, am, bm, mesh, scheme, direction, scale)
         out[p][i, j, k] = rm[p][i, j, k] + fleft - fright
         air[p][i, j, k] = m[p][i, j, k] + left - right
     end
-    location = AtmosTransport.Preprocessing._cs_edge_face_location
+    location = AtmosTransport.Grids.cs_edge_face_location
     for p in 1:6, edge in 1:4
         neighbor = mesh.connectivity.neighbors[p][edge]
         q = neighbor.panel

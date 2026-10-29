@@ -69,7 +69,7 @@ this folder's `read_oco2_retrieval_columns`.
   lat-lon DEM lives in `GriddedIO`), `ObservationTerrain`,
   `VerticalPlacementSpec` with `ErrorOnUnplaced`/`SkipUnplaced`,
   `AboveGroundPlacement`/`AbsoluteAltitudeAbove`, the ordered coordinates
-  `AbstractVerticalCoordinate` (`HeightAboveGroundCoordinate`,
+  `AbstractPlacementCoordinate` (`HeightAboveGroundCoordinate`,
   `PressureCoordinate`) and the pressure basis `AbstractPressureBasis`
   (`TotalFromHumidity`, `DryInterfaces`), the source trait
   `missing_height_rule` (`LowestLayerWithoutHeight`, `UnplacedWithoutHeight`),
@@ -143,7 +143,7 @@ this folder's `read_oco2_retrieval_columns`.
   `ObservationOutputSpec` (or `VerticalPlacementSpec` for placement keys), parse
   it in `observation_output_spec` (or `_parse_vertical_placement`), and add it
   to the schema.
-- To add a vertical coordinate, subtype `AbstractVerticalCoordinate`, register
+- To add a vertical coordinate, subtype `AbstractPlacementCoordinate`, register
   it in `_VERTICAL_COORDINATES`, give it a `vertical_coordinate_label`, a
   `_place_by` method (the placement, or `nothing`), and a `_coordinate_text`
   for the unplaced message, and list it in the schema.

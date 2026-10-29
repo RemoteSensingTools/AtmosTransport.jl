@@ -1,3 +1,6 @@
+@inline _cs_seam_tracer(rm::AbstractArray{FT, 3}, t) where FT = rm
+@inline _cs_seam_tracer(rm::AbstractArray{FT, 4}, t) where FT = TracerView(rm, Int32(t))
+
 # A directional group contains its panel-interior faces and the physical seams
 # whose lower-numbered panel owns an edge in that direction. A rotated seam
 # transfers to both panels in the SAME group, even when its neighbor's local
@@ -25,17 +28,6 @@ function Adapt.adapt_structure(to, a::_CSInteriorFlux{FT, A, D}) where {FT, A, D
     return _CSInteriorFlux{FT, typeof(data), D}(data, a.first_face, a.last_face)
 end
 
-@inline _cs_seam_axis(edge) = edge in (EDGE_EAST, EDGE_WEST) ? 1 : 2
-@inline _cs_seam_sign(edge, ::Type{FT}) where FT =
-    edge in (EDGE_EAST, EDGE_NORTH) ? one(FT) : -one(FT)
-@inline function _cs_seam_face_index(edge, s, Nc)
-    edge == EDGE_NORTH && return (s, Nc + 1)
-    edge == EDGE_SOUTH && return (s, 1)
-    edge == EDGE_EAST && return (Nc + 1, s)
-    return (1, s)
-end
-@inline _cs_seam_tracer(rm::AbstractArray{FT, 3}, t) where FT = rm
-@inline _cs_seam_tracer(rm::AbstractArray{FT, 4}, t) where FT = TracerView(rm, Int32(t))
 @inline function _cs_add_seam_tracer!(rm::AbstractArray{FT, 3}, i, j, k, t, amount) where FT
     @inbounds rm[i, j, k] += amount
 end
@@ -89,11 +81,11 @@ bound_context(op::SeamTransferCache, ctx) =
     rm = _seam_panel(op, ctx, Val(:rm))
     m = _seam_panel(op, ctx, Val(:m))
     flux = _seam_panel(op, ctx, Val(:flux))
-    i, j = _cs_seam_face_index(op.edge, s, Nc)
+    i, j = cs_seam_face_index(op.edge, s, Nc)
     i += Hp; j += Hp
     @inbounds begin
         F = scale * flux[i, j, k]
-        sign = _cs_seam_sign(op.edge, eltype(m))
+        sign = cs_seam_sign(op.edge, eltype(m))
         cache[s, k, Nt + 1, op.seam] = sign * F
         for t in 1:Nt
             tracer = _cs_seam_tracer(rm, t)
@@ -107,19 +99,12 @@ end
 # Physical seam `n` of a cube in seam-cache order: the `n`-th edge `edge` of a
 # panel `p` whose neighbor has the higher panel number (panels, then edges, in
 # increasing order, as `_apply_cs_seams!` counts them).
-function _cs_seam(conn::PanelConnectivity, n::Int)
-    seam = 0
-    for p in 1:6, edge in 1:4
-        p < conn.neighbors[p][edge].panel || continue
-        (seam += 1) == n && return (p, edge)
-    end
-    throw(ArgumentError("cubed-sphere connectivity has $seam physical seams, not 12"))
-end
+
 
 function _seam_cache_ops(conn::PanelConnectivity, ::Val{D}) where D
     return Fused(ntuple(Val(12)) do n
-        p, edge = _cs_seam(conn, n)
-        SeamTransferCache{D}(p, edge, n, _cs_seam_axis(edge) == D)
+        p, edge = cs_seam(conn, n)
+        SeamTransferCache{D}(p, edge, n, cs_seam_axis(edge) == D)
     end)
 end
 
@@ -207,8 +192,8 @@ end
     rm_b, m_b = _seam_side_arrays(op, ctx, Val(:b))
     t = op.reversed ? Nc + 1 - s : s
     # Face Nc + 1 belongs to cell Nc.
-    i, j = _cs_seam_face_index(op.edge, s, Nc)
-    u, v = _cs_seam_face_index(op.other_edge, t, Nc)
+    i, j = cs_seam_face_index(op.edge, s, Nc)
+    u, v = cs_seam_face_index(op.other_edge, t, Nc)
     i = Hp + min(i, Nc); j = Hp + min(j, Nc)
     u = Hp + min(u, Nc); v = Hp + min(v, Nc)
     end_a, end_b = s == 1 ? (1, 3) : s == Nc ? (2, 4) : (0, 0)
@@ -217,19 +202,7 @@ end
     return nothing
 end
 
-# The seam number of panel `p`'s edge `edge`, whether `p` is the seam's side B,
-# and whether the seam reverses the along-edge index.
-function _cs_panel_edge_seam(conn::PanelConnectivity, p::Int, edge::Int)
-    q = conn.neighbors[p][edge].panel
-    lower, lower_edge = p < q ? (p, edge) : (q, reciprocal_edge(conn, p, edge))
-    seam = 0
-    for r in 1:6, e in 1:4
-        r < conn.neighbors[r][e].panel || continue
-        seam += 1
-        (r, e) == (lower, lower_edge) && break
-    end
-    return seam, p > q, conn.neighbors[lower][lower_edge].orientation != 0, lower_edge
-end
+
 
 # The other contribution of group `D` to the corner cell at along-edge cell
 # index `along` (1 or Nc) of panel `panel`'s edge `edge`, as (seam, cache index,
@@ -237,11 +210,11 @@ end
 # its seam's lower panel owns it on axis `D`.
 function _cs_seam_corner_partner(conn::PanelConnectivity, ::Val{D}, panel, edge,
                                  along, Nc) where D
-    i, j = min.(_cs_seam_face_index(edge, along, Nc), Nc)
-    other, other_along = _cs_seam_axis(edge) == 2 ? (i == 1 ? EDGE_WEST : EDGE_EAST, j) :
+    i, j = min.(cs_seam_face_index(edge, along, Nc), Nc)
+    other, other_along = cs_seam_axis(edge) == 2 ? (i == 1 ? EDGE_WEST : EDGE_EAST, j) :
                                                     (j == 1 ? EDGE_SOUTH : EDGE_NORTH, i)
-    seam, on_q, reversed, lower_edge = _cs_panel_edge_seam(conn, panel, other)
-    _cs_seam_axis(lower_edge) == D || return (0, 0, false)
+    seam, on_q, reversed, lower_edge = cs_panel_edge_seam(conn, panel, other)
+    cs_seam_axis(lower_edge) == D || return (0, 0, false)
     return (seam, on_q && reversed ? Nc + 1 - other_along : other_along, on_q)
 end
 
@@ -249,11 +222,11 @@ end
 # then carry no partners and `_apply_cs_seams!` runs them one after the other.
 function _seam_apply_ops(conn::PanelConnectivity, ::Val{D}, Nc::Int) where D
     return Fused(ntuple(Val(12)) do n
-        p, edge = _cs_seam(conn, n)
+        p, edge = cs_seam(conn, n)
         q = conn.neighbors[p][edge].panel
         other_edge = reciprocal_edge(conn, p, edge)
         reversed = conn.neighbors[p][edge].orientation != 0
-        active = _cs_seam_axis(edge) == D
+        active = cs_seam_axis(edge) == D
         partners = ntuple(Val(4)) do e
             on_q, s = e > 2, isodd(e) ? 1 : Nc
             (active && Nc >= 2) || return (0, 0, false)

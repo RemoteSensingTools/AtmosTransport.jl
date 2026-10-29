@@ -140,7 +140,7 @@ end
         @test window_count(reader) == 2
         @test reader.header.steps_per_window_by_window == [2, 2]
         @test reader.header.poisson_balance_target_scale_by_window == [0.25, 0.25]
-        @test mass_basis(reader) == :moist
+        @test binary_mass_basis(reader) == :moist
         @test has_qv_endpoints(reader)
         @test has_flux_delta(reader)
         @test source_flux_sampling(reader) == :window_start_endpoint
@@ -264,7 +264,7 @@ end
         @test grid_type(reader) == :reduced_gaussian
         @test horizontal_topology(reader) == :faceindexed
         @test window_count(reader) == 2
-        @test mass_basis(reader) == :moist
+        @test binary_mass_basis(reader) == :moist
         @test has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
         @test source_flux_sampling(reader) == :window_start_endpoint

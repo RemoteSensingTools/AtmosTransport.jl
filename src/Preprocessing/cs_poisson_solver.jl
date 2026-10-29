@@ -340,14 +340,10 @@ function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
             for s in 1:Nc
                 t = ori == 0 ? s : Nc + 1 - s
 
-                can_dir, can_i, can_j = _cs_edge_face_location(e, s, Nc)
-                mir_dir, mir_i, mir_j = _cs_edge_face_location(eq, t, Nc)
+                can_dir, can_i, can_j = cs_edge_face_location(e, s, Nc)
+                mir_dir, mir_i, mir_j = cs_edge_face_location(eq, t, Nc)
 
-                can_at_outflow = (can_dir == 1 && can_i == Nc + 1) ||
-                                 (can_dir == 2 && can_j == Nc + 1)
-                mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
-                                 (mir_dir == 2 && mir_j == Nc + 1)
-                msign = (can_at_outflow == mir_at_outflow) ? FT(-1) : FT(1)
+                msign = seam_mirror_sign(e, eq, FT)
 
                 @inbounds for k in 1:Nz
                     canonical = can_dir == 1 ? panels_am[p][can_i, can_j, k] :
@@ -365,14 +361,10 @@ function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
             for s in 1:Nc
                 t = ori == 0 ? s : Nc + 1 - s
 
-                can_dir, can_i, can_j = _cs_edge_face_location(eq, t, Nc)
-                mir_dir, mir_i, mir_j = _cs_edge_face_location(e, s, Nc)
+                can_dir, can_i, can_j = cs_edge_face_location(eq, t, Nc)
+                mir_dir, mir_i, mir_j = cs_edge_face_location(e, s, Nc)
 
-                can_at_outflow = (can_dir == 1 && can_i == Nc + 1) ||
-                                 (can_dir == 2 && can_j == Nc + 1)
-                mir_at_outflow = (mir_dir == 1 && mir_i == Nc + 1) ||
-                                 (mir_dir == 2 && mir_j == Nc + 1)
-                msign = (can_at_outflow == mir_at_outflow) ? FT(-1) : FT(1)
+                msign = seam_mirror_sign(e, eq, FT)
 
                 @inbounds for k in 1:Nz
                     canonical = can_dir == 1 ? panels_am[q][can_i, can_j, k] :

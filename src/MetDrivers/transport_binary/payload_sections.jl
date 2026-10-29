@@ -285,11 +285,11 @@ end
 
 function _transport_validate_basis(window, basis_sym::Symbol)
     if haskey(window, :state)
-        _transport_basis_symbol(mass_basis(window.state)) == basis_sym ||
+        basis_symbol(mass_basis(window.state)) == basis_sym ||
             throw(ArgumentError("window state basis does not match requested transport binary basis $(basis_sym)"))
     end
     if haskey(window, :fluxes)
-        _transport_basis_symbol(mass_basis(window.fluxes)) == basis_sym ||
+        basis_symbol(mass_basis(window.fluxes)) == basis_sym ||
             throw(ArgumentError("window flux basis does not match requested transport binary basis $(basis_sym)"))
     end
     return nothing

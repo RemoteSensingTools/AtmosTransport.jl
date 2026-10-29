@@ -61,12 +61,12 @@ function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, 
     I, J, V = Int[], Int[], Float64[]
     for f in 1:ft.nf
         a, b = _cs_face_corners(target, ft, f)
-        n = _unit3(_cross3(a, b))                       # normal of the face's great circle,
-        s = _dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1 : -1   # pointing left → right
-        θ = _arc3(a, b)
+        n = unit3(cross3(a, b))                       # normal of the face's great circle,
+        s = dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1 : -1   # pointing left → right
+        θ = arc3(a, b)
         w = s * R * θ / samples_per_face                # arc length per sample (midpoint rule)
         for q in 1:samples_per_face
-            x = _slerp3(a, b, θ, (q - 0.5) / samples_per_face)
+            x = slerp3(a, b, θ, (q - 0.5) / samples_per_face)
             for (c, wc) in _point_weights(source, x), d in 1:3
                 push!(I, f); push!(J, (d - 1) * nsrc + c); push!(V, w * wc * n[d])
             end
@@ -120,8 +120,7 @@ function _point_weights(m::LatLonMesh, x)
             (c22, tx * ty))
 end
 
-# Point at fraction t of the great-circle arc from unit vector a to b (θ = arc).
-@inline _slerp3(a, b, θ, t) = (sin((1 - t) * θ) .* a .+ sin(t * θ) .* b) ./ sin(θ)
+
 
 """
     _point_weights(mesh::ReducedGaussianMesh, x) -> NTuple{4, Tuple{Int, Float64}}

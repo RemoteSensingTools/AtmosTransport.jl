@@ -273,3 +273,11 @@ experiments.
 - [Operators](@ref Operator-concepts) — Advection, Convection, Diffusion, Sources behind
   abstract types with `No<Operator>` defaults.
 - [Binary format](@ref) — the on-disk layout the runtime consumes.
+
+
+`mass_basis(:dry)` / `mass_basis("moist")` return `DryBasis()` / `MoistBasis()`.
+Parsing is case insensitive and unknown tags raise `ArgumentError`.
+`basis_symbol(basis)` converts back to `:dry` / `:moist`. State and face-flux
+accessors use the same `mass_basis` function; the redundant `flux_basis` name
+has been removed. `binary_mass_basis(reader)` preserves the transport-reader
+Symbol interface under its own name, as does `air_mass_basis(driver)`.

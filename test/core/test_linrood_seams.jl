@@ -20,7 +20,7 @@ function independent_seam_mean(fields, mesh)
     Nc = mesh.Nc
     # Use the preprocessing contact-map indexing as an independent reference
     # for the runtime exchange. Every expected value reads original fields.
-    location = AtmosTransport.Preprocessing._cs_edge_face_location
+    location = AtmosTransport.Grids.cs_edge_face_location
     for p in 1:6, edge in 1:4
         neighbor = mesh.connectivity.neighbors[p][edge]
         q = neighbor.panel

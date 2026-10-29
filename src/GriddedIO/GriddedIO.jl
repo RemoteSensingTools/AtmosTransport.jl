@@ -67,6 +67,12 @@ cubed-sphere geometry and provenance blocks) and `AtomicFiles`. See
 """
 module GriddedIO
 
+using ..Grids: cell_centers, CS_PANEL_COUNT
+
+using ..Grids: cell_areas, float64_twin
+
+using ..Grids: lonlat_to_unit_xyz
+
 using Dates
 using NCDatasets
 using NCDatasets: CFTime

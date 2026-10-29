@@ -135,23 +135,6 @@ end
         end
     end
 
-    @testset "mesh wrapper matches definition form" begin
-        # The CubedSphereMesh method should be identical to the (def, Nc)
-        # method for the same geometry.
-        for fixture in _all_definitions()
-            (; label, def) = fixture
-            mesh = CubedSphereMesh(; Nc = 6, FT = FT_T, definition = def)
-            for p in 1:NPANEL, j in 1:6, i in 1:6
-                lon, lat = _forward_lonlat(def, 6, p, i + 0.5, j + 0.5)
-                a = lonlat_to_panel_xy(mesh, lon, lat)
-                b = lonlat_to_panel_xy(def, 6, lon, lat, FT_T)
-                @test a[1] == b[1]
-                @test a[2] ≈ b[2] atol = 1e-12
-                @test a[3] ≈ b[3] atol = 1e-12
-            end
-        end
-    end
-
     @testset "panel-center anchors land at s = t = (Nc + 2)/2" begin
         # The "panel center" (intersection of cube-face center axis with
         # the unit sphere) maps to ξ = η = 0, which both edge laws send
@@ -168,7 +151,7 @@ end
                 s_in = (Nc + 2) / 2
                 t_in = (Nc + 2) / 2
                 lon, lat = _forward_lonlat(def, Nc, p, s_in, t_in)
-                p_out, s_out, t_out = lonlat_to_panel_xy(mesh, lon, lat)
+                p_out, s_out, t_out = lonlat_to_panel_xy(cs_definition(mesh), mesh.Nc, lon, lat, eltype(mesh))
                 @test p_out == p
                 @test s_out ≈ s_in atol = 1e-12
                 @test t_out ≈ t_in atol = 1e-12
@@ -238,7 +221,7 @@ end
             lons, lats = panel_cell_center_lonlat(mesh, p)
             for j in 1:Nc, i in 1:Nc
                 p_out, s_out, t_out =
-                    lonlat_to_panel_xy(mesh, lons[i, j], lats[i, j])
+                    lonlat_to_panel_xy(cs_definition(mesh), mesh.Nc, lons[i, j], lats[i, j], eltype(mesh))
                 @test p_out == p
                 # `FourCornerNormalizedCenter` (the GEOS center law) is not
                 # the midpoint of the parameter square; the inverse must

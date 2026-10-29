@@ -178,7 +178,7 @@ end
 function _lonlat_cell_areas_m2(lon::AbstractVector, lat::AbstractVector; radius::Real = EARTH_RADIUS)
     Nx, Ny = length(lon), length(lat)
     mesh = source_latlon_mesh(lon, lat; radius)
-    areas = Float64[cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny]
+    areas = reshape(cell_areas(mesh), Nx, Ny)
     return lat[2] > lat[1] ? areas : areas[:, end:-1:1]
 end
 

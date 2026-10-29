@@ -179,14 +179,14 @@ function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
     # PS — 2D intensive field.
     _regrid_intensive!(workspace.dst_flat_2d, workspace.src_flat_2d,
                        workspace.regridder, workspace.coverage, n320_window.ps)
-    _unpack_flat_to_cs_panels_2d!(c180_fields.ps, workspace.dst_flat_2d, Nc)
+    unpack_flat_to_panels_2d!(c180_fields.ps, workspace.dst_flat_2d, Nc)
 
     # 3D intensive fields — all share the same workspace scratch. The winds
     # go through `wind` (as two scalars, or as a vector).
     function regrid3d!(dst_panels, src_field)
         _regrid_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
                            workspace.regridder, workspace.coverage, src_field)
-        return _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+        return unpack_flat_to_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
     _regrid_winds!(wind, c180_fields.u, c180_fields.v, regrid3d!, n320_window.u, n320_window.v)
     regrid3d!(c180_fields.t, n320_window.t)
@@ -209,7 +209,7 @@ function regrid_n320_raw_convection_to_c180!(
             (conv_n320.ddrf, conv_c180.ddrf))
         _regrid_intensive!(workspace.dst_flat_3d, workspace.src_flat_3d,
                            workspace.regridder, workspace.coverage, src_field)
-        _unpack_flat_to_cs_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
+        unpack_flat_to_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
     return conv_c180
 end
@@ -385,43 +385,6 @@ function _regrid_intensive!(dst_flat::AbstractVecOrMat{Float64},
     apply_regridder!(dst_flat, regridder, src_scratch)
     dst_flat ./= coverage
     return dst_flat
-end
-
-"""Unpack a flat `n_dst = 6 × Nc²` vector into 6 panels of `(Nc, Nc)`. The
-CS mesh enumerates cells panel-major in column-major Julia order within each
-panel: `flat_index = (p-1)·Nc² + (j-1)·Nc + i`, and
-`panel[i, j] = flat[offset + (j-1)·Nc + i]`."""
-function _unpack_flat_to_cs_panels_2d!(panels::NTuple{6, Matrix{FT}},
-                                        flat::AbstractVector{Float64},
-                                        Nc::Int) where FT
-    length(flat) == 6 * Nc * Nc ||
-        throw(DimensionMismatch("flat length $(length(flat)) ≠ 6×$Nc² = $(6*Nc*Nc)"))
-    @inbounds for p in 1:6
-        panel = panels[p]
-        offset = (p - 1) * Nc * Nc
-        for j in 1:Nc, i in 1:Nc
-            panel[i, j] = FT(flat[offset + (j - 1) * Nc + i])
-        end
-    end
-    return panels
-end
-
-"""Unpack a flat `(n_dst, Nz)` matrix into 6 panels of `(Nc, Nc, Nz)`."""
-function _unpack_flat_to_cs_panels_3d!(panels::NTuple{6, Array{FT, 3}},
-                                        flat::AbstractMatrix{Float64},
-                                        Nc::Int, Nz::Int) where FT
-    size(flat, 1) == 6 * Nc * Nc ||
-        throw(DimensionMismatch("flat rows $(size(flat, 1)) ≠ 6×$Nc² = $(6*Nc*Nc)"))
-    size(flat, 2) == Nz ||
-        throw(DimensionMismatch("flat cols $(size(flat, 2)) ≠ Nz=$Nz"))
-    @inbounds for p in 1:6
-        panel = panels[p]
-        offset = (p - 1) * Nc * Nc
-        for k in 1:Nz, j in 1:Nc, i in 1:Nc
-            panel[i, j, k] = FT(flat[offset + (j - 1) * Nc + i, k])
-        end
-    end
-    return panels
 end
 
 # ---------------------------------------------------------------------------

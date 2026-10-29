@@ -84,18 +84,18 @@ indicate whether the stored values are moist or dry.
 # Examples
 ```jldoctest
 julia> using AtmosTransport.State: StructuredFaceFluxState, DryBasis,
-       MoistBasis, flux_basis
+       MoistBasis, mass_basis
 
 julia> am = zeros(11, 8, 4); bm = zeros(10, 9, 4); cm = zeros(10, 8, 5);
 
 julia> dry = StructuredFaceFluxState{DryBasis}(am, bm, cm);
 
-julia> flux_basis(dry)
+julia> mass_basis(dry)
 DryBasis()
 
 julia> moist = StructuredFaceFluxState{MoistBasis}(am, bm, cm);
 
-julia> flux_basis(moist)
+julia> mass_basis(moist)
 MoistBasis()
 ```
 """
@@ -220,7 +220,7 @@ end
     CubedSphereFaceFluxState{Basis, AX, AY, AZ} <: AbstractStructuredFaceFluxState
 
 Panel-native structured-directional flux storage for cubed-sphere transport.
-Each field is an `NTuple{6}` of halo-padded panel arrays matching the
+Each field is an `NTuple{CS_PANEL_COUNT}` of halo-padded panel arrays matching the
 `strang_split_cs!` contract.
 """
 function _validate_cs_flux_storage(am, bm, cm)
@@ -254,12 +254,12 @@ struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
                                 AX <: AbstractArray,
                                 AY <: AbstractArray,
                                 AZ <: AbstractArray} <: AbstractStructuredFaceFluxState{Basis}
-    am :: NTuple{6, AX}
-    bm :: NTuple{6, AY}
-    cm :: NTuple{6, AZ}
+    am :: NTuple{CS_PANEL_COUNT, AX}
+    bm :: NTuple{CS_PANEL_COUNT, AY}
+    cm :: NTuple{CS_PANEL_COUNT, AZ}
 
     function CubedSphereFaceFluxState{Basis, AX, AY, AZ}(
-            am::NTuple{6, AX}, bm::NTuple{6, AY}, cm::NTuple{6, AZ}) where
+            am::NTuple{CS_PANEL_COUNT, AX}, bm::NTuple{CS_PANEL_COUNT, AY}, cm::NTuple{CS_PANEL_COUNT, AZ}) where
             {Basis <: AbstractMassBasis, AX <: AbstractArray,
              AY <: AbstractArray, AZ <: AbstractArray}
         _validate_cs_flux_storage(am, bm, cm)
@@ -267,7 +267,7 @@ struct CubedSphereFaceFluxState{Basis <: AbstractMassBasis,
     end
 end
 
-function CubedSphereFaceFluxState{B}(am::NTuple{6}, bm::NTuple{6}, cm::NTuple{6}) where {B <: AbstractMassBasis}
+function CubedSphereFaceFluxState{B}(am::NTuple{CS_PANEL_COUNT}, bm::NTuple{CS_PANEL_COUNT}, cm::NTuple{CS_PANEL_COUNT}) where {B <: AbstractMassBasis}
     return CubedSphereFaceFluxState{B, typeof(am[1]), typeof(bm[1]), typeof(cm[1])}(am, bm, cm)
 end
 
@@ -297,11 +297,10 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    flux_basis(state) → AbstractMassBasis
+    mass_basis(state) → AbstractMassBasis
 
 Return the mass flux basis tag for the given flux state.
 """
-@inline flux_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
 @inline mass_basis(::AbstractFaceFluxState{B}) where {B <: AbstractMassBasis} = B()
 
 # ---------------------------------------------------------------------------
@@ -379,9 +378,9 @@ function allocate_face_fluxes(mesh::CubedSphereMesh, Nz::Int;
                               ArrayType = Array,
                               basis::Type{B} = DryBasis) where {B <: AbstractMassBasis}
     N = mesh.Nc + 2 * mesh.Hp
-    am = ntuple(_ -> ArrayType(zeros(FT, N + 1, N, Nz)), 6)
-    bm = ntuple(_ -> ArrayType(zeros(FT, N, N + 1, Nz)), 6)
-    cm = ntuple(_ -> ArrayType(zeros(FT, N, N, Nz + 1)), 6)
+    am = ntuple(_ -> ArrayType(zeros(FT, N + 1, N, Nz)), CS_PANEL_COUNT)
+    bm = ntuple(_ -> ArrayType(zeros(FT, N, N + 1, Nz)), CS_PANEL_COUNT)
+    cm = ntuple(_ -> ArrayType(zeros(FT, N, N, Nz + 1)), CS_PANEL_COUNT)
     return CubedSphereFaceFluxState{B}(am, bm, cm)
 end
 
@@ -398,7 +397,6 @@ function allocate_face_fluxes(mesh::AbstractHorizontalMesh, Nz::Int;
                                 FT=FT, ArrayType=ArrayType, basis=B)
 end
 
-export flux_basis
 export AbstractFaceFluxState
 export AbstractStructuredFaceFluxState, AbstractUnstructuredFaceFluxState
 export StructuredFaceFluxState, FaceIndexedFluxState, CubedSphereFaceFluxState

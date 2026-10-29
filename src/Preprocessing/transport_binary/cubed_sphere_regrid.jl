@@ -392,11 +392,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         # The regrid copies the source's TM5 sections and their basis record;
         # explicit `nothing` preserves a genuinely legacy keyless source.
         tm5_convection_mass_basis=tm5_convection_mass_basis(reader),
-        panel_convention=_cs_panel_convention_tag(cs_grid),
-        cs_definition=_cs_definition_tag(cs_grid),
-        cs_coordinate_law=_cs_coordinate_law_tag(cs_grid),
-        cs_center_law=_cs_center_law_tag(cs_grid),
-        longitude_offset_deg=longitude_offset_deg(cs_definition(cs_grid.mesh)),
+        cs_geometry_tags(cs_grid.mesh)...,
         planet_radius=cs_grid.mesh.radius,
         extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
@@ -409,7 +405,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             "adaptive_substeps" => out_policy.adaptive_substeps,
         ), source_mass_fix, carried_tm5_convection_record(h.raw_header, source_has_tm5)),
            column_balance_weights), write_replay_check))
-    writer = CubedSphereBinaryWriter(inner_writer, mass_basis_from_symbol(output_basis);
+    writer = CubedSphereBinaryWriter(inner_writer, State.mass_basis(output_basis);
                                      Nc = Nc,
                                      npanel = CS_PANEL_COUNT,
                                      final_path = out_path)

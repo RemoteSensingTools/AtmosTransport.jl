@@ -173,7 +173,7 @@ struct AbsoluteAltitudeAbove <: AbstractAltitudePlacement
 end
 
 """
-    AbstractVerticalCoordinate
+    AbstractPlacementCoordinate
 
 A vertical coordinate that can place a record in the model column:
 [`HeightAboveGroundCoordinate`](@ref) or [`PressureCoordinate`](@ref).
@@ -181,7 +181,7 @@ A vertical coordinate that can place a record in the model column:
 preference order (`vertical_coordinates`); [`resolve_placement`](@ref) places
 each record by the first one it can.
 """
-abstract type AbstractVerticalCoordinate end
+abstract type AbstractPlacementCoordinate end
 
 """
 `"height_above_ground"`: the record's height ``h`` above the true ground, the
@@ -190,14 +190,14 @@ ground elevation at the point, measured up from the model surface with the
 model's hypsometric layer heights (`vertical_placement` codes
 `record_height` and `altitude_minus_dem`).
 """
-struct HeightAboveGroundCoordinate <: AbstractVerticalCoordinate end
+struct HeightAboveGroundCoordinate <: AbstractPlacementCoordinate end
 
 """
 `"pressure"`: the record's pressure (ObsPack `pressure`, a total pressure)
 against the column's interface pressures, built as the
 [`AbstractPressureBasis`](@ref) says (`vertical_placement` code `pressure`).
 """
-struct PressureCoordinate <: AbstractVerticalCoordinate end
+struct PressureCoordinate <: AbstractPlacementCoordinate end
 
 const _VERTICAL_COORDINATES = (height_above_ground = HeightAboveGroundCoordinate(),
                                pressure = PressureCoordinate())
@@ -205,7 +205,7 @@ const _VERTICAL_COORDINATES = (height_above_ground = HeightAboveGroundCoordinate
 const DEFAULT_VERTICAL_COORDINATES = (HeightAboveGroundCoordinate(), PressureCoordinate())
 vertical_coordinate_label(::HeightAboveGroundCoordinate) = :height_above_ground
 vertical_coordinate_label(::PressureCoordinate) = :pressure
-_uses_coordinate(coordinates::Tuple, ::Type{C}) where {C <: AbstractVerticalCoordinate} =
+_uses_coordinate(coordinates::Tuple, ::Type{C}) where {C <: AbstractPlacementCoordinate} =
     any(c -> c isa C, coordinates)
 
 """
@@ -299,12 +299,12 @@ pressure_basis_label(::DryInterfaces) = :dry
 The vertical-placement settings of `[output.observations]`: the per-grid
 model surface height dataset, an optional point DEM (file and variable), the
 [`AbstractUnplacedPolicy`](@ref), the [`AbstractAltitudePlacement`](@ref),
-the [`AbstractVerticalCoordinate`](@ref)s in preference order (a non-empty
+the [`AbstractPlacementCoordinate`](@ref)s in preference order (a non-empty
 tuple without repeats; by default height above ground, then pressure), and
 the [`AbstractPressureBasis`](@ref) of pressure placement.
 """
 struct VerticalPlacementSpec{U <: AbstractUnplacedPolicy, A <: AbstractAltitudePlacement,
-                             C <: Tuple{Vararg{AbstractVerticalCoordinate}}, P <: AbstractPressureBasis}
+                             C <: Tuple{Vararg{AbstractPlacementCoordinate}}, P <: AbstractPressureBasis}
     surface_height_file::Union{Nothing, String}
     dem_file::Union{Nothing, String}
     dem_variable::String
@@ -316,7 +316,7 @@ struct VerticalPlacementSpec{U <: AbstractUnplacedPolicy, A <: AbstractAltitudeP
                                    dem_variable::String, unplaced::U, altitude_placement::A, coordinates::C,
                                    pressure_basis::P) where {U <: AbstractUnplacedPolicy,
                                                              A <: AbstractAltitudePlacement,
-                                                             C <: Tuple{Vararg{AbstractVerticalCoordinate}},
+                                                             C <: Tuple{Vararg{AbstractPlacementCoordinate}},
                                                              P <: AbstractPressureBasis}
         isempty(coordinates) && throw(ArgumentError("vertical placement needs at least one vertical coordinate"))
         allunique(coordinates) || throw(ArgumentError(
@@ -330,7 +330,7 @@ VerticalPlacementSpec(; surface_height_file::Union{Nothing, AbstractString} = no
                         dem_variable::AbstractString = "z",
                         unplaced::AbstractUnplacedPolicy = ErrorOnUnplaced(),
                         altitude_placement::AbstractAltitudePlacement = AboveGroundPlacement(),
-                        coordinates::Tuple{Vararg{AbstractVerticalCoordinate}} = DEFAULT_VERTICAL_COORDINATES,
+                        coordinates::Tuple{Vararg{AbstractPlacementCoordinate}} = DEFAULT_VERTICAL_COORDINATES,
                         pressure_basis::AbstractPressureBasis = TotalFromHumidity()) =
     VerticalPlacementSpec(surface_height_file === nothing ? nothing : String(surface_height_file),
                           dem_file === nothing ? nothing : String(dem_file), String(dem_variable),
@@ -453,7 +453,7 @@ end
 
 Place a [`SoundingRequest`](@ref) or [`SiteRequest`](@ref) in the column of
 its containing `cell` by the first of `spec.coordinates`
-([`AbstractVerticalCoordinate`](@ref), in preference order) that places it:
+([`AbstractPlacementCoordinate`](@ref), in preference order) that places it:
 
 - [`HeightAboveGroundCoordinate`](@ref): the record's height above ground
   ``h`` (`intake_height`, or `altitude − elevation` with the record's or

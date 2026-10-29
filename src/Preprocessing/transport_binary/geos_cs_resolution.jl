@@ -9,9 +9,6 @@ function _cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     return total
 end
 
-function _cs_total_area(cell_areas::AbstractMatrix)
-    return CS_PANEL_COUNT * sum(Float64, cell_areas)
-end
 
 """
     _pin_cs_global_air_mass!(panels_m, panels_qv, cell_areas, g, target_kg, dB)

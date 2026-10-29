@@ -28,6 +28,12 @@ files written by [`build_observation_sampler`](@ref)'s sampler.
 """
 module Output
 
+using ..Grids: cell_centers
+
+using ..Grids: panel_convention_tag
+
+using ..State: basis_symbol
+
 using Dates
 using HDF5_jll
 using JSON3
@@ -37,7 +43,7 @@ using Printf
 using Statistics: median!
 using TOML
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
-using ..Architectures: _compensated_total, _total_accumulator_type
+using ..Architectures: compensated_total, _total_accumulator_type
 
 using ..ConfigChecks: config_bool as _config_bool, check_known_keys as _check_known_keys
 
@@ -96,7 +102,7 @@ export AbstractModelSurfaceHeight, NoModelSurfaceHeight, ModelSurfaceHeight, mod
 export AbstractPointElevation, NoPointElevation, point_elevation, ObservationTerrain
 export AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced
 export AbstractAltitudePlacement, AboveGroundPlacement, AbsoluteAltitudeAbove, VerticalPlacementSpec
-export AbstractVerticalCoordinate, HeightAboveGroundCoordinate, PressureCoordinate
+export AbstractPlacementCoordinate, HeightAboveGroundCoordinate, PressureCoordinate
 export AbstractPressureBasis, TotalFromHumidity, DryInterfaces
 export VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer
 export PlacementColumn, column_layer!, sample_column_layer!, needs_column_humidity

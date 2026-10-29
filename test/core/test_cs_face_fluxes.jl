@@ -37,10 +37,10 @@ function exact_face_fluxes(mesh, ft, wind)
     gx, gw = (-sqrt(0.6), 0.0, sqrt(0.6)), (5 / 9, 8 / 9, 5 / 9)
     map(1:ft.nf) do f
         a, b = P._cs_face_corners(mesh, ft, f)
-        n = P._unit3(P._cross3(a, b))
-        n = P._dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
-        θ = P._arc3(a, b)
-        s = sum(w * P._dot3(wind((sin(θ * (1 - x) / 2) .* a .+ sin(θ * (1 + x) / 2) .* b) ./ sin(θ)), n)
+        n = G.unit3(G.cross3(a, b))
+        n = G.dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
+        θ = G.arc3(a, b)
+        s = sum(w * G.dot3(wind((sin(θ * (1 - x) / 2) .* a .+ sin(θ * (1 + x) / 2) .* b) ./ sin(θ)), n)
                 for (x, w) in zip(gx, gw))
         mesh.radius * s * θ / 2
     end
@@ -55,8 +55,8 @@ function cell_winds(mesh, wind)
         for j in 1:Nc, i in 1:Nc
             λ, φ = deg2rad(lon[i, j]), deg2rad(lat[i, j])
             w = wind((cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
-            u_e[p][i, j, 1] = P._dot3(w, (-sin(λ), cos(λ), 0.0))
-            v_n[p][i, j, 1] = P._dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+            u_e[p][i, j, 1] = G.dot3(w, (-sin(λ), cos(λ), 0.0))
+            v_n[p][i, j, 1] = G.dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
         end
     end
     return u_e, v_n
@@ -117,7 +117,7 @@ interior_divergence(am, bm, Nc) =
     @testset "vector face fluxes: orientation, seams and mirrors" begin
         mesh = gmao_mesh(48); Nc = mesh.Nc
         conn = G.panel_connectivity_for(mesh.convention)
-        ft = P.build_cs_global_face_table(Nc, conn)
+        ft = G.build_cs_global_face_table(Nc, conn)
         geom = P.CSVectorFaceGeometry(mesh, ft)
         dps = ntuple(_ -> fill(1000.0, Nc, Nc, 1), 6)
         scale = 30.0 * 1000.0 * mean(mesh.Δy) / 9.80665
@@ -157,7 +157,7 @@ interior_divergence(am, bm, Nc) =
     @testset "every seam face has an along-edge partner" begin
         for Nc in (24, 48)
             mesh = gmao_mesh(Nc)
-            ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+            ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
             geom = P.CSVectorFaceGeometry(mesh, ft)
             # even Nc: every seam face is off the edge midpoint and gets a partner
             seam = ft.mirror_panel .!= 0
@@ -168,7 +168,7 @@ interior_divergence(am, bm, Nc) =
 
     @testset "fourth-order wind interpolation at interior faces" begin
         mesh = gmao_mesh(48); Nc = mesh.Nc
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         geo2, geo4 = P.CSVectorFaceGeometry(mesh, ft), P.CSVectorFaceGeometry(mesh, ft; order = 4)
         @test_throws ArgumentError P.CSVectorFaceGeometry(mesh, ft; order = 3)
         # the stencil needs two cells on each side in the panel row
@@ -176,8 +176,8 @@ interior_divergence(am, bm, Nc) =
         @test all(f -> geo4.coef[f] == geo2.coef[f], findall(==(0), geo4.outer.slot))
         # a smooth divergent and rotational wind: interior face fluxes against exact line integrals
         a, b = (0.3, 0.5, 0.8) ./ sqrt(0.98), (0.1, -0.9, 0.3) ./ sqrt(0.91)
-        wind(x) = let k = 12.0, w = 20 .* (cos(k * P._dot3(x, a)) .* a .+ P._cross3(x, cos(k * P._dot3(x, b)) .* b))
-            w .- P._dot3(w, x) .* x
+        wind(x) = let k = 12.0, w = 20 .* (cos(k * G.dot3(x, a)) .* a .+ G.cross3(x, cos(k * G.dot3(x, b)) .* b))
+            w .- G.dot3(w, x) .* x
         end
         u_e, v_n = cell_winds(mesh, wind)
         dps = ntuple(_ -> fill(1.0, Nc, Nc, 1), 6)
@@ -193,7 +193,7 @@ interior_divergence(am, bm, Nc) =
 
     @testset "FV3's filter along the faces" begin
         mesh = gmao_mesh(24); Nc = mesh.Nc
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         geo = P.CSVectorFaceGeometry(mesh, ft; order = 4, along_face_filter = true)
         face(p, d, i, j) = findfirst(f -> (ft.face_panel[f], ft.face_dir[f], ft.face_idx_i[f], ft.face_idx_j[f]) ==
                                           (p, d, i, j), 1:ft.nf)
@@ -261,7 +261,7 @@ interior_divergence(am, bm, Nc) =
         u = zeros(nx, ny, Nz); v = zeros(nx, ny, Nz)
         for j in 1:ny, i in 1:nx
             e, n = en(deg2rad(src.λᶜ[i]), deg2rad(src.φᶜ[j]))
-            u[i, j, 1], v[i, j, 1] = P._dot3(V, e), P._dot3(V, n)
+            u[i, j, 1], v[i, j, 1] = G.dot3(V, e), G.dot3(V, n)
         end
         regrid!(panels, f) = P.regrid_3d_to_cs_panels!(panels, R, f, ws, Nc)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(src, mesh, Nz, Float64))) do w
@@ -269,7 +269,7 @@ interior_divergence(am, bm, Nc) =
             lon, lat = G.panel_cell_center_lonlat(mesh, 3)       # the north-polar panel
             maximum(Iterators.product(1:Nc, 1:Nc)) do (i, j)
                 e, n = en(deg2rad(lon[i, j]), deg2rad(lat[i, j]))
-                hypot(pipe.u[3][i, j, 1] - P._dot3(V, e), pipe.v[3][i, j, 1] - P._dot3(V, n))
+                hypot(pipe.u[3][i, j, 1] - G.dot3(V, e), pipe.v[3][i, j, 1] - G.dot3(V, n))
             end
         end
         @test polar_error[1] > 0.05 * hypot(V...)      # u and v remapped separately: > 5 % of |V|
@@ -303,7 +303,7 @@ interior_divergence(am, bm, Nc) =
         u = zeros(length(lon), Nz); v = similar(u)
         for c in eachindex(lon)
             e, n = en(deg2rad(lon[c]), deg2rad(lat[c]))
-            u[c, :] .= P._dot3(V, e); v[c, :] .= P._dot3(V, n)
+            u[c, :] .= G.dot3(V, e); v[c, :] .= G.dot3(V, n)
         end
         src_flat, dst_flat = zeros(length(lon), Nz), zeros(length(R.dst_areas), Nz)
         # Few-longitude polar rings leave the polar target cells a few percent short of
@@ -313,14 +313,14 @@ interior_divergence(am, bm, Nc) =
         @test P._regrid_intensive!(dst_flat, src_flat, R, coverage, fill(400.0, length(lon), Nz)) ≈
               fill(400.0, size(dst_flat)) rtol = 1e-12
         regrid!(panels, f) = (P._regrid_intensive!(dst_flat, src_flat, R, coverage, f);
-                              P._unpack_flat_to_cs_panels_3d!(panels, dst_flat, Nc, Nz))
+                              P.unpack_flat_to_panels_3d!(panels, dst_flat, Nc, Nz))
         u_cs, v_cs = ntuple(_ -> zeros(Nc, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(rg, mesh, Nz, Float64))) do w
             P._regrid_winds!(w, u_cs, v_cs, regrid!, u, v)
             lonp, latp = G.panel_cell_center_lonlat(mesh, 3)
             maximum(Iterators.product(1:Nc, 1:Nc, 1:Nz)) do (i, j, k)
                 e, n = en(deg2rad(lonp[i, j]), deg2rad(latp[i, j]))
-                hypot(u_cs[3][i, j, k] - P._dot3(V, e), v_cs[3][i, j, k] - P._dot3(V, n))
+                hypot(u_cs[3][i, j, k] - G.dot3(V, e), v_cs[3][i, j, k] - G.dot3(V, n))
             end
         end
         # a C12 cell touching the pole spans 90° of longitude: the scalar regrid is off by
@@ -336,7 +336,7 @@ interior_divergence(am, bm, Nc) =
         # zonal solid-body wind times a smooth thickness field: the flux at a seam
         # face must use the thickness at the face midpoint, not between the centres
         mesh = gmao_mesh(48); Nc = mesh.Nc
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         geom = P.CSVectorFaceGeometry(mesh, ft)
         centre = P._cs_cell_bases(mesh)[1]
         thickness(x) = 1000.0 * (1 + 0.3 * x[3] + 0.2 * x[1])
@@ -346,7 +346,7 @@ interior_divergence(am, bm, Nc) =
             lon, lat = G.panel_cell_center_lonlat(mesh, p)
             for j in 1:Nc, i in 1:Nc
                 u_e[p][i, j, 1] = 30.0 * cos(deg2rad(lat[i, j]))
-                dps[p][i, j, 1] = thickness(centre[P._cs_global_cell(i, j, p, Nc)])
+                dps[p][i, j, 1] = thickness(centre[G.cs_flat_index(i, j, p, Nc)])
             end
         end
         am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6); bm = ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
@@ -354,10 +354,10 @@ interior_divergence(am, bm, Nc) =
         rel = Float64[]
         for f in findall(!=(0), ft.mirror_panel)
             a, b = P._cs_face_corners(mesh, ft, f)
-            mid = P._unit3(a .+ b)
-            n = P._unit3(P._cross3(a, b))
-            n = P._dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
-            exact = 30.0 * P._dot3((-mid[2], mid[1], 0.0), n) * thickness(mid) * geom.len[f]
+            mid = G.unit3(a .+ b)
+            n = G.unit3(G.cross3(a, b))
+            n = G.dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
+            exact = 30.0 * G.dot3((-mid[2], mid[1], 0.0), n) * thickness(mid) * geom.len[f]
             p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
             got = ft.face_dir[f] == 1 ? am[p][i, j, 1] : bm[p][i, j, 1]
             push!(rel, (got - exact) / (30.0 * 1000.0 * geom.len[f]))
@@ -368,7 +368,7 @@ interior_divergence(am, bm, Nc) =
     @testset "default flux construction is the historical reconstruct_cs_fluxes!" begin
         # the ERA5 N320 driver now calls the shared methods; the defaults must be bit-identical
         mesh = gmao_mesh(8); Nc, Nz = 8, 3
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         u_e = ntuple(_ -> randn(Nc, Nc, Nz), 6); v_n = ntuple(_ -> randn(Nc, Nc, Nz), 6)
         ps = ntuple(_ -> 1e5 .+ 500 .* rand(Nc, Nc), 6)
         A, B = [0.0, 3000.0, 8000.0, 0.0], [0.0, 0.0, 0.4, 1.0]
@@ -389,7 +389,7 @@ interior_divergence(am, bm, Nc) =
 
     @testset "each flux method gets the winds it expects" begin
         mesh = gmao_mesh(8); Nc, Nz = 8, 2
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         u_e = ntuple(_ -> rand(Nc, Nc, Nz), 6); v_n = ntuple(_ -> rand(Nc, Nc, Nz), 6)
         x = (u_local = ntuple(_ -> zeros(Nc, Nc, Nz), 6), v_local = ntuple(_ -> zeros(Nc, Nc, Nz), 6))
         P._prepare_cell_winds!(P.VectorFaceFluxes(P.CSVectorFaceGeometry(mesh, ft), ft), x, u_e, v_n, mesh, Nz)
@@ -402,7 +402,7 @@ interior_divergence(am, bm, Nc) =
 
     @testset "face fluxes integrated along the faces from the source grid" begin
         mesh = gmao_mesh(12); Nc = mesh.Nc
-        ft = P.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
+        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         src = P.build_target_geometry(Val(:synthetic_reduced_gaussian),
                                       Dict{String, Any}("gaussian_number" => 96, "nlon_mode" => "octahedral"), Float64).mesh
         li = P.LineIntegralFaceFluxes(src, mesh, ft)
@@ -413,8 +413,8 @@ interior_divergence(am, bm, Nc) =
             for c in eachindex(lon)
                 λ, φ = deg2rad(lon[c]), deg2rad(lat[c])
                 w = wind((cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
-                u[c, 1] = P._dot3(w, (-sin(λ), cos(λ), 0.0))
-                v[c, 1] = P._dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+                u[c, 1] = G.dot3(w, (-sin(λ), cos(λ), 0.0))
+                v[c, 1] = G.dot3(w, (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
             end
             am, bm = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6), ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
             P.line_integral_face_fluxes!(am, bm, li, u, v, ones(length(lon)), [0.0, 0.0], [0.0, 1.0], 1.0, 1.0, 1)
@@ -426,7 +426,7 @@ interior_divergence(am, bm, Nc) =
             g = k .* (cos(k * x[1]) * sin(k * x[2]) * sin(k * x[3]),
                       sin(k * x[1]) * cos(k * x[2]) * sin(k * x[3]),
                       sin(k * x[1]) * sin(k * x[2]) * cos(k * x[3]))
-            return 20.0 .* (0.0, -x[3], x[2]) .+ (g .- P._dot3(g, x) .* x)   # tangent gradient
+            return 20.0 .* (0.0, -x[3], x[2]) .+ (g .- G.dot3(g, x) .* x)   # tangent gradient
         end
         exact = exact_face_fluxes(mesh, ft, wind)
         am, bm = li_fluxes(wind)

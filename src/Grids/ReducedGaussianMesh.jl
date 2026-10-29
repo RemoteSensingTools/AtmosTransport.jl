@@ -73,7 +73,7 @@ function _validate_reduced_gaussian_rings(latitudes_in::AbstractVector{<:Real},
     return latitudes, nlon_per_ring
 end
 
-function _latitude_faces(latitudes::AbstractVector{FT}) where FT <: AbstractFloat
+function _ring_latitude_faces(latitudes::AbstractVector{FT}) where FT <: AbstractFloat
     nr = length(latitudes)
 
     lat_faces = Vector{FT}(undef, nr + 1)
@@ -86,7 +86,7 @@ function _latitude_faces(latitudes::AbstractVector{FT}) where FT <: AbstractFloa
     return lat_faces
 end
 
-function _ring_offsets(nlon_per_ring::AbstractVector{Int})
+function _prefix_offsets(nlon_per_ring::AbstractVector{Int})
     nr = length(nlon_per_ring)
     ring_offsets = Vector{Int}(undef, nr + 1)
     ring_offsets[1] = 1
@@ -130,26 +130,16 @@ function _boundary_counts(nlon_per_ring::AbstractVector{Int})
     return boundary_counts
 end
 
-function _boundary_offsets(boundary_counts::AbstractVector{Int})
-    nb = length(boundary_counts)
-    boundary_offsets = Vector{Int}(undef, nb + 1)
-    boundary_offsets[1] = 1
-    for b in 1:nb
-        boundary_offsets[b + 1] = boundary_offsets[b] + boundary_counts[b]
-    end
-
-    return boundary_offsets
-end
 
 function ReducedGaussianMesh(latitudes_in::AbstractVector{<:Real},
                              nlon_in::AbstractVector{<:Integer};
                              FT::Type{<:AbstractFloat} = Float64,
                              radius = FT(EARTH_RADIUS))
     latitudes, nlon_per_ring = _validate_reduced_gaussian_rings(latitudes_in, nlon_in, FT)
-    lat_faces = _latitude_faces(latitudes)
-    ring_offsets = _ring_offsets(nlon_per_ring)
+    lat_faces = _ring_latitude_faces(latitudes)
+    ring_offsets = _prefix_offsets(nlon_per_ring)
     boundary_counts = _boundary_counts(nlon_per_ring)
-    boundary_offsets = _boundary_offsets(boundary_counts)
+    boundary_offsets = _prefix_offsets(boundary_counts)
 
     ncells_total = ring_offsets[end] - 1
 
@@ -374,3 +364,20 @@ end
 export ReducedGaussianMesh, nrings, nboundaries
 export ring_cell_count, ring_longitudes, cell_index
 export boundary_face_count, boundary_face_offset, boundary_face_range
+
+"""Native cell-centre lon/lat vectors in cell-index order, optionally converted to `FT`."""
+function cell_centers(mesh::ReducedGaussianMesh; FT::Type = eltype(mesh))
+    lon = Vector{FT}(undef, ncells(mesh))
+    lat = similar(lon)
+    for j in 1:nrings(mesh)
+        for (i, λ) in enumerate(ring_longitudes(mesh, j))
+            c = cell_index(mesh, i, j)
+            lon[c] = FT(λ)
+            lat[c] = FT(mesh.latitudes[j])
+        end
+    end
+    return lon, lat
+end
+
+
+export cell_centers

@@ -18,6 +18,10 @@ operator without an adjoint before anything is recorded.
 """
 module Adjoints
 
+using ..Grids: canonical_seams
+
+using ..Grids: edge_interior_ij, edge_halo_ij, corner_source_ij, cs_seam_axis, cs_seam_sign, cs_seam_face_index, cs_seam
+
 using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
 # NCDatasets is loaded here (not inside ObservationsIO.jl) so the
 # NetCDF readers/writers under `src/Inversion/` (ObservationsIO.jl,
@@ -35,7 +39,7 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     fill_panel_halos!, strang_split_cs!, copy_corners!,
     _cs_static_palindrome_subcycle_count,
     _sweep_z_panel!, _sweep_cs_horizontal!,
-    _CSInteriorFlux, _cs_seam_axis, _cs_seam_sign, _cs_seam_face_index,
+    _CSInteriorFlux,
     apply_linrood_horizontal_adjoint_single_panel!,
     apply_linrood_update_adjoint!, _share_lr_seam_faces!,
     _init_q_buf_kernel!, _ppm_y_face_kernel!, _ppm_x_face_kernel!,

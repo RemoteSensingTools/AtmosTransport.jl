@@ -73,6 +73,9 @@ Advanced users can call `process_day` directly from Julia.
 """
 module Preprocessing
 
+import ..Grids
+import ..Grids: panel_convention_tag
+
 using Dates
 using Logging
 using FFTW
@@ -138,6 +141,13 @@ using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_P
                     ECHLEVS_ML137_66L, ECHLEVS_ML137_CFL94, ECHLEVS_ML137_CFL85,
                     ECHLEVS_ML137_FULL, ERA5_L137_ECHLEVS_PRESETS,
                     TM5_CONVECTION_SOURCE_KEY, TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION
+using ..Grids: cell_centers, cell_area_matrix, unit3, arc3, slerp3, unit_xyz_from_radians,
+               seam_mirror_sign, face_connectivity, cell_areas, cs_total_area, dot3, cross3,
+               CS_PANEL_COUNT, cs_panel_flat_range, unpack_flat_to_panels_2d!,
+               unpack_flat_to_panels_3d!, CSGlobalFaceTable, build_cs_global_face_table,
+               cs_edge_cell, cs_edge_face_location, cs_flat_index, cs_panel_ij,
+               default_cs_definition, parse_panel_convention, parse_cs_definition,
+               cs_geometry_tags
 using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,
@@ -153,6 +163,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
                default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
+import ..State
 using ..State: AbstractMassBasis, DryBasis, MoistBasis,
                TotalSurfacePressure, DrySurfacePressure
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
@@ -212,7 +223,6 @@ export verify_write_replay_cs!,
 # auditors (focused tests, the binary inspector,
 # `scripts/diagnostics/*`) can gate a binary against the same contract
 # without duplicating logic.
-export mass_basis_from_symbol
 export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
 export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
        required_substeps, next_substeps, rescale_substep_amounts!,
@@ -265,7 +275,7 @@ include("vertical_transforms.jl")
 
 # Global 6-panel Poisson balance for cubed-sphere grids
 # (must precede target_geometry.jl which uses CSGlobalFaceTable)
-include("cs_face_table.jl")
+
 include("cs_poisson_solver.jl")
 include("cs_poisson_balance.jl")
 

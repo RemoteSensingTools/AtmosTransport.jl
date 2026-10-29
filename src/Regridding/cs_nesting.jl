@@ -258,11 +258,6 @@ end
 # Cell areas of every panel in the flat regridder order, in Float64 whatever
 # the mesh precision: a Float32 mesh stores Float32-rounded areas, so its
 # areas are recomputed by the (Float64) mesh constructor.
-_float64_cell_areas(m::CubedSphereMesh{Float64}) = m.cell_areas
-_float64_cell_areas(m::CubedSphereMesh) =
-    CubedSphereMesh(; FT = Float64, Nc = m.Nc, Hp = 0, definition = cs_definition(m),
-                    radius = Float64(m.radius)).cell_areas
-_flat_float64_cell_areas(m::CubedSphereMesh) = repeat(vec(_float64_cell_areas(m)), 6)
 
 function NestedCubedSphereRegrid(src::CubedSphereMesh, dst::CubedSphereMesh)
     meshes_nested(src, dst) || throw(ArgumentError(
@@ -270,8 +265,8 @@ function NestedCubedSphereRegrid(src::CubedSphereMesh, dst::CubedSphereMesh)
         "integer Nc ratio, coinciding corners)"))
     D = src.Nc > dst.Nc ? Restriction : Prolongation
     ratio = max(src.Nc, dst.Nc) ÷ min(src.Nc, dst.Nc)
-    return NestedCubedSphereRegrid{D}(ratio, _flat_float64_cell_areas(src),
-                                      _flat_float64_cell_areas(dst))
+    return NestedCubedSphereRegrid{D}(ratio, flat_float64_cell_areas(src),
+                                      flat_float64_cell_areas(dst))
 end
 
 """
@@ -284,9 +279,8 @@ nested_regrid_or_nothing(src, dst) =
     meshes_nested(src, dst) ? NestedCubedSphereRegrid(src, dst) : nothing
 
 # Flat indices of coarse cell (i, j) of panel p and of its fine cell (ii, jj).
-@inline _flat_cell(p, i, j, N) = (p - 1) * N * N + i + (j - 1) * N
 @inline _flat_fine_cell(p, i, j, ii, jj, R, Nf) =
-    _flat_cell(p, (i - 1) * R + ii, (j - 1) * R + jj, Nf)
+    cs_flat_index((i - 1) * R + ii, (j - 1) * R + jj, p, Nf)
 
 function _nested_apply!(dst::AbstractVector, r::NestedCubedSphereRegrid{Restriction},
                         src::AbstractVector)
@@ -300,7 +294,7 @@ function _nested_apply!(dst::AbstractVector, r::NestedCubedSphereRegrid{Restrict
             f = _flat_fine_cell(p, i, j, ii, jj, R, Nf)
             acc += Float64(src[f]) * A_fine[f]
         end
-        c = _flat_cell(p, i, j, Nc)
+        c = cs_flat_index(i, j, p, Nc)
         dst[c] = acc / A_coarse[c]
     end
     return dst
@@ -317,7 +311,7 @@ function _nested_apply!(dst::AbstractVector, r::NestedCubedSphereRegrid{Prolonga
         for jj in 1:R, ii in 1:R
             block_area += A_fine[_flat_fine_cell(p, i, j, ii, jj, R, Nf)]
         end
-        c = _flat_cell(p, i, j, Nc)
+        c = cs_flat_index(i, j, p, Nc)
         value = Float64(src[c]) * (A_coarse[c] / block_area)
         for jj in 1:R, ii in 1:R
             dst[_flat_fine_cell(p, i, j, ii, jj, R, Nf)] = value

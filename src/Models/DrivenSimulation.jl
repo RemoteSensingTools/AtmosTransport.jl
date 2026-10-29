@@ -34,8 +34,7 @@ validate_runtime_physics_recipe(recipe, driver)
 grid = driver_grid(driver)
 window1 = load_transport_window(driver, 1)
 basis_tag = air_mass_basis(driver)
-Basis = basis_tag === :dry ? DryBasis : basis_tag === :moist ? MoistBasis :
-    throw(ArgumentError("driver mass basis must be :dry or :moist; got \$(repr(basis_tag))"))
+Basis = typeof(mass_basis(basis_tag))
 air = copy(window1.air_mass)
 
 vmr = build_initial_mixing_ratio(
@@ -102,8 +101,6 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS
     host_staging                :: HS
 end
 
-@inline _basis_symbol(::DryBasis) = :dry
-@inline _basis_symbol(::MoistBasis) = :moist
 
 _same_values(a, b) = a == b
 _same_horizontal_geometry(a::LatLonMesh, b::LatLonMesh) =
@@ -144,10 +141,10 @@ end
 
 function _check_basis_compatibility(model::TransportModel, driver::D) where {D <: AbstractMetDriver}
     basis_sym = air_mass_basis(driver)
-    _basis_symbol(mass_basis(model.state)) == basis_sym ||
-        throw(ArgumentError("model state basis $(_basis_symbol(mass_basis(model.state))) does not match driver basis $(basis_sym)"))
-    _basis_symbol(mass_basis(model.fluxes)) == basis_sym ||
-        throw(ArgumentError("model flux basis $(_basis_symbol(mass_basis(model.fluxes))) does not match driver basis $(basis_sym)"))
+    basis_symbol(mass_basis(model.state)) == basis_sym ||
+        throw(ArgumentError("model state basis $(basis_symbol(mass_basis(model.state))) does not match driver basis $(basis_sym)"))
+    basis_symbol(mass_basis(model.fluxes)) == basis_sym ||
+        throw(ArgumentError("model flux basis $(basis_symbol(mass_basis(model.fluxes))) does not match driver basis $(basis_sym)"))
     return nothing
 end
 

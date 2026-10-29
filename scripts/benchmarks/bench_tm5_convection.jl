@@ -35,8 +35,8 @@ include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 
 using .AtmosTransport.State: CellState, DryBasis, allocate_face_fluxes
-using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure,
-                              CPU as GridsCPU
+using .AtmosTransport.Architectures: CPU as GridsCPU
+using .AtmosTransport.Grids: AtmosGrid, LatLonMesh, HybridSigmaPressure
 using .AtmosTransport.Operators: TM5Convection, TM5Workspace, UpwindScheme
 using .AtmosTransport.MetDrivers: ConvectionForcing
 

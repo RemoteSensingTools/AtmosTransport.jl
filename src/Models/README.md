@@ -210,3 +210,6 @@ for the support gates and fallback diagnostics.
   - [`../../test/core/test_no_advection.jl`](../../test/core/test_no_advection.jl)
   - [`../../test/core/test_transport_model_emissions.jl`](../../test/core/test_transport_model_emissions.jl)
   - [`../../test/core/test_multiday_source_clock.jl`](../../test/core/test_multiday_source_clock.jl)
+
+Initial-condition panel unpacking uses Grids directly; Models has no
+Preprocessing import. State owns basis conversion and panel-interior views.

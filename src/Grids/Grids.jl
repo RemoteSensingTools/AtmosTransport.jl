@@ -13,7 +13,6 @@ Provides:
 """
 module Grids
 
-using ..Architectures: CPU
 using ..Parameters: PlanetParameters, earth_parameters, EARTH_RADIUS, GMAO_CS_LONGITUDE_OFFSET_DEG
 
 include("AbstractMeshes.jl")
@@ -21,9 +20,14 @@ include("VerticalCoordinates.jl")
 include("GeometryOps.jl")
 include("LatLonMesh.jl")
 include("PanelConnectivity.jl")
+include("PanelIndices.jl")
+include("CSGlobalFaceTable.jl")
+include("PanelPacking.jl")
 include("CubedSphereMesh.jl")
+include("SphereVectors.jl")
 include("cs_mesh_coordinates.jl")
 include("cs_mesh_locate.jl")
 include("ReducedGaussianMesh.jl")
+include("CellAreas.jl")
 
 end # module Grids

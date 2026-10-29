@@ -59,16 +59,7 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     rm_4d_B        :: A4
 end
 
-function _face_connectivity_vectors(mesh::AbstractHorizontalMesh)
-    left = Vector{Int32}(undef, nfaces(mesh))
-    right = Vector{Int32}(undef, nfaces(mesh))
-    @inbounds for f in eachindex(left)
-        l, r = face_cells(mesh, f)
-        left[f] = Int32(l)
-        right[f] = Int32(r)
-    end
-    return left, right
-end
+
 
 function AdvectionWorkspace(m::AbstractArray{FT,3};
                             cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
@@ -97,7 +88,7 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
         face_left = similar(m, Int32, 0)
         face_right = similar(m, Int32, 0)
     else
-        left_cpu, right_cpu = _face_connectivity_vectors(mesh)
+        left_cpu, right_cpu = face_connectivity(mesh)
         face_left = similar(m, Int32, length(left_cpu))
         face_right = similar(m, Int32, length(right_cpu))
         copyto!(face_left, left_cpu)

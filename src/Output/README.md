@@ -19,7 +19,7 @@ writing topology-specific NetCDF files directly.
   model-state capture.
 - `selected_snapshots.jl` captures requested layers and backend column reductions.
 - `snapshot_totals.jl` records compensated Float64 signed tracer totals through
-  `Architectures._compensated_total`: in place on CPU and CUDA, in bounded host
+  `Architectures.compensated_total`: in place on CPU and CUDA, in bounded host
   slabs on Metal.
 - `netcdf_stream.jl` appends single-file runtime output and records completed
   snapshots. Its owner must close the stream on every exit.
@@ -171,3 +171,7 @@ even when no layer or column diagnostic is requested.
 
 Explicit snapshot schedules sort a copy of the supplied hours, including
 `Vector{Float64}` inputs, and reject non-finite hours in the constructor.
+
+Geometry convention tags come from Grids and mass-basis tags from State.
+Observation placement uses `AbstractPlacementCoordinate`; Grids owns
+`AbstractVerticalCoordinate` for model vertical grids.

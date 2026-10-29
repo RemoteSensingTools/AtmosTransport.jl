@@ -203,7 +203,7 @@ end
 
 # `true` for strictly ascending faces, `false` for strictly descending ones;
 # anything else throws.
-function _latitude_faces_ascending(φᶠ::AbstractVector{<:Real})
+function _ring_latitude_faces_ascending(φᶠ::AbstractVector{<:Real})
     _check_face_count(φᶠ, "latitude")
     ascending = φᶠ[2] > φᶠ[1]
     @inbounds for j in 2:length(φᶠ)
@@ -231,14 +231,14 @@ longitude faces are unwrapped, not rolled, so mesh column `i` is input column
 """
 function latitude_row_order(φᶠ::AbstractVector{<:Real})
     Ny = length(φᶠ) - 1
-    return _latitude_faces_ascending(φᶠ) ? (1:1:Ny) : (Ny:-1:1)
+    return _ring_latitude_faces_ascending(φᶠ) ? (1:1:Ny) : (Ny:-1:1)
 end
 
 # Latitude faces → (ascending faces::Vector{FT}, Δφ::FT), Δφ = NaN when the
 # faces are not uniform.
-function _explicit_latitude_faces(φᶠ::AbstractVector{<:Real}, ::Type{FT}) where FT
+function _explicit_ring_latitude_faces(φᶠ::AbstractVector{<:Real}, ::Type{FT}) where FT
     Ny = length(φᶠ) - 1
-    order = _latitude_faces_ascending(φᶠ) ? (1:1:(Ny + 1)) : ((Ny + 1):-1:1)   # face order
+    order = _ring_latitude_faces_ascending(φᶠ) ? (1:1:(Ny + 1)) : ((Ny + 1):-1:1)   # face order
     faces64 = Float64[φᶠ[r] for r in order]
     first(faces64) >= -90 && last(faces64) <= 90 || throw(ArgumentError(
         "latitude faces must lie in [-90, 90]; got [$(first(faces64)), $(last(faces64))]"))
@@ -306,7 +306,7 @@ Faces of a regular mesh reproduce `LatLonMesh(; ...)` bit for bit.
 function LatLonMesh(λᶠ::AbstractVector{<:Real}, φᶠ::AbstractVector{<:Real};
                     FT::Type{<:AbstractFloat} = Float64, radius::Real)
     λ_faces, Δλ = _explicit_longitude_faces(λᶠ, FT)
-    φ_faces, Δφ = _explicit_latitude_faces(φᶠ, FT)
+    φ_faces, Δφ = _explicit_ring_latitude_faces(φᶠ, FT)
     Nx = length(λ_faces) - 1
     Ny = length(φ_faces) - 1
     return LatLonMesh{FT}(Nx, Ny, Δλ, Δφ, _regular_centers(λ_faces), λ_faces,
@@ -372,8 +372,7 @@ end
 
 """Cell area vector (precomputed, one per latitude band)."""
 function cell_areas_by_latitude(m::LatLonMesh{FT}) where FT
-    R = m.radius
-    return FT[R^2 * deg2rad(m.Δλ) * abs(sind(m.φᶠ[j+1]) - sind(m.φᶠ[j])) for j in 1:m.Ny]
+    return FT[cell_area(m, 1, j) for j in 1:m.Ny]
 end
 
 # ---- Internal structured-only metric helpers (not exported) ----

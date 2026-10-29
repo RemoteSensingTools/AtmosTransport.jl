@@ -19,6 +19,7 @@ using Dates
 
 using AtmosTransport
 using AtmosTransport.Architectures: CPU
+using AtmosTransport.Grids: parse_panel_convention, parse_cs_definition
 using AtmosTransport.Grids: AtmosGrid, CubedSphereMesh, CubedSphereDefinition,
                               EquiangularCubedSphereDefinition,
                               GMAOCubedSphereDefinition,
@@ -39,27 +40,12 @@ function _read_atmsnap_header(io::IO)
     return JSON3.read(String(header_bytes), Dict{String, Any})
 end
 
-function _panel_convention_from_tag(tag::AbstractString)
-    tag == "gnomonic" && return GnomonicPanelConvention()
-    tag == "geos_native" && return GEOSNativePanelConvention()
-    error("unknown panel_convention tag: $(repr(tag))")
-end
 
 # Map the `cs_definition_tag` Symbol (round-tripped through JSON as a String)
 # back to a fully-constructed `CubedSphereDefinition`. The binary header stores
 # only the definition tag, panel convention, and the two law tags; we use the
 # convention-aware default-constructors for each definition to rebuild a
 # self-consistent object rather than reaching into the law factories directly.
-function _definition_from_tags(def_tag::AbstractString,
-                               convention::AbstractCubedSpherePanelConvention)
-    if def_tag == "equiangular_gnomonic"
-        return EquiangularCubedSphereDefinition(convention = convention)
-    elseif def_tag == "gmao_equal_distance"
-        return GMAOCubedSphereDefinition(convention = convention)
-    else
-        error("unknown cs_definition tag: $(repr(def_tag))")
-    end
-end
 
 _float_from_dtype_tag(tag::AbstractString) =
     tag == "Float32" ? Float32 :
@@ -69,8 +55,8 @@ _float_from_dtype_tag(tag::AbstractString) =
 function _rebuild_cs_mesh(header::Dict{String, Any})
     g = header["grid"]
     Nc = Int(g["Nc"])
-    conv = _panel_convention_from_tag(String(g["panel_convention"]))
-    def = _definition_from_tags(String(g["definition"]), conv)
+    conv = parse_panel_convention(String(g["panel_convention"]))
+    def = parse_cs_definition(String(g["definition"]), conv)
     # Match the original run's mesh `FT` so geometry-derived diagnostics
     # (cell_area, lat/lon corner positions, etc.) round-trip bit-exact.
     FT = _float_from_dtype_tag(String(header["float_dtype"]))

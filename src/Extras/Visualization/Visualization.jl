@@ -10,6 +10,8 @@ plotting load cost unless a Makie backend is explicitly loaded.
 """
 module Visualization
 
+using ..Grids: parse_panel_convention, parse_coordinate_law, parse_center_law
+
 using Dates
 using NCDatasets
 using Printf
@@ -18,7 +20,7 @@ using Statistics: quantile
 using ..Grids: LatLonMesh, CubedSphereMesh,
                AbstractCubedSpherePanelConvention,
                GnomonicPanelConvention, GEOSNativePanelConvention,
-               AbstractCubedSphereDefinition, CubedSphereDefinition, _default_cs_definition,
+               AbstractCubedSphereDefinition, CubedSphereDefinition, default_cs_definition,
                EquiangularGnomonic, GMAOEqualDistanceGnomonic,
                AngularMidpointCenter, FourCornerNormalizedCenter
 using ..Regridding: build_regridder, apply_regridder!
@@ -134,7 +136,7 @@ end
 CubedSphereSnapshotTopology(Nc, nlevel,
                             panel_convention::AbstractCubedSpherePanelConvention) =
     CubedSphereSnapshotTopology(Nc, nlevel, panel_convention,
-                                _default_cs_definition(panel_convention))
+                                default_cs_definition(panel_convention))
 
 """
     SnapshotDataset
@@ -286,7 +288,7 @@ function open_snapshot(path::AbstractString)
         topology = if _is_cs_snapshot(ds)
             Nc = haskey(attrs, "Nc") ? Int(attrs["Nc"]) : length(ds.dim["Xdim"])
             nlevel = haskey(ds, "lev") ? size(ds["lev"], 1) : size(ds["air_mass"], 4)
-            conv = _parse_cs_panel_convention(get(attrs, "panel_convention", "gnomonic"))
+            conv = parse_panel_convention(get(attrs, "panel_convention", "gnomonic"))
             CubedSphereSnapshotTopology(Nc, nlevel, conv, _cs_snapshot_definition(attrs, conv))
         elseif _is_lonlat_snapshot(ds)
             lons = Float64.(collect(ds["lon"][:]))
@@ -515,29 +517,14 @@ function _target_lonlat_mesh(resolution::Tuple{Int, Int})
     return mesh, Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)
 end
 
-function _parse_cs_panel_convention(raw)
-    name = String(raw)
-    name == "gnomonic" && return GnomonicPanelConvention()
-    name == "geos_native" && return GEOSNativePanelConvention()
-    throw(ArgumentError(
-        "unsupported CS panel_convention=$(repr(raw)); expected gnomonic or geos_native"))
-end
-
-const _CS_COORDINATE_LAWS = Dict("equiangular_gnomonic" => EquiangularGnomonic(),
-                                 "gmao_equal_distance_gnomonic" => GMAOEqualDistanceGnomonic())
-const _CS_CENTER_LAWS = Dict("angular_midpoint" => AngularMidpointCenter(),
-                             "four_corner_normalized" => FourCornerNormalizedCenter())
 
 # The mesh definition recorded by the snapshot writer (`define_cs_horizontal_geometry!`);
 # files written before those attributes get the panel convention's default.
 function _cs_snapshot_definition(attrs,
                                  convention::AbstractCubedSpherePanelConvention)
-    haskey(attrs, "cs_coordinate_law") || return _default_cs_definition(convention)
-    law = get(_CS_COORDINATE_LAWS, String(attrs["cs_coordinate_law"]), nothing)
-    center = get(_CS_CENTER_LAWS, String(get(attrs, "cs_center_law", "")), nothing)
-    (law === nothing || center === nothing) && throw(ArgumentError(
-        "unsupported CS geometry attributes cs_coordinate_law=$(repr(attrs["cs_coordinate_law"])), " *
-        "cs_center_law=$(repr(get(attrs, "cs_center_law", nothing)))"))
+    haskey(attrs, "cs_coordinate_law") || return default_cs_definition(convention)
+    law = parse_coordinate_law(attrs["cs_coordinate_law"])
+    center = parse_center_law(get(attrs, "cs_center_law", ""))
     return CubedSphereDefinition(law, center, convention;
                                  longitude_offset_deg = Float64(attrs["longitude_of_central_meridian"]),
                                  tag = Symbol(get(attrs, "cs_definition", "custom")))

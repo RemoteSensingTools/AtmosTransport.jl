@@ -38,22 +38,18 @@ end
 
 Number of tracers carried by `state`.
 """
-ntracers(state::CellState) = length(state.tracer_names)
-ntracers(state::CubedSphereState) = length(state.tracer_names)
+ntracers(state::AbstractCellState) = length(state.tracer_names)
 
 """
-    tracer_index(state::CellState, name::Symbol) -> Union{Int, Nothing}
+    tracer_index(state::AbstractCellState, name::Symbol) -> Union{Int, Nothing}
 
 Index of the tracer named `name` in `state.tracer_names`, or `nothing`
 if absent.
 """
-function tracer_index(state::CellState, name::Symbol)
+function tracer_index(state::AbstractCellState, name::Symbol)
     return findfirst(==(name), state.tracer_names)
 end
 
-function tracer_index(state::CubedSphereState, name::Symbol)
-    return findfirst(==(name), state.tracer_names)
-end
 
 """
     tracer_name(state::CellState, idx::Integer) -> Symbol
@@ -61,11 +57,10 @@ end
 Name of the tracer at index `idx`. Throws `BoundsError` if out of
 range.
 """
-tracer_name(state::CellState, idx::Integer) = state.tracer_names[Int(idx)]
-tracer_name(state::CubedSphereState, idx::Integer) = state.tracer_names[Int(idx)]
+tracer_name(state::AbstractCellState, idx::Integer) = state.tracer_names[Int(idx)]
 
 """
-    get_tracer(state::CellState, name::Symbol)
+    get_tracer(state::AbstractCellState, name::Symbol)
     get_tracer(state::CellState, idx::Integer)
 
 Return a view of the model tracer-storage slice. For a structured grid with
@@ -77,17 +72,12 @@ reflected in `state.tracers_raw`.
 
 Throws `KeyError(name)` if `name` is not a tracer in `state`.
 """
-function get_tracer(state::CellState, name::Symbol)
+function get_tracer(state::AbstractCellState, name::Symbol)
     idx = tracer_index(state, name)
     idx === nothing && throw(KeyError(name))
     return get_tracer(state, idx)
 end
 
-function get_tracer(state::CubedSphereState, name::Symbol)
-    idx = tracer_index(state, name)
-    idx === nothing && throw(KeyError(name))
-    return get_tracer(state, idx)
-end
 
 function get_tracer(state::CellState, idx::Integer)
     raw = state.tracers_raw
@@ -96,27 +86,24 @@ end
 
 function get_tracer(state::CubedSphereState, idx::Integer)
     tracer_idx = Int(idx)
-    return ntuple(6) do p
+    return ntuple(CS_PANEL_COUNT) do p
         raw = state.tracers_raw[p]
         selectdim(raw, ndims(raw), tracer_idx)
     end
 end
 
 """
-    eachtracer(state::CellState)
+    eachtracer(state::AbstractCellState)
 
 Iterate `name => tracer_slice` pairs for every tracer in `state`, in
 storage order. The yielded shape matches the previous
 `pairs(::NamedTuple)` contract so callers that destructure
 `for (name, rm) in eachtracer(state)` continue to work.
 """
-function eachtracer(state::CellState)
+function eachtracer(state::AbstractCellState)
     return (n => get_tracer(state, i) for (i, n) in enumerate(state.tracer_names))
 end
 
-function eachtracer(state::CubedSphereState)
-    return (n => get_tracer(state, i) for (i, n) in enumerate(state.tracer_names))
-end
 
 # =========================================================================
 # Mutating utilities
@@ -135,7 +122,7 @@ end
 
 function set_uniform_mixing_ratio!(state::CubedSphereState, name::Symbol, χ)
     rm_panels = get_tracer(state, name)
-    @inbounds for p in 1:6
+    @inbounds for p in 1:CS_PANEL_COUNT
         rm_panels[p] .= χ .* state.air_mass[p]
     end
     return nothing
@@ -143,3 +130,11 @@ end
 
 export allocate_tracers, set_uniform_mixing_ratio!
 export ntracers, tracer_index, tracer_name, get_tracer, eachtracer
+
+mass_basis(::AbstractCellState{B}) where {B <: AbstractMassBasis} = B()
+"""
+    tracer_names(state::AbstractCellState) -> NTuple{Nt, Symbol}
+
+Names of all tracers in `state`, in stored order.
+"""
+tracer_names(state::AbstractCellState) = getfield(state, :tracer_names)

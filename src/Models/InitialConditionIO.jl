@@ -46,6 +46,8 @@ via `AtmosTransport.Models.InitialConditionIO.<name>` if needed.
 """
 module InitialConditionIO
 
+using ..Grids: cell_areas
+
 using NCDatasets
 using Dates
 using ..Models: _config_bool
@@ -60,11 +62,9 @@ using ..State: AbstractMassBasis, DryBasis, MoistBasis,
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
                 gravity, panel_cell_center_lonlat
-# Regridding + Preprocessing are loaded before Models (AtmosTransport.jl)
-# so we can pull in the LL→CS conservative regridder + panel unpacking
-# helpers for the CS file-based IC path.
+# Regridding supplies LL→CS conservative weights; Grids owns panel unpacking.
 using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir, source_coverage
-using ..Preprocessing: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
+using ..Grids: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
                                StepwiseFlux, flux_temporal_scheme

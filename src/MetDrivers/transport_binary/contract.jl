@@ -177,12 +177,12 @@ function _set_tm5_convection_mass_basis!(header::Dict{String, Any},
     end
 
     requested === nothing && return header
-    binary_basis = _transport_parse_mass_basis_tag(mass_basis, "mass_basis")
+    binary_basis = State.mass_basis(mass_basis)
     basis = requested isa _DefaultTM5ConvectionMassBasis ? binary_basis : requested
     typeof(basis) === typeof(binary_basis) || throw(ArgumentError(
-        "tm5_convection_mass_basis=$(_transport_basis_symbol(basis)) does not match " *
-        "mass_basis=$(_transport_basis_symbol(binary_basis))"))
-    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(_transport_basis_symbol(basis))
+        "tm5_convection_mass_basis=$(basis_symbol(basis)) does not match " *
+        "mass_basis=$(basis_symbol(binary_basis))"))
+    header[TM5_CONVECTION_MASS_BASIS_KEY] = String(basis_symbol(basis))
     return header
 end
 
@@ -415,12 +415,8 @@ function _validate_transport_layout!(header::AbstractDict)
         definition = lowercase(String(header["cs_definition"]))
         coordinate_law = lowercase(String(header["cs_coordinate_law"]))
         center_law = lowercase(String(header["cs_center_law"]))
-        expected_geometry = convention == "gnomonic" ?
-            ("equiangular_gnomonic", "equiangular_gnomonic", "angular_midpoint") :
-            convention == "geos_native" ?
-            ("gmao_equal_distance", "gmao_equal_distance_gnomonic", "four_corner_normalized") :
-            throw(ArgumentError(
-                "Transport-binary contract violation — panel_convention must be gnomonic or geos_native"))
+        tags = cs_geometry_tags(default_cs_definition(parse_panel_convention(convention)))
+        expected_geometry = (tags.cs_definition, tags.cs_coordinate_law, tags.cs_center_law)
         (definition, coordinate_law, center_law) == expected_geometry || throw(ArgumentError(
             "Transport-binary contract violation — cubed-sphere geometry tags do not match " *
             "panel_convention=$(convention); expected $(expected_geometry)"))

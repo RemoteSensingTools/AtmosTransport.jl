@@ -51,7 +51,8 @@ steps_per_window(r::TransportBinaryReader, win::Integer) =
     r.header.steps_per_window_by_window[Int(win)]
 steps_per_window_schedule(r::TransportBinaryReader) =
     copy(r.header.steps_per_window_by_window)
-mass_basis(r::TransportBinaryReader) = r.header.mass_basis
+"""Return the transport binary header mass basis as `:dry` or `:moist`."""
+binary_mass_basis(r::TransportBinaryReader) = r.header.mass_basis
 surface_pressure_basis(r::TransportBinaryReader) = r.header.surface_pressure_basis
 binary_geometry(r::TransportBinaryReader) = binary_geometry(r.header)
 grid_type(r::TransportBinaryReader) = grid_type(r.header)
@@ -101,7 +102,7 @@ has been regenerated.
 function _check_tm5_convection_basis(reader::TransportBinaryReader)
     has_tm5_convection(reader) || return nothing
     recorded = tm5_convection_mass_basis(reader)
-    binary_basis = mass_basis(reader)
+    binary_basis = binary_mass_basis(reader)
     if recorded === nothing
         # Planned production-regeneration switch: after the ERA5 TM5 archive
         # is regenerated with issue #19 fixed, replace this warning by an error.
@@ -113,8 +114,8 @@ function _check_tm5_convection_basis(reader::TransportBinaryReader)
             "globally, up to about 2 % in humid tropical columns. Regenerate the " *
             "binary to remove the bias. (Reported once per session.)",
             maxlog = 1)
-    elseif typeof(recorded) !== typeof(_transport_parse_mass_basis_tag(binary_basis, "mass_basis"))
-        recorded_label = _transport_basis_symbol(recorded)
+    elseif typeof(recorded) !== typeof(mass_basis(binary_basis))
+        recorded_label = basis_symbol(recorded)
         throw(ArgumentError(
             "$(basename(reader.path)): TM5 convection fluxes are on a $(recorded_label) basis " *
             "(`$(TM5_CONVECTION_MASS_BASIS_KEY)`) but the air mass is $(binary_basis) " *
@@ -240,7 +241,7 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
 end
 
 function _infer_legacy_surface_pressure_basis(reader::TransportBinaryReader)
-    mass_basis(reader) === :moist && return TotalSurfacePressure()
+    binary_mass_basis(reader) === :moist && return TotalSurfacePressure()
     grid = _legacy_surface_pressure_grid(reader, binary_geometry(reader))
     air_mass = _transport_section_view(reader, 1, :m)
     surface_pressure = _transport_section_view(reader, 1, :ps)

@@ -285,7 +285,7 @@ end
         @test grid_type(reader) == :cubed_sphere
         @test horizontal_topology(reader) == :structureddirectional
         @test window_count(reader) == 2
-        @test mass_basis(reader) == :dry
+        @test binary_mass_basis(reader) == :dry
         @test !has_qv_endpoints(reader)
         @test !has_flux_delta(reader)
         @test !has_cmfmc(reader)

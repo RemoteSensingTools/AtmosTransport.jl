@@ -198,7 +198,7 @@ using .MetDrivers: AbstractMetDriver,
                    CubedSphereFluxDeltas,
                    load_window!, load_flux_delta_window!,
                    load_qv_pair_window!, load_grid, load_transport_window,
-                   driver_grid, air_mass_basis, has_humidity_endpoints,
+                   driver_grid, air_mass_basis, binary_mass_basis, has_humidity_endpoints,
                    interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
                    load_surface_window!,
                    ConvectionForcing, has_convection_forcing,
@@ -342,7 +342,7 @@ export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryReader, TransportBinaryHeader, TransportBinaryDriver
 export load_transport_window, driver_grid
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
-export window_count, load_grid, mass_basis, air_mass_basis
+export window_count, load_grid, mass_basis, binary_mass_basis, air_mass_basis
 export surface_pressure_basis
 export has_qv_endpoints, has_flux_delta, has_cmfmc
 export has_surface, has_vdiff_fields, has_tm5_convection, has_humidity_endpoints

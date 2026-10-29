@@ -29,7 +29,6 @@ panel convention of the mesh (`Output.define_cs_horizontal_geometry!`).
 const CS_NATIVE_FLUX_DIMS = ("Xdim", "Ydim", "nf", "time")
 
 # Faces of the cube.
-const _CS_PANELS = 6
 
 # Relative tolerance of today's norm-based cell-area gate (`check_cell_area`).
 const _CELL_AREA_RTOL = 1e-4
@@ -252,9 +251,9 @@ function write_slices!(w::CSNativeFluxWriter, name::AbstractString, k::AbstractU
     !isempty(k) && first(k) >= 1 && last(k) <= n || throw(ArgumentError(
         "slices $(k) are outside 1:$(n) of $(w.path)"))
     Nc = w.mesh.Nc
-    size(density) == (Nc, Nc, _CS_PANELS, length(k)) || throw(DimensionMismatch(
+    size(density) == (Nc, Nc, CS_PANEL_COUNT, length(k)) || throw(DimensionMismatch(
         "densities for slices $(k) of $(repr(name)) have size $(size(density)); expected " *
-        "$((Nc, Nc, _CS_PANELS, length(k))) = (Xdim, Ydim, nf, time)"))
+        "$((Nc, Nc, CS_PANEL_COUNT, length(k))) = (Xdim, Ydim, nf, time)"))
     _check_all_finite(density, name)
     w.ds[name].var[:, :, :, k] = density
     w.written[name][k] .= true
@@ -364,8 +363,8 @@ function _cs_native_variable(ds, path::String, name::String, mesh::CubedSphereMe
     size(v, 1) == Nc && size(v, 2) == Nc || throw(DimensionMismatch(
         "native cubed-sphere flux has horizontal shape $(size(v, 1))x$(size(v, 2)); " *
         "transport grid is C$(Nc)"))
-    size(v, 3) == _CS_PANELS || throw(DimensionMismatch(
-        "native cubed-sphere flux has nf=$(size(v, 3)); expected $(_CS_PANELS)"))
+    size(v, 3) == CS_PANEL_COUNT || throw(DimensionMismatch(
+        "native cubed-sphere flux has nf=$(size(v, 3)); expected $(CS_PANEL_COUNT)"))
     size(v, 4) > 0 || throw(ArgumentError("native cubed-sphere flux has no time slices"))
     T = nonmissingtype(eltype(v))
     T <: AbstractFloat || throw(ArgumentError(
@@ -516,9 +515,9 @@ function read_cs_native_flux(path::AbstractString, variable::AbstractString;
     return NCDataset(file) do ds
         info = _cs_native_flux_info(ds, file, name, mesh, slices)
         v = ds[name]
-        density = Array{nonmissingtype(eltype(v))}(undef, mesh.Nc, mesh.Nc, _CS_PANELS,
+        density = Array{nonmissingtype(eltype(v))}(undef, mesh.Nc, mesh.Nc, CS_PANEL_COUNT,
                                                    length(info.slices))
-        _read_cs_native_panels!(ntuple(p -> view(density, :, :, p, :), _CS_PANELS), v,
+        _read_cs_native_panels!(ntuple(p -> view(density, :, :, p, :), CS_PANEL_COUNT), v,
                                 info.slices, name, file)
         (; density, times = info.times, units = info.units)
     end
@@ -551,11 +550,11 @@ function check_cell_area(ds, mesh::CubedSphereMesh; file::AbstractString = _data
     Nc = mesh.Nc
     panels = if size(file_area) == (Nc, Nc)
         (file_area,)
-    elseif size(file_area) == (Nc, Nc, _CS_PANELS)
-        ntuple(p -> view(file_area, :, :, p), _CS_PANELS)
+    elseif size(file_area) == (Nc, Nc, CS_PANEL_COUNT)
+        ntuple(p -> view(file_area, :, :, p), CS_PANEL_COUNT)
     else
         throw(DimensionMismatch("cell_area in $(file) has shape $(size(file_area)); " *
-                                "expected ($(Nc), $(Nc)) or ($(Nc), $(Nc), $(_CS_PANELS))"))
+                                "expected ($(Nc), $(Nc)) or ($(Nc), $(Nc), $(CS_PANEL_COUNT))"))
     end
     for (p, a) in enumerate(panels)
         isapprox(a, mesh_area; rtol = _CELL_AREA_RTOL) || throw(ArgumentError(

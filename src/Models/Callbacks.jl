@@ -149,17 +149,13 @@ function _nonfinite_flag!(checker::NaNChecker, reference)
 end
 
 # Interior views, without the cubed-sphere halos (which are not prognostic).
-_interior_view(panel::AbstractArray{<:Any, 3}, Hp) =
-    view(panel, Hp + 1:size(panel, 1) - Hp, Hp + 1:size(panel, 2) - Hp, :)
-_interior_view(panel::AbstractArray{<:Any, 4}, Hp) =
-    view(panel, Hp + 1:size(panel, 1) - Hp, Hp + 1:size(panel, 2) - Hp, :, :)
 
 _checked_air_mass(state::CellState) = state.air_mass
 _checked_air_mass(state::CubedSphereState) =
-    map(panel -> _interior_view(panel, halo_width(state)), state.air_mass)
+    map(panel -> panel_interior(panel, halo_width(state)), state.air_mass)
 _checked_tracers(state::CellState) = state.tracers_raw
 _checked_tracers(state::CubedSphereState) =
-    map(panel -> _interior_view(panel, halo_width(state)), state.tracers_raw)
+    map(panel -> panel_interior(panel, halo_width(state)), state.tracers_raw)
 # Tracer `i` alone, over the same cells.
 _checked_tracer(state::CellState, i) = selectdim(state.tracers_raw, ndims(state.tracers_raw), i)
 _checked_tracer(state::CubedSphereState, i) =

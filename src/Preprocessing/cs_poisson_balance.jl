@@ -64,10 +64,7 @@ function _balance_cs_level!(
     # 2. RHS = divergence - target mass tendency.
     rhs_sum = 0.0
     @inbounds for c in 1:nc
-        p_idx = (c - 1) ÷ (Nc * Nc) + 1
-        local_idx = (c - 1) % (Nc * Nc)
-        j_local = local_idx ÷ Nc + 1
-        i_local = local_idx % Nc + 1
+        i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
                   Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
         rc = div[c] - target
@@ -110,10 +107,7 @@ function _balance_cs_level!(
         div[right] -= flux
     end
     @inbounds for c in 1:nc
-        p_idx = (c - 1) ÷ (Nc * Nc) + 1
-        local_idx = (c - 1) % (Nc * Nc)
-        j_local = local_idx ÷ Nc + 1
-        i_local = local_idx % Nc + 1
+        i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
                   Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
         rhs[c] = (div[c] - target) - rhs_mean
@@ -143,10 +137,7 @@ function _balance_cs_level!(
     end
     post_raw = 0.0
     @inbounds for c in 1:nc
-        p_idx = (c - 1) ÷ (Nc * Nc) + 1
-        local_idx = (c - 1) % (Nc * Nc)
-        j_local = local_idx ÷ Nc + 1
-        i_local = local_idx % Nc + 1
+        i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
                   Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
         r = abs(div[c] - target)
@@ -293,10 +284,7 @@ function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
     raw_linf = 0.0
     mean = 0.0
     @inbounds for c in 1:ft.nc
-        p_idx = (c - 1) ÷ (Nc * Nc) + 1
-        local_idx = (c - 1) % (Nc * Nc)
-        j_local = local_idx ÷ Nc + 1
-        i_local = local_idx % Nc + 1
+        i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(col_m[p_idx][i_local, j_local, 1]) -
                   Float64(col_m_next[p_idx][i_local, j_local, 1])) * inv_scale
         r = div[c] - target
@@ -511,12 +499,8 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
 
         left = Int(ft.face_left[f])
         right = Int(ft.face_right[f])
-        lp = (left - 1) ÷ (Nc * Nc) + 1
-        rp = (right - 1) ÷ (Nc * Nc) + 1
-        ll = (left - 1) % (Nc * Nc)
-        rl = (right - 1) % (Nc * Nc)
-        li, lj = ll % Nc + 1, ll ÷ Nc + 1
-        ri, rj = rl % Nc + 1, rl ÷ Nc + 1
+        li, lj, lp = cs_panel_ij(left, Nc)
+        ri, rj, rp = cs_panel_ij(right, Nc)
         flux = dir == 1 ? view(panels_am[p], i, j, :) : view(panels_bm[p], i, j, :)
         spread_column_correction!(flux, delta, weights,
                                   view(panels_m[lp], li, lj, :),
@@ -839,7 +823,7 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
             raw_residual = Float64(cm[i, j, Nz + 1])
             isfinite(raw_residual) || throw(DomainError(raw_residual,
                 "vertical mass-flux diagnosis residual must be finite"))
-            c = (p - 1) * Nc * Nc + (j - 1) * Nc + i
+            c = cs_flat_index(i, j, p, Nc)
             tolerance = _column_tolerance(residual_tol, c) + 2epsFT * rounding
             ratio = _residual_ratio(abs(raw_residual), tolerance)
             sum_residual += raw_residual

@@ -10,6 +10,8 @@ Provides:
 """
 module MetDrivers
 
+using ..Grids: face_connectivity
+
 using Adapt
 using Printf: @sprintf
 using ..Architectures: array_adapter_for, AbstractPointOp, Fused, select_panel,

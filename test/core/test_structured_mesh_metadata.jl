@@ -138,3 +138,50 @@ end
         @test abs(sum(y_north) / length(y_north)) < 1e-10
     end
 end
+
+
+@testset "Shared CS geometry tags and panel storage" begin
+    G = AtmosTransport.Grids
+    for (conv, tag, definition, law, center, offset) in (
+        (G.GnomonicPanelConvention(), "gnomonic", "equiangular_gnomonic", "equiangular_gnomonic", "angular_midpoint", 0.0),
+        (G.GEOSNativePanelConvention(), "geos_native", "gmao_equal_distance", "gmao_equal_distance_gnomonic", "four_corner_normalized", -10.0))
+        @test G.parse_panel_convention(uppercase(tag)) === conv
+        @test G.parse_panel_convention(Symbol(uppercase(tag))) === conv
+        @test G.panel_convention_tag(conv) == tag
+        def = G.default_cs_definition(conv)
+        tags = G.cs_geometry_tags(def)
+        @test tags == (cs_definition=definition, cs_coordinate_law=law,
+                       cs_center_law=center, longitude_offset_deg=offset, panel_convention=tag)
+        @test typeof(G.parse_coordinate_law(uppercase(law))) == typeof(G.coordinate_law(def))
+        @test typeof(G.parse_center_law(Symbol(uppercase(center)))) == typeof(G.center_law(def))
+        @test G.cs_geometry_tags(G.parse_cs_definition(uppercase(definition), conv)) == tags
+    end
+    for parse in (G.parse_panel_convention, G.parse_coordinate_law, G.parse_center_law)
+        @test_throws ArgumentError parse(:unknown)
+    end
+    @test_throws ArgumentError G.parse_cs_definition(:unknown, G.GnomonicPanelConvention())
+
+    # Unique cell/level values expose panel permutations, transposes and stride mistakes.
+    Nc, Nz = 3, 2
+    flat = reshape(Float64.(1:(G.CS_PANEL_COUNT * Nc^2 * Nz)), :, Nz)
+    panels = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), G.CS_PANEL_COUNT)
+    @test G.unpack_flat_to_panels_3d!(panels, flat, Nc, Nz) === panels
+    for p in 1:G.CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc, k in 1:Nz
+        c = G.cs_flat_index(i, j, p, Nc)
+        @test G.cs_panel_ij(c, Nc) == (i, j, p)
+        @test panels[p][i, j, k] === Float32(flat[c, k])
+    end
+    two_d = ntuple(_ -> zeros(Float32, Nc, Nc), G.CS_PANEL_COUNT)
+    G.unpack_flat_to_panels_2d!(two_d, flat[:, 1], Nc)
+    packed = zeros(Float64, G.CS_PANEL_COUNT * Nc^2)
+    @test G.pack_panels!(packed, 0, two_d) == length(packed)
+    @test packed == flat[:, 1]
+    @test_throws DimensionMismatch G.unpack_flat_to_panels_2d!(two_d, packed[2:end], Nc)
+    @test_throws DimensionMismatch G.unpack_flat_to_panels_3d!(panels, flat[:, 1:1], Nc, Nz)
+    # Integer widths used by adjoint kernels must not require a narrowing conversion.
+    for edge in 1:4, s in 1:Nc, d in 1:2
+        args = (edge, d, s, Nc, 2)
+        @test G.edge_interior_ij(Int32.(args)...) == G.edge_interior_ij(args...)
+        @test G.edge_halo_ij(Int32.(args)...) == G.edge_halo_ij(args...)
+    end
+end

@@ -152,17 +152,6 @@ end
 # Cubed-sphere binaries have their own load-time gate,
 # `_validate_replay_consistency_cs` (`cubed_sphere_driver.jl`).
 
-@inline function _rg_face_connectivity(mesh)
-    nf = Grids.nfaces(mesh)
-    left  = Vector{Int32}(undef, nf)
-    right = Vector{Int32}(undef, nf)
-    @inbounds for f in 1:nf
-        l, r = Grids.face_cells(mesh, f)
-        left[f]  = Int32(l)
-        right[f] = Int32(r)
-    end
-    return left, right
-end
 
 @inline function _replay_window_pair(layout::FaceIndexedReplayLayout,
                                      scratch::ReplayScratch,
@@ -194,7 +183,7 @@ function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT, DiskF
     Nt = window_count(reader)
     Nt >= 2 || return nothing
 
-    face_left, face_right = _rg_face_connectivity(grid.horizontal)
+    face_left, face_right = face_connectivity(grid.horizontal)
     layout = faceindexed_replay_layout(face_left, face_right)
 
     m_cur, _, fluxes = load_window!(reader, 1)
@@ -447,7 +436,7 @@ steps_per_window(driver::TransportBinaryDriver, win::Integer) =
 steps_per_window_schedule(driver::TransportBinaryDriver) =
     copy(driver.reader.header.steps_per_window_by_window)
 """Return the binary's declared air-mass basis (`:dry` or `:moist`)."""
-air_mass_basis(driver::TransportBinaryDriver) = mass_basis(driver.reader)
+air_mass_basis(driver::TransportBinaryDriver) = binary_mass_basis(driver.reader)
 surface_pressure_basis(driver::TransportBinaryDriver) =
     surface_pressure_basis(driver.reader)
 supports_moisture(driver::TransportBinaryDriver) = has_qv_endpoints(driver.reader)

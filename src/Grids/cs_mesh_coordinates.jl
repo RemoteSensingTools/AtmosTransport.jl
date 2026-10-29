@@ -14,7 +14,7 @@
     return lon, lat
 end
 
-@inline _dot3(ax, ay, az, bx, by, bz) = ax * bx + ay * by + az * bz
+
 
 @inline function _normalize3(x, y, z)
     n = sqrt(x^2 + y^2 + z^2)
@@ -186,7 +186,7 @@ end
 
 function _panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
                                    convention::AbstractCubedSpherePanelConvention)
-    return _panel_cell_center_lonlat(Nc, panel, FT, _default_cs_definition(convention))
+    return _panel_cell_center_lonlat(Nc, panel, FT, default_cs_definition(convention))
 end
 
 function _panel_cell_center_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
@@ -219,7 +219,7 @@ end
 
 function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
                                    convention::AbstractCubedSpherePanelConvention)
-    return _panel_cell_corner_lonlat(Nc, panel, FT, _default_cs_definition(convention))
+    return _panel_cell_corner_lonlat(Nc, panel, FT, default_cs_definition(convention))
 end
 
 function _panel_cell_corner_lonlat(Nc::Int, panel::Int, FT::Type{<:AbstractFloat},
@@ -291,17 +291,17 @@ function panel_cell_local_tangent_basis(mesh::CubedSphereMesh{FT}, panel::Int) w
         dy = ((xq - xr) / (2h), (yq - yr) / (2h), (zq - zr) / (2h))
 
         # Remove radial roundoff before normalizing to tangent unit vectors.
-        rx = _dot3(dx[1], dx[2], dx[3], x0, y0, z0)
-        ry = _dot3(dy[1], dy[2], dy[3], x0, y0, z0)
+        rx = dot3(dx[1], dx[2], dx[3], x0, y0, z0)
+        ry = dot3(dy[1], dy[2], dy[3], x0, y0, z0)
         ex = _normalize3(dx[1] - rx * x0, dx[2] - rx * y0, dx[3] - rx * z0)
         ey = _normalize3(dy[1] - ry * x0, dy[2] - ry * y0, dy[3] - ry * z0)
 
         east, north = _east_north_basis(x0, y0, z0)
 
-        x_east[i, j]  = FT(_dot3(ex[1], ex[2], ex[3], east[1], east[2], east[3]))
-        x_north[i, j] = FT(_dot3(ex[1], ex[2], ex[3], north[1], north[2], north[3]))
-        y_east[i, j]  = FT(_dot3(ey[1], ey[2], ey[3], east[1], east[2], east[3]))
-        y_north[i, j] = FT(_dot3(ey[1], ey[2], ey[3], north[1], north[2], north[3]))
+        x_east[i, j]  = FT(dot3(ex[1], ex[2], ex[3], east[1], east[2], east[3]))
+        x_north[i, j] = FT(dot3(ex[1], ex[2], ex[3], north[1], north[2], north[3]))
+        y_east[i, j]  = FT(dot3(ey[1], ey[2], ey[3], east[1], east[2], east[3]))
+        y_north[i, j] = FT(dot3(ey[1], ey[2], ey[3], north[1], north[2], north[3]))
     end
 
     return (x_east, x_north, y_east, y_north)

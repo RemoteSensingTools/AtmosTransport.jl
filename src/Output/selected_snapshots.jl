@@ -129,7 +129,7 @@ function _capture_selected_snapshot(model, fields::OutputFieldSpec;
         end
     end
     return SelectedSnapshotFrame{typeof(air),C}(Float64(time_hours), air, tracers,
-        _basis_symbol(mass_basis(model.state)), totals, Nz, levels, column_air, columns)
+        basis_symbol(mass_basis(model.state)), totals, Nz, levels, column_air, columns)
 end
 
 _float64_columns(x::AbstractArray) = convert(Array{Float64,ndims(x)}, x)

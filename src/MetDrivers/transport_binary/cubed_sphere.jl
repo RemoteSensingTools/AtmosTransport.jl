@@ -81,14 +81,7 @@ function _pack_cs_window!(dest::Vector{FT}, offset::Int,
     o = offset
     for section in payload_sections
         panels = _cs_window_section(window, section)
-        for p in 1:npanel
-            panel_data = panels[p]
-            n = length(panel_data)
-            @inbounds for idx in 1:n
-                dest[o + idx] = convert(FT, panel_data[idx])
-            end
-            o += n
-        end
+        o = pack_panels!(dest, o, panels)
     end
     return nothing
 end
@@ -156,30 +149,6 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     return nothing
 end
 
-function _normalize_cs_panel_convention(raw)
-    norm = lowercase(String(raw))
-    norm in ("gnomonic", "geos_native") && return norm
-    throw(ArgumentError("unsupported panel_convention=$(raw); expected gnomonic or geos_native"))
-end
-
-function _cs_default_geometry_tags(panel_convention)
-    conv = _normalize_cs_panel_convention(panel_convention)
-    if conv == "geos_native"
-        return (
-            cs_definition = "gmao_equal_distance",
-            cs_coordinate_law = "gmao_equal_distance_gnomonic",
-            cs_center_law = "four_corner_normalized",
-            longitude_offset_deg = GMAO_CS_LONGITUDE_OFFSET_DEG,
-        )
-    else
-        return (
-            cs_definition = "equiangular_gnomonic",
-            cs_coordinate_law = "equiangular_gnomonic",
-            cs_center_law = "angular_midpoint",
-            longitude_offset_deg = 0.0,
-        )
-    end
-end
 
 """
     open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
@@ -281,8 +250,8 @@ function open_streaming_cs_transport_binary(
                                       delta_semantics=include_flux_delta ?
                                           :forward_window_endpoint_difference : :none)
 
-    panel_convention_norm = _normalize_cs_panel_convention(panel_convention)
-    default_geometry = _cs_default_geometry_tags(panel_convention_norm)
+    panel_convention_norm = panel_convention_tag(parse_panel_convention(panel_convention))
+    default_geometry = cs_geometry_tags(default_cs_definition(parse_panel_convention(panel_convention_norm)))
 
     revision = source_revision()
     merge!(header, Dict{String, Any}(
@@ -350,7 +319,7 @@ function open_streaming_cs_transport_binary(
     _set_tm5_convection_mass_basis!(header, payload_sections, mass_basis,
                                     tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
-    header["panel_convention"] = _normalize_cs_panel_convention(header["panel_convention"])
+    header["panel_convention"] = panel_convention_tag(parse_panel_convention(header["panel_convention"]))
 
     validate_cs_writer_contract!(header)
     validate_transport_contract!(header)

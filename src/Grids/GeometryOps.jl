@@ -108,3 +108,17 @@ ny(mesh::AbstractStructuredMesh) = _missing_mesh_method(mesh, :ny)
 export ncells, nfaces, cell_area, cell_faces
 export face_length, face_normal, face_cells
 export nx, ny
+
+"""Materialize face-left and face-right cell connectivity as Int32 vectors."""
+function face_connectivity(mesh::AbstractHorizontalMesh)
+    left = Vector{Int32}(undef, nfaces(mesh))
+    right = Vector{Int32}(undef, nfaces(mesh))
+    @inbounds for f in eachindex(left)
+        l, r = face_cells(mesh, f)
+        left[f] = Int32(l)
+        right[f] = Int32(r)
+    end
+    return left, right
+end
+
+export face_connectivity

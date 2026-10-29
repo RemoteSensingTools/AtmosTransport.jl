@@ -45,9 +45,9 @@ each panel, with names retained in storage order. Diagnostics and global sums
 exclude halos.
 
 # Fields
-- `air_mass :: NTuple{6, A3}` — halo-padded panel air mass arrays with shape
+- `air_mass :: NTuple{CS_PANEL_COUNT, A3}` — halo-padded panel air mass arrays with shape
   `(Nc + 2Hp, Nc + 2Hp, Nz)`.
-- `tracers_raw :: NTuple{6, Raw4}` — packed per-panel model tracer storage
+- `tracers_raw :: NTuple{CS_PANEL_COUNT, Raw4}` — packed per-panel model tracer storage
   (conventionally `dry VMR × dry-air mass`, not physical kg species) with shape
   `(Nc + 2Hp, Nc + 2Hp, Nz, Nt)`.
 - `tracer_names :: Names` — names of the tracer axis in storage order.
@@ -56,14 +56,14 @@ exclude halos.
 struct CubedSphereState{Basis <: AbstractMassBasis,
                         A3 <: AbstractArray,
                         Raw4 <: AbstractArray,
-                        Names <: Tuple}
-    air_mass     :: NTuple{6, A3}
-    tracers_raw  :: NTuple{6, Raw4}
+                        Names <: Tuple} <: AbstractCellState{Basis}
+    air_mass     :: NTuple{CS_PANEL_COUNT, A3}
+    tracers_raw  :: NTuple{CS_PANEL_COUNT, Raw4}
     tracer_names :: Names
     halo_width   :: Int
 
     function CubedSphereState{Basis, A3, Raw4, Names}(
-            air_mass::NTuple{6, A3}, tracers_raw::NTuple{6, Raw4},
+            air_mass::NTuple{CS_PANEL_COUNT, A3}, tracers_raw::NTuple{CS_PANEL_COUNT, Raw4},
             tracer_names::Names, halo_width::Int) where
             {Basis <: AbstractMassBasis, A3 <: AbstractArray,
              Raw4 <: AbstractArray, Names <: Tuple}
@@ -75,9 +75,9 @@ end
 
 @inline halo_width(state::CubedSphereState) = state.halo_width
 
-@inline function _pack_cs_tracers_raw(panels_m::NTuple{6, A3}, tr::NamedTuple) where {A3 <: AbstractArray}
+@inline function _pack_cs_tracers_raw(panels_m::NTuple{CS_PANEL_COUNT, A3}, tr::NamedTuple) where {A3 <: AbstractArray}
     Nt = length(tr)
-    return ntuple(6) do p
+    return ntuple(CS_PANEL_COUNT) do p
         panel_m = panels_m[p]
         raw = similar(panel_m, eltype(panel_m), size(panel_m)..., Nt)
         if Nt == 0
@@ -91,12 +91,12 @@ end
 end
 
 function CubedSphereState(::Type{B}, mesh::CubedSphereMesh,
-                          air_mass::NTuple{6}; tracers...) where {B <: AbstractMassBasis}
+                          air_mass::NTuple{CS_PANEL_COUNT}; tracers...) where {B <: AbstractMassBasis}
     return CubedSphereState(B, air_mass; halo_width = mesh.Hp, tracers...)
 end
 
 function CubedSphereState(::Type{B},
-                          air_mass::NTuple{6};
+                          air_mass::NTuple{CS_PANEL_COUNT};
                           halo_width::Integer,
                           tracers...) where {B <: AbstractMassBasis}
     tr = NamedTuple(tracers)
@@ -107,15 +107,14 @@ function CubedSphereState(::Type{B},
 end
 
 function CubedSphereState(::Type{B},
-                          air_mass::NTuple{6},
-                          tracers_raw::NTuple{6},
+                          air_mass::NTuple{CS_PANEL_COUNT},
+                          tracers_raw::NTuple{CS_PANEL_COUNT},
                           tracer_names::Tuple;
                           halo_width::Integer) where {B <: AbstractMassBasis}
     return CubedSphereState{B, typeof(air_mass[1]), typeof(tracers_raw[1]), typeof(tracer_names)}(
         air_mass, tracers_raw, tracer_names, Int(halo_width))
 end
 
-mass_basis(::CubedSphereState{B}) where {B <: AbstractMassBasis} = B()
 
 function Adapt.adapt_structure(to, state::CubedSphereState{B}) where {B <: AbstractMassBasis}
     air_mass = Adapt.adapt(to, state.air_mass)
@@ -125,34 +124,28 @@ function Adapt.adapt_structure(to, state::CubedSphereState{B}) where {B <: Abstr
         air_mass, tracers_raw, names, state.halo_width)
 end
 
-function Base.getproperty(state::CubedSphereState, name::Symbol)
-    if name === :tracers
-        return TracerAccessor(state)
-    else
-        return getfield(state, name)
-    end
-end
 
 function Base.propertynames(::CubedSphereState, private::Bool = false)
     names = (:air_mass, :tracers_raw, :tracer_names,
              :tracers, :halo_width)
-    return private ? names : names
+    return names
 end
 
-@inline function _panel_interior(panel::AbstractArray, Hp::Int)
+"""Physical interior of a three-dimensional panel, with halos excluded."""
+@inline function panel_interior(panel::AbstractArray{<:Any, 3}, Hp::Integer)
     nx_panel = size(panel, 1)
     ny_panel = size(panel, 2)
     return @view panel[Hp + 1:nx_panel - Hp, Hp + 1:ny_panel - Hp, :]
 end
 
-@inline function _panel_interior(panel::AbstractArray, Hp::Int, tracer_idx::Int)
+@inline function panel_interior(panel::AbstractArray, Hp::Int, tracer_idx::Int)
     nx_panel = size(panel, 1)
     ny_panel = size(panel, 2)
     return @view panel[Hp + 1:nx_panel - Hp, Hp + 1:ny_panel - Hp, :, tracer_idx]
 end
 
 mixing_ratio(state::CubedSphereState, name::Symbol) =
-    ntuple(6) do p
+    ntuple(CS_PANEL_COUNT) do p
         get_tracer(state, name)[p] ./ state.air_mass[p]
     end
 
@@ -160,13 +153,18 @@ function total_mass(state::CubedSphereState, name::Symbol)
     idx = tracer_index(state, name)
     idx === nothing && throw(KeyError(name))
     Hp = halo_width(state)
-    return _compensated_total(ntuple(p -> _panel_interior(state.tracers_raw[p], Hp, idx), 6))
+    return compensated_total(ntuple(p -> panel_interior(state.tracers_raw[p], Hp, idx), CS_PANEL_COUNT))
 end
 
 total_air_mass(state::CubedSphereState) =
-    _compensated_total(ntuple(p -> _panel_interior(state.air_mass[p], halo_width(state)), 6))
+    compensated_total(ntuple(p -> panel_interior(state.air_mass[p], halo_width(state)), CS_PANEL_COUNT))
 
-tracer_names(state::CubedSphereState) = getfield(state, :tracer_names)
 
 export CubedSphereState
 export halo_width
+
+"""Physical panel interior, excluding `Hp` halo cells along each horizontal axis."""
+panel_interior(panel::AbstractArray{<:Any, 4}, Hp::Integer) =
+    view(panel, Hp + 1:size(panel, 1) - Hp, Hp + 1:size(panel, 2) - Hp, :, :)
+
+export panel_interior

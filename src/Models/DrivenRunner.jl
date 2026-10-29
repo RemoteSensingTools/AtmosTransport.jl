@@ -77,7 +77,7 @@ import ...expand_data_path
 using ...SectionTimer
 using ...ConfigChecks: unknown_key_messages, config_int, config_date, parse_float_type
 using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
-using ..State: AbstractMassBasis, DryBasis, MoistBasis, CellState,
+using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels

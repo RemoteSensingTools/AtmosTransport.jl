@@ -127,7 +127,6 @@ end
 end
 
 """
-    lonlat_to_panel_xy(mesh::CubedSphereMesh, lon_deg, lat_deg)
         -> (panel::Int, s_frac, t_frac)
     lonlat_to_panel_xy(def::CubedSphereDefinition, Nc, lon_deg, lat_deg, FT)
         -> (panel::Int, s_frac, t_frac)
@@ -155,10 +154,7 @@ and the definition's `longitude_offset_deg` (e.g. the GMAO `-10°` shift).
                                     lon_deg::Real, lat_deg::Real,
                                     ::Type{FT}) where {FT}
     # lonlat → unit xyz
-    coslat = cosd(FT(lat_deg))
-    x = coslat * cosd(FT(lon_deg))
-    y = coslat * sind(FT(lon_deg))
-    z = sind(FT(lat_deg))
+    x, y, z = lonlat_to_unit_xyz(FT(lon_deg), FT(lat_deg))
 
     # Undo the rigid z-axis rotation (e.g. GEOS -10°) applied at the end of
     # the forward map. `_rotate_z_lon_offset` rotates by `+offset`; the
@@ -196,10 +192,6 @@ and the definition's `longitude_offset_deg` (e.g. the GMAO `-10°` shift).
     return (panel, s, t)
 end
 
-@inline function lonlat_to_panel_xy(mesh::CubedSphereMesh{FT},
-                                    lon_deg::Real, lat_deg::Real) where {FT}
-    return lonlat_to_panel_xy(cs_definition(mesh), mesh.Nc, lon_deg, lat_deg, FT)
-end
 
 export AbstractCubedSphereCoordinateLaw, AbstractCubedSphereCenterLaw
 export AbstractCubedSpherePanelConvention, AbstractCubedSphereDefinition

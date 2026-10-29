@@ -22,7 +22,7 @@ function grouped_horizontal(rm,m,am,bm,mesh,scheme,dir,scale)
         rnew[p][i,j,k]=rm[p][i,j,k]+left-right
         mnew[p][i,j,k]=m[p][i,j,k]+a-b
     end
-    location=AtmosTransport.Preprocessing._cs_edge_face_location
+    location=AtmosTransport.Grids.cs_edge_face_location
     for p in 1:6,edge in 1:4
         neighbor=mesh.connectivity.neighbors[p][edge];q=neighbor.panel
         p<q || continue

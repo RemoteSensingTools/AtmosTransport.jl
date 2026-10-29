@@ -7,54 +7,6 @@
 # same edge/corner orientation logic as the forward pass.
 # ---------------------------------------------------------------------------
 
-@inline function _edge_interior_ij(q_e, d, s, Nc, Hp)
-    if q_e == EDGE_NORTH
-        return (Hp + s, Hp + Nc + 1 - d)
-    elseif q_e == EDGE_SOUTH
-        return (Hp + s, Hp + d)
-    elseif q_e == EDGE_EAST
-        return (Hp + Nc + 1 - d, Hp + s)
-    else
-        return (Hp + d, Hp + s)
-    end
-end
-
-@inline function _edge_halo_ij(e, d, s, Nc, Hp)
-    if e == EDGE_NORTH
-        return (Hp + s, Hp + Nc + d)
-    elseif e == EDGE_SOUTH
-        return (Hp + s, Hp + 1 - d)
-    elseif e == EDGE_EAST
-        return (Hp + Nc + d, Hp + s)
-    else
-        return (Hp + 1 - d, Hp + s)
-    end
-end
-
-@inline function _corner_source_ij(i_dst, j_dst, Nc, Hp, N, dir)
-    if dir == 1
-        if i_dst <= Hp && j_dst <= Hp
-            return (j_dst, 2 * Hp + 1 - i_dst)
-        elseif i_dst > Hp + Nc && j_dst <= Hp
-            return (N + 1 - j_dst, i_dst - Nc)
-        elseif i_dst > Hp + Nc && j_dst > Hp + Nc
-            return (j_dst, 2 * (Nc + Hp) + 1 - i_dst)
-        else
-            return (N + 1 - j_dst, i_dst + Nc)
-        end
-    else
-        if i_dst <= Hp && j_dst <= Hp
-            return (2 * Hp + 1 - j_dst, i_dst)
-        elseif i_dst > Hp + Nc && j_dst <= Hp
-            return (Nc + j_dst, N + 1 - i_dst)
-        elseif i_dst > Hp + Nc && j_dst > Hp + Nc
-            return (2 * (Nc + Hp) + 1 - j_dst, i_dst)
-        else
-            return (j_dst - Nc, N + 1 - i_dst)
-        end
-    end
-end
-
 @kernel function _adjoint_corner_halo_kernel!(lambda, Nc, Hp, N, dir)
     di, dj, k = @index(Global, NTuple)
     @inbounds begin
@@ -63,22 +15,22 @@ end
         i_ne = Hp + Nc + di; j_ne = Hp + Nc + dj
         i_nw = Hp + 1 - di;  j_nw = Hp + Nc + dj
 
-        si, sj = _corner_source_ij(i_sw, j_sw, Nc, Hp, N, dir)
+        si, sj = corner_source_ij(i_sw, j_sw, Nc, Hp, N, dir)
         val = lambda[i_sw, j_sw, k]
         @atomic lambda[si, sj, k] += val
         lambda[i_sw, j_sw, k] = zero(val)
 
-        si, sj = _corner_source_ij(i_se, j_se, Nc, Hp, N, dir)
+        si, sj = corner_source_ij(i_se, j_se, Nc, Hp, N, dir)
         val = lambda[i_se, j_se, k]
         @atomic lambda[si, sj, k] += val
         lambda[i_se, j_se, k] = zero(val)
 
-        si, sj = _corner_source_ij(i_ne, j_ne, Nc, Hp, N, dir)
+        si, sj = corner_source_ij(i_ne, j_ne, Nc, Hp, N, dir)
         val = lambda[i_ne, j_ne, k]
         @atomic lambda[si, sj, k] += val
         lambda[i_ne, j_ne, k] = zero(val)
 
-        si, sj = _corner_source_ij(i_nw, j_nw, Nc, Hp, N, dir)
+        si, sj = corner_source_ij(i_nw, j_nw, Nc, Hp, N, dir)
         val = lambda[i_nw, j_nw, k]
         @atomic lambda[si, sj, k] += val
         lambda[i_nw, j_nw, k] = zero(val)
@@ -89,8 +41,8 @@ end
     s, d, k = @index(Global, NTuple)
     @inbounds begin
         s_src = flip ? (Nc + 1 - s) : s
-        i_src, j_src = _edge_interior_ij(q_e, d, s_src, Nc, Hp)
-        i_dst, j_dst = _edge_halo_ij(e, d, s, Nc, Hp)
+        i_src, j_src = edge_interior_ij(q_e, d, s_src, Nc, Hp)
+        i_dst, j_dst = edge_halo_ij(e, d, s, Nc, Hp)
         val = dst[i_dst, j_dst, k]
         @atomic src[i_src, j_src, k] += val
         dst[i_dst, j_dst, k] = zero(val)

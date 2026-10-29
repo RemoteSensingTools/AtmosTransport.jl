@@ -8,7 +8,7 @@
 
 using Test, Random, LinearAlgebra
 using AtmosTransport
-using AtmosTransport.Architectures: _two_sum, _neumaier_add, _compensated_total, _ledger_deposit
+using AtmosTransport.Architectures: _two_sum, _neumaier_add, compensated_total, _ledger_deposit
 using AtmosTransport.Parameters: RN222_HALF_LIFE
 using AtmosTransport.Grids: AtmosGrid, CubedSphereMesh, GEOSNativePanelConvention, LatLonMesh,
                             ReducedGaussianMesh, HybridSigmaPressure, ncells
@@ -44,10 +44,10 @@ end
     rng = MersenneTwister(11)
     panels = ntuple(_ -> 4f-4 .* (1 .+ rand(rng, Float32, 9, 9, 5)), 6)
     exact = sum(p -> sum(big, p), panels)
-    @test _compensated_total(panels[1]) isa Float64
-    @test abs(_compensated_total(panels) - exact) <= eps(Float64) * exact
+    @test compensated_total(panels[1]) isa Float64
+    @test abs(compensated_total(panels) - exact) <= eps(Float64) * exact
     interior = view(panels[1], 2:8, 2:8, :)
-    @test abs(_compensated_total(interior) - sum(big, interior)) <= eps(Float64) * sum(big, interior)
+    @test abs(compensated_total(interior) - sum(big, interior)) <= eps(Float64) * sum(big, interior)
 end
 
 @testset "Column ledger returns rounding, not leaks" begin

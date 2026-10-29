@@ -410,7 +410,7 @@ function process_day(date::Date,
         tmp_path = _open_preprocessing_staging(bin_path)
         writer = LatLonDeferredBinaryWriter(
             tmp_path, header, workspace, settings, FT,
-            mass_basis_from_symbol(Symbol(settings.mass_basis));
+            State.mass_basis(Symbol(settings.mass_basis));
             final_path = bin_path)
         ctx = LLSpectralUnifiedDriverContext(
             grid, settings, vertical, spec, next_day_hour0, date,
