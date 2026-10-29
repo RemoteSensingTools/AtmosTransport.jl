@@ -41,8 +41,10 @@ Geometry and topology decisions come from
 - `Architectures.jl` — unified CPU/vendor-specific GPU execution policies,
   kernel launching (`launch!`) and point operations (`AbstractPointOp`,
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
-  `copy_arrays!`: a set of device copies as one queued launch). The exported
-  `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order to Extras
+  `copy_arrays!`: a set of device copies as one queued launch). The declared shared
+  `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order
+- `SectionTimer.jl` — foundation timing and optional NVTX instrumentation,
+  loaded before operators and models
 - `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), dates
   (`config_date`, accepting TOML dates or strings), the `float_type` parser, and
   known-key checks with "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
@@ -53,7 +55,7 @@ Geometry and topology decisions come from
   day cache and the regridder cache)
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
 - [`Diagnostics/`](Diagnostics/README.md) — core run mass budgets, conservation
-  diagnostics, snapshot series and lightweight runtime instrumentation
+  diagnostics and snapshot series
 - `Regridding/` — conservative regridding, weight application by quantity kind, nested cubed-sphere remapping and the CS block kernels
 - [`GriddedIO/`](GriddedIO/README.md) — conventions of native gridded input
   files: coordinate discovery by name, fill policies, lat-lon orientation,
@@ -105,10 +107,23 @@ subfolders are budgeted separately. Existing oversized folders have exact,
 shrink-only byte ceilings. Core modules cannot depend on Visualization,
 Analysis, DataDownloads, the Makie extension, or future Extras modules;
 existing package-facade re-exports are allowlisted with reasons.
+Core `Diagnostics` follows `Models` and depends only on earlier core modules.
+Its runtime-context imports were formerly owned by Analysis. Extras/Analysis
+depends on Diagnostics to re-export the conservation API. Foundation
+`SectionTimer.jl` stays early in the include order and lives in `src`, so
+operators and models do not depend on the later Diagnostics folder.
 The code map lists files, sizes, dependencies/users, public-name counts and
 forward/adjoint mirrors. The gate rejects a stale map; regenerate it with
 `scripts/checks/check_structure.jl --write-code-map` under `--project=test`.
 README contract headings are reported only during the P1 rollout.
+
+## Shared helpers owned here
+
+Architectures owns the compensated summation helper used by convection and
+Extras/Analysis. It is available through an explicit named import and is not
+exported. This declaration also works on the minimum supported Julia 1.10.
+
+# shared: _neumaier_sum
 
 ## Related Docs
 

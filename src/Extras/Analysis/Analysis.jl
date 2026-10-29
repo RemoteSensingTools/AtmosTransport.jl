@@ -5,7 +5,7 @@ Non-core post-processing: latitude bands, decompositions, skill statistics,
 column profiles and GEOS-Chem CATRINE archive reading. Conservation diagnostics
 are imported and re-exported from core `Diagnostics`, preserving the API used
 by scripts. Core modules never depend on this module; its core dependencies
-are public names only. See `src/Extras/Analysis/README.md` and
+are public names or declared shared helpers. See `src/Extras/Analysis/README.md` and
 `docs/src/api/analysis.md`.
 """
 module Analysis

@@ -89,9 +89,9 @@ end
     for path in ("src/Models/DrivenRunner.jl", "src/Models/InputStaging.jl",
                  "src/Models/RuntimePhysicsRecipe.jl", "src/MetDrivers/transport_binary/reader.jl",
                  "src/Preprocessing/transport_binary/entrypoint.jl",
-                 "src/Downloads/Downloads.jl", "scripts/run_transport.jl",
+                 "scripts/run_transport.jl",
                  "scripts/preprocessing/preprocess_transport_binary.jl",
-                 "scripts/downloads/download_data.jl", "examples/generate_synthetic_quickstart.jl")
+                 "examples/generate_synthetic_quickstart.jl")
         selection = select_changed(groups, TEST_ROOT, [path])
         files = topic_files(groups, selection.topics)
         @test "core/test_public_config_and_cli.jl" in files
@@ -100,4 +100,19 @@ end
     @test "core/test_structure.jl" in groups.quick
     @test "health" in TestGroups.topics_for_path(groups, "src/LAYERS.toml")
     @test "health" in TestGroups.topics_for_path(groups, "test/structure/clone_allowlist.toml")
+    for path in ("src/Downloads/Downloads.jl", "src/Extras/Downloads/Downloads.jl",
+                 "src/Extras/Analysis/skill.jl", "src/Extras/Visualization/Visualization.jl",
+                 "scripts/downloads/download_data.jl")
+        selection = select_changed(groups, TEST_ROOT, [path])
+        @test selection.topics == Set(["extras"])
+        @test isempty(topic_files(groups, selection.topics)) && !selection.full
+    end
+    for path in ("src/SectionTimer.jl", "src/Diagnostics/SectionTimer.jl")
+        @test "runner" in TestGroups.topics_for_path(groups, path)
+    end
+    for path in ("src/Diagnostics/Diagnostics.jl", "src/Diagnostics/budget_closure.jl")
+        selection = select_changed(groups, TEST_ROOT, [path])
+        @test "diagnostics" in selection.topics && !selection.full
+        @test "core/test_analysis_budget_closure.jl" in topic_files(groups, selection.topics)
+    end
 end

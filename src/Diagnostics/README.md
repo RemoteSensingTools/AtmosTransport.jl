@@ -9,7 +9,7 @@ and before Extras. It depends on `Architectures`, `Parameters`, `Grids`,
 libraries Dates, Statistics and TOML plus NCDatasets. `RunContext` uses the
 runner's existing layout helpers without changing their logic.
 
-`SectionTimer.jl` remains the separate foundation module `SectionTimer`, loaded
+[`../SectionTimer.jl`](../SectionTimer.jl) is the separate foundation module `SectionTimer`, loaded
 right after `Architectures`, before every other module. Timing is off by default;
 it depends only on `Printf`.
 
@@ -35,7 +35,7 @@ There are no forward/adjoint mirrors here.
 
 ## Entry Points
 
-All in [`SectionTimer.jl`](SectionTimer.jl):
+All in [`../SectionTimer.jl`](../SectionTimer.jl):
 
 - `@section name expr` times `expr` and records the sample under the `Symbol`
   `name`
@@ -54,7 +54,6 @@ All in [`SectionTimer.jl`](SectionTimer.jl):
 
 ## File Map
 
-- [`SectionTimer.jl`](SectionTimer.jl): the foundation timing module
 - [`Diagnostics.jl`](Diagnostics.jl): conservation module, imports and exports
 - [`run_context.jl`](run_context.jl): runtime layout and snapshot paths
 - [`budget_closure.jl`](budget_closure.jl): budget checks and carrier drawdown

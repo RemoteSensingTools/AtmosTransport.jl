@@ -99,13 +99,11 @@ paths = [
     "src/Models/**",
     "src/MetDrivers/**",
     "src/Preprocessing/**",
-    "src/Downloads/**",
     "examples/**",
     "schemas/**",
     "config/**",
     "scripts/run_transport.jl",
     "scripts/preprocessing/preprocess_transport_binary.jl",
-    "scripts/downloads/download_data.jl",
 ]
 
 [topics.grids_state]
@@ -403,7 +401,7 @@ files = [
 paths = [
     "src/Models/**",
     "src/Operators/StepPlan/**",
-    "src/Diagnostics/SectionTimer.jl",
+    "src/**/SectionTimer.jl",
     "src/LogLevels.jl",
     "scripts/run_transport.jl",
 ]

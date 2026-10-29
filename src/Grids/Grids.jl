@@ -13,8 +13,6 @@ Provides:
 """
 module Grids
 
-export _default_cs_definition
-
 using ..Architectures: CPU
 using ..Parameters: PlanetParameters, earth_parameters, EARTH_RADIUS, GMAO_CS_LONGITUDE_OFFSET_DEG
 

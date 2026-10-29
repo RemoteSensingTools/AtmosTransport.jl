@@ -2,7 +2,7 @@
 
 Non-core modules retained in AtmosTransport for a future package split. They
 have no tests. Core modules must never import from Extras. Extras use only
-public core names; each subfolder is meant to become its own package, with
+public core names or helpers declared shared in the owning README; each subfolder is meant to become its own package, with
 its own `Project.toml`, in `lib/` or a separate repository.
 
 ## File Map

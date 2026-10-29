@@ -11,7 +11,7 @@ Float64 in a fixed order, so results do not depend on threading or on the
 element type of the input.
 
 `src/AtmosTransport.jl` loads this folder after core `Diagnostics` and
-`Visualization`, before `DataDownloads`. It depends on public names from
+`Visualization`, before `DataDownloads`. It depends on public names and declared shared helpers from
 `Architectures`, `Parameters`, `Output` and `Diagnostics`, plus NCDatasets,
 Dates, LinearAlgebra and Statistics. No core module imports `Analysis`.
 The conservation API (`budget_closure`, `carrier_drawdown`, `RunContext`,

@@ -138,6 +138,14 @@ skips only the comparison against the base. Today's allowlists, folder budgets,
 layers, and generated code map are still checked. The quick gate also needs
 enough branch history for its merge-base diff and changed-topic selection.
 
+The structure test's historical-ratchet fixture reads existing repository
+history through a temporary Git pointer. It does not initialize a repository,
+stage files, create commit objects, or update refs. In a package archive it
+visibly skips that fixture; synthetic allowance-growth checks still run.
+The runner selector fixture supplies changed paths through a read-only Git
+stub; it also needs no staging, commits or ref updates. The quick gate itself
+uses real read-only diffs to select this checkout's tests.
+
 ## Adding a new test
 
 1. Decide which tier the test belongs in. Default to `core/` if the test

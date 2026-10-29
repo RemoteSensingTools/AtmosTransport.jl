@@ -148,7 +148,7 @@ const CPU = Architectures.CPU
 const GPU = Architectures.GPU
 
 # ---- Section timer (host-side wall-clock; off unless ATMOSTR_TIMERS=1/true/on/yes) ----
-include("Diagnostics/SectionTimer.jl")
+include("SectionTimer.jl")
 using .SectionTimer
 
 # Strict Boolean and known-key checks for TOML tables (Output, Preprocessing, Models).

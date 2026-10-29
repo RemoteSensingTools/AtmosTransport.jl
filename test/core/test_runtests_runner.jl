@@ -39,8 +39,9 @@ end
     @test !occursin("Test file failed", log)
 end
 
-# A throwaway git repository with the runner, the groups helper, a groups file
-# and a few trivial test files; returns the repository root.
+# A throwaway checkout with a read-only Git stub, the runner, the groups helper,
+# a groups file and trivial test files. Selector tests supply changed paths;
+# they never stage files, create commits or change refs.
 function fake_grouped_repo()
     repo = mktempdir()
     test = joinpath(repo, "test")
@@ -65,15 +66,27 @@ function fake_grouped_repo()
     end
     write(joinpath(test, "regridding", "runtests.jl"), "using Test\n@test true\n")
     write(joinpath(repo, "src", "Alpha", "x.jl"), "x = 1\n")
-    git = `git -C $repo -c user.name=t -c user.email=t@example.com`
-    run(pipeline(`$git init -q`; stdout = devnull))
-    run(`$git add -A`)
-    run(pipeline(`$git commit -q -m fixture`; stdout = devnull))
+    mkpath(joinpath(repo, "bin"))
+    # TestGroups must still call its normal subprocess reader. Only the three
+    # read-only commands used by changed_paths are supported in this fixture.
+    stub = joinpath(repo, "bin", "git")
+    write(stub, raw"""#!/bin/sh
+        [ "$1" = "-C" ] || exit 2
+        case "$3:$4:$5:$6" in
+            diff:--name-only:--no-renames:HEAD...HEAD) ;;
+            diff:--name-only:--no-renames:HEAD) cat "$2/fixture-changed-paths" ;;
+            ls-files:--others:--exclude-standard:) ;;
+            *) exit 2 ;;
+        esac
+        """)
+    chmod(stub, 0o755)
+    write(joinpath(repo, "fixture-changed-paths"), "")
     return repo
 end
 
 function run_runner(repo, args...)
     cmd = `$(Base.julia_cmd()) --startup-file=no $(joinpath(repo, "test", "runtests.jl")) $args`
+    cmd = addenv(cmd, "PATH" => joinpath(repo, "bin") * ":" * ENV["PATH"])
     out = IOBuffer()
     proc = run(pipeline(ignorestatus(cmd); stdout = out, stderr = out))
     return proc.exitcode, String(take!(out))
@@ -102,22 +115,26 @@ listed(log) = filter(l -> startswith(l, "core/") || startswith(l, "regridding/")
     # Changes: a modified src file maps through its topic; a modified test
     # file selects itself.
     write(joinpath(repo, "src", "Alpha", "x.jl"), "x = 2\n")
+    write(joinpath(repo, "fixture-changed-paths"), "src/Alpha/x.jl\n")
     code, log = run_runner(repo, "--changed=HEAD", "--list")
     @test listed(log) == ["core/test_a.jl", "core/test_c.jl"]
     write(joinpath(repo, "test", "core", "test_b.jl"), "using Test\n@test true\n")
+    write(joinpath(repo, "fixture-changed-paths"), "src/Alpha/x.jl\ntest/core/test_b.jl\n")
     code, log = run_runner(repo, "--changed=HEAD", "--quick", "--list")
     @test listed(log) == ["core/test_aqua.jl", "core/test_jet.jl", "core/test_a.jl",
                           "core/test_b.jl", "core/test_c.jl"]
 
     # An unmapped src file runs the full default tiers.
     write(joinpath(repo, "src", "Unmapped.jl"), "y = 1\n")
+    write(joinpath(repo, "fixture-changed-paths"), "src/Alpha/x.jl\nsrc/Unmapped.jl\n")
     code, log = run_runner(repo, "--changed=HEAD", "--list")
     @test length(listed(log)) == 6
     @test occursin("src/Unmapped.jl maps to no test topic", log)
 
     # A moved file selects the topics of its old and its new path.
     renamed = fake_grouped_repo()
-    run(`git -C $renamed mv src/Alpha/x.jl src/Beta.jl`)
+    mv(joinpath(renamed, "src", "Alpha", "x.jl"), joinpath(renamed, "src", "Beta.jl"))
+    write(joinpath(renamed, "fixture-changed-paths"), "src/Alpha/x.jl\nsrc/Beta.jl\n")
     code, log = run_runner(renamed, "--changed=HEAD", "--list")
     @test listed(log) == ["core/test_a.jl", "core/test_b.jl", "core/test_c.jl",
                           "regridding/runtests.jl"]

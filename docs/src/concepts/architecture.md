@@ -213,7 +213,8 @@ src/
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
 ├── MetDrivers/      version-4 binary reader, driver, and window carriers
 ├── Models/          typed model, runtime recipes, driven runner, initial conditions
-├── Diagnostics/     core run budgets, snapshot series, mass drift and SectionTimer
+├── Diagnostics/     core run budgets, snapshot series and mass drift
+├── SectionTimer.jl  foundation timing and optional NVTX instrumentation
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers
 ├── Output/          snapshot capture and NetCDF/ATMSNAP persistence
 ├── Regridding/      conservative offline remapping
@@ -249,7 +250,8 @@ scripts keep using `AtmosTransport.Analysis`. Visualization, Analysis
 post-processing and DataDownloads live under `src/Extras/`; their module names
 and plotting exports stay the same. They have no tests and each folder is
 intended to become its own package. Core must never import Extras; Extras use
-only public core names. Julia's optional Makie extension remains in `ext/`.
+public core names and helpers declared shared in the owning README. Julia's
+optional Makie extension remains in `ext/`.
 
 Three single-file modules depend on Base and the standard library only:
 `ConfigChecks.jl` checks TOML tables, `LogLevels.jl` applies the
