@@ -150,7 +150,6 @@ function AtmosGrid(horizontal::H, vertical::V, arch::Arch;
 end
 
 floattype(::AtmosGrid{H, V, Arch, P, FT}) where {H, V, Arch, P, FT} = FT
-architecture(g::AtmosGrid) = g.arch
 nlevels(g::AtmosGrid) = n_levels(g.vertical)
 
 planet_parameters(g::AtmosGrid) = g.planet

@@ -321,7 +321,6 @@ end
 
 Base.@propagate_inbounds function _add_y_face_adjoint!(lambda_in, m, i, face_j, k, F, scale,
                                       ::UpwindScheme, Ny)
-    FT = typeof(F)
     at_boundary = (face_j <= Int32(1)) | (face_j > Ny)
     at_boundary && return nothing
     jl = max(face_j - Int32(1), Int32(1))
@@ -440,7 +439,6 @@ end
 
 Base.@propagate_inbounds function _add_z_face_adjoint!(lambda_in, m, i, j, face_k, F, scale,
                                       ::UpwindScheme, Nz)
-    FT = typeof(F)
     at_boundary = (face_k <= Int32(1)) | (face_k > Nz)
     at_boundary && return nothing
     kl = max(face_k - Int32(1), Int32(1))

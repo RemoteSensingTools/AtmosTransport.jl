@@ -774,7 +774,7 @@ end
     build_initial_mixing_ratio(air_mass, mesh, cfg)
     build_initial_mixing_ratio(air_mass, grid::AtmosGrid, cfg;
         surface_pressure=nothing, pressure_basis=TotalSurfacePressure(),
-        mass_basis=DryBasis(), qv=nothing)
+        qv=nothing)
 
 Construct the initial dry-air volume mixing ratio described by `cfg` on the
 horizontal topology and vertical layout of `air_mass`.
@@ -792,10 +792,9 @@ interior buffers between analytic initializers before copying each tracer into
 its independent packed state slot.
 
 For file-backed hybrid remapping, `pressure_basis` states whether the binary's
-stored surface pressure is total or dry, `mass_basis` states what `air_mass`
-contains, and `qv` is the binary's window-start specific humidity when
-available. Source humidity participates only when `init.humidity_variable` is
-configured explicitly. In that case each target value is the source-dry-air
+stored surface pressure is total or dry, and `qv` is the binary's
+window-start specific humidity when available. Source humidity participates
+only when `init.humidity_variable` is configured explicitly. In that case each target value is the source-dry-air
 mean `∫q(1-qv)dp / ∫(1-qv)dp`; without it the mean is `∫qdp / ∫dp`.
 For legacy dry-pressure binaries without any
 humidity payload, total pressure cannot be reconstructed: the builder keeps
@@ -893,7 +892,6 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                     cfg;
                                     surface_pressure::Union{Nothing, AbstractMatrix} = nothing,
                                     pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
-                                    mass_basis::AbstractMassBasis = DryBasis(),
                                     qv::Union{Nothing, AbstractArray} = nothing) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)
@@ -954,7 +952,6 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
                                     cfg;
                                     surface_pressure::Union{Nothing, AbstractVector} = nothing,
                                     pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
-                                    mass_basis::AbstractMassBasis = DryBasis(),
                                     qv::Union{Nothing, AbstractArray} = nothing) where FT
     kind = _init_kind(cfg)
     _is_file_init_kind(kind) || return build_initial_mixing_ratio(air_mass, grid.horizontal, cfg)

@@ -5,7 +5,7 @@ Adjoint-identity verification for the CMFMC convection operator.
 Confirms `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to machine precision (Float64) and
 single-precision tolerance (Float32). The forward `L` is the
 production CMFMC column update (`_cmfmc_cs_column!`, one panel per launch in
-`_cmfmc_cs_panel_column_kernel!`), which the adjoint path replays; its transpose is `_cmfmc_cs_panel_column_single_adjoint_kernel!`
+`_cmfmc_cs_panels_column_kernel!`), which the adjoint path replays; its transpose is `_cmfmc_cs_panel_column_single_adjoint_kernel!`
 in `src/Adjoints/ConvectionAdjoint.jl` (GG1 surface-up cloud-base scan, CC1
 kg/m² well-mix with cloud-base closure, C3 entrn≥0 guard). A second testset
 pins the replay to the production `apply_convection!` bit for bit.

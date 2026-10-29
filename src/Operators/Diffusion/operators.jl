@@ -284,7 +284,6 @@ compared with. Layouts:
 `meteo` is threaded through to `update_field!(op.kz_field, t)` as the Float64
 clock `t = current_time(meteo)` (`0.0` if `meteo === nothing`). `air_mass` is
 mandatory because the coefficients are those of the tracer-mass exchange.
-`NoDiffusion` is a no-op method, so call sites compile to nothing.
 """
 function apply_vertical_diffusion! end
 
@@ -306,25 +305,10 @@ fields use the conservative mass solve of `conservative_dkg.jl`.
 """
 function apply_vertical_diffusion_vmr! end
 
-apply_vertical_diffusion!(q_raw::NTuple{6}, air_mass::NTuple{6},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing; halo_width = 0) = nothing
 apply_vertical_diffusion_vmr!(q_raw::NTuple{6}, air_mass::NTuple{6},
                               ::NoDiffusion, workspace, dt,
                               meteo = nothing; halo_width = 0, tracer = nothing) = nothing
 # LL/RG NoDiffusion stubs.
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 4},
-                          air_mass::AbstractArray{<:Any, 3},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 3},
-                          air_mass::AbstractArray{<:Any, 2},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
-apply_vertical_diffusion!(q_raw::AbstractArray{<:Any, 2},
-                          air_mass::AbstractArray{<:Any, 2},
-                          ::NoDiffusion, workspace, dt,
-                          meteo = nothing) = nothing
 apply_vertical_diffusion_vmr!(q_raw::AbstractArray{<:Any, 4},
                               air_mass::AbstractArray{<:Any, 3},
                               ::NoDiffusion, workspace, dt,

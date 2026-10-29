@@ -97,8 +97,9 @@ println("Sensitivity to source rate at each step: ", sensitivities)
 # these products over cells and steps. A footprint is a derivative, not a
 # probability or an inferred emission map. `lag_steps` counts steps before the
 # final step; keep the actual timestamps when interpreting variable step sizes.
-# Use the forward call above for `J`: the result's legacy `base_value` field is
-# not evaluated by the reverse API.
+# Use `J = receptor_value(rates)` above for the forward receptor mixing ratio.
+# The reverse result stores the objective, footprints, lag steps, timestep,
+# and initial adjoint.
 
 # ## 4. Check one derivative independently
 #

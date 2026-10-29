@@ -19,9 +19,6 @@ import AtmosTransport.Adjoints:
 using AtmosTransport.Architectures: GPU
 using AMDGPU: ROCArray, AnyROCArray, ROCBackend
 
-AtmosTransport.Architectures.array_type(::GPU{:rocm}) = ROCArray
-AtmosTransport.Architectures.device(::GPU{:rocm}) = ROCBackend()
-AtmosTransport.Architectures.architecture(::AnyROCArray) = GPU(:rocm)
 AtmosTransport.Architectures._array_adapter_for(::AnyROCArray) = ROCArray
 
 function AtmosTransport.Architectures._reclaim_backend_pool!(::AnyROCArray)

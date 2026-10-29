@@ -126,7 +126,6 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
                                        dt = nothing,
                                        schedule = nothing,
-                                       epsilon = nothing,
                                        flux_scale = one(eltype(panels_rm0[1])),
                                        cfl_limit = DEFAULT_CFL_LIMIT,
                                        base_emission_rates = nothing,
@@ -142,7 +141,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
     return only(_cs_objective_footprints(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, (objective,);
-        scheme, dt, schedule, epsilon, flux_scale, cfl_limit, base_emission_rates,
+        scheme, dt, schedule, flux_scale, cfl_limit, base_emission_rates,
         diffusion_op, diffusion_workspace, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace,
         tape_storage, tape_path, checkpoint))
@@ -161,7 +160,6 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
                                   dt = nothing,
                                   schedule = nothing,
-                                  epsilon = nothing,
                                   flux_scale = one(eltype(panels_rm0[1])),
                                   cfl_limit = DEFAULT_CFL_LIMIT,
                                   base_emission_rates = nothing,
@@ -174,7 +172,6 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   tape_storage = :device,
                                   tape_path::Union{Nothing, AbstractString} = nothing,
                                   checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
-    _ = epsilon  # compatibility keyword of the finite-difference prototype
     Nz = size(panels_rm0[1], 3)
     starts = [_ObjectiveStart(objective) for objective in objectives]
     foreach(start -> _validate_start(start, mesh, Nz), starts)
@@ -293,7 +290,6 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 tape_path::Union{Nothing, AbstractString},
                                 forcing::AbstractStepForcing = NoStepForcing())
     _validate_step_forcing(forcing, nsteps, size(panels_m0[1], 3))
-    _require_checkpoint_supported(scheme, checkpoint)
     _require_tape_storage_supported(scheme, checkpoint, tape_storage)
     # `_require_tape_path_supported` runs BEFORE `_resolve_tape_path`
     # so an invalid `(scheme, tape_path)` combination leaves no

@@ -33,12 +33,6 @@ struct CSFootprintResult{FT, O <: AbstractCSFootprintObjective, A2 <: AbstractAr
     footprints::Vector{NTuple{6, A2}}
     lag_steps::Vector{Int}
     dt::FT
-    # Compatibility field from the earlier finite-difference prototype;
-    # reverse-mode results set it to zero.
-    epsilon::FT
-    # Not evaluated by the reverse pass. Current built-in objectives only
-    # need dJ/drm at final time, independent of final tracer mass.
-    base_value::FT
     initial_adjoint::NTuple{6, A3}
 end
 

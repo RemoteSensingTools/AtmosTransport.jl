@@ -104,7 +104,7 @@ Storage types, record types, and schedules come from [`../Tape/`](../Tape/).
   `column_met` at each sampled state; `_run_cs_observations_forward` wraps it)
 - [`StrideCheckpoint.jl`](StrideCheckpoint.jl) — `FullCheckpoint` and
   `StrideCheckpoint` drivers (`_collect_footprints`), the shared reverse-state
-  helpers, and the `_require_checkpoint_supported`, tape-storage and
+  helpers, and the tape-storage and
   `tape_path` guards; [`revolve_checkpoint.jl`](revolve_checkpoint.jl) — the
   `RevolveCheckpoint` driver. One driver per schedule serves every scheme
   family.

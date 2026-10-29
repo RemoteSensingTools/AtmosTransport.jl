@@ -458,8 +458,8 @@ end
                       Val(do_clamp))
 
 One CMFMC convection substep of interior column `(i, j)` of one cubed-sphere
-panel, all `Nt` packed tracers (the arguments are that panel's arrays, see
-`_cmfmc_cs_panel_column_kernel!`).
+panel, all `Nt` packed tracers. The six-panel kernel
+`_cmfmc_cs_panels_column_kernel!` selects that panel's arrays.
 """
 @inline function _cmfmc_cs_column!(tracers_raw, ledger_carry, air_mass, cmfmc, dtrain, cell_areas,
                                    cloud_base, qc_scratch, i, j, Nz, Nt, dt, Hp,
@@ -608,32 +608,11 @@ panel, all `Nt` packed tracers (the arguments are that panel's arrays, see
     return nothing
 end
 
-@kernel function _cmfmc_cs_panel_column_kernel!(
-    tracers_raw,                 # (Nc+2Hp, Nc+2Hp, Nz, Nt), modified in place
-    ledger_carry,                # (Nc, Nc, Nt) column ledger carry, or nothing
-    @Const(air_mass),            # (Nc+2Hp, Nc+2Hp, Nz)
-    @Const(cmfmc),               # (Nc, Nc, Nz+1) at interfaces
-    @Const(dtrain),              # (Nc, Nc, Nz) at centers
-    @Const(cell_areas),          # (Nc, Nc)
-    cloud_base,                  # (Nc, Nc) archived cloud-base layer, or nothing
-    qc_scratch,                  # (Nc+2Hp, Nc+2Hp, Nz) — workspace
-    Nz::Int,
-    Nt::Int,
-    dt,
-    Hp::Int,
-    ::Val{has_dtrain},
-    ::Val{do_clamp}
-) where {has_dtrain, do_clamp}
-    i, j = @index(Global, NTuple)
-    _cmfmc_cs_column!(tracers_raw, ledger_carry, air_mass, cmfmc, dtrain, cell_areas, cloud_base,
-                      qc_scratch, i, j, Nz, Nt, dt, Hp, Val(has_dtrain), Val(do_clamp))
-end
-
 """
-Six-panel variant of `_cmfmc_cs_panel_column_kernel!`: every array argument
+Six-panel column kernel: every array argument
 is a six-panel tuple (`ledger_carry` and `cloud_base` tuples of panels or of
 `nothing`s), the third index selects the panel, and each column runs
-`_cmfmc_cs_column!` exactly as the one-panel kernel does.
+`_cmfmc_cs_column!`.
 """
 @kernel function _cmfmc_cs_panels_column_kernel!(tracers_raw, ledger_carry, @Const(air_mass),
                                                  @Const(cmfmc), @Const(dtrain),

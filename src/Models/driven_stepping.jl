@@ -175,8 +175,6 @@ function DrivenSimulation(model::TransportModel,
                                   _reinstall_convection_forcing(model, driver, window)
     FT = _storage_eltype(model.state.air_mass)
     step_schedule = _driver_step_schedule(driver)
-    all(>(0), step_schedule) || throw(ArgumentError(
-        "DrivenSimulation driver step schedule must contain only positive integers"))
     isfinite(window_dt(driver)) && window_dt(driver) > 0 || throw(ArgumentError(
         "DrivenSimulation driver window_dt must be finite and positive"))
     steps_current = step_schedule[Int(start_window)]

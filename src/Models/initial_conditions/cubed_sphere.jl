@@ -12,10 +12,9 @@ function build_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                     cfg;
                                     surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing,
                                     pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
-                                    mass_basis::AbstractMassBasis = DryBasis(),
                                     qv::Union{Nothing, NTuple{6}} = nothing) where FT
     return _build_cs_initial_mixing_ratio(
-        air_mass, grid, cfg, nothing; surface_pressure, pressure_basis, mass_basis, qv)
+        air_mass, grid, cfg, nothing; surface_pressure, pressure_basis, qv)
 end
 
 # The allocating public API always owns fresh panels. The runner may reuse its
@@ -38,7 +37,6 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
                                        grid::AtmosGrid{<:CubedSphereMesh}, cfg, vmr;
                                        surface_pressure::Union{Nothing, NTuple{6, <:AbstractMatrix}} = nothing,
                                        pressure_basis::AbstractSurfacePressureBasis = TotalSurfacePressure(),
-                                       mass_basis::AbstractMassBasis = DryBasis(),
                                        qv::Union{Nothing, NTuple{6}} = nothing) where FT
     kind = _init_kind(cfg)
     mesh = grid.horizontal
@@ -108,7 +106,7 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
         qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
             throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
         return _build_cs_file_ic(grid, air_mass, cfg, FT, surface_pressure,
-                                 pressure_basis, mass_basis, qv)
+                                 pressure_basis, qv)
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
@@ -121,7 +119,6 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
                            cfg, ::Type{FT},
                            ps_tgt_panels::NTuple{6, <:AbstractMatrix},
                            pressure_basis::AbstractSurfacePressureBasis,
-                           mass_basis::AbstractMassBasis,
                            target_qv_panels::Union{Nothing, NTuple{6}}) where FT
     mesh = grid.horizontal
     Nc   = mesh.Nc

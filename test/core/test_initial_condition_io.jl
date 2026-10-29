@@ -901,7 +901,7 @@ end
                 qv = qv_profile === nothing ? nothing : ll_qv
                 build_initial_mixing_ratio(ll_air, ll_grid, init_cfg;
                     surface_pressure = fill(ps, 4, 2), pressure_basis = basis,
-                    mass_basis = DryBasis(), qv)
+                    qv)
             end
             @test ll_results[1] ≈ ll_results[2] rtol = 128eps(T)
             @test all(isfinite, ll_results[3])
@@ -918,7 +918,7 @@ end
                 qv = qv_profile === nothing ? nothing : rg_qv
                 build_initial_mixing_ratio(rg_air, rg_grid, init_cfg;
                     surface_pressure = fill(ps, ncells(rg_mesh)),
-                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+                    pressure_basis = basis, qv)
             end
             @test rg_results[1] ≈ rg_results[2] rtol = 128eps(T)
             @test all(isfinite, rg_results[3])
@@ -937,7 +937,7 @@ end
                 qv = qv_profile === nothing ? nothing : cs_qv
                 build_initial_mixing_ratio(cs_air, cs_grid, init_cfg;
                     surface_pressure = ntuple(_ -> fill(ps, Nc, Nc), 6),
-                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+                    pressure_basis = basis, qv)
             end
             for p in 1:6
                 @test cs_results[1][p] ≈ cs_results[2][p] rtol = 128eps(T)

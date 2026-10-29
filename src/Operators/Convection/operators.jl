@@ -63,25 +63,3 @@ end
                         workspace = nothing)
     return state
 end
-
-# =========================================================================
-# apply_convection!  (array-level; CMFMC/TM5 methods elsewhere)
-# =========================================================================
-
-"""
-    apply_convection!(q_raw, air_mass, forcing::ConvectionForcing,
-                       ::NoConvection, dt, workspace, grid) -> nothing
-
-Array-level no-op, parallels the
-the diffusion and surface-flux `apply!` pattern. Accepts any
-shape of `q_raw` / `air_mass` — `NoConvection` doesn't inspect them.
-Returns `nothing`.
-
-The structured `apply!` flow goes through the state-level
-method above. `apply_convection!` is reserved for the future case
-where the convection block is called from inside a palindrome or
-another composed setting — same signature contract as the diffusion
-and surface-flux array entry points.
-"""
-apply_convection!(q_raw, air_mass, forcing::ConvectionForcing,
-                   ::NoConvection, dt, workspace, grid) = nothing

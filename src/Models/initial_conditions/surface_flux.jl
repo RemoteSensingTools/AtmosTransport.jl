@@ -223,7 +223,7 @@ end
 # This keeps partial-year and out-of-order inventories from silently reading a
 # different month while preserving the coordinate-less twelve-slice GridFED
 # layout.
-function _static_surface_flux_time_index(cfg, kind::Symbol, ds, raw_var,
+function _static_surface_flux_time_index(cfg, ds, raw_var,
                                          fallback::Integer)
     haskey(cfg, "time_index") && return Int(cfg["time_index"])
     haskey(cfg, "month") || return Int(fallback)
@@ -393,7 +393,7 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
         ndims(raw_var) in (2, 3) || throw(ArgumentError(
             "surface-flux variable '$variable' must be 2D or 3D, got ndims=$(ndims(raw_var))"))
         lon_src, lat_src = _latlon_centres(ds, raw_var)
-        time_index = _static_surface_flux_time_index(cfg, kind, ds, raw_var, time_index)
+        time_index = _static_surface_flux_time_index(cfg, ds, raw_var, time_index)
         ndims(raw_var) == 2 || 1 <= time_index <= size(raw_var, 3) || throw(ArgumentError(
             "surface_flux time index $time_index is outside 1:$(size(raw_var, 3))"))
 
@@ -520,13 +520,6 @@ function _load_single_timevarying_surface_flux_field(
         # emission still depends on the scheme (a "conservative" linear-blend
         # scheme would average adjacent slices regardless of any shift). Keeping
         # the raw stamps + StepwiseFlux reproduces GC's step exactly.
-
-        # Require ascending; sort consistently if needed.
-        if !issorted(times_sec)
-            perm = sortperm(times_sec)
-            times_sec = times_sec[perm]
-            raw = raw[:, :, perm]
-        end
 
         return TimeVaryingFileSurfaceFluxField{FT}(raw, lon_src, lat_src, times_sec)
     finally

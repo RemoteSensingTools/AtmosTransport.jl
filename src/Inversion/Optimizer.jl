@@ -14,10 +14,7 @@
 # Backends implement `cs_surface_flux_4dvar_solve(opt, cost_fn,
 # controls)` where `cost_fn(controls) -> CS4DVarResult` is the
 # closure built by `cs_surface_flux_4dvar_optimize`. The public
-# entrypoint keeps its existing keyword surface for backward
-# compatibility — when no explicit `optimizer` is passed, it
-# constructs a `CSGradientDescent` from the legacy descent-policy
-# kwargs.
+# entrypoint accepts a concrete optimizer and defaults to gradient descent.
 # ---------------------------------------------------------------------------
 
 import Optim
@@ -466,22 +463,14 @@ end
 
 """
     cs_surface_flux_4dvar_optimize(..., observations, controls;
-                                    optimizer = nothing, kwargs...)
+                                    optimizer = CSGradientDescent(...), kwargs...)
         -> CS4DVarSolveResult
 
 Run an optimization loop around [`cs_surface_flux_4dvar`](@ref).
 
-`optimizer::AbstractCSOptimizer` (kwarg) selects the backend. When
-omitted, a [`CSGradientDescent`](@ref) is constructed from the
-legacy descent-policy keyword arguments (`iterations`,
-`initial_step`, `min_step`, `step_shrink`, `gradient_tolerance`,
-`line_search`, `log`) so existing call sites keep working unchanged.
-
-`log::Bool = false` is consumed by the entrypoint, not forwarded to
-`cs_surface_flux_4dvar`. It only takes effect on the default
-`CSGradientDescent` path; an explicit `optimizer = CSLBFGS(..., log
-= true)` (or `optimizer = CSGradientDescent(..., log = true)`)
-carries its own setting and overrides the entrypoint kwarg.
+`optimizer::AbstractCSOptimizer` selects the backend; configure descent and
+logging on that object. The default uses the model precision for its step
+settings, including `min_step = sqrt(eps(FT))`.
 
 Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
 on every cost evaluation — including `preconditioner = ...` for the
@@ -494,34 +483,17 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                         mesh::CubedSphereMesh,
                                         observations,
                                         controls;
-                                        optimizer::Union{Nothing,
-                                                          AbstractCSOptimizer} = nothing,
-                                        iterations::Integer = 10,
-                                        initial_step = one(eltype(panels_rm0[1])),
-                                        min_step = sqrt(eps(eltype(panels_rm0[1]))),
-                                        step_shrink = 0.5,
-                                        gradient_tolerance = zero(eltype(panels_rm0[1])),
-                                        line_search::Bool = true,
-                                        log::Bool = false,
+                                        optimizer::AbstractCSOptimizer = CSGradientDescent(
+                                            10, one(eltype(panels_rm0[1])),
+                                            sqrt(eps(eltype(panels_rm0[1]))),
+                                            eltype(panels_rm0[1])(0.5),
+                                            zero(eltype(panels_rm0[1])), true, false),
                                         kwargs...)
-    # `log` is consumed here (NOT forwarded into `cs_surface_flux_4dvar`
-    # via `kwargs...`). It only takes effect when the entrypoint
-    # constructs the default `CSGradientDescent` itself; an explicit
-    # `optimizer = ...` already carries its own `log` field.
-    opt = if optimizer === nothing
-        FT = eltype(panels_rm0[1])
-        CSGradientDescent(Int(iterations), FT(initial_step), FT(min_step),
-                          FT(step_shrink), FT(gradient_tolerance),
-                          line_search, log)
-    else
-        optimizer
-    end
-
     cost_fn = function (active_controls)
         return cs_surface_flux_4dvar(
             panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
             mesh, observations, active_controls; kwargs...)
     end
 
-    return cs_surface_flux_4dvar_solve(opt, cost_fn, controls)
+    return cs_surface_flux_4dvar_solve(optimizer, cost_fn, controls)
 end

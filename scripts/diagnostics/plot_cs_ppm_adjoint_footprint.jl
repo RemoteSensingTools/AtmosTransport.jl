@@ -174,7 +174,7 @@ function _plot(out::AbstractString; Nc::Int, nsteps::Int)
     results = map(objectives) do (_, obj)
         cs_surface_emission_footprint(
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt, epsilon=1e-6,
+            scheme=scheme, dt=dt,
             diffusion_op=diffusion_op,
             diffusion_workspace=diffusion_ws,
             convection_op=convection_op,

@@ -44,10 +44,10 @@ is:
    and `with_emissions`.
 4. The runtime loop below calls `run_window!(sim)` for LL/RG or `step!(sim)`
    for CS. Those functions live in `driven_stepping.jl`.
-5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver,
-   then calls `TransportModel.step!` or, for binary-scheduled substeps,
-   `transport_step!` bracketed by exponential-decay half-steps, plus
-   end-of-window convection (and unsplit non-decay chemistry).
+5. `DrivenSimulation.step!` refreshes time-varying forcing from the driver
+   and executes the phases of `sim.plan`, including transport substeps,
+   exponential-decay half-steps, convection, and other chemistry at their
+   configured cadence.
 6. `TransportModel.jl` is where advection, surface emissions, diffusion,
    convection, and chemistry are applied to the state.
 
@@ -206,8 +206,7 @@ optionally writes topology-native snapshots, and returns the terminal
 This function does not call the advection/diffusion/convection kernels
 directly. The handoff to physics happens inside the structured loop at
 `run_window!(sim)` and inside the CS loop at `step!(sim)`. Both routes enter
-`DrivenSimulation.step!`, which refreshes forcing and then calls
-`TransportModel.step!` / `transport_step!` / `convection_chemistry_step!`.
+`DrivenSimulation.step!`, which refreshes forcing and executes `sim.plan`.
 """
 function run_driven_simulation(cfg::AbstractDict)
     # The whole run, validation included, logs at `[logging] level`. An invalid
@@ -879,14 +878,9 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     air_mass = window1.air_mass
     Nz = size(air_mass[1], 3)
 
-    # Honor the binary's mass_basis — `DrivenSimulation._check_basis_compatibility`
-    # compares `mass_basis(model.state/fluxes)` against `air_mass_basis(driver)`
-    # and throws if they diverge. Hardcoding `DryBasis` would trip a
-    # runtime ArgumentError on any moist-basis CS binary.
     basis_sym = air_mass_basis(driver1)
-    BasisT    = basis_sym === :dry   ? DryBasis   :
-                basis_sym === :moist ? MoistBasis :
-                error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
+    basis_sym in (:dry, :moist) ||
+        error("CS binary has unsupported mass_basis $(basis_sym); expected :dry or :moist")
 
     # CS tracers flow through the unified IC pipeline.
     # DryBasis is the default runtime basis; MoistBasis requires qv from
@@ -905,7 +899,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     state = _initialize_cs_dry_state(
         grid, air_mass, tracer_init;
         surface_pressure = window1.surface_pressure, pressure_basis, qv = qv_initial)
-    fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, BasisT)
+    fluxes = _allocate_cs_runner_fluxes(mesh, Nz, FT, DryBasis)
     # Workspace constructors allocate with `similar(state.air_mass[1])`.
     # Move prognostic storage first so scratch is created on the target backend,
     # avoiding temporary CPU workspaces and copying their unused contents.
@@ -1117,9 +1111,8 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                 out_path = _output_path_for_partition(output_spec, output_spec.partition,
                                                        _binary_date_label(path), driver_idx)
                 grid_ref = grid
-                mb = BasisT === DryBasis ? :dry : :moist
                 _start_daily_output!(output_resources, output_spec, out_path,
-                                      day_snapshots, grid_ref, mb)
+                                      day_snapshots, grid_ref, :dry)
                 set_progress_status!(timer;
                                      detail = @sprintf("async write %s", basename(out_path)),
                                      redraw = true)
@@ -1146,12 +1139,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         end
 
         if do_snapshots
-            # BasisT was bound at model construction (dry by default on CS);
-            # reuse it so the NetCDF records the same basis the `air_mass`
-            # arrays were stored under.
+            # CS runtime state uses dry air mass.
             _flush_single_output!(output_spec.partition, timer, output_spec,
                                   snapshots, grid;
-                                  mass_basis = BasisT === DryBasis ? :dry : :moist)
+                                  mass_basis = :dry)
         end
         summarize_progress!(timer)
     finally
