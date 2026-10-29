@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-27 17:48 UTC",
+ "generated": "2026-10-29 00:36 UTC",
  "note": "mean of the passes; s = steady seconds per simulated day",
  "configs": [
   {
@@ -7443,25 +7443,25 @@
    "g": "C90",
    "t": 50,
    "o": "adv",
-   "s": 13.1932,
+   "s": 13.1648,
    "p": [
     {
      "n": "1",
-     "s": 13.1932,
-     "utc": "20261027T023934"
+     "s": 13.1648,
+     "utc": "20261027T192030"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 17.942,
-   "cost_ns": 75.4071,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 17.9807,
+   "cost_ns": 75.2445,
+   "mem": 2949.0,
+   "util": 98.8794,
+   "power": 301.813,
    "load": [
-    3.58
+    10.39
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7472,25 +7472,25 @@
    "g": "C90",
    "t": 50,
    "o": "all",
-   "s": 15.7982,
+   "s": 15.811,
    "p": [
     {
      "n": "1",
-     "s": 15.7982,
-     "utc": "20261027T024326"
+     "s": 15.811,
+     "utc": "20261027T192459"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 14.9835,
-   "cost_ns": 90.2959,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 14.9714,
+   "cost_ns": 90.3693,
+   "mem": 3301.0,
+   "util": 88.6022,
+   "power": 286.79,
    "load": [
-    2.63
+    9.77
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7501,25 +7501,25 @@
    "g": "C90",
    "t": 100,
    "o": "adv",
-   "s": 26.0966,
+   "s": 26.1415,
    "p": [
     {
      "n": "1",
-     "s": 26.0966,
-     "utc": "20261027T024830"
+     "s": 26.1415,
+     "utc": "20261027T193011"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 9.07061,
-   "cost_ns": 74.5789,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 9.05504,
+   "cost_ns": 74.7071,
+   "mem": 4933.0,
+   "util": 99.2843,
+   "power": 309.763,
    "load": [
-    1.68
+    10.81
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7530,25 +7530,25 @@
    "g": "C90",
    "t": 100,
    "o": "all",
-   "s": 31.6037,
+   "s": 31.5343,
    "p": [
     {
      "n": "1",
-     "s": 31.6037,
-     "utc": "20261027T025431"
+     "s": 31.5343,
+     "utc": "20261027T193617"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 7.49002,
-   "cost_ns": 90.3169,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 7.50651,
+   "cost_ns": 90.1185,
+   "mem": 5477.0,
+   "util": 86.6512,
+   "power": 284.714,
    "load": [
-    2.49
+    11.93
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7559,25 +7559,54 @@
    "g": "C90",
    "t": 200,
    "o": "adv",
-   "s": 52.3062,
+   "s": 52.4547,
    "p": [
     {
      "n": "1",
-     "s": 52.3062,
-     "utc": "20261027T030303"
+     "s": 52.4547,
+     "utc": "20261027T194501"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 4.52551,
-   "cost_ns": 74.7402,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 4.5127,
+   "cost_ns": 74.9524,
+   "mem": 8973.0,
+   "util": 99.4269,
+   "power": 313.179,
    "load": [
-    3.37
+    13.22
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
+   "backend": "cuda",
+   "float_type": "Float32",
+   "sim_days": "8"
+  },
+  {
+   "d": "L40S",
+   "v": "main",
+   "g": "C90",
+   "t": 200,
+   "o": "all",
+   "s": 63.5449,
+   "p": [
+    {
+     "n": "1",
+     "s": 63.5449,
+     "utc": "20261027T195533"
+    }
+   ],
+   "spread": null,
+   "flag": false,
+   "sypd": 3.72512,
+   "cost_ns": 90.7992,
+   "mem": 9893.0,
+   "util": 92.2843,
+   "power": 295.292,
+   "load": [
+    10.27
+   ],
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7961,25 +7990,25 @@
    "g": "C180",
    "t": 50,
    "o": "adv",
-   "s": 78.2787,
+   "s": 77.9794,
    "p": [
     {
      "n": "1",
-     "s": 78.2787,
-     "utc": "20261027T031829"
+     "s": 77.9794,
+     "utc": "20261027T201037"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 3.02397,
-   "cost_ns": 111.852,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 3.03558,
+   "cost_ns": 111.425,
+   "mem": 9755.0,
+   "util": 99.7367,
+   "power": 332.425,
    "load": [
-    2.05
+    9.96
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -7990,25 +8019,25 @@
    "g": "C180",
    "t": 50,
    "o": "all",
-   "s": 97.5337,
+   "s": 97.2751,
    "p": [
     {
      "n": "1",
-     "s": 97.5337,
-     "utc": "20261027T033127"
+     "s": 97.2751,
+     "utc": "20261027T202343"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 2.42698,
-   "cost_ns": 139.366,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 2.43343,
+   "cost_ns": 138.996,
+   "mem": 11109.0,
+   "util": 97.9778,
+   "power": 322.032,
    "load": [
-    1.79
+    10.97
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -8019,25 +8048,25 @@
    "g": "C180",
    "t": 100,
    "o": "adv",
-   "s": 156.67,
+   "s": 156.13,
    "p": [
     {
      "n": "1",
-     "s": 156.67,
-     "utc": "20261027T034750"
+     "s": 156.13,
+     "utc": "20261027T204010"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 1.5109,
-   "cost_ns": 111.933,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 1.51613,
+   "cost_ns": 111.547,
+   "mem": 17285.0,
+   "util": 99.8331,
+   "power": 326.753,
    "load": [
-    1.21
+    8.71
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -8048,25 +8077,25 @@
    "g": "C180",
    "t": 100,
    "o": "all",
-   "s": 197.422,
+   "s": 196.961,
    "p": [
     {
      "n": "1",
-     "s": 197.422,
-     "utc": "20261027T041206"
+     "s": 196.961,
+     "utc": "20261027T210431"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 1.19902,
-   "cost_ns": 141.048,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 1.20182,
+   "cost_ns": 140.719,
+   "mem": 19461.0,
+   "util": 97.5243,
+   "power": 315.707,
    "load": [
-    1.22
+    9.65
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -8077,25 +8106,54 @@
    "g": "C180",
    "t": 200,
    "o": "adv",
-   "s": 314.982,
+   "s": 314.567,
    "p": [
     {
      "n": "1",
-     "s": 314.982,
-     "utc": "20261027T044338"
+     "s": 314.567,
+     "utc": "20261027T213616"
     }
    ],
    "spread": null,
    "flag": false,
-   "sypd": 0.75151,
-   "cost_ns": 112.519,
-   "mem": null,
-   "util": null,
-   "power": null,
+   "sypd": 0.752503,
+   "cost_ns": 112.371,
+   "mem": 32475.0,
+   "util": 99.8746,
+   "power": 324.357,
    "load": [
-    1.33
+    4.6
    ],
-   "commit": "16ea4b3c5",
+   "commit": "e1f9dfe4c",
+   "backend": "cuda",
+   "float_type": "Float32",
+   "sim_days": "8"
+  },
+  {
+   "d": "L40S",
+   "v": "main",
+   "g": "C180",
+   "t": 200,
+   "o": "all",
+   "s": 399.633,
+   "p": [
+    {
+     "n": "1",
+     "s": 399.633,
+     "utc": "20261027T222305"
+    }
+   ],
+   "spread": null,
+   "flag": false,
+   "sypd": 0.592325,
+   "cost_ns": 142.759,
+   "mem": 36445.0,
+   "util": 98.6487,
+   "power": 315.716,
+   "load": [
+    1.55
+   ],
+   "commit": "e1f9dfe4c",
    "backend": "cuda",
    "float_type": "Float32",
    "sim_days": "8"
@@ -12036,26 +12094,6 @@
   }
  ],
  "failures": [
-  {
-   "d": "L40S",
-   "v": "main",
-   "g": "C90",
-   "t": 200,
-   "o": "all",
-   "p": "1",
-   "status": "exit_1",
-   "utc": "20261027T031332"
-  },
-  {
-   "d": "L40S",
-   "v": "main",
-   "g": "C180",
-   "t": 200,
-   "o": "all",
-   "p": "1",
-   "status": "exit_1",
-   "utc": "20261027T053027"
-  },
   {
    "d": "L40S",
    "v": "main",
