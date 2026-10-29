@@ -1112,3 +1112,8 @@ end
     model_none = with_convection(model_tm5, NoConvection())
     @test model_none.workspace.convection_ws === nothing
 end
+@testset "matrix convection rejects negative truncation depth" begin
+    @test_throws ArgumentError TM5Convection(lmax_conv = -1)
+    @test_throws ArgumentError TM5Convection{Float64}(1.0, true, -1, 1)
+    @test_throws ArgumentError AtmosTransport.CMFMCMatrixConvection(lmax_conv = -1)
+end

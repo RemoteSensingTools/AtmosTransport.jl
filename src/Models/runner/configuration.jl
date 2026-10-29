@@ -90,17 +90,9 @@ end
 @inline _cfg_architecture_section(cfg) = get(cfg, "architecture", Dict{String, Any}())
 @inline _cfg_architecture(cfg) = architecture_from_config(_cfg_architecture_section(cfg))
 
-function _cfg_float_type(cfg)
-    raw = get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64")
-    s = lowercase(String(raw))
-    if s == "float32"
-        return Float32
-    elseif s == "float64"
-        return Float64
-    end
-    throw(ArgumentError(
-        "[numerics] float_type must be \"Float32\" or \"Float64\"; got $(repr(raw))."))
-end
+_cfg_float_type(cfg) =
+    parse_float_type(get(get(cfg, "numerics", Dict{String, Any}()), "float_type", "Float64"),
+                     "[numerics] float_type")
 
 function _capture_config_error!(f, errors::Vector{String})
     try
@@ -197,7 +189,8 @@ parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
 reported before value checks. Window indices accept integers, not Booleans or
-floating-point values.
+floating-point values. Explicit halo widths must be integers ≥ 1; input dates
+accept TOML dates or date strings in either input mode.
 
 Unknown keys and tables are returned as errors (with a suggestion when a known
 key is close, e.g. `order` → `ppm_order`); known keys that the chosen kind or
@@ -295,6 +288,11 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
     if run_cfg isa AbstractDict
+        for key in ("Hp", "halo_padding")
+            haskey(run_cfg, key) && _capture_config_error!(errors) do
+                config_int(run_cfg[key], "[run].$(key)"; min = 1)
+            end
+        end
         haskey(run_cfg, "reset_air_mass_each_window") && push!(errors,
             "run.reset_air_mass_each_window was replaced by run.air_mass_reset_mode = " *
             "\"none\", \"preserve_vmr\", or \"preserve_tracer_mass\"")

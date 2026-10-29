@@ -901,7 +901,7 @@ end
                 qv = qv_profile === nothing ? nothing : ll_qv
                 build_initial_mixing_ratio(ll_air, ll_grid, init_cfg;
                     surface_pressure = fill(ps, 4, 2), pressure_basis = basis,
-                    mass_basis = DryBasis(), qv)
+                    qv)
             end
             @test ll_results[1] ≈ ll_results[2] rtol = 128eps(T)
             @test all(isfinite, ll_results[3])
@@ -918,7 +918,7 @@ end
                 qv = qv_profile === nothing ? nothing : rg_qv
                 build_initial_mixing_ratio(rg_air, rg_grid, init_cfg;
                     surface_pressure = fill(ps, ncells(rg_mesh)),
-                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+                    pressure_basis = basis, qv)
             end
             @test rg_results[1] ≈ rg_results[2] rtol = 128eps(T)
             @test all(isfinite, rg_results[3])
@@ -937,7 +937,7 @@ end
                 qv = qv_profile === nothing ? nothing : cs_qv
                 build_initial_mixing_ratio(cs_air, cs_grid, init_cfg;
                     surface_pressure = ntuple(_ -> fill(ps, Nc, Nc), 6),
-                    pressure_basis = basis, mass_basis = DryBasis(), qv)
+                    pressure_basis = basis, qv)
             end
             for p in 1:6
                 @test cs_results[1][p] ≈ cs_results[2][p] rtol = 128eps(T)
@@ -954,10 +954,10 @@ end
     # was deleted. Verify the equivalence on all three topologies.
     #
     # Requires the real Catrine NetCDF file — skipped when missing
-    # (CI or fresh checkouts without `~/data/AtmosTransport/`).
+    # (CI or fresh checkouts without the configured data root).
     @testset "`catrine_co2` ≡ `file` with default Catrine path" begin
         catrine_ic_path =
-            expanduser("~/data/AtmosTransport/catrine/InitialConditions/startCO2_202112010000.nc")
+            AtmosTransport.expand_data_path("\$ATMOSTRANSPORT_DATA_ROOT/catrine/InitialConditions/startCO2_202112010000.nc")
         if !isfile(catrine_ic_path)
             @info "Skipping Catrine equivalence tests; file not present at $catrine_ic_path"
             @test_skip false
@@ -1731,5 +1731,16 @@ end
         hours = load(write_series(joinpath(dir, "utc.nc"), "hours since 2021-01-01 00:00:00 UTC"))
         @test hours.times_sec == [0.0, 3600.0, 7200.0]
         @test_throws ArgumentError load(write_series(joinpath(dir, "years.nc"), "years since 2021-01-01"))
+    end
+end
+
+@testset "catrine_co2 default follows the data root" begin
+    ICIO = AtmosTransport.Models.InitialConditionIO
+    withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/bf2_data") do
+        file, variable, time_index = ICIO._resolve_file_init(Dict(), :catrine_co2)
+        @test file == "/tmp/bf2_data/catrine/InitialConditions/startCO2_202112010000.nc"
+        @test (variable, time_index) == ("CO2", 1)
+        @test first(ICIO._resolve_file_init(Dict("file" => "/tmp/explicit.nc"), :catrine_co2)) ==
+              "/tmp/explicit.nc"
     end
 end

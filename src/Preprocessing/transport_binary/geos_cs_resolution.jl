@@ -107,9 +107,7 @@ function _validate_geos_native_panel_convention(conv)
           "the target geometry; got $(typeof(conv)).")
 end
 
-_geos_next_endpoint_available(handles::GEOSDayHandles) =
-    handles.next_ctm_i1 !== nothing
-_geos_next_endpoint_available(handles::GEOSFPNativeDayHandles) =
+_geos_next_endpoint_available(handles::Union{GEOSDayHandles, GEOSFPNativeDayHandles}) =
     handles.next_ctm_i1 !== nothing
 
 abstract type AbstractGEOSCSResolutionStrategy end

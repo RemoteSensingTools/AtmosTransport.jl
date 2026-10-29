@@ -183,6 +183,8 @@ Files directly in this folder; the subfolders have their own READMEs
   order. MERRA-2 readers return top-down arrays, and canonical ERA5 N320
   GRIB fields are top-down. `cm` is zero at
   the top (`k = 1`) and surface (`k = Nz + 1`) interfaces.
+- The LL and RG staging divergence closures require `B_ifc` with exactly
+  `Nz + 1` interfaces; missing or mismatched coefficients raise an error.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see
   `poisson_balance_target_scale`), then `cm` is diagnosed from that explicit
@@ -199,8 +201,13 @@ Files directly in this folder; the subfolders have their own READMEs
 - Outputs use unique sibling staging files from `AtomicFiles` and are
   atomically published after the gates.
 - GEOS `mass_flux_dt` defaults to `450` s (`[preprocessing].mass_flux_dt_seconds`
-  must be 100–3600, warns outside 400–500); the GEOS writer uses
-  `round(dt_met_seconds / mass_flux_dt)` source substeps per window.
+  must be 100–3600 and divide 3600 exactly, warns outside 400–500); the GEOS
+  writer uses `exact_steps_per_window(dt_met_seconds, mass_flux_dt)` source
+  substeps per window, which throws on a non-integer ratio.
+- `[numerics] float_type` is parsed by `ConfigChecks.parse_float_type`
+  (`"Float32"`/`"Float64"`, any letter case; anything else throws). The default
+  is `Float32` on the spectral path and `Float64` on the native path.
+- `MergeAbovePressure` requires `target_min_thickness_Pa > 0` (`Inf` allowed).
 - ERA5 spectral: `met_interval / dt` must be an integer (`exact_steps_per_window`).
 - ERA5 → TM5 convection (`ec2tm_from_rates!`): UDMF/DDMF level `k` is the
   flux through the top of layer `k`, so callers pass `[GRIB levels 1..Nz; 0]`

@@ -4,6 +4,7 @@ using AtmosTransport: AtmosGrid, CPU, HybridSigmaPressure, ReducedGaussianMesh,
 using AtmosTransport.Grids: ncells, nfaces
 using AtmosTransport.Preprocessing:
     SubstepSchedulePolicy,
+    exact_steps_per_window,
     initial_substeps,
     next_substeps,
     required_substeps,
@@ -22,7 +23,18 @@ using AtmosTransport.MetDrivers:
     @test initial_substeps(policy, 4) == 4
     @test required_substeps(policy, 8, 1.233) == 11
     @test next_substeps(policy, 8, 0.25) == 8
-    @test next_substeps(policy, 8, Inf) == 64
+    @test required_substeps(policy, 8, 1e300) == 64   # a finite cap still clamps
+    # A NaN/Inf ratio (NaN mass or fluxes, non-positive mass) is an error, not
+    # a jump to `max_steps_per_window`.
+    @test_throws ArgumentError next_substeps(policy, 8, Inf)
+    @test_throws ArgumentError next_substeps(policy, 8, NaN)
+    # With the unbounded default cap, a request whose `2 * steps` would
+    # overflow `Int` throws instead of returning typemax(Int).
+    unbounded = SubstepSchedulePolicy(adaptive_substeps = true, substep_cfl_target = 0.95)
+    @test unbounded.max_steps_per_window == typemax(Int)
+    @test required_substeps(unbounded, 8, 1.233) == 11
+    @test_throws ArgumentError required_substeps(unbounded, 8, 1e300)
+    @test_throws ArgumentError required_substeps(unbounded, 8, NaN)
 
     fixed = SubstepSchedulePolicy(
         adaptive_substeps = false,
@@ -45,6 +57,15 @@ using AtmosTransport.MetDrivers:
         substep_cfl_target = 0.95,
         min_steps_per_window = 8,
         max_steps_per_window = 4)
+end
+
+# GEOS substeps per window are `dt_met / mass_flux_dt`; a non-divisor would
+# round (420 s -> 9 steps, ~5 % too much flux), so it throws.
+@testset "exact steps per window" begin
+    @test exact_steps_per_window(3600.0, 450.0) == 8
+    @test exact_steps_per_window(3600.0f0, 450.0f0) == 8
+    @test exact_steps_per_window(3600.0, 400.0) == 9
+    @test_throws ArgumentError exact_steps_per_window(3600.0, 420.0)
 end
 
 @testset "transport header schedule patch keeps Poisson contract synchronized" begin

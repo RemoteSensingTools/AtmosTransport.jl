@@ -2,8 +2,7 @@
 CUDA extension for AtmosTransport.
 
 Loaded automatically when `using CUDA` is called alongside AtmosTransport.
-Provides `array_type` and `device` overloads so `GPU(:cuda)` selects
-`CuArray` and `CUDABackend()`.
+Provides CUDA array adaptation, launch policies, and tape storage support.
 """
 module AtmosTransportCUDAExt
 
@@ -47,9 +46,6 @@ AtmosTransport.Operators.Diffusion._cs_dkg_tracer_workgroupsize(
 AtmosTransport.Operators.Convection._tm5_collab_max_depth(
     ::Type{Float64}, ::CUDABackend) = AtmosTransport.Operators.Convection._TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA
 
-AtmosTransport.Architectures.array_type(::GPU{:cuda}) = CuArray
-AtmosTransport.Architectures.device(::GPU{:cuda})     = CUDABackend()
-AtmosTransport.Architectures.architecture(::CUDA.AbstractGPUArray) = GPU(:cuda)
 AtmosTransport.Architectures._array_adapter_for(::CUDA.AbstractGPUArray) = CuArray
 
 function AtmosTransport.Architectures._reclaim_backend_pool!(::CUDA.AbstractGPUArray)

@@ -113,27 +113,15 @@ available as `sim.driver` when a capability check is needed.
 
 ## Model blocks
 
-`src/Models/TransportModel.jl` separates the runtime into two blocks:
+`step!(model, dt; meteo)` in `src/Models/TransportModel.jl` executes the
+`step` phases of the substep `StepPlan` on `step_operators(model)`, in order:
 
-```julia
-function transport_step!(model, dt; meteo = nothing)
-    apply!(model.state, model.fluxes, model.grid, model.advection, dt;
-           workspace = model.workspace.advection_ws,
-           diffusion_workspace = model.workspace.diffusion_ws,
-           diffusion_op = model.diffusion,
-           emissions_op = model.emissions,
-           meteo)
-end
+1. `ChemistryBeforeStage`: exponential decay half-step, otherwise no-op.
+2. `TransportStage`: advection with diffusion and surface flux at its midpoint.
+3. `ConvectionStage`: the configured convection operator.
+4. `ChemistryAfterStage`: closing decay half-step, otherwise full chemistry.
 
-_chemistry_before_emissions!(model, dt; meteo) # decay(dt/2), otherwise no-op
-transport_step!(model, dt; meteo)
-_convection_step!(model, dt)
-_chemistry_after_emissions!(model, dt; meteo)  # decay(dt/2), otherwise chemistry(dt)
-```
-
-`step!(model, dt)` runs these in order: they are the `step` stages of the
-substep `StepPlan` (`ChemistryBeforeStage`, `TransportStage`,
-`ConvectionStage`, `ChemistryAfterStage`), executed on `step_operators(model)`. `NoDiffusion`, `NoSurfaceFlux`,
+`NoDiffusion`, `NoSurfaceFlux`,
 `NoConvection`, and `NoChemistry` provide explicit identity methods; callers
 do not need `nothing` checks or string branches in the operator loop.
 

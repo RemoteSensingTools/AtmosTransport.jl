@@ -48,6 +48,7 @@ date and rejects missing or duplicate dates.
 module BinaryPathExpander
 
 using Dates
+using ...ConfigChecks: config_date
 import ...expand_data_path
 
 export expand_binary_paths
@@ -69,6 +70,7 @@ function expand_binary_paths(input_cfg::AbstractDict)
     end
 
     if has_explicit
+        haskey(input_cfg, "start_date") && config_date(input_cfg["start_date"], "[input].start_date")
         raw = input_cfg["binary_paths"]
         raw isa AbstractVector ||
             throw(ArgumentError("[input].binary_paths must be a list, got $(typeof(raw))"))
@@ -99,8 +101,8 @@ function _expand_folder_range(input_cfg::AbstractDict)
     haskey(input_cfg, "end_date") || throw(ArgumentError(
         "[input].folder requires end_date = \"YYYY-MM-DD\""))
 
-    start_date = Date(String(input_cfg["start_date"]))
-    end_date   = Date(String(input_cfg["end_date"]))
+    start_date = config_date(input_cfg["start_date"], "[input].start_date")
+    end_date   = config_date(input_cfg["end_date"], "[input].end_date")
     start_date <= end_date || throw(ArgumentError(
         "[input].start_date ($start_date) must be <= end_date ($end_date)"))
 

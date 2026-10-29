@@ -392,6 +392,7 @@ description = "Driven simulations and the run driver: window stepping, runtime o
 files = [
     "core/test_driven_simulation.jl",
     "core/test_operator_defaults.jl",
+    "core/test_air_mass_reset.jl",
     "core/test_cs_driven_builders.jl",
     "core/test_cubed_sphere_runtime.jl",
     "core/test_run_transport_binary_recipe.jl",

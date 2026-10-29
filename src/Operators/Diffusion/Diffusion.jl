@@ -15,8 +15,7 @@ Public surface:
 
 Both subtype the global `AbstractDiffusion` declared in
 `src/Operators/AbstractOperators.jl`; concrete operator structs live in
-`operators.jl`. The column-level Thomas solve (`solve_tridiagonal!`) is
-exposed as the numerical reference. Generic Kz kernels name the tridiagonal
+`operators.jl`. Generic Kz kernels name the tridiagonal
 coefficients `(a, b, c)` explicitly. Precomputed Dkg mass transport uses
 column-conservative bidiagonal factors in `conservative_dkg.jl`; both matching
 transposes live in `src/Adjoints/DiffusionAdjoint.jl`.
@@ -39,7 +38,6 @@ using ...Parameters: VIRTUAL_TEMPERATURE_FACTOR, R_DRY_AIR, STANDARD_GRAVITY,
 import ..apply!
 import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 
-export solve_tridiagonal!
 export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion
 export DiffusionWorkspace
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
@@ -48,7 +46,6 @@ export apply_vertical_diffusion_vmr!
 export fill_dz_hydrostatic_constT!, fill_dz_hydrostatic_virtualT!
 export recover_total_surface_pressure!
 
-include("thomas_solve.jl")
 include("diffusion_kernels.jl")
 include("conservative_dkg.jl")
 include("workspace.jl")

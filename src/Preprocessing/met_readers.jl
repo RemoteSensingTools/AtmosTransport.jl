@@ -257,7 +257,7 @@ end
 @inline function window_metadata(reader::GEOSNativeReader{FT}) where FT
     dt_met = GEOS_MET_INTERVAL_SECONDS   # GEOS-IT / GEOS-FP archive cadence
     mass_flux_dt = reader.settings.mass_flux_dt
-    substeps = round(Int, dt_met / mass_flux_dt)
+    substeps = exact_steps_per_window(dt_met, mass_flux_dt)
     return (windows = windows_per_day(reader),
             substeps = substeps,
             dt_substep = mass_flux_dt,

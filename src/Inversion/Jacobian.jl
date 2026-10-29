@@ -18,8 +18,7 @@
 end
 
 function _aggregate_surface_window(result::CSFootprintResult,
-                                   window::CSSurfaceFluxWindow;
-                                   ignore_future::Bool = false)
+                                   window::CSSurfaceFluxWindow)
     nsteps = length(result.footprints)
     FT = eltype(result.footprints[1][1])
     aggregate = ntuple(p -> begin
@@ -29,9 +28,6 @@ function _aggregate_surface_window(result::CSFootprintResult,
     end, 6)
     @inbounds for (idx, step) in enumerate(window.steps)
         if !(1 <= step <= nsteps)
-            if ignore_future && step > nsteps
-                continue
-            end
             throw(ArgumentError(
                 "surface-flux window $(window.name) references step $step, " *
                 "but the footprint has $nsteps steps"))

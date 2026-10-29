@@ -510,20 +510,10 @@ end
 @inline function _refresh_and_synthesize_cmfmc_matrix_forcing!(
         workspace::CMFMCMatrixWorkspace, forcing::ConvectionForcing)
     _assert_cmfmc_matrix_adjoint_forcing(forcing)
-    # ALWAYS invalidate at the entry of the footprint forward/adjoint helpers.
-    # Reason: these helpers are called from `Footprint/ReverseLoop.jl` with a
-    # per-step forcing slice that can differ step-to-step. Production
-    # `DrivenSimulation` invalidates the cache on met-window advance, but the
-    # footprint path bypasses that hook. Mirrors the `CMFMCConvection`
-    # methods of `_apply_cs_convection_forward!` / `_apply_cs_convection_adjoint!`
-    # below, which call `invalidate_cmfmc_cache!(workspace)` before every
-    # kernel launch for the same reason.
     invalidate_cmfmc_matrix_cache!(workspace)
-    if !workspace.derived_valid[]
-        _launch_cmfmc_matrix_derivation!(workspace.derived_entu, workspace.derived_detu,
-                                          forcing.cmfmc, forcing.dtrain)
-        workspace.derived_valid[] = true
-    end
+    _launch_cmfmc_matrix_derivation!(workspace.derived_entu, workspace.derived_detu,
+                                      forcing.cmfmc, forcing.dtrain)
+    workspace.derived_valid[] = true
     return ConvectionForcing(nothing, nothing,
         (entu = workspace.derived_entu, detu = workspace.derived_detu,
          entd = workspace.zero_entd,    detd = workspace.zero_detd))

@@ -33,8 +33,7 @@ end
 
 # NoAdvection no-op apply! — LatLon. The workspace, cfl_limit, and
 # meteo arguments are accepted but ignored when diffusion is also
-# disabled, so callers (e.g. `transport_step!` in
-# `Models/TransportModel.jl`) can dispatch without branching on the
+# disabled, so the step plan can dispatch without branching on the
 # scheme. NoAdvection + non-trivial diffusion is supported: a single
 # V(dt) step is applied via the mass-flux VMR wrapper, which is
 # mass-conserving on its own and needs no Strang palindrome. Surface
@@ -163,13 +162,6 @@ function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
                 "diffusion workspace panel $p and state must use the same backend"))
     end
     return nothing
-end
-
-function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
-                grid::AtmosGrid{<:CubedSphereMesh},
-                scheme::AbstractAdvectionScheme, dt;
-                workspace::AdvectionWorkspace) where {B <: AbstractMassBasis}
-    throw(ArgumentError("CubedSphereMesh remains metadata-only in src; structured advection is only supported on LatLonMesh until cubed-sphere geometry/connectivity are implemented"))
 end
 
 function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},

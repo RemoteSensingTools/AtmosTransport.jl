@@ -57,6 +57,12 @@ header (LL does it when `LatLonDeferredBinaryWriter` opens). GEOS uses
 
 ## Window Contracts
 
+LL `apply_poisson_balance!` takes a per-window step vector, a `LatLonContract`,
+and a `SubstepSchedulePolicy`, including for fixed schedules. Writers publish
+through the typed writer adapters and atomic staging lifecycle. Contract policy
+values live on the concrete contract; `verify_window!`, `update_accumulator!`,
+and `summarize_status!` implement the verification interface.
+
 - Replay: `verify_window_continuity` (from `MetDrivers`) integrates the
   stored fluxes from `m_cur` over the palindrome substeps and compares with
   `m_next` in every cell; it errors when a cell's residual exceeds
@@ -122,6 +128,11 @@ balanced correction. See the binary-format guide for the full schema.
   `regrid_ll_binary_to_cs`, which is adaptive unless `steps_per_window` is given.
 - `next_substeps` returns `ceil(steps * ratio / substep_cfl_target)`, never
   below the current count and clamped to the bounds; fixed policies keep the count.
+  A NaN/Inf ratio throws (also with `require_substep_positivity = false`; a
+  `fixed` schedule never reads the ratio), and so does a request above
+  `typemax(Int) ÷ 2` when `max_steps_per_window` is left at its unbounded
+  default (`2 * steps` would overflow). GEOS's per-window "hypothetical split"
+  log statistic does not throw.
 - On a change the workflow rescales (`rescale_substep_amounts!`, spectral
   paths and the LL → CS regrid), re-prepares from native fluxes (GEOS), or rebuilds fluxes from winds
   (N320, MERRA-2), then repeats balance, `cm`, and the positivity check.

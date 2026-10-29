@@ -82,11 +82,6 @@ end
 _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
     _zero_panel_tuple_like(final_m)
 
-# Whether a tape record's reverse needs `CSAdjointWorkspace.column_scratch`
-# (the FV3 vertical profile's sweeps).
-_needs_column_scratch(op::_CSSweepRecord) = needs_column_scratch(op.scheme)
-_needs_column_scratch(op) = false
-
 # Walk `ops` backwards from `lambda_panels` (mutated in place; chain calls in
 # window-reverse order so the adjoint state flows from final to initial across
 # windows). `footprints[step]` must exist for every step that has an emission

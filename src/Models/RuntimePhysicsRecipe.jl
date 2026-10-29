@@ -334,12 +334,6 @@ function validate_runtime_halo_width(scheme::AbstractAdvectionScheme, halo_width
     return nothing
 end
 
-@inline validate_runtime_combination(::AbstractRuntimeRecipeStyle,
-                                     ::AbstractAdvectionScheme,
-                                     ::AbstractDiffusion,
-                                     ::AbstractConvection,
-                                     _context) = nothing
-
 """
     validate_runtime_physics_recipe(recipe, context; halo_width=nothing)
 
@@ -354,11 +348,6 @@ function validate_runtime_physics_recipe(recipe::RuntimePhysicsRecipe,
     validate_runtime_advection(style, recipe.advection, context)
     validate_runtime_diffusion(style, recipe.diffusion, context)
     validate_runtime_convection(style, recipe.convection, context)
-    validate_runtime_combination(style,
-                                 recipe.advection,
-                                 recipe.diffusion,
-                                 recipe.convection,
-                                 context)
     halo_width === nothing || validate_runtime_halo_width(recipe.advection, halo_width)
     return recipe
 end
@@ -421,14 +410,16 @@ function configured_halo_width(cfg, scheme::AbstractAdvectionScheme)
     default_hp = required_halo_width(scheme)
 
     if haskey(run_cfg, "Hp") && haskey(run_cfg, "halo_padding")
-        hp = Int(run_cfg["Hp"])
-        halo_padding = Int(run_cfg["halo_padding"])
+        hp = config_int(run_cfg["Hp"], "[run].Hp"; min = 1)
+        halo_padding = config_int(run_cfg["halo_padding"], "[run].halo_padding"; min = 1)
         hp == halo_padding || throw(ArgumentError(
             "[run] `Hp` ($(hp)) and `halo_padding` ($(halo_padding)) disagree; use one value."))
     end
 
-    return haskey(run_cfg, "Hp") ? Int(run_cfg["Hp"]) :
-           Int(get(run_cfg, "halo_padding", default_hp))
+    haskey(run_cfg, "Hp") && return config_int(run_cfg["Hp"], "[run].Hp"; min = 1)
+    haskey(run_cfg, "halo_padding") &&
+        return config_int(run_cfg["halo_padding"], "[run].halo_padding"; min = 1)
+    return default_hp
 end
 
 # CS tracers flow through the unified pipeline:

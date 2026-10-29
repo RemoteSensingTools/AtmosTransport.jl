@@ -235,6 +235,28 @@ const REPO_ROOT = joinpath(@__DIR__, "..", "..")
         end
     end
 
+    @testset "GEOS level_orientation and mass_flux_dt_seconds are validated" begin
+        function geos_cfg(line)
+            path = tempname() * ".toml"
+            write(path, "[source]\nname = \"GEOS-IT\"\n[grid]\nNc = 180\n" *
+                        "[preprocessing]\n$(line)\n")
+            return path
+        end
+        load(line) = load_met_settings(geos_cfg(line); root_dir = "/tmp/geos_validate")
+        for value in ("auto", "bottom_up", "top_down")
+            @test load("level_orientation = \"$(value)\"").level_orientation === Symbol(value)
+        end
+        # A typo would otherwise skip the bottom-up flip silently.
+        for value in ("bottom-up", "BottomUp", "topdown", "")
+            @test_throws ArgumentError load("level_orientation = \"$(value)\"")
+        end
+        @test load("mass_flux_dt_seconds = 450.0").mass_flux_dt == 450.0
+        @test load("mass_flux_dt_seconds = 400.0").mass_flux_dt == 400.0
+        # 420 s does not divide the 3600 s window: rounding to 9 steps would
+        # scale the fluxes ~5 % too high.
+        @test_throws ArgumentError load("mass_flux_dt_seconds = 420.0")
+    end
+
     @testset "unsupported source name errors loudly" begin
         # Synthesize a tiny TOML with an unknown source name.
         path = tempname() * ".toml"

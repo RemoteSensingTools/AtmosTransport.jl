@@ -168,6 +168,9 @@ function Adapt.adapt_structure(to, ws::LinRoodWorkspace{FT}) where FT
     return LinRoodWorkspace(q_buf, fx_in, fx_out, fy_in, fy_out, q_out, dp_out)
 end
 
+# Lin-Rood transports one tracer at a time on 3-D panels: its `cs` part supplies
+# only `rm_A`, `m_A` and the column scratch, so it is built without the 4-D
+# per-tracer ping-pong buffers of the split-sweep schemes (`n_tracers = 0`).
 struct CSLinRoodAdvectionWorkspace{CSW, LRW}
     cs      :: CSW
     linrood :: LRW
@@ -176,9 +179,8 @@ end
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh, Nz::Int;
                                      FT::Type{<:AbstractFloat} = Float64,
                                      array_type::Type{<:AbstractArray} = Array,
-                                     n_tracers::Integer = 0,
                                      column_scratch::Bool = false)
-    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers, seam_transport=false,
+    cs = CSAdvectionWorkspace(mesh, Nz; FT, array_type, n_tracers = 0, seam_transport=false,
                               column_scratch,
                               column_scratch_tracers = 1,                # tracers run one by one,
                               column_scratch_panels = 1)                 # one panel at a time
@@ -188,9 +190,8 @@ end
 
 function CSLinRoodAdvectionWorkspace(mesh::CubedSphereMesh,
                                      prototype::AbstractArray{FT, 3};
-                                     n_tracers::Integer = 0,
                                      column_scratch::Bool = false) where {FT <: AbstractFloat}
-    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers, seam_transport=false, column_scratch,
+    cs = CSAdvectionWorkspace(mesh, prototype; n_tracers = 0, seam_transport=false, column_scratch,
                               column_scratch_tracers = 1,                    # tracers run one by one,
                               column_scratch_panels = 1)                     # one panel at a time
     lr = LinRoodWorkspace(mesh, prototype)

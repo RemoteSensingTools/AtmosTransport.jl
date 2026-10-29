@@ -45,7 +45,7 @@ PAGES = [  # file, nav label, page title
 VERSIONS = OrderedDict([
     ("v0.5.0", dict(color="#8f8d86", note="release v0.5.0")),
     ("v0.6.0", dict(color="#2a78d6", note="release v0.6.0")),
-    ("main", dict(color="#eb6834", note="main with the performance pull requests #90 to #97")),
+    ("main", dict(color="#eb6834", note="main with the performance pull requests #90 to #97; the 50 to 200 tracer runs also with the decay fix #99")),
 ])
 DEVICES = OrderedDict([
     ("L40S", dict(name="L40S", long="NVIDIA L40S 48 GB (wurst)", kind="gpu", color="#008300", shape="circle")),

@@ -278,16 +278,6 @@ function apply!(state::CubedSphereState, meteo, grid,
 end
 
 """
-    apply!(state::CubedSphereState, meteo, grid, ::NoChemistry, dt; workspace=nothing)
-
-No-op — returns `state` unchanged.
-"""
-function apply!(state::CubedSphereState, meteo, grid, ::NoChemistry, dt;
-                workspace = nothing)
-    return state
-end
-
-"""
     apply!(state::CubedSphereState, meteo, grid, op::CompositeChemistry, dt;
            workspace=nothing)
 

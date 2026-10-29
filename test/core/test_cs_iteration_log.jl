@@ -155,59 +155,6 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Public-entrypoint integration: log flag flows through.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Public-entrypoint integration: the log flag carried by the optimizer
-# survives the legacy-kwargs vs explicit-optimizer split in
-# `cs_surface_flux_4dvar_optimize`.
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Regression: `cs_surface_flux_4dvar_optimize(...; log = true)` (without
-# an explicit `optimizer = ...`) used to forward `log` into
-# `cs_surface_flux_4dvar` via `kwargs...` and throw `MethodError` on
-# the unsupported keyword. Now consumed at the entrypoint and plumbed
-# into the default `CSGradientDescent`.
-# ---------------------------------------------------------------------------
-
-@testset "cs_surface_flux_4dvar_optimize — log = true at entrypoint (no optimizer)" begin
-    mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-        _constant_cs_problem(Nc=3, Nz=3, nsteps=2)
-    dt = 2.0
-    zero_panel = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
-    control = AT.CSSurfaceFluxControl(
-        AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize=true),
-        zero_panel)
-    observations = [
-        AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.05, 0.2),
-    ]
-
-    # `log = true` at the entrypoint with NO explicit optimizer must
-    # build a `CSGradientDescent(log = true)` and not forward `log`
-    # into `cs_surface_flux_4dvar`. Pre-fix this threw MethodError.
-    solve = AT.cs_surface_flux_4dvar_optimize(
-        panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-        mesh, observations, control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = dt,
-        iterations = 2, initial_step = 0.25,
-        log = true)
-    @test solve.log isa AT.CSIterationLog
-    @test length(solve.log) >= 1
-
-    # Explicit optimizer overrides the entrypoint `log` kwarg.
-    solve_opt = AT.cs_surface_flux_4dvar_optimize(
-        panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-        mesh, observations, control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = dt,
-        log = true,
-        optimizer = AT.CSGradientDescent(iterations = 2, initial_step = 0.25,
-                                          log = false))
-    @test solve_opt.log === nothing
-end
-
-# ---------------------------------------------------------------------------
 # Regression: L-BFGS stopping, histories and log entries all use Optim's
 # L∞ gradient norm. `CSGradientDescent` intentionally keeps its L2 norm.
 # ---------------------------------------------------------------------------

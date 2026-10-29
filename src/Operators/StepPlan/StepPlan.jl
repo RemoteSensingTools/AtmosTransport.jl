@@ -25,7 +25,7 @@ module StepPlans
 
 using ...SectionTimer
 using ...Architectures: copy_arrays!
-using ...State: CellState, CubedSphereState, ConstantField, eachtracer, ntracers
+using ...State: CellState, CubedSphereState, ConstantField, ntracers
 using ...Grids: AtmosGrid, CubedSphereMesh
 import ..apply!
 import ..AbstractStepRecorder, ..NoStepRecorder,
@@ -466,11 +466,12 @@ function _reset_air_mass_preserve_vmr!(state::CellState, new_air_mass, _mesh)
     old_air_mass = state.air_mass
     FT = eltype(old_air_mass)
     floor_m = eps(FT)
-    for (_name, rm) in eachtracer(state)
-        @. rm = ifelse(old_air_mass > floor_m,
-                       rm / old_air_mass * new_air_mass,
-                       zero(FT))
-    end
+    # One broadcast over the packed tracer array: the air masses broadcast
+    # along its trailing tracer axis.
+    raw = state.tracers_raw
+    @. raw = ifelse(old_air_mass > floor_m,
+                    raw / old_air_mass * new_air_mass,
+                    zero(FT))
     copyto!(old_air_mass, new_air_mass)
     return state
 end
@@ -485,12 +486,10 @@ function _reset_air_mass_preserve_vmr!(state::CubedSphereState,
         old_p = state.air_mass[p]
         new_p = new_air_mass[p]
         raw_p = state.tracers_raw[p]
-        for idx in 1:length(state.tracer_names)
-            rm = selectdim(raw_p, ndims(raw_p), idx)
-            @. rm = ifelse(old_p > floor_m,
-                           rm / old_p * new_p,
-                           zero(FT))
-        end
+        # One broadcast per panel over all tracers (trailing axis).
+        @. raw_p = ifelse(old_p > floor_m,
+                          raw_p / old_p * new_p,
+                          zero(FT))
     end
     # One queued launch for the six panels (each panel's rescaling above read
     # only its own old air mass); see `copy_arrays!`.
@@ -542,7 +541,6 @@ function _cs_advection_workspace_for(scheme::LinRoodPPMScheme,
                                      binary_cfl_check::AbstractBinaryCFLCheck = NoBinaryCFLCheck())
     _reject_binary_cfl_check(binary_cfl_check, scheme)
     return CSLinRoodAdvectionWorkspace(grid.horizontal, state.air_mass[1];
-                                       n_tracers = ntracers(state),
                                        column_scratch = needs_column_scratch(scheme))
 end
 

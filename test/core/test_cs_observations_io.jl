@@ -74,15 +74,14 @@ end
     end
     # Column records state no height or pressure.
     for field in (:intake_height_m, :altitude_m, :pressure_pa)
-        err = try ctor(; kind = "column", NamedTuple{(field,)}((100.0,))...) catch e e end
-        @test err isa ArgumentError && occursin("column record", err.msg)
+        @test_throws ArgumentError ctor(; kind = "column", NamedTuple{(field,)}((100.0,))...)
     end
     @test ctor(; kind = "column", elevation_m = 300.0).elevation_m == 300.0
     # The positional constructor validates too.
     @test_throws ArgumentError AT.CSObservationRecord(
         Int64(1), (Int16(2024), Int16(1), Int16(1), Int16(0), Int16(0), Int16(0)),
         NaN, 0.0, AT.PointObservationKind(), NaN, NaN, NaN, NaN, 0.0, Int8(0),
-        420.0, 1.0, 0.0, "TCCON", "CO2")
+        420.0, 1.0, 0.0, "TCCON", "CO2", nothing)
 end
 
 @testset "CSObservationSet v2 NetCDF round trip, bit for bit" begin

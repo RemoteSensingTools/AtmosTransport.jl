@@ -317,20 +317,6 @@ function _start_daily_output!(output::RunSnapshotOutput, spec::RuntimeOutputSpec
     return nothing
 end
 
-_flush_daily_output!(::SingleOutputFile, timer, spec, frames, grid;
-                     mass_basis, date_label, day_index) = nothing
-
-function _flush_daily_output!(partition::DailyOutputFiles, timer, spec, frames, grid;
-                              mass_basis, date_label, day_index)
-    isempty(frames) && return nothing
-    written = _write_output_frames!(timer, spec, partition, frames, grid;
-                                    mass_basis = mass_basis,
-                                    date_label = date_label,
-                                    day_index = day_index)
-    empty!(frames)
-    return written
-end
-
 _flush_single_output!(::DailyOutputFiles, timer, spec, frames, grid;
                       mass_basis) = nothing
 

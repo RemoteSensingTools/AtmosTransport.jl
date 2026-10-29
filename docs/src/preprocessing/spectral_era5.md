@@ -287,8 +287,9 @@ For each of the day's 24 hourly windows:
     - All three converge to the same current dry-basis tolerance and
       pass the per-cell write-time replay gate (`replay_tolerance(FT)`).
 
-6. **Write + replay gate** — `verify_storage_continuity_*!` re-runs the
-   forward stepper on the just-written window and checks every cell,
+6. **Write + replay gate** — the topology contract checks the balanced
+   window before it is written. It compares the flux-implied endpoint
+   with the stored forward endpoint in every cell,
    `|m_evolved − m_stored_{n+1}| ≤ replay_tolerance(FT) · (|m_n| +
    |m_stored_{n+1}| + 2 n Σ_faces |F|)` (`1e-12` for Float64, `1e-5` for
    Float32). Failures throw rather than letting the bad binary land. The gate

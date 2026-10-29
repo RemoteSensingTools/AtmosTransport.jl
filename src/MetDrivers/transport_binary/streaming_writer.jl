@@ -37,9 +37,7 @@ function _streaming_section_shapes(window, payload_sections::Vector{Symbol})
 end
 
 function _validate_streaming_window(writer::StreamingTransportBinaryWriter, window)
-    base_sections = :am in writer.payload_sections ?
-        Symbol[:m, :am, :bm, :cm, :ps] :
-        Symbol[:m, :hflux, :cm, :ps]
+    base_sections = Symbol[:m, :hflux, :cm, :ps]
     actual_sections = _transport_push_optional_sections!(base_sections, window)
     actual_sections == writer.payload_sections || throw(ArgumentError(
         "transport-binary window payload sections $(actual_sections) do not match " *

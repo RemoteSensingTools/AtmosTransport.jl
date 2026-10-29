@@ -184,6 +184,3 @@ function _plan_stage_count(plan::StepPlan, steps::_ResolvedSchedule, ::Type{T}) 
     end
     return total
 end
-
-# Internal name of the estimate.
-_tape_byte_estimate(args...; kwargs...) = cs_tape_byte_estimate(args...; kwargs...)

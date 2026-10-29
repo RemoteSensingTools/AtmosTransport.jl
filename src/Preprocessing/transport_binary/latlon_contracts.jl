@@ -88,205 +88,13 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
 end
 
 """
-    verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, ::Type{FT};
-                                  write_replay_on = true)
-
-Write-time replay gate for structured LL storage.
-Iterates every window k and asserts
-
-    m[k] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[k+1]    (k < Nt)
-    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ last_hour_next.m   (k == Nt, if available)
-    m[Nt] − 2·steps·(∇·am + ∇·bm + ∂_k cm) ≈ m[Nt]              (otherwise zero-tendency fallback)
-
-cell by cell, to within `replay_tolerance(FT)` of the summed magnitudes of
-the budget's terms (see `verify_window_continuity`). Errors loudly with a
-per-window diagnostic if the contract is violated — this was the gate that
-would have caught the dry-basis Δb×pit closure bug before it reached the
-runtime.
-
-`write_replay_on = false` (`[numerics] write_replay_check = false`) skips it,
-for diagnostic runs.
-"""
-function verify_storage_continuity_ll!(storage::WindowStorage{FT},
-                                        last_hour_next,
-                                        steps_per_window::Int,
-                                        ::Type{FT};
-                                        write_replay_on::Bool = true) where FT
-    if !write_replay_on
-        @info "  Write-time replay gate SKIPPED ([numerics] write_replay_check = false)"
-        return nothing
-    end
-    Nt = length(storage.all_m)
-    Nt == 0 && return nothing
-    tol_rel = replay_tolerance(FT)
-    scratch = ReplayScratch(size(storage.all_m[1]))
-    layout = structured_replay_layout()
-    run_replay_gate(Nt; tol_rel=tol_rel,
-                    summary_label="  Write-time replay gate",
-                    failure_prefix="Write-time replay gate") do k
-        m_next = if k < Nt
-            storage.all_m[k + 1]
-        elseif last_hour_next !== nothing
-            last_hour_next.m
-        else
-            storage.all_m[k]
-        end
-        verify_window_continuity(layout, scratch,
-                                 storage.all_m[k],
-                                 storage.all_cm[k],
-                                 m_next,
-                                 steps_per_window,
-                                 storage.all_am[k],
-                                 storage.all_bm[k])
-    end
-    return nothing
-end
-
-"""
-    verify_storage_contract_ll!(storage, last_hour_next, contract; write_replay_on = true)
-
-Run the typed LL window contract across balanced per-day storage. This is the
-P2a production bridge: the legacy `apply_poisson_balance!` loop still owns the
-numerics, but the post-balance write gate now uses `LatLonContract`'s typed
-policy and accumulator state.
-
-With `write_replay_on = false` (`[numerics] write_replay_check = false`) only
-the replay gate is skipped; the positivity scan still runs so diagnostic
-binaries cannot silently bypass the runtime CFL contract.
-"""
-function verify_storage_contract_ll!(storage::WindowStorage{FT},
-                                      last_hour_next,
-                                      contract;
-                                      write_replay_on::Bool = true) where FT
-    Nt = length(storage.all_m)
-    Nt == 0 && return contract
-
-    write_replay_on ||
-        @info "  Write-time replay gate SKIPPED ([numerics] write_replay_check = false)"
-
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_win = 0
-    worst_idx = (0, 0, 0)
-
-    for win_idx in 1:Nt
-        m_next = if win_idx < Nt
-            storage.all_m[win_idx + 1]
-        elseif last_hour_next !== nothing
-            last_hour_next.m
-        else
-            storage.all_m[win_idx]
-        end
-
-        if write_replay_on
-            diag = verify_window!((m_cur = storage.all_m[win_idx],
-                                   am = storage.all_am[win_idx],
-                                   bm = storage.all_bm[win_idx],
-                                   cm = storage.all_cm[win_idx],
-                                   m_next = m_next),
-                                  contract, win_idx)
-            if diag.replay.max_rel_err > worst_rel
-                worst_rel = diag.replay.max_rel_err
-                worst_abs = diag.replay.max_abs_err
-                worst_win = win_idx
-                worst_idx = diag.replay.worst_idx
-            end
-            update_accumulator!(contract, diag.positivity, win_idx)
-        else
-            positivity = verify_substep_positivity_ll!(storage.all_m[win_idx],
-                                                        storage.all_am[win_idx],
-                                                        storage.all_bm[win_idx],
-                                                        storage.all_cm[win_idx];
-                                                        cfl_limit = contract.positivity_cfl_limit,
-                                                        m_next)
-            update_accumulator!(contract, positivity, win_idx)
-        end
-    end
-
-    if write_replay_on
-        @info @sprintf("  Write-time LL replay gate: max rel=%.3e abs=%.3e win=%d cell=%s",
-                       worst_rel, worst_abs, worst_win, worst_idx)
-    end
-
-    return contract
-end
-
-"""
-    apply_poisson_balance!(storage, last_hour_next, steps_per_window, contract=nothing;
+    apply_poisson_balance!(storage, last_hour_next, steps_schedule, contract, substep_policy;
                            write_replay_on=true, weights=MassWeightedColumn())
 
-Close each stored window against its forward mass endpoint.
-
-This applies the column Poisson balance (`balance_column_mass_fluxes!`, the
-correction spread by the column `weights`), then diagnoses the vertical mass
-flux from the explicit endpoint mass tendency, folding the column residual into
-the same levels. This keeps the ERA layer winds anchored to the spectral U/V
-fields while satisfying the zero top/bottom `cm` replay contract.
-
-`write_replay_on = false` (`[numerics] write_replay_check = false`) skips the
-write-time replay gate; the typed contract's positivity gate still runs.
+Balance each LL window against its forward mass endpoint, diagnose explicit-dm
+vertical closure, and apply the replay and positivity contract. Fixed schedules
+also supply one step count per window.
 """
-function apply_poisson_balance!(storage::WindowStorage{FT},
-                                last_hour_next,
-                                steps_per_window::Int,
-                                contract = nothing;
-                                write_replay_on::Bool = true,
-                                weights::AbstractColumnWeights = MassWeightedColumn()) where FT
-    Nx, Ny, Nz = size(storage.all_m[1])
-    dm_dt_buf = Array{FT}(undef, Nx, Ny, Nz)
-    div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
-    replay_layout = structured_replay_layout()
-
-    poisson_ws = LLPoissonWorkspace(Nx, Ny)
-    @info "  Applying column mass-balance correction; diagnosing cm from endpoint mass tendency..."
-
-    worst_column_pre = 0.0
-    worst_column_post = 0.0
-    worst_column_delta = 0.0
-    for win_idx in eachindex(storage.all_m)
-        fill_window_mass_tendency!(dm_dt_buf, storage, last_hour_next, win_idx, steps_per_window)
-        col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
-                                               storage.all_bm[win_idx],
-                                               storage.all_m[win_idx],
-                                               dm_dt_buf, poisson_ws; weights)
-        worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
-        worst_column_post = max(worst_column_post, col_diag.max_post_residual)
-        worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)
-        # Dry-basis fix (2026-04-22): use explicit-dm closure, not
-        # the hybrid Δb×pit one. The Δb×pit closure assumes
-        # dm[k] = dB[k] × Σ_k dm[k], which holds under moist hybrid coords
-        # but is violated by ~27% under dry basis because qv[k] varies with
-        # level. That mismatch caused the 0.75% day-boundary air_mass jump
-        # observed on F64 probe; see plan39_reconnect.md memory entry.
-        recompute_cm_from_dm_target!(replay_layout, div_scratch,
-                                     storage.all_cm[win_idx], storage.all_m[win_idx], dm_dt_buf,
-                                     storage.all_am[win_idx], storage.all_bm[win_idx];
-                                     residual_weight = ColumnResidualWeight(weights))
-        @views storage.all_cm[win_idx][:, :, 1] .= zero(FT)
-        @views storage.all_cm[win_idx][:, :, Nz + 1] .= zero(FT)
-    end
-
-    @info @sprintf("  Column balance summary: pre=%.3e post=%.3e max_face_delta=%.3e kg",
-                   worst_column_pre, worst_column_post, worst_column_delta)
-
-    # Write-time replay gate. Under the
-    # `:window_constant` contract, starting from `storage.all_m[k]` and
-    # integrating the stored fluxes (am, bm, cm) over one window via
-    # palindrome continuity must reproduce `storage.all_m[k+1]` (or
-    # `last_hour_next.m` for k=Nt). P2a routes production callers through the
-    # typed contract so the positivity gate and run-level policy are active
-    # too; the legacy helper remains for direct/debug callers.
-    if contract === nothing
-        verify_storage_continuity_ll!(storage, last_hour_next, steps_per_window, FT;
-                                      write_replay_on)
-    else
-        verify_storage_contract_ll!(storage, last_hour_next, contract; write_replay_on)
-    end
-    @info "  Continuity closure complete for $(length(storage.all_m)) windows"
-
-    return nothing
-end
-
 function apply_poisson_balance!(storage::WindowStorage{FT},
                                 last_hour_next,
                                 steps_schedule::Vector{Int},
@@ -749,10 +557,6 @@ mutable struct LatLonContract{FT} <:
     end
 end
 
-@inline contract_replay_tolerance(c::LatLonContract)   = c.replay_tol
-@inline contract_cfl_limit(c::LatLonContract)          = c.positivity_cfl_limit
-@inline contract_require_positivity(c::LatLonContract) = c.require_substep_positivity
-
 function verify_window!(window, contract::LatLonContract, win_idx::Integer)
     # Lazy-allocate `_replay_scratch` on first call (or reallocate on a
     # shape change). Subsequent calls reuse the buffer.
@@ -784,35 +588,4 @@ function summarize_status!(contract::LatLonContract;
                                             require_substep_positivity =
                                                 contract.require_substep_positivity,
                                             quarantine_path = quarantine_path)
-end
-
-"""
-    write_day_binary!(bin_path, header_json, storage, settings, merged, last_hour_next)
-
-Write the padded header and all window payloads for one daily binary file.
-Returns the total number of bytes written.
-"""
-function write_day_binary!(bin_path::String,
-                           header_json,
-                           storage::WindowStorage{FT},
-                           settings,
-                           merged::MergeWorkspace{FT},
-                           last_hour_next) where FT
-    @info "  Writing binary..."
-    bytes_written = Int64(0)
-
-    open(bin_path, "w") do io
-        hdr_buf = zeros(UInt8, HEADER_SIZE)
-        copyto!(hdr_buf, 1, Vector{UInt8}(header_json), 1, length(header_json))
-        write(io, hdr_buf)
-        bytes_written += HEADER_SIZE
-
-        for win_idx in eachindex(storage.all_m)
-            bytes_written += write_window!(io, win_idx, storage, settings, merged, last_hour_next)
-        end
-
-        flush(io)
-    end
-
-    return bytes_written
 end

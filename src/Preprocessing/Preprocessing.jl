@@ -85,7 +85,7 @@ using LinearAlgebra: mul!, dot
 using SparseArrays: SparseMatrixCSC, sparse
 using NCDatasets
 
-using ..ConfigChecks: config_bool as _config_bool, check_known_keys
+using ..ConfigChecks: config_bool as _config_bool, check_known_keys, parse_float_type
 using ..LogLevels: log_level, with_log_level
 using ..AtomicFiles: atomic_publish, open_atomic_staging,
                      commit_atomic_staging, abandon_atomic_staging
@@ -180,7 +180,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     load_surface_window!,
                     TransportBinaryContract, canonical_window_constant_contract,
                     validate_transport_contract!,
-                    recompute_cm_from_dm_target!, recompute_faceindexed_cm_from_dm_target!,
+                    recompute_cm_from_dm_target!,
                     verify_window_continuity, verify_window_continuity_ll,
                     verify_window_continuity_rg, verify_window_continuity_cs,
                     delta_semantics, flux_kind, flux_application_seconds,
@@ -212,11 +212,11 @@ export verify_write_replay_cs!,
 # auditors (focused tests, the binary inspector,
 # `scripts/diagnostics/*`) can gate a binary against the same contract
 # without duplicating logic.
-export mass_basis_symbol, mass_basis_from_symbol
+export mass_basis_from_symbol
 export AbstractWindowContract, AbstractWindowWorkspace, AbstractBinaryWriter
 export SubstepSchedulePolicy, clamp_substeps, initial_substeps,
        required_substeps, next_substeps, rescale_substep_amounts!,
-       contract_steps_for_window, set_contract_steps_schedule!
+       set_contract_steps_schedule!
 export ReadyWindow, PreverifiedWindow, PreprocessorRunCache
 export AbstractFluxFidelityEvidence, AbstractOmegaFidelityEvidence,
        WindDerivedFluxEvidence, NativeFluxEvidence, NoFluxFidelityEvidence,
@@ -224,7 +224,6 @@ export AbstractFluxFidelityEvidence, AbstractOmegaFidelityEvidence,
        FluxFidelitySample, OmegaFidelitySample, FidelitySampleMap,
        FluxFidelityAccumulator, verify_flux_fidelity!, flux_fidelity_header!
 export verify_window!, update_accumulator!, summarize_status!
-export contract_replay_tolerance, contract_cfl_limit, contract_require_positivity
 export allocate_window_workspace,
        ingest_window!, drain_ready_windows!, flush_final_windows!
 export LatLonBinaryWriter, ReducedGaussianBinaryWriter, CubedSphereBinaryWriter

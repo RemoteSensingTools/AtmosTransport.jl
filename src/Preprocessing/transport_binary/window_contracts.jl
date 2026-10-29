@@ -43,16 +43,6 @@
 # ===========================================================================
 
 """
-    mass_basis_symbol(::AbstractMassBasis) -> Symbol
-
-Map a basis singleton (`State.DryBasis` / `State.MoistBasis`) to the
-on-disk binary-header value (`:dry` / `:moist`). Inverse of
-`mass_basis_from_symbol`.
-"""
-@inline mass_basis_symbol(::DryBasis)   = :dry
-@inline mass_basis_symbol(::MoistBasis) = :moist
-
-"""
     mass_basis_from_symbol(s::Symbol) -> AbstractMassBasis
 
 Construct the matching basis singleton from a header `Symbol`. Throws
@@ -165,17 +155,40 @@ end
     return clamp_substeps(policy, source_steps)
 end
 
+# Largest substep count whose flux divisor `2 * steps` still fits in an `Int`.
+const _MAX_REPRESENTABLE_SUBSTEPS = typemax(Int) ÷ 2
+
+# `ceil(current * ratio / cfl_target)`, capped at `max_steps`. A NaN/Inf ratio
+# (NaN fluxes or non-positive mass) and a request above
+# `_MAX_REPRESENTABLE_SUBSTEPS` with an uncapped `max_steps` (default
+# `typemax(Int)`) throw: taking `typemax(Int)` steps would overflow `2 * steps`
+# and write sign-flipped fluxes.
+function _requested_substeps(current::Integer, ratio::Real,
+                             cfl_target::Real, max_steps::Integer)
+    r = Float64(ratio)
+    isfinite(r) || throw(ArgumentError(
+        "adaptive substepping got a non-finite positivity ratio ($(r)): the window " *
+        "has NaN/Inf fluxes or non-positive cell mass, which no substep count can fix. " *
+        "This holds with `require_substep_positivity = false` too; use " *
+        "`[numerics].substep_schedule = \"fixed\"` to write such a window for diagnosis."))
+    scaled = Float64(current) * r / Float64(cfl_target)
+    scaled <= min(Int(max_steps), _MAX_REPRESENTABLE_SUBSTEPS) && return ceil(Int, scaled)
+    max_steps <= _MAX_REPRESENTABLE_SUBSTEPS && return Int(max_steps)
+    throw(ArgumentError(
+        "adaptive substepping requests $(scaled) steps per window (positivity " *
+        "ratio $(r)), beyond the $(_MAX_REPRESENTABLE_SUBSTEPS) at which `2 * steps` " *
+        "overflows; check the window's fluxes or set a finite " *
+        "`[numerics].max_steps_per_window`."))
+end
+
 function required_substeps(policy::SubstepSchedulePolicy,
                            current_steps::Integer,
                            ratio::Real)
     current = Int(current_steps)
     current >= 1 ||
         throw(ArgumentError("current_steps must be positive; got $(current_steps)"))
-    required = if isfinite(Float64(ratio))
-        ceil(Int, Float64(current) * Float64(ratio) / policy.substep_cfl_target)
-    else
-        policy.max_steps_per_window
-    end
+    required = _requested_substeps(current, ratio, policy.substep_cfl_target,
+                                   policy.max_steps_per_window)
     return clamp_substeps(policy, max(required, current, 1))
 end
 
@@ -199,8 +212,6 @@ function rescale_substep_amounts!(arrays, old_steps::Integer, new_steps::Integer
     end
     return arrays
 end
-
-@inline contract_steps_for_window(c, _win::Integer) = c.steps_per_window
 
 function set_contract_steps_schedule!(contract, schedule::AbstractVector{<:Integer})
     steps = Int.(collect(schedule))
@@ -358,34 +369,6 @@ contract's policy demands and the worst exceeds the gate, deletes
 gate is violated but the policy is set to record-and-continue.
 """
 function summarize_status! end
-
-# Optional accessors that concrete contracts may override. The defaults
-# match `CubedSphereContract`'s current behavior so siblings can share
-# them when their policy matches; topology-specific contracts that need
-# different defaults register their own method.
-
-"""
-    contract_replay_tolerance(contract::AbstractWindowContract) -> Float64
-
-Relative replay tolerance the contract's `verify_window!` uses.
-Concrete contracts return their stored policy value.
-"""
-function contract_replay_tolerance end
-
-"""
-    contract_cfl_limit(contract::AbstractWindowContract) -> Float64
-
-Per-substep positivity CFL gate the contract enforces.
-"""
-function contract_cfl_limit end
-
-"""
-    contract_require_positivity(contract::AbstractWindowContract) -> Bool
-
-Whether `summarize_status!` errors (`true`) or warns (`false`) on a
-positivity violation. Closes-the-escape-hatch toggle from CS round-2.
-"""
-function contract_require_positivity end
 
 """
     allocate_window_workspace(args...; kwargs...)

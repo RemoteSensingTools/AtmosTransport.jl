@@ -124,7 +124,6 @@ BLDiffDiag{FT}() where {FT} = BLDiffDiag{FT}(0, 0, zero(FT))
 # TM5's `nint(0.5 + sign(0.5, a-b))`, which yields 1 at exact equality — the
 # only case where `>` would diverge from the Fortran.
 @inline _step(a::T, b::T) where {T <: AbstractFloat} = a >= b ? one(T) : zero(T)
-@inline _step(a, b) = a >= b ? 1 : 0
 
 """
     tm5_bldiff_kvh_column!(kvh, T, q, u, v, p_edge, z_edge,

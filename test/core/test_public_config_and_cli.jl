@@ -9,6 +9,29 @@ using AtmosTransport
 
 const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
+@testset "runtime preflight validates dates and halo values" begin
+    mktemp() do path, io
+        for date in ("2021-12-01", Date(2021, 12, 1))
+            cfg = Dict("input" => Dict("binary_paths" => [path], "start_date" => date))
+            @test first(validate_config(cfg))
+            @test AtmosTransport.Models.DrivenRunner._run_reference_time(cfg) == DateTime(2021, 12, 1)
+        end
+        for date in ("2021-13-01", "invalid", true, 20211201)
+            cfg = Dict("input" => Dict("binary_paths" => [path], "start_date" => date))
+            @test !first(validate_config(cfg))
+            @test_throws ArgumentError AtmosTransport.Models.DrivenRunner._run_reference_time(cfg)
+        end
+        for key in ("Hp", "halo_padding"), value in (true, "3", 2.5, 0, -1)
+            cfg = Dict("input" => Dict("binary_paths" => [path]), "run" => Dict(key => value))
+            @test !first(validate_config(cfg))
+        end
+        sf = Dict("kind" => "lmdz_co2", "month" => 12)
+        cfg = Dict("input" => Dict("binary_paths" => [path]),
+                   "tracers" => Dict("co2" => Dict("surface_flux" => sf)))
+        @test !first(validate_config(cfg))
+    end
+end
+
 function _script_module(name::Symbol, relative_path::AbstractString)
     mod = Module(name)
     Core.eval(mod, :(include(path::AbstractString) = Base.include($mod, path)))
