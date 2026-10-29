@@ -219,7 +219,7 @@ end
 # ---------------------------------------------------------------------------
 
 function _project_root()
-    # Walk up from src/Downloads/ to find Project.toml
+    # Walk up from src/Extras/Downloads/ to find Project.toml
     dir = @__DIR__
     for _ in 1:5
         if isfile(joinpath(dir, "Project.toml"))

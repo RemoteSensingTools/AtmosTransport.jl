@@ -15,6 +15,11 @@ Private = false
 
 ## Visualization
 
+`AtmosTransport.Visualization` lives in `src/Extras/Visualization/`. It is
+non-core, has no tests, and is intended to become its own package. The Makie
+extension stays in `ext/AtmosTransportMakieExt.jl`, Julia's extension location.
+Core modules never import Visualization.
+
 Field selection uses typed values. Pass `ColumnMean()`, `ColumnSum()`,
 `LevelSlice()`, or `SurfaceSlice()` as the `transform` keyword to `fieldview`;
 `LevelSlice()` also requires `level`. Pass `NativeUnit()` or `PPMUnit()` as

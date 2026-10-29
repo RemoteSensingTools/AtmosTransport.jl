@@ -1,12 +1,37 @@
 # Diagnostics
 
-Host-side runtime instrumentation.
+Core host-side run diagnostics and runtime instrumentation. Core never imports
+from `Extras`. Analysis re-exports the conservation API for existing scripts.
 
-The folder holds one file, [`SectionTimer.jl`](SectionTimer.jl), which defines
-the module `SectionTimer`. There is no `Diagnostics` module. Timing is off by
-default. `src/AtmosTransport.jl` loads it right after `Architectures`, before
-every other module, so any later module can `using ..SectionTimer`. It
-depends only on `Printf`.
+`Diagnostics.jl` defines `AtmosTransport.Diagnostics`, loaded after `Models`
+and before Extras. It depends on `Architectures`, `Parameters`, `Grids`,
+`MetDrivers`, `Operators`, `Output`, `GriddedIO`, `Models`, and the standard
+libraries Dates, Statistics and TOML plus NCDatasets. `RunContext` uses the
+runner's existing layout helpers without changing their logic.
+
+`SectionTimer.jl` remains the separate foundation module `SectionTimer`, loaded
+right after `Architectures`, before every other module. Timing is off by default;
+it depends only on `Printf`.
+
+## Conservation API
+
+- `RunContext`, `run_snapshot_paths`: reconstruct a run using the runtime's
+  config parsing, binary layouts, grid and output schedule.
+- `budget_closure`, `BudgetTolerance`, `TracerBudget`, `BudgetReport`,
+  `report_dict`: compare snapshot storage changes with runtime surface sources.
+- `carrier_drawdown`: check that a planned carrier covers cumulative uptake.
+- `AbstractExpectedEmission`, `RuntimeSurfaceSources`, `expected_storage_change`:
+  the expected-emission interface.
+- `daily_snapshot_series`: read and concatenate snapshots with their CF origin,
+  repeated boundary times and fill-value handling.
+- `drift_statistics`, `twin_relative_difference`: conservation and precision
+  comparisons of global mass totals.
+
+Used by diagnostic scripts through `AtmosTransport.Analysis` re-exports or
+`AtmosTransport.Diagnostics`. The tests `test_analysis_budget_closure.jl`,
+`test_analysis_snapshot_series.jl`, `test_analysis_mass_totals.jl` and
+`test_diagnostics_mass_balance.jl` retain the core conservation checks.
+There are no forward/adjoint mirrors here.
 
 ## Entry Points
 
@@ -29,7 +54,12 @@ All in [`SectionTimer.jl`](SectionTimer.jl):
 
 ## File Map
 
-- [`SectionTimer.jl`](SectionTimer.jl): the whole module
+- [`SectionTimer.jl`](SectionTimer.jl): the foundation timing module
+- [`Diagnostics.jl`](Diagnostics.jl): conservation module, imports and exports
+- [`run_context.jl`](run_context.jl): runtime layout and snapshot paths
+- [`budget_closure.jl`](budget_closure.jl): budget checks and carrier drawdown
+- [`snapshot_series.jl`](snapshot_series.jl): snapshot series and NetCDF helpers
+- [`mass_totals.jl`](mass_totals.jl): global-total drift and twin-run comparisons
 
 ## How A Run Uses It
 

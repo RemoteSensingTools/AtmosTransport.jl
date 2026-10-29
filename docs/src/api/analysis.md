@@ -10,6 +10,15 @@ write.
 The names are exported from `AtmosTransport.Analysis`
 (`using AtmosTransport.Analysis`), not from the top level.
 
+The non-core implementation is in `src/Extras/Analysis/` and has no tests.
+Mass-budget checks remain core in `src/Diagnostics/`: `RunContext`,
+`budget_closure`, `carrier_drawdown`, their budget types and expected-emission
+interface, `daily_snapshot_series`, `drift_statistics`, and
+`twin_relative_difference`. These names are exported by
+`AtmosTransport.Diagnostics` and re-exported by `AtmosTransport.Analysis` for
+existing scripts. Core never imports Extras, and Extras use only public core
+names. Each Extras folder is intended to become its own package.
+
 Conventions shared by every function:
 
 - arrays are read in NCDatasets order, for example `(Xdim, Ydim, nf, time)`
@@ -82,7 +91,7 @@ JSON report (`report_dict`) and exits 1 when the gated level fails. Another
 way to compute ``E`` plugs in as a subtype of `AbstractExpectedEmission`.
 
 ```@autodocs
-Modules = [AtmosTransport.Analysis]
+Modules = [AtmosTransport.Analysis, AtmosTransport.Diagnostics]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

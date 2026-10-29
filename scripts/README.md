@@ -256,7 +256,7 @@ commit that contains the file; recover it with `git show <commit>:<path>`.
 
 | Path | Replaced by | Last commit |
 |---|---|---|
-| `test/diagnostics/test_trendy_hovmoller.py` | `test/core/test_analysis_decomposition.jl` (`Analysis.seasonal_trend_decomposition`, `Analysis.skill_metrics`) | `a5df02ae` |
+| `test/diagnostics/test_trendy_hovmoller.py` | `src/Extras/Analysis/decomposition.jl` and `skill.jl` (`Analysis.seasonal_trend_decomposition`, `Analysis.skill_metrics`; non-core, no tests) | `a5df02ae` |
 | `scripts/diagnostics/check_trendy_npp_rh_run.py` | `scripts/diagnostics/tracer_budget_closure.jl series <run.toml>` (`Analysis.budget_closure`); `scripts/run_trendy_npp_rh_campaign.py` calls it | `a5df02ae` |
 | `scripts/diagnostics/catrine_true_mass_balance_gc.py` | `scripts/diagnostics/catrine_true_mass_balance.jl --model geoschem` (`Analysis.GEOSChemCATRINEArchive`, `Analysis.global_totals`) | `a5df02ae` |
 | `scripts/diagnostics/float32_conservation_attribution.py` | `scripts/diagnostics/float32_conservation_attribution.jl` (`write-configs`, `budget`; `Analysis.drift_statistics`, `Analysis.twin_relative_difference`) | `a5df02ae` |

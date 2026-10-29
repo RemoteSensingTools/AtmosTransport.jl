@@ -22,6 +22,7 @@ export autodetect_gpu_architecture, is_gpu, ensure_runtime!, array_adapter
 export architecture_label, device_name, backend_name, synchronize_architecture!
 export array_adapter_for, assert_residency!, assert_float_type!
 export reclaim_backend_pool!, _kahan_add
+export _neumaier_sum
 export HostMemoryModel, DiscreteHostMemory, UnifiedHostMemory, host_memory_model,
        host_mapped_vector
 export launch!
@@ -915,6 +916,8 @@ end
     _neumaier_sum(f, ks, T) -> (s, c)
 
 Compensated sum of `f(k)` over `ks` in precision `T`; the total is `s + c`.
+This exported helper is shared with non-core analysis; the historical name is
+retained. Iteration order is the order of `ks`.
 """
 @inline function _neumaier_sum(f, ks, ::Type{T}) where T
     s = c = zero(T)

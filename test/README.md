@@ -13,6 +13,14 @@ include other tiers.
 | **Golden** | [`golden/`](golden/) | By hand, before committing a refactor | End-to-end preprocessing and runtime cases compared bit for bit with a recorded reference (`golden/run_goldens.jl`); needs the group's data and a GPU. Not run by `runtests.jl`. |
 | **Python** | [`diagnostics/`](diagnostics/) | By hand: `python3 test/diagnostics/test_transcom_partition.py` | `unittest` of the land-weight normalization in `scripts/preprocessing/prepare_transcom_c30.py` (3 cases). Not run by `runtests.jl` or CI. The Python flux port plan ([`docs/memos/2026-10-10_python_flux_port_design.md`](../docs/memos/2026-10-10_python_flux_port_design.md), step P7) ports it to `core/test_surface_flux_regions.jl` and deletes it with the script. |
 
+Visualization, Analysis post-processing, DataDownloads and the Makie extension
+are non-core (`src/Extras/`, plus `ext/AtmosTransportMakieExt.jl`) and have no
+tests. The `extras` topic has an empty `files` list to map those paths without
+selecting core tests. Module-folder globs cover both sides of a source move,
+so deleted old paths do not trigger the full-suite fallback; moved budget
+helpers still select core diagnostics. The `diagnostics` topic keeps the core mass-budget,
+snapshot-reader, mass-drift and decay-closure tests in `src/Diagnostics/`.
+
 ## Usage
 
 For direct `--project=test` invocations, prepare the test environment from the

@@ -173,7 +173,7 @@ the project's own configs use historically.
   products (`GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.*.nc4` and
   `GEOS.fp.asm.inst_1hr_ctm_c0720_v72.*.nc4`).
 - `config/downloads/geosfp_c720.toml` — the **native C720**
-  cubed-sphere download descriptor; the **`src/Downloads/sources/geosfp.jl`**
+  cubed-sphere download descriptor; the **`src/Extras/Downloads/sources/geosfp.jl`**
   downloader pulls over HTTPS from the public GEOS-Chem S3 archive into a
   local directory.
 

@@ -41,7 +41,8 @@ Geometry and topology decisions come from
 - `Architectures.jl` — unified CPU/vendor-specific GPU execution policies,
   kernel launching (`launch!`) and point operations (`AbstractPointOp`,
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
-  `copy_arrays!`: a set of device copies as one queued launch)
+  `copy_arrays!`: a set of device copies as one queued launch). The exported
+  `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order to Extras
 - `ConfigChecks.jl` — strict TOML Booleans, the `float_type` parser and known-key checks with
   "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
 - `AtomicFiles.jl` — publish a file only when it is complete: a sibling
@@ -50,7 +51,8 @@ Geometry and topology decisions come from
   rename fails (Base only; used by the transport-binary writers, the spectral
   day cache and the regridder cache)
 - `Quantities/` — intensive/extensive/vector/flux traits used by regridding
-- `Diagnostics/` — lightweight runtime instrumentation
+- [`Diagnostics/`](Diagnostics/README.md) — core run mass budgets, conservation
+  diagnostics, snapshot series and lightweight runtime instrumentation
 - `Regridding/` — conservative regridding, weight application by quantity kind, nested cubed-sphere remapping and the CS block kernels
 - [`GriddedIO/`](GriddedIO/README.md) — conventions of native gridded input
   files: coordinate discovery by name, fill policies, lat-lon orientation,
@@ -58,11 +60,12 @@ Geometry and topology decisions come from
   inputs, flux-unit grammar; the `cs_native` and lat-lon surface-flux file
   schemas with their writers and the runtime's `cs_native` reader
 - `Preprocessing/` — transport-binary and met-data preparation
-- `Downloads/` — data acquisition helpers
-- `Visualization/` — topology-aware snapshot views and optional Makie methods
-- [`Analysis/`](Analysis/README.md) — post-run diagnostics numerics: snapshot
-  time series, equal-area band means, seasonal/interannual decompositions,
-  skill statistics and column profile tools (loaded after `Models`)
+- [`Extras/`](Extras/README.md) — non-core code, no tests, intended to become
+  separate packages; core must never import it. The module names stay the same:
+  [`Extras/Downloads/`](Extras/Downloads/README.md) (`DataDownloads`),
+  [`Extras/Visualization/`](Extras/Visualization/README.md) (`Visualization`),
+  [`Extras/Analysis/`](Extras/Analysis/README.md) (`Analysis`, also re-exporting
+  the core conservation API). The optional Makie extension stays in `ext/`.
 - `Tape/` — checkpoint schedules and device/pinned-host/mmap tape storage
 - `Adjoints/` — reverse operators and objective seeding
 - `Footprint/` — forward-record/reverse-loop footprint workflows included by

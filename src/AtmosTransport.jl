@@ -257,22 +257,25 @@ using .GriddedIO
 include("Preprocessing/Preprocessing.jl")
 using .Preprocessing
 
-# ---- Topology-aware snapshot visualization data layer ----
-include("Visualization/Visualization.jl")
-using .Visualization
-
 # ---- Minimal runtime/model layer ----
 include("Models/Models.jl")
 using .Models
 
+# ---- Core run diagnostics (mass budgets and conservation) ----
+include("Diagnostics/Diagnostics.jl")
+
+# ---- Non-core topology-aware snapshot visualization data layer ----
+include("Extras/Visualization/Visualization.jl")
+using .Visualization
+
 # ---- Post-run analysis numerics (band means, decompositions, skill statistics) ----
 # Numerics for the diagnostic command lines in scripts/diagnostics/. Reachable as
 # `AtmosTransport.Analysis`; its names are not re-exported at the top level.
-include("Analysis/Analysis.jl")
+include("Extras/Analysis/Analysis.jl")
 using .Analysis
 
 # ---- Download pipeline (TOML-driven met/emissions data download) ----
-include("Downloads/Downloads.jl")
+include("Extras/Downloads/Downloads.jl")
 using .DataDownloads
 
 # ---- Curated top-level API ----

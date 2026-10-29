@@ -26,6 +26,8 @@ make that decision possible.
   [`ReducedGaussianMesh.jl`](ReducedGaussianMesh.jl)
 - Cubed-sphere mesh definitions and panel conventions:
   [`CubedSphereMesh.jl`](CubedSphereMesh.jl)
+  The exported `_default_cs_definition(convention)` returns the convention's
+  standard definition for consumers such as the non-core snapshot reader.
 - Cubed-sphere panel connectivity:
   [`PanelConnectivity.jl`](PanelConnectivity.jl)
 - Vertical coordinate:

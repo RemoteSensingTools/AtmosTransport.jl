@@ -1,7 +1,6 @@
 """
-The global-total and twin-run numerics of `AtmosTransport.Analysis`:
-`drift_statistics` and `twin_relative_difference` (`src/Analysis/mass_totals.jl`)
-and `weighted_difference_stats` (`src/Analysis/skill.jl`).
+The global-total and twin-run numerics of `AtmosTransport.Diagnostics`:
+`drift_statistics` and `twin_relative_difference` (`src/Diagnostics/mass_totals.jl`).
 
 Asserts:
 - `drift_statistics`: drift and increment statistics against a direct
@@ -14,16 +13,11 @@ Asserts:
   bitwise the Python `f32_minus_f64` expression for positive, negative and
   zero starts (pinned values too); NaN where the reference is zero; errors,
   including non-finite totals;
-- `weighted_difference_stats`: mean and RMS by hand, the difference formed per
-  cell (Float32 against Float64), compensated sums (a cancellation a plain sum
-  gets wrong), NaN cells left out with the weights renormalised, the
-  all-missing and zero-weight cases, weight checks, and agreement with the
-  NumPy expression of `compare_float32_float64_runs.py` (pinned, ≤ 1e-14).
 """
 
 using Test
 using Statistics: mean, std
-using AtmosTransport.Analysis: drift_statistics, twin_relative_difference, weighted_difference_stats
+using AtmosTransport.Diagnostics: drift_statistics, twin_relative_difference
 
 relerr(a, b) = abs(a - b) / abs(b)
 
@@ -96,52 +90,4 @@ end
     @test_throws ArgumentError twin_relative_difference(Float64[], Float64[])
     @test_throws ArgumentError twin_relative_difference([NaN, 2.0], [1.0, 2.0])   # e.g. a fill value
     @test_throws ArgumentError twin_relative_difference([1.0, 2.0], [1.0, Inf])
-end
-
-@testset "weighted_difference_stats" begin
-    x = [1.0 2.0; 3.0 4.0]
-    y = [0.5 2.0; 3.0 5.0]
-    w = [1.0 1.0; 1.0 2.0]
-    s = weighted_difference_stats(x, y, w)
-    d = x .- y
-    @test s.n == 4
-    @test s.mean ≈ sum(w .* d) / sum(w) rtol = 1e-15
-    @test s.rms ≈ sqrt(sum(w .* d .^ 2) / sum(w)) rtol = 1e-15
-
-    # The difference is formed per cell in Float64.
-    f = weighted_difference_stats(Float32[0.1], [0.1], [3.0])
-    @test f.mean == Float64(0.1f0) - 0.1
-    @test f.rms == abs(Float64(0.1f0) - 0.1)
-
-    # Compensated sums: 2.5e15 + 0.25 rounds back to 2.5e15 in a plain sum.
-    big = weighted_difference_stats([1e16, 1.0, -1e16, 1.0], zeros(4), ones(4))
-    @test big.mean == 0.5
-    @test sum(0.25 .* [1e16, 1.0, -1e16, 1.0]) != 0.5
-
-    # NaN cells are left out and the weights renormalised over the rest.
-    xn = [1.0, NaN, 3.0, 4.0]
-    yn = [0.0, 0.0, NaN, 1.0]
-    wn = [1.0, -5.0, 2.0, 3.0]                    # negative weights only where a value is NaN
-    n = weighted_difference_stats(xn, yn, wn)
-    @test n.n == 2
-    @test n.mean ≈ (1.0 * 1 + 3.0 * 3) / 4 rtol = 1e-15
-    @test n.rms ≈ sqrt((1.0 * 1 + 3.0 * 9) / 4) rtol = 1e-15
-    none = weighted_difference_stats([NaN, 1.0], [0.0, Inf], [1.0, 1.0])
-    @test none.n == 0 && isnan(none.mean) && isnan(none.rms)
-    zero_w = weighted_difference_stats([1.0, 2.0], [0.0, 0.0], [0.0, 0.0])
-    @test zero_w.n == 2 && isnan(zero_w.mean) && isnan(zero_w.rms)
-
-    @test_throws ArgumentError weighted_difference_stats([1.0, 2.0], [0.0, 0.0], [1.0, -1.0])
-    @test_throws ArgumentError weighted_difference_stats([1.0, 2.0], [0.0, 0.0], [1.0, NaN])
-    @test_throws DimensionMismatch weighted_difference_stats([1.0, 2.0], [0.0], [1.0, 1.0])
-
-    # The NumPy expression of compare_float32_float64_runs.py on a Float32 and
-    # a Float64 field (w = area / area.sum(), d = (x - y) * 1e6, sum(w * d) and
-    # sqrt(sum(w * d * d))), pinned; the scale is applied after the sums here.
-    area = [1.0 2.0 3.0; 4.0 5.0 6.5]
-    x32 = Float32[400.1e-6 400.2e-6 399.9e-6; 401.0e-6 400.0e-6 399.0e-6]
-    y64 = [400.0e-6 400.25e-6 399.95e-6; 401.05e-6 399.98e-6 399.01e-6]
-    p = weighted_difference_stats(x32, y64, area)
-    @test relerr(p.mean * 1e6, -0.014653283381871794) <= 1e-14
-    @test relerr(p.rms * 1e6, 0.040434043195172534) <= 1e-14
 end

@@ -391,7 +391,7 @@ files = [
 paths = [
     "src/Models/**",
     "src/Operators/StepPlan/**",
-    "src/Diagnostics/**",
+    "src/Diagnostics/SectionTimer.jl",
     "src/LogLevels.jl",
     "scripts/run_transport.jl",
 ]
@@ -430,24 +430,19 @@ paths = [
     "schemas/observation_sites.schema.json",
 ]
 
-[topics.analysis_visualization]
-description = "Post-run analysis (bands, budgets, decomposition, GEOS-Chem archives, mass totals, snapshot series), Float32/Float64 attribution, visualization and the diagnostic scripts built on them"
+[topics.diagnostics]
+description = "Core run diagnostics: mass budgets, decay closure, mass totals and snapshot series"
 files = [
-    "core/test_analysis_bands_stats.jl",
     "core/test_analysis_budget_closure.jl",
-    "core/test_analysis_decomposition.jl",
-    "core/test_analysis_geoschem_archive.jl",
+    "core/test_diagnostics_mass_balance.jl",
     "core/test_analysis_mass_totals.jl",
     "core/test_analysis_snapshot_series.jl",
-    "core/test_float32_float64_diagnostics.jl",
-    "core/test_visualization_snapshots.jl",
 ]
 paths = [
-    "src/Analysis/**",
-    "src/Visualization/**",
-    "ext/AtmosTransportMakieExt.jl",
+    "src/Diagnostics/Diagnostics.jl",
+    # **/ also matches the old location when --changed sees a source move.
+    "src/**/{run_context,budget_closure,snapshot_series,mass_totals}.jl",
     "scripts/diagnostics/**",
-    "scripts/visualization/**",
 ]
 
 [topics.adjoint_footprint]
@@ -517,18 +512,6 @@ paths = [
     "test/helpers/cs_observation_columns.jl",
 ]
 
-[topics.downloads]
-description = "Data downloads: configuration, logging, source URLs"
-files = [
-    "core/test_download_logging.jl",
-    "core/test_download_source_urls.jl",
-]
-paths = [
-    "src/Downloads/**",
-    "scripts/downloads/**",
-    "config/downloads/**",
-]
-
 [topics.regridding]
 description = "Conservative regridding: weights, conservation, transposes, serialization, nested cubed spheres, the identity regridder and the weight cache"
 files = [
@@ -551,4 +534,18 @@ paths = [
     "test/golden/**",
     "benchmarking/**",
     "scripts/benchmarks/**",
+]
+
+# Non-core code is retained for a future package split; owner rule: no tests.
+[topics.extras]
+description = "Non-core Visualization, Analysis post-processing and DataDownloads (no tests)"
+files = []
+paths = [
+    "src/Extras/**",
+    # Match both sides of a git mv, including the deleted source folders.
+    "src/**/{Analysis,Visualization,Downloads}/**",
+    "ext/AtmosTransportMakieExt.jl",
+    "scripts/visualization/**",
+    "scripts/downloads/**",
+    "config/downloads/**",
 ]

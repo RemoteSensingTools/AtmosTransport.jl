@@ -1,5 +1,7 @@
 # Visualization
 
+Non-core; no tests. See [`../README.md`](../README.md) for the Extras rules.
+
 Makie-free data layer for AtmosTransport NetCDF snapshots. It opens a
 snapshot, reads one horizontal field per time in the topology the snapshot
 stores (reduced-Gaussian snapshots are already lon-lat rasters), and rasterizes
@@ -7,11 +9,11 @@ it to lon-lat.
 
 The plotting functions here are stubs that throw until a Makie backend is
 loaded. Their real methods live in
-[`../../ext/AtmosTransportMakieExt.jl`](../../ext/AtmosTransportMakieExt.jl),
+[`../../../ext/AtmosTransportMakieExt.jl`](../../../ext/AtmosTransportMakieExt.jl),
 which loads when `Makie` is present (`[extensions]` in `Project.toml`).
 
-`src/AtmosTransport.jl` loads this folder after `Preprocessing` and before
-`Models`. It imports from `Grids` (`LatLonMesh`, `CubedSphereMesh`, panel
+`src/AtmosTransport.jl` loads this folder after core `Models` and
+`Diagnostics`, before `Analysis`. It imports from `Grids` (`LatLonMesh`, `CubedSphereMesh`, panel
 conventions), `Regridding` (`build_regridder`, `apply_regridder!`), and
 `Parameters` (`IFS_EARTH_RADIUS`). `open_snapshot`, `fieldview`, `mapplot`,
 and `movie` are exported at the top level.
@@ -61,7 +63,7 @@ All in [`Visualization.jl`](Visualization.jl):
   snapshot topology types, `SnapshotDataset`, `HorizontalField`, and
   `RasterField`, plus the NetCDF readers, cubed-sphere column reductions,
   cubed-sphere to lon-lat rasterization, and the Makie stubs.
-- Related: [`../../ext/AtmosTransportMakieExt.jl`](../../ext/AtmosTransportMakieExt.jl)
+- Related: [`../../../ext/AtmosTransportMakieExt.jl`](../../../ext/AtmosTransportMakieExt.jl)
   has the Makie methods for every stub, including the CATRINE
   map-and-curtain comparison products
 
@@ -87,12 +89,6 @@ All in [`Visualization.jl`](Visualization.jl):
 - To plot, load a Makie backend such as CairoMakie before calling the
   plotting functions.
 
-## Tests And Docs
+## Docs
 
-- [`../../test/core/test_visualization_snapshots.jl`](../../test/core/test_visualization_snapshots.jl):
-  lat-lon and cubed-sphere field views and rasters
-- [`../../test/core/test_netcdf_stream.jl`](../../test/core/test_netcdf_stream.jl):
-  streamed snapshots read back through `open_snapshot` / `fieldview`
-- [`../../test/core/test_public_api_surface.jl`](../../test/core/test_public_api_surface.jl):
-  top-level exports
-- API page: [`../../docs/src/api/output_visualization.md`](../../docs/src/api/output_visualization.md)
+API page: [`../../../docs/src/api/output_visualization.md`](../../../docs/src/api/output_visualization.md).
