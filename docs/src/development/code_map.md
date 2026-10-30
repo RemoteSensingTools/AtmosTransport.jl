@@ -866,7 +866,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **88239 bytes / 25211.1 tokens**. Public names: **50**.
+Size: **88294 bytes / 25226.9 tokens**. Public names: **50**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -876,7 +876,7 @@ Files:
 
 - `Spectral.jl` (2200 bytes)
 - `discovery.jl` (1210 bytes)
-- `mass_support.jl` (37111 bytes)
+- `mass_support.jl` (37166 bytes)
 - `reduced_spectral_synthesis.jl` (6910 bytes)
 - `spectral_io.jl` (16656 bytes)
 - `spectral_synthesis.jl` (24152 bytes)

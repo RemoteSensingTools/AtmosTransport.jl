@@ -756,8 +756,8 @@ Uses the TM5/ERA5 hybrid-coordinate `Δb × pit` closure. `B_ifc` must
 contain exactly `Nz + 1` interface coefficients.
 
 For the post-Poisson-balance correctness-critical path, prefer
-[`recompute_cm_from_dm_target!`](@ref) which uses an explicit dm target
-and is basis-agnostic. This legacy function is retained for the pre-Poisson
+[`recompute_cm_from_dm_target!`](@ref AtmosTransport.MetDrivers.recompute_cm_from_dm_target!)
+which uses an explicit dm target and is basis-agnostic. This legacy function is retained for the pre-Poisson
 staging / on-the-fly synthesis code paths that only seed `merged.cm_merged`
 for the unused `:window_constant` delta payload.
 """
