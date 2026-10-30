@@ -23,6 +23,7 @@ include("AbstractOperators.jl")
 # Step recorders: the observation hooks the production step calls (no-ops for
 # `NoStepRecorder`) and the cubed-sphere adjoint records its tape through.
 include("StepRecording.jl")
+include("OperatorState.jl")
 
 # Diffusion is included BEFORE Advection so `strang_split_mt!`
 # (palindrome integration) can import

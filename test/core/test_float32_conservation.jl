@@ -61,10 +61,10 @@ end
         end
         A[n, n] += leak
         pivots = zeros(Int, n)
-        TM5._tm5_lu!(A, pivots, n)
+        TM5.TM5.TM5._tm5_lu!(A, pivots, n)
         q = FT(4) .* (1 .+ rand(rng, FT, n, 1))
         q0 = copy(q)
-        carry = TM5._tm5_conserving_solve_tracer!(q, A, pivots, n, 1, 1, false)
+        carry = TM5.TM5.TM5._tm5_conserving_solve_tracer!(q, A, pivots, n, 1, 1, false)
         gap = sum(big, q) - sum(big, q0)
         if iszero(leak)
             @test abs(gap) <= eps(FT) * maximum(q)
@@ -120,9 +120,9 @@ end
     q0 = Float32[1f9 * exp(-(n - k) / 4f0) * (1 + rand(rng, Float32)) for k in 1:n, _ in 1:ncol]
     function convect(FT; keep_carry = true)
         B, q, pivots, carry = FT.(A), FT.(q0), zeros(Int, n), zeros(FT, ncol)
-        TM5._tm5_lu!(B, pivots, n)
+        TM5.TM5.TM5._tm5_lu!(B, pivots, n)
         for _ in 1:solves, c in 1:ncol
-            c′ = TM5._tm5_conserving_solve_tracer!(q, B, pivots, n, 1, c, false, carry[c])
+            c′ = TM5.TM5.TM5._tm5_conserving_solve_tracer!(q, B, pivots, n, 1, c, false, carry[c])
             keep_carry && (carry[c] = c′)
         end
         return q, carry
@@ -323,10 +323,10 @@ end
     end
     function convect(FT, cm; steps = calls)
         state = CellState(FT.(m0); A = FT.(q0[:, :, :, 1]), B = FT.(q0[:, :, :, 2]))
-        ws = TM5.CMFMCWorkspace(state.air_mass)
+        ws = TM5.CMFMC.CMFMCWorkspace(state.air_mass)
         forcing = ConvectionForcing(FT.(cm), nothing, nothing)
         for _ in 1:steps
-            TM5.apply_convection!(state.tracers_raw, state.air_mass, forcing, TM5.CMFMCConvection(),
+            TM5.apply_convection!(state.tracers_raw, state.air_mass, forcing, TM5.CMFMC.CMFMCConvection(),
                                   FT(900), ws, cmfmc_grid(FT))
         end
         return state.tracers_raw, ws.ledger_carry[]

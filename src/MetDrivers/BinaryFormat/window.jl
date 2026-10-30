@@ -87,7 +87,6 @@ mass_basis(::TransportWindow{B}) where {B} = B()
 has_humidity_endpoints(window::TransportWindow) =
     window.qv_start !== nothing && window.qv_end !== nothing
 has_flux_delta(window::TransportWindow) = window.deltas !== nothing
-has_convection_forcing(window::TransportWindow) = window.convection !== nothing
 
 function TransportWindow(air_mass, surface_pressure,
                          fluxes::AbstractFaceFluxState{B};

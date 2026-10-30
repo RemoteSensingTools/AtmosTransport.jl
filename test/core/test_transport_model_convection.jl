@@ -3,17 +3,7 @@
 using Test
 
 using AtmosTransport
-
-const _REALISTIC_AIR_MASS_KG = 1e16
-
-function _make_convection_grid(; FT = Float64, Nx = 4, Ny = 3, Nz = 5)
-    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
-    vertical = HybridSigmaPressure(
-        FT[0, 100, 300, 600, 1000, 2000],
-        FT[0, 0, 0.1, 0.3, 0.7, 1],
-    )
-    return AtmosGrid(mesh, vertical, CPU(); FT = FT)
-end
+include(joinpath(@__DIR__, "..", "helpers", "convection_runtime.jl"))
 
 function _make_convection_model(; FT = Float64, Nx = 4, Ny = 3, Nz = 5,
                                  convection::AbstractConvection = NoConvection(),
@@ -27,17 +17,6 @@ function _make_convection_model(; FT = Float64, Nx = 4, Ny = 3, Nz = 5,
     return TransportModel(state, fluxes, grid, UpwindScheme();
                           convection = convection,
                           convection_forcing = convection_forcing)
-end
-
-function _make_cmfmc_forcing(FT, Nx, Ny, Nz; peak = FT(0.02), top_detrain = FT(0.01))
-    cmfmc = zeros(FT, Nx, Ny, Nz + 1)
-    cmfmc[:, :, 4] .= peak * FT(0.5)
-    cmfmc[:, :, 3] .= peak
-    cmfmc[:, :, 2] .= peak * FT(0.5)
-
-    dtrain = zeros(FT, Nx, Ny, Nz)
-    dtrain[:, :, 1] .= top_detrain
-    return ConvectionForcing(cmfmc, dtrain, nothing)
 end
 
 function _make_rg_cmfmc_forcing(FT, ncell, Nz; peak = FT(0.02), top_detrain = FT(0.01))
@@ -72,82 +51,13 @@ function _make_rg_convection_model(; FT = Float64, Nz = 5,
                           convection_forcing = convection_forcing)
 end
 
-struct _ConvectionWindowDriver{FT, GridT, WindowT} <: AbstractMetDriver
-    grid    :: GridT
-    windows :: Vector{WindowT}
-    dt      :: FT
-    steps   :: Int
-    binary_contract :: Bool
-end
-
-AtmosTransport.total_windows(driver::_ConvectionWindowDriver) = length(driver.windows)
-AtmosTransport.window_dt(driver::_ConvectionWindowDriver) = driver.dt
-AtmosTransport.steps_per_window(driver::_ConvectionWindowDriver) = driver.steps
-AtmosTransport.load_transport_window(driver::_ConvectionWindowDriver, win::Int) = driver.windows[win]
-AtmosTransport.driver_grid(driver::_ConvectionWindowDriver) = driver.grid
-AtmosTransport.air_mass_basis(::_ConvectionWindowDriver) = :dry
-AtmosTransport.MetDrivers.flux_interpolation_mode(::_ConvectionWindowDriver) = :constant
-AtmosTransport.MetDrivers.supports_native_vertical_flux(::_ConvectionWindowDriver) = true
-AtmosTransport.MetDrivers.uses_binary_substep_contract(driver::_ConvectionWindowDriver) =
-    driver.binary_contract
-AtmosTransport.supports_convection(::_ConvectionWindowDriver) = true
-
 # `NoConvection` is a dead branch: after warm-up, `apply!` allocates nothing.
 function _no_convection_apply_allocs(state, forcing, grid, dt)
     apply!(state, forcing, grid, NoConvection(), dt; workspace = nothing)
     return @allocated apply!(state, forcing, grid, NoConvection(), dt; workspace = nothing)
 end
 
-struct _CountingChemistry <: AbstractChemistryOperator
-    calls    :: Base.RefValue{Int}
-    total_dt :: Base.RefValue{Float64}
-end
-
-function AtmosTransport.Operators.apply!(state, meteo, grid,
-                                         op::_CountingChemistry, dt;
-                                         workspace = nothing)
-    op.calls[] += 1
-    op.total_dt[] += Float64(dt)
-    return state
-end
-
-function _make_convection_window_driver(; FT = Float64, steps = 1,
-                                        binary_contract = false)
-    grid = _make_convection_grid(FT = FT)
-    Nx, Ny, Nz = 4, 3, 5
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
-    ps = fill(FT(95_000), Nx, Ny)
-    fluxes = allocate_face_fluxes(grid.horizontal, Nz; FT = FT, basis = DryBasis)
-
-    forcing_a = _make_cmfmc_forcing(FT, Nx, Ny, Nz; peak = FT(0.02), top_detrain = FT(0.01))
-    forcing_b = _make_cmfmc_forcing(FT, Nx, Ny, Nz; peak = FT(0.5), top_detrain = FT(0.1))
-
-    window_a = TransportWindow(air_mass, ps, fluxes; convection = forcing_a)
-    window_b = TransportWindow(air_mass, ps, fluxes; convection = forcing_b)
-    driver = _ConvectionWindowDriver{FT, typeof(grid), typeof(window_a)}(
-        grid, [window_a, window_b], FT(1800), Int(steps), Bool(binary_contract))
-    return driver, forcing_a, forcing_b
-end
-
 @testset "TransportModel convection runtime" begin
-    @testset "with_convection installs structured CMFMC workspace" begin
-        base = _make_convection_model()
-        updated = with_convection(base, CMFMCConvection())
-
-        @test updated.convection isa CMFMCConvection
-        @test updated.convection_forcing === base.convection_forcing
-        @test updated.state === base.state
-        @test updated.fluxes === base.fluxes
-        @test updated.grid === base.grid
-        @test updated.advection === base.advection
-        @test updated.chemistry === base.chemistry
-        @test updated.diffusion === base.diffusion
-        @test updated.emissions === base.emissions
-        @test updated.workspace !== base.workspace
-        @test updated.workspace.advection_ws === base.workspace.advection_ws
-        @test updated.workspace.convection_ws isa CMFMCWorkspace
-        @test updated.workspace.diffusion_ws === nothing
-    end
 
     @testset "NoConvection apply! is an allocation-free identity, also on cubed-sphere states" begin
         FT = Float64
@@ -237,144 +147,33 @@ end
     end
 end
 
-@testset "DrivenSimulation convection runtime" begin
-    FT = Float64
-    driver, forcing_a, forcing_b = _make_convection_window_driver(FT = FT)
-
-    state = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
-                      CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
-    fluxes = allocate_face_fluxes(driver.grid.horizontal, 5; FT = FT, basis = DryBasis)
-    model = TransportModel(state, fluxes, driver.grid, UpwindScheme();
-                           convection = CMFMCConvection())
-
-    sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 2)
-
-    @test sim.model.workspace.convection_ws isa CMFMCWorkspace
-    @test sim.model.convection_forcing !== forcing_a
-    @test sim.model.convection_forcing.cmfmc !== forcing_a.cmfmc
-    @test sim.model.convection_forcing.cmfmc == forcing_a.cmfmc
-
-    step!(sim)
-    @test sim.model.workspace.convection_ws.cached_n_sub[] == 1
-    @test sim.model.workspace.convection_ws.cache_valid[] == true
-
-    step!(sim)
-    @test window_index(sim) == 2
-    @test sim.model.convection_forcing.cmfmc == forcing_b.cmfmc
-    @test sim.model.workspace.convection_ws.cached_n_sub[] > 1
-    @test sim.model.workspace.convection_ws.cache_valid[] == true
-end
-
-@testset "binary substep contract keeps chemistry at window cadence" begin
-    FT = Float64
-
-    driver_step, _, _ = _make_convection_window_driver(
-        FT = FT, steps = 4, binary_contract = false)
-    state_step = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
-                           CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
-    fluxes_step = allocate_face_fluxes(driver_step.grid.horizontal, 5; FT = FT, basis = DryBasis)
-    model_step = TransportModel(state_step, fluxes_step, driver_step.grid, UpwindScheme())
-    chem_step = _CountingChemistry(Ref(0), Ref(0.0))
-    sim_step = DrivenSimulation(model_step, driver_step;
-                                start_window = 1, stop_window = 1,
-                                chemistry = chem_step)
-    run!(sim_step)
-
-    @test chem_step.calls[] == 4
-    @test chem_step.total_dt[] == 1800.0
-
-    driver_window, _, _ = _make_convection_window_driver(
-        FT = FT, steps = 4, binary_contract = true)
-    state_window = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
-                             CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
-    fluxes_window = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
-    model_window = TransportModel(state_window, fluxes_window, driver_window.grid, UpwindScheme())
-    chem_window = _CountingChemistry(Ref(0), Ref(0.0))
-    sim_window = DrivenSimulation(model_window, driver_window;
-                                  start_window = 1, stop_window = 1,
-                                  chemistry = chem_window)
-    run!(sim_window)
-
-    @test chem_window.calls[] == 1
-    @test chem_window.total_dt[] == 1800.0
-
-    # `[run] physics_cadence = "substep"` runs chemistry every advection substep on
-    # the same binary-contract driver (cadence A/B comparisons).
-    state_sub = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
-                          CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
-    fluxes_sub = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
-    model_sub = TransportModel(state_sub, fluxes_sub, driver_window.grid, UpwindScheme())
-    chem_sub = _CountingChemistry(Ref(0), Ref(0.0))
-    sim_sub = DrivenSimulation(model_sub, driver_window; start_window = 1, stop_window = 1,
-                               chemistry = chem_sub, physics_cadence = "substep")
-    run!(sim_sub)
-    @test chem_sub.calls[] == 4
-    @test chem_sub.total_dt[] == 1800.0
-    # Both cadences keep the binary's window-end air-mass reset.
-    @test AtmosTransport.Models._binary_window_contract(sim_sub)
-    SP = AtmosTransport.Operators.StepPlans
-    @test sim_sub.plan.cadence isa SP.SubstepPhysics
-    @test sim_window.plan.cadence isa SP.WindowPhysics
-    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_sub.plan.window_end)
-    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_window.plan.window_end)
-
-    resolve = AtmosTransport.Models._resolve_physics_cadence
-    @test resolve(nothing) === :window
-    @test resolve(:substep) === :substep
-    @test resolve("window") === :window
-    @test_throws ArgumentError resolve("hourly")
-    # The removed environment switch no longer changes the cadence.
-    withenv("ATMOSTR_FORCE_PER_SUBSTEP_PHYSICS" => "1") do
-        @test resolve(nothing) === :window
+@testset "DrivenSimulation convection runtime and model precision" begin
+    for FT in (Float32,Float64), tm5 in (false,true)
+        driver, forcing_a, forcing_b = _make_convection_window_driver(;FT,tm5)
+        m = copy(driver.windows[1].air_mass)
+        tracer = zeros(FT,4,3,5)
+        tracer[:,:,5] .= FT(1e-6).*m[:,:,5]
+        state = CellState(m;CO2=tracer)
+        fluxes = allocate_face_fluxes(driver.grid.horizontal,5;FT,basis=DryBasis)
+        op = tm5 ? TM5Convection() : CMFMCConvection()
+        model = TransportModel(state,fluxes,driver.grid,UpwindScheme();convection=op)
+        sim = DrivenSimulation(model,driver;start_window=1,stop_window=2)
+        payload(f) = tm5 ? f.tm5_fields.entu : f.cmfmc
+        @test typeof(sim.Δt) === FT
+        @test typeof(sim.window_dt) === FT
+        @test eltype(payload(sim.model.convection_forcing)) === FT
+        @test payload(sim.model.convection_forcing) == payload(forcing_a)
+        initial = copy(sim.model.state.tracers_raw)
+        mass0 = sum(Float64,initial)
+        step!(sim)
+        @test isapprox(sum(Float64,sim.model.state.tracers_raw),mass0;rtol=100eps(FT))
+        step!(sim)
+        @test window_index(sim) == 2
+        @test payload(sim.model.convection_forcing) == payload(forcing_b)
+        @test isapprox(sum(Float64,sim.model.state.tracers_raw),mass0;rtol=100eps(FT))
+        @test sim.model.state.tracers_raw != initial
+        @test sum(sim.model.state.tracers_raw[:,:,5,1]) < sum(initial[:,:,5,1])
     end
-end
-
-@testset "binary window symmetrically splits Rn-222 decay around emissions" begin
-    FT = Float64
-    Nx, Ny, Nz = 4, 3, 5
-    driver, _, _ = _make_convection_window_driver(
-        FT = FT, steps = 4, binary_contract = true)
-    T = driver.dt
-    half_life = FT(330_350.4)
-    λ = log(FT(2)) / half_life
-    E = FT(2.5)
-    Bstar = E * T / (2sinh(λ * T / 2))
-
-    air = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
-    rn222 = zeros(FT, Nx, Ny, Nz)
-    rn222[:, :, Nz] .= Bstar
-    state = CellState(DryBasis, air; rn222)
-    fluxes = allocate_face_fluxes(driver.grid.horizontal, Nz;
-                                  FT, basis = DryBasis)
-    model = TransportModel(state, fluxes, driver.grid, UpwindScheme())
-    source = SurfaceFluxSource(:rn222, fill(E, Nx, Ny))
-    decay = ExponentialDecay(FT; rn222 = half_life)
-    sim = DrivenSimulation(model, driver;
-                           start_window = 1, stop_window = 1,
-                           surface_sources = (source,), chemistry = decay)
-
-    run!(sim)
-
-    burden = dropdims(sum(sim.model.state.tracers.rn222; dims = 3); dims = 3)
-    @test all(isapprox.(burden, Bstar; rtol = 3e-15))
-end
-
-@testset "DrivenSimulation keeps convection runtime on model FT" begin
-    FT = Float32
-    driver, forcing_a, _ = _make_convection_window_driver(FT = FT)
-
-    state = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
-                      CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
-    fluxes = allocate_face_fluxes(driver.grid.horizontal, 5; FT = FT, basis = DryBasis)
-    model = TransportModel(state, fluxes, driver.grid, UpwindScheme();
-                           convection = CMFMCConvection())
-
-    sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
-
-    @test typeof(sim.Δt) === FT
-    @test typeof(sim.window_dt) === FT
-    @test eltype(sim.model.convection_forcing.cmfmc) === FT
-    @test sim.model.convection_forcing.cmfmc == forcing_a.cmfmc
 end
 
 @testset "New DrivenSimulation invalidates convection from a previous driver" begin

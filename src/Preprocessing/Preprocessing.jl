@@ -456,9 +456,8 @@ export plan_vertical, apply_vertical!
 # Exports for the CLI script and advanced users
 export build_target_geometry, target_summary
 export process_day, regrid_transport_binary, regrid_ll_binary_to_cs
-export ec2tm!
 export ec2tm_from_rates!, TM5CleanupStats
 export interface_specific_humidity, ecmwf_convection_to_basis!, tm5_convection_to_basis!
-export dz_hydrostatic_virtual!, dz_hydrostatic_constT!
+export dz_hydrostatic_virtual!
 
 end # module Preprocessing

@@ -64,3 +64,6 @@ it differentiates is the production step by construction.
   `window_end` stage) has not run yet.
 - Stages call the production operator entry points (`apply!`); a recorder
   only reads.
+
+The checkpoint-state generic interface lives in `../OperatorState.jl`;
+Convection owns its workspace snapshot methods in `../Convection/workspace_state.jl`.

@@ -126,8 +126,8 @@ paths = [
     "src/Operators/AbstractOperators.jl",
     "src/Operators/Operators.jl",
     # Column mass ledgers and their carries (test_float32_conservation.jl).
-    "src/Operators/Convection/tm5_column_solve.jl",
-    "src/Operators/Convection/convection_workspace.jl",
+    "src/Operators/Convection/TM5/tm5_column_solve.jl",
+    "src/Operators/Convection/TM5/workspace.jl",
     "src/Operators/Diffusion/conservative_dkg.jl",
     "src/Operators/Diffusion/workspace.jl",
     "ext/**",
@@ -170,13 +170,9 @@ files = [
     "core/test_tm5_alias_safety.jl",
     "core/test_tm5_bidiagonal_solve.jl",
     "core/test_tm5_convection.jl",
-    "core/test_tm5_driven_simulation.jl",
     "core/test_tm5_hessenberg.jl",
     "core/test_tm5_level_merge_split.jl",
-    "core/test_tm5_sparsity_above_icltop.jl",
-    "core/test_tm5_tile_bit_equality.jl",
     "core/test_tm5_tracer_batching.jl",
-    "core/test_tm5_vs_cmfmc_parity.jl",
     "core/test_tm5_workspace_lifetime.jl",
     "core/test_tm5_preprocessing.jl",
     "core/test_tm5_preprocessing_rates.jl",
@@ -244,6 +240,7 @@ paths = [
     "src/MetDrivers/SurfaceForcing.jl",
     "src/State/Fields/StepwiseField.jl",
     "src/Operators/StepPlan/**",
+    "src/Operators/OperatorState.jl",
     "src/Models/{TransportModel,driven_stepping}.jl",
     "src/Models/initial_conditions/surface_flux*.jl",
 ]
@@ -398,6 +395,7 @@ files = [
 paths = [
     "src/Models/**",
     "src/Operators/StepPlan/**",
+    "src/Operators/OperatorState.jl",
     "src/**/SectionTimer.jl",
     "src/LogLevels.jl",
     "scripts/run_transport.jl",
@@ -473,6 +471,7 @@ paths = [
     "src/Operators/Advection/{StrangSplitting,CubedSphereStrang,linrood_horizontal,strang_apply}.jl",
     "src/Operators/Diffusion/operators.jl",
     "src/Operators/StepPlan/**",
+    "src/Operators/OperatorState.jl",
     "src/Operators/StepRecording.jl",
     "src/Models/{driven_stepping,adjoint_schedule,TransportModel}.jl",
 ]

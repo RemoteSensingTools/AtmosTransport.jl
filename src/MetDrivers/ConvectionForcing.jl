@@ -66,7 +66,6 @@ the initial value of `TransportModel.convection_forcing`;
 
 # See also
 
-- [`has_convection_forcing`](@ref) — capability probe.
 - [`copy_convection_forcing!`](@ref) — per-window refresh copy.
 - [`allocate_convection_forcing_like`](@ref) — sim-construction
   allocation.
@@ -103,23 +102,6 @@ ConvectionForcing() = ConvectionForcing(nothing, nothing, nothing)
 # =========================================================================
 # Capability probes
 # =========================================================================
-
-"""
-    has_convection_forcing(forcing::ConvectionForcing) -> Bool
-
-Whether `forcing` carries any non-nothing payload. Returns `false`
-for the all-nothing placeholder. Used by `_refresh_forcing!` as a
-gate so the copy path is skipped for models without an active
-convection operator.
-
-The window-level overload `has_convection_forcing(window) =
-window.convection !== nothing` is defined in `transport_binary/window.jl`
-alongside the window struct extensions.
-"""
-has_convection_forcing(forcing::ConvectionForcing) =
-    forcing.cmfmc !== nothing ||
-    forcing.dtrain !== nothing ||
-    forcing.tm5_fields !== nothing
 
 """
     _cap(f::ConvectionForcing) -> NTuple{4, Bool}
@@ -252,5 +234,5 @@ function Adapt.adapt_structure(to, f::ConvectionForcing)
     return ConvectionForcing(cmfmc, dtrain, tm5_fields, Adapt.adapt(to, f.cloud_base))
 end
 
-export ConvectionForcing, has_convection_forcing
+export ConvectionForcing
 export copy_convection_forcing!, allocate_convection_forcing_like

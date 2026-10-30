@@ -6,8 +6,7 @@ using ...Grids
 using ...State
 using ...Parameters
 import ...source_revision
-import ..MetDrivers: surface_pressure_basis, flux_kind, steps_per_window, steps_per_window_schedule,
-                     has_convection_forcing
+import ..MetDrivers: surface_pressure_basis, flux_kind, steps_per_window, steps_per_window_schedule
 
 using ...Grids: pack_panels!
 
@@ -51,7 +50,7 @@ export AbstractColumnClosureHeader, AbstractFidelityStatus, AbstractFluxFidelity
        TRANSPORT_BINARY_FORMAT_VERSION, TransportBinaryContract, TransportBinaryHeader, TransportWindow,
        WindRederivedFidelity, binary_capabilities, binary_dry_mass_target, binary_geometry,
        canonical_window_constant_contract, close_streaming_transport_binary!, grid_type,
-       has_convection_forcing, has_flux_delta, has_humidity_endpoints, horizontal_topology,
+       has_flux_delta, has_humidity_endpoints, horizontal_topology,
        inspect_binary, mass_basis, open_streaming_transport_binary,
        set_streaming_steps_per_window_schedule!, set_transport_header_steps_per_window_schedule!,
        surface_pressure_basis, validate_cs_writer_contract!, validate_transport_contract!,

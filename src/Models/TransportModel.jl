@@ -74,7 +74,6 @@ end
 _diffusion_workspace_for(::NoDiffusion, state) = nothing
 _diffusion_workspace_for(::AbstractDiffusion, state) = DiffusionWorkspace(state)
 
-_convection_workspace_for(::NoConvection, state, grid) = nothing
 
 # The cubed-sphere advection workspace of a scheme (`_cs_advection_workspace_for`)
 # is defined with the step plan (`Operators.StepPlans`), which the adjoint replay
@@ -84,87 +83,6 @@ _convection_workspace_for(::NoConvection, state, grid) = nothing
 _workspace_binary_cfl_check(ws::CSAdvectionWorkspace) = ws.binary_cfl_check
 _workspace_binary_cfl_check(ws) = NoBinaryCFLCheck()
 
-_cmfmc_cell_metrics(mesh::LatLonMesh) = cell_areas_by_latitude(mesh)
-_cmfmc_cell_metrics(mesh::ReducedGaussianMesh) = [cell_area(mesh, c) for c in 1:ncells(mesh)]
-_cmfmc_cell_metrics(mesh::CubedSphereMesh) = ntuple(_ -> mesh.cell_areas, 6)
-
-# CMFMCConvection — one CMFMCWorkspace per topology with cached
-# cell metrics the CFL scan needs.
-_convection_workspace_for(::CMFMCConvection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
-    CMFMCWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(::CMFMCConvection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
-    CMFMCWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(::CMFMCConvection,
-                          state::CubedSphereState{B},
-                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
-    CMFMCWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-
-# TM5Convection — one TM5Workspace per topology with cached cell
-# metrics. TM5's original matrix divides kg/m²/s convective fluxes
-# by layer mass per unit area; runtime state stores kg per cell, so
-# the kernels need cell areas just like the CMFMC path. The operator
-# also carries a `tile_workspace_gib::FT` budget; the `TM5Workspace`
-# constructor turns that into a tile
-# column count via `derive_tile_columns`, so the same code path
-# covers all three topologies.
-_convection_workspace_for(op::TM5Convection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
-    TM5Workspace(state.air_mass;
-                 tile_workspace_gib = op.tile_workspace_gib,
-                 defer_scratch = op.use_collab_lu,
-                 cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(op::TM5Convection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
-    TM5Workspace(state.air_mass;
-                 tile_workspace_gib = op.tile_workspace_gib,
-                 defer_scratch = op.use_collab_lu,
-                 cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(op::TM5Convection,
-                          state::CubedSphereState{B},
-                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
-    TM5Workspace(state.air_mass;
-                 tile_workspace_gib = op.tile_workspace_gib,
-                 defer_scratch = op.use_collab_lu,
-                 cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-
-# CMFMCMatrixConvection — derives (entu, detu) from GEOS (cmfmc, dtrain) and
-# routes through the same TM5 LU machinery. Workspace composes a TM5Workspace
-# with rate-cache slabs sized to mirror dtrain (one entry per layer center).
-_convection_workspace_for(op::CMFMCMatrixConvection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
-    CMFMCMatrixWorkspace(state.air_mass;
-                         tile_workspace_gib = op.inner.tile_workspace_gib,
-                         defer_scratch = op.inner.use_collab_lu,
-                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(op::CMFMCMatrixConvection,
-                          state::CellState{B, A, Raw},
-                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
-    CMFMCMatrixWorkspace(state.air_mass;
-                         tile_workspace_gib = op.inner.tile_workspace_gib,
-                         defer_scratch = op.inner.use_collab_lu,
-                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
-_convection_workspace_for(op::CMFMCMatrixConvection,
-                          state::CubedSphereState{B},
-                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
-    CMFMCMatrixWorkspace(state.air_mass;
-                         tile_workspace_gib = op.inner.tile_workspace_gib,
-                         defer_scratch = op.inner.use_collab_lu,
-                         cell_metrics = _cmfmc_cell_metrics(grid.horizontal),
-                         halo_width = grid.horizontal.Hp)
-
-# Fallback for future operators — keep LAST so the specific
-# methods above take precedence. Returns `nothing` so installing an
-# unknown operator on the model compiles; DrivenSimulation's
-# validator catches it at runtime with a clear error.
-_convection_workspace_for(::AbstractConvection, state, grid) = nothing
-
 function _with_convection_workspace(workspace::TransportModelWorkspace,
                                     convection_ws)
     return workspace.convection_ws === convection_ws ? workspace :
@@ -172,6 +90,7 @@ function _with_convection_workspace(workspace::TransportModelWorkspace,
                                    workspace.diffusion_ws;
                                    convection_ws)
 end
+
 
 struct TransportModel{StateT, FluxT, GridT, SchemeT, WorkspaceT,
                        ChemT, DiffT, EmT, ConvT, CF}
@@ -221,7 +140,7 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
-        convection_ws = _convection_workspace_for(convection, state, grid))
+        convection_ws = convection_workspace_for(convection, state, grid))
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -243,7 +162,7 @@ function TransportModel(state::CellState{B},
                         convection_forcing::ConvectionForcing = ConvectionForcing()) where {B <: AbstractMassBasis}
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
-        convection_ws = _convection_workspace_for(convection, state, grid))
+        convection_ws = convection_workspace_for(convection, state, grid))
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -285,7 +204,7 @@ function TransportModel(state::CubedSphereState{B},
                             "advection_workspace was built without it"))
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
-        convection_ws = _convection_workspace_for(convection, state, grid))
+        convection_ws = convection_workspace_for(convection, state, grid))
     return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
                           typeof(advection), typeof(workspace_model),
                           typeof(chemistry), typeof(diffusion), typeof(emissions),
@@ -356,7 +275,7 @@ without disturbing the advection workspace.
 """
 function with_convection(model::TransportModel, convection::AbstractConvection)
     workspace = _with_convection_workspace(
-        model.workspace, _convection_workspace_for(convection, model.state, model.grid))
+        model.workspace, convection_workspace_for(convection, model.state, model.grid))
     return _rebuild_model(model; workspace, convection)
 end
 

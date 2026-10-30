@@ -10,7 +10,7 @@ using AtmosTransport
     # Soft cap on top-level export count. Original threshold was 100; the
     # 2026-05 additions (`NoAdvection`, `CMFMCMatrixConvection`,
     # `AbstractConvection`, `ConvectionForcing`, `apply_convection!`,
-    # `has_convection_forcing`, `AbstractMetDriver`, `lonlat_to_panel_xy`)
+    # `AbstractMetDriver`, `lonlat_to_panel_xy`)
     # took the count to 107; the 2026-06 typed runtime-physics specs and
     # config-facing additions took it to 144. Bump to 160 to give breathing
     # room. Next API audit should bring it back down (good candidates: internal

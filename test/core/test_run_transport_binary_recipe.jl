@@ -4,7 +4,7 @@ using Test
 import NCDatasets: NCDataset, defDim, defVar
 
 using AtmosTransport
-using AtmosTransport.Operators.Convection: TM5Workspace
+using AtmosTransport.Operators.Convection.TM5: TM5Workspace
 
 const _RUNTIME_RECIPE_AIR_MASS = 1e16
 const _RUNTIME_RECIPE_JANUARY_SECONDS = 31 * 86400

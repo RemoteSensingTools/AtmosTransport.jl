@@ -4,13 +4,13 @@ const C = AtmosTransport.Operators.Convection
 const AD = AtmosTransport.Adjoints
 
 @testset "Bidiagonal eligibility follows active pivot history" begin
-    @test C._tm5_identity_pivots(Int32[-1,-1,3,4,5], 5, 3)
-    @test !C._tm5_identity_pivots(Int32[-1,-1,4,4,5], 5, 3)
+    @test C.TM5._tm5_identity_pivots(Int32[-1,-1,3,4,5], 5, 3)
+    @test !C.TM5._tm5_identity_pivots(Int32[-1,-1,4,4,5], 5, 3)
     A = Float64[0.01 2 3; 2 4 5; 0 6 7]
     pivots = zeros(Int,3)
-    C._tm5_hessenberg_lu!(A,pivots,3)
+    C.TM5._tm5_hessenberg_lu!(A,pivots,3)
     @test pivots[1] == 2
-    @test !C._tm5_identity_pivots(pivots,3,1)
+    @test !C.TM5._tm5_identity_pivots(pivots,3,1)
 end
 
 @testset "Bidiagonal RHS solves agree with general LU solves" begin
@@ -27,8 +27,8 @@ end
             k > lo && (A[k,k-1] = -rand(rng,FT))
         end
         lu, pivots = copy(A), fill(Int32(-1),n)
-        C._tm5_hessenberg_lu!(lu,pivots,n; icltop_eff=lo)
-        @test C._tm5_identity_pivots(pivots,n,lo)
+        C.TM5._tm5_hessenberg_lu!(lu,pivots,n; icltop_eff=lo)
+        @test C.TM5._tm5_identity_pivots(pivots,n,lo)
         @test all(iszero(lu[k,j]) for j in lo:n for k in (j+2):n)
         saved = copy(lu)
         bits = FT === Float32 ? UInt32 : UInt64
@@ -37,9 +37,9 @@ end
             rhs[:,1] .= 0 # Include zeros and a sparse tracer.
             rhs[n,1] = one(FT)
             reference = copy(rhs)
-            C._tm5_solve!(reference,lu,pivots,n,nt; icltop_eff=lo)
+            foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(reference, lu, pivots, n, max(Int(lo), 1), tracer), 1:nt)
             actual = copy(rhs)
-            C._tm5_solve_bidiagonal!(actual,lu,n,nt; icltop_eff=lo)
+            foreach(tracer -> C.TM5._tm5_solve_bidiagonal_tracer!(actual, lu, n, max(Int(lo), 1), tracer), 1:nt)
             @test reinterpret(bits,vec(actual)) == reinterpret(bits,vec(reference))
             @test actual[1:(lo-1),:] == rhs[1:(lo-1),:]
             @test norm(Float64.(A)*Float64.(actual)-Float64.(rhs)) /
@@ -48,7 +48,7 @@ end
             packed = zeros(FT,2,3,n,nt)
             column = view(packed,2,2,:,:)
             column .= rhs
-            C._tm5_solve_bidiagonal!(column,lu,n,nt; icltop_eff=lo)
+            foreach(tracer -> C.TM5._tm5_solve_bidiagonal_tracer!(column, lu, n, max(Int(lo), 1), tracer), 1:nt)
             @test column == reference
             # Shared-buffer batches, including the final partial batch.
             shared = zeros(FT,n,6)
@@ -56,19 +56,19 @@ end
                 count = min(6,nt-first+1)
                 shared[:,1:count] .= rhs[:,first:(first+count-1)]
                 for slot in 1:count
-                    C._tm5_solve_bidiagonal_tracer!(shared,lu,n,lo,slot)
+                    C.TM5._tm5_solve_bidiagonal_tracer!(shared,lu,n,lo,slot)
                 end
                 @test shared[:,1:count] == reference[:,first:(first+count-1)]
             end
         end
         x, y = randn(rng,FT,n), randn(rng,FT,n)
         general, fast = copy(x), copy(x)
-        AD._tm5_solve_vector!(general,lu,pivots,n; icltop_eff=lo)
-        AD._tm5_solve_vector_bidiagonal!(fast,lu,n; icltop_eff=lo)
+        C.TM5._tm5_solve_shared_tracer!(reshape(general,:,1),lu,pivots,n,lo,1)
+        C.TM5._tm5_solve_bidiagonal_tracer!(reshape(fast,:,1),lu,n,lo,1)
         @test reinterpret(bits,fast) == reinterpret(bits,general)
         general_adj, fast_adj = copy(y), copy(y)
-        AD._tm5_solve_vector_transpose!(general_adj,lu,pivots,n; icltop_eff=lo)
-        AD._tm5_solve_vector_transpose_bidiagonal!(fast_adj,lu,n; icltop_eff=lo)
+        C.TM5._tm5_solve_vector_transpose!(general_adj,lu,pivots,n; icltop_eff=lo)
+        C.TM5._tm5_solve_vector_transpose_bidiagonal!(fast_adj,lu,n; icltop_eff=lo)
         @test reinterpret(bits,fast_adj) == reinterpret(bits,general_adj)
         @test abs(dot(fast,y)-dot(x,fast_adj)) <
               100eps(FT)*max(norm(fast)*norm(y),norm(x)*norm(fast_adj))

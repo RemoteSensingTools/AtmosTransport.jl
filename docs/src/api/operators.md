@@ -24,7 +24,9 @@ Private = false
 ## Convection
 
 ```@autodocs
-Modules = [AtmosTransport.Operators.Convection]
+Modules = [AtmosTransport.Operators.Convection,
+           AtmosTransport.Operators.Convection.CMFMC,
+           AtmosTransport.Operators.Convection.TM5]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

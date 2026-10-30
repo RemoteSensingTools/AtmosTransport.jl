@@ -94,12 +94,12 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`DiffusionAdjoint.jl`](DiffusionAdjoint.jl) — input validation and launch wiring for
   CS diffusion; numerical Kz/Dkg transpose kernels live in Diffusion,
   plus input validation
-- [`ConvectionAdjoint.jl`](ConvectionAdjoint.jl) — TM5 LU solves and their
-  transposes, the CMFMC and TM5 adjoint column kernels, and the adjoint arms
-  for `NoConvection`, `CMFMCConvection` (with the recorded CFL sub-step
-  count), `TM5Convection`, and `CMFMCMatrixConvection`;
-  `_apply_cs_convection_forward!` (production `apply_convection!` on
-  single-tracer panels) serves the per-operator identity tests only
+- [`ConvectionAdjoint.jl`](ConvectionAdjoint.jl) — supported-variant checks,
+  workspace/forcing validation and tape dispatch. Numerical convection
+  transposes live beside their forward kernels in
+  [`../Operators/Convection/CMFMC/`](../Operators/Convection/CMFMC/README.md) and
+  [`../Operators/Convection/TM5/`](../Operators/Convection/TM5/README.md).
+
 - [`LinRoodTape.jl`](LinRoodTape.jl) — `_CSLinRoodHorizRecord` (built from
   the production `fv_tp_2d_cs!`'s recorder hooks) and
   `_apply_cs_linrood_horizontal_adjoint!`. The per-kernel Lin-Rood adjoints

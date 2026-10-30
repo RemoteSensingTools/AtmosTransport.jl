@@ -205,7 +205,7 @@ using .MetDrivers: AbstractMetDriver,
                    driver_grid, air_mass_basis, binary_mass_basis, has_humidity_endpoints,
                    interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!,
                    load_surface_window!,
-                   ConvectionForcing, has_convection_forcing,
+                   ConvectionForcing,
                    copy_convection_forcing!, allocate_convection_forcing_like,
                    PBLSurfaceForcing,
                    window_count, has_qv_endpoints, has_flux_delta, has_cmfmc,
@@ -324,7 +324,7 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace,
        AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase
-export ConvectionForcing, apply_convection!, has_convection_forcing
+export ConvectionForcing, apply_convection!
 export AbstractMetDriver, TransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
 export ConstantField

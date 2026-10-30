@@ -51,7 +51,7 @@ function check_tm5_ledger_carry(array_type; FT = Float32, calls = 30)
             q0 = [m[I, k] * profile(k, t) for I in CartesianIndices(cols), k in 1:Nz, t in 1:Nt]
             q, m_d = array_type(q0), array_type(m)
             forcing = ConvectionForcing(nothing, nothing, fields(map(array_type, rates(cols))))
-            ws = Adapt.adapt(array_type, LedgerConv.TM5Workspace(m; cell_metrics = metrics))
+            ws = Adapt.adapt(array_type, LedgerConv.TM5.TM5Workspace(m; cell_metrics = metrics))
             for _ in 1:calls
                 LedgerConv.apply_convection!(q, m_d, forcing, op, FT(900), ws, grid)
             end
@@ -73,7 +73,7 @@ function check_tm5_ledger_carry(array_type; FT = Float32, calls = 30)
         r = rates((Nc, Nc))
         forcing = ConvectionForcing(nothing, nothing,
                                     fields(ntuple(f -> ntuple(_ -> array_type(r[f]), 6), 4)))
-        ws = Adapt.adapt(array_type, LedgerConv.TM5Workspace(m; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6)))
+        ws = Adapt.adapt(array_type, LedgerConv.TM5.TM5Workspace(m; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6)))
         for _ in 1:calls
             LedgerConv.apply_convection!(q, m_d, forcing, op, FT(900), ws, grid)
         end

@@ -249,6 +249,8 @@ end
         # Open the binary back and confirm the header round-trips.
         reader = TransportBinaryReader(out_path; FT=FT_TEST)
         try
+            @test !(:cmfmc in reader.header.payload_sections)
+            @test !(:dtrain in reader.header.payload_sections)
             @test binary_geometry(reader) isa CubedSphereBinaryGeometry
             @test reader.header.geometry.Nc == NC
             @test reader.header.geometry.npanel == 6

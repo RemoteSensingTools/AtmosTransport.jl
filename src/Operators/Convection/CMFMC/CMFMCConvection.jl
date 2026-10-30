@@ -23,6 +23,30 @@
 # kernel mechanics) rather than "GCHP-faithful" (line-by-line parity).
 # ---------------------------------------------------------------------------
 
+
+# `clamp = true` opts into the GCHP positivity clamp (Q+DELQ<0 → DELQ=−Q) made
+# conservative by a post-update per-column rescale. The clamp absorbs the CFL
+# overshoot of strong convection so the scheme stays stable at FEW sub-steps (the
+# explicit flux-divergence form alone is CFL-limited and would need thousands);
+# the rescale restores the pre-convection column tracer mass exactly, so the
+# scheme remains conservative. The default `clamp = false` is the pure
+# (unclamped) conservative explicit scheme — exactly mass-conserving but
+# CFL-substep-limited.
+"""
+    CMFMCEdgeCloudBase()
+    ArchivedCloudBase()
+
+Where `CMFMCConvection` puts the convective cloud base, below which the
+column is mixed before the updraft starts. `CMFMCEdgeCloudBase` (default)
+takes the lowest layer with updraft inflow through its bottom edge.
+`ArchivedCloudBase` takes it from the met forcing (`forcing.cloud_base`):
+GEOS-Chem's lowest layer with convective rain production DQRCU > 0
+(`convection_mod.F90`, `DO_RAS_CLOUD_CONVECTION`). Cubed sphere only.
+"""
+abstract type AbstractCloudBase end
+struct CMFMCEdgeCloudBase <: AbstractCloudBase end
+struct ArchivedCloudBase <: AbstractCloudBase end
+
 """
     CMFMCConvection()
 
@@ -93,43 +117,11 @@ driver and applied column-locally on the halo-free panel interior.
 # Adjoint path
 
 With `clamp = false`, the forward operator is linear in tracer mixing ratio
-and its transposed two-pass kernel ships in `Adjoints/ConvectionAdjoint.jl`.
+and its transposed two-pass kernel ships in `adjoint_kernels.jl`.
 Adjoint-identity and end-to-end footprint finite-difference tests cover this
 default path. `clamp = true` is nonlinear; the footprint API rejects that
 variant until its branch decisions are taped and transposed. The four-term
 scavenging-restoring form remains a wet-deposition follow-up.
-"""
-# `clamp = true` opts into the GCHP positivity clamp (Q+DELQ<0 → DELQ=−Q) made
-# conservative by a post-update per-column rescale. The clamp absorbs the CFL
-# overshoot of strong convection so the scheme stays stable at FEW sub-steps (the
-# explicit flux-divergence form alone is CFL-limited and would need thousands);
-# the rescale restores the pre-convection column tracer mass exactly, so the
-# scheme remains conservative. The default `clamp = false` is the pure
-# (unclamped) conservative explicit scheme — exactly mass-conserving but
-# CFL-substep-limited.
-"""
-    CMFMCEdgeCloudBase()
-    ArchivedCloudBase()
-
-Where `CMFMCConvection` puts the convective cloud base, below which the
-column is mixed before the updraft starts. `CMFMCEdgeCloudBase` (default)
-takes the lowest layer with updraft inflow through its bottom edge.
-`ArchivedCloudBase` takes it from the met forcing (`forcing.cloud_base`):
-GEOS-Chem's lowest layer with convective rain production DQRCU > 0
-(`convection_mod.F90`, `DO_RAS_CLOUD_CONVECTION`). Cubed sphere only.
-"""
-abstract type AbstractCloudBase end
-struct CMFMCEdgeCloudBase <: AbstractCloudBase end
-struct ArchivedCloudBase <: AbstractCloudBase end
-
-"""
-    CMFMCConvection(; clamp=false, cloud_base=CMFMCEdgeCloudBase())
-
-Explicit, conservative convection driven by per-layer convective mass flux and
-detrainment from ConvectionForcing. Supported on lat-lon, reduced-Gaussian,
-and cubed-sphere states. Setting clamp=true applies the positivity correction
-and conservative column rescaling used for strong-CFL forcing. `cloud_base`
-selects the cloud-base rule (see [`AbstractCloudBase`](@ref)).
 """
 struct CMFMCConvection{CB <: AbstractCloudBase} <: AbstractConvection
     clamp      :: Bool

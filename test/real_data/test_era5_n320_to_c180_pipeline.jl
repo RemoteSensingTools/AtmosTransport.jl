@@ -143,3 +143,49 @@ end
     end
     end
 end
+
+using AtmosTransport.Preprocessing: ERA5N320Settings, open_era5_day, close_era5_day!, discover_era5_n320_source_grid, allocate_era5_n320_convection_fields, read_era5_n320_convection_window!
+
+@testset "Real N320 convection input" begin
+    real_root_env = get(ENV, "ATMOS_ERA5_N320_ROOT", "")
+    if !isempty(real_root_env) && isdir(real_root_env)
+        @testset "Real N320 convection smoke (2021-12-01 hour 6)" begin
+            settings = ERA5N320Settings(; root_dir = real_root_env,
+                                          include_convection = true)
+            handles = open_era5_day(settings, Date(2021, 12, 1))
+            try
+                @test handles.convection_path !== nothing
+
+                grid = discover_era5_n320_source_grid(handles.core_path; FT = Float64)
+                Nz = 137
+                f = allocate_era5_n320_convection_fields(grid, Nz)
+                read_era5_n320_convection_window!(f, handles, grid.mesh,
+                                                   Date(2021, 12, 1), 6)
+
+                # ERA5 convective mass fluxes are time-mean kg m⁻² s⁻¹.
+                # Updraft is non-negative; downdraft is mostly non-positive
+                # with small (~1e-6 kg m⁻² s⁻¹) positive noise from the
+                # forecast time-averaging — sign-flip bug would invert the
+                # dominant tail. Magnitudes peak near ~1 kg m⁻² s⁻¹ in the
+                # deepest convection.
+                @test all(f.udmf .>= -1e-12)
+                @test all(abs.(f.udmf) .<= 2.0)
+                @test all(abs.(f.ddmf) .<= 2.0)
+                @test minimum(f.ddmf) < -1e-4               # downdraft tail is genuinely negative
+                @test count(f.ddmf .> 1e-4) == 0            # no large positive outliers
+
+                # Detrainment rates are non-negative magnitudes.
+                @test all(f.udrf .>= -1e-12)
+                @test all(f.ddrf .>= -1e-12)
+                # Sanity: at least one cell has non-trivial convection at
+                # hour 6 UTC (deep tropics are convectively active).
+                @test maximum(f.udmf) > 1e-6
+            finally
+                close_era5_day!(handles)
+            end
+        end
+    else
+        @info "Skipping real N320 convection smoke (set ATMOS_ERA5_N320_ROOT to enable)."
+        @test_skip false
+    end
+end

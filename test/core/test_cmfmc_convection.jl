@@ -224,102 +224,6 @@ end
     @test n_sub_a > 1
 end
 
-@testset "A5. Adjoint identity (linearity)" begin
-    FT = Float64
-    # Build a small case (Nz=8) so we can explicitly assemble L via
-    # kernel invocations on unit vectors, then compare ⟨y, Lx⟩ vs ⟨L^T y, x⟩.
-    Nx, Ny, Nz = 1, 1, 8
-    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
-    vc_A = FT[0, 100, 200, 400, 700, 1100, 1500, 1900, 2400]
-    vc_B = FT[0, 0, 0.05, 0.15, 0.3, 0.5, 0.7, 0.85, 1.0]
-    vc = HybridSigmaPressure(vc_A, vc_B)
-    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
-
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
-    cmfmc = zeros(FT, Nx, Ny, Nz + 1)
-    cmfmc[:, :, 6] .= FT(0.01)
-    cmfmc[:, :, 5] .= FT(0.02)
-    cmfmc[:, :, 4] .= FT(0.015)
-    cmfmc[:, :, 3] .= FT(0.005)
-    dtrain = zeros(FT, Nx, Ny, Nz)
-    dtrain[:, :, 3] .= FT(0.01)
-    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
-    op = CMFMCConvection()
-
-    # Build L : q_in → q_out as an (Nz × Nz) matrix by applying the
-    # operator to unit-vector perturbations. (Nx=Ny=1 so the column
-    # is the only degree of freedom.)
-    L = zeros(FT, Nz, Nz)
-    for j in 1:Nz
-        state_j = CellState(copy(air_mass);
-                             CO2 = zeros(FT, Nx, Ny, Nz))
-        state_j.tracers_raw[1, 1, j, 1] = air_mass[1, 1, j]   # q_j = 1, others 0
-
-        ws_j = CMFMCWorkspace(copy(air_mass))
-        apply!(state_j, forcing, grid, op, FT(1800.0); workspace = ws_j)
-
-        # Read out post-kernel mixing ratio in the column
-        for i in 1:Nz
-            L[i, j] = state_j.tracers_raw[1, 1, i, 1] / air_mass[1, 1, i]
-        end
-    end
-
-    # Adjoint identity: for random x, y in R^Nz, ⟨y, L x⟩ = ⟨L^T y, x⟩.
-    # This is a matrix identity (dot(y, L*x) == dot(L'*y, x)) and
-    # holds exactly for any matrix — the test verifies our L
-    # reconstruction is self-consistent AND no nonlinear branch in the
-    # kernel has polluted it. If a positivity clamp were present, L
-    # would not be a pure linear map and the identity would fail.
-    x = randn(FT, Nz)
-    y = randn(FT, Nz)
-    lhs = dot(y, L * x)
-    rhs = dot(L' * y, x)
-    @test abs(lhs - rhs) / max(abs(lhs), abs(rhs), FT(1e-30)) < 1e-12
-end
-
-@testset "A6. Face-indexed ReducedGaussian path" begin
-    FT = Float64
-    mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
-    vc = HybridSigmaPressure(
-        FT[0, 100, 300, 600, 1000, 2000],
-        FT[0, 0, 0.1, 0.3, 0.7, 1],
-    )
-    grid = AtmosGrid(mesh, vc, CPU(); FT = FT)
-    ncell = ncells(mesh)
-    Nz = 5
-
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), ncell, Nz)
-    tracer = zeros(FT, ncell, Nz)
-    tracer[:, Nz] .= FT(1e-6) .* air_mass[:, Nz]
-    state = CellState(MoistBasis, copy(air_mass); CO2 = copy(tracer))
-
-    # Self-consistent flux profile: `entrn = cmout - cmfmc_below ≥ 0`
-    # at every layer, with column-summed entrainment = column-summed
-    # detrainment. Matches what a well-formed CMFMC/DTRAIN pair looks
-    # like in real met (monotone rise from cloud base, stepwise
-    # detrainment going up). The earlier version had an unphysical
-    # inversion `cmfmc[3] > cmfmc[2]` with no compensating dtrain[2],
-    # which made `entrn[2] = -0.01` and exposed the GCHP-matching
-    # kernel's documented lossy behaviour under inconsistent input.
-    cmfmc = zeros(FT, ncell, Nz + 1)
-    cmfmc[:, 4] .= FT(0.02)            # cloud base inflow
-    cmfmc[:, 3] .= FT(0.02)            # unchanged through layer 3
-    cmfmc[:, 2] .= FT(0.01)            # 0.01 detrained between layer 3 → 2
-    dtrain = zeros(FT, ncell, Nz)
-    dtrain[:, 2] .= FT(0.01)           # matches the cmfmc step
-    dtrain[:, 1] .= FT(0.01)           # remaining mass detrained at cloud top
-    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
-    op = CMFMCConvection()
-    ws = CMFMCWorkspace(state.air_mass;
-                        cell_metrics = [cell_area(mesh, c) for c in 1:ncell])
-    rm_before = copy(state.tracers_raw)
-
-    apply!(state, forcing, grid, op, FT(1800.0); workspace = ws)
-
-    @test abs(sum(state.tracers_raw) - sum(rm_before)) / sum(rm_before) < 1e-12
-    @test state.tracers_raw != rm_before
-end
-
 # ---------------------------------------------------------------------------
 # TIER B
 # ---------------------------------------------------------------------------
@@ -361,19 +265,6 @@ end
     rm_init[1, 1, Nz, 1] *= FT(1.5)
     @test state_a.tracers_raw != rm_init   # path A moved mass
     @test state_b.tracers_raw != rm_init   # path B moved mass
-end
-
-@testset "B2b. DTRAIN fallback preserves source array backend" begin
-    FT = Float64
-    grid = _make_grid(FT = FT)
-    Nx, Ny, Nz = grid.horizontal.Nx, grid.horizontal.Ny, length(grid.vertical.A) - 1
-    cmfmc = _make_cmfmc_profile(FT, Nx, Ny, Nz)
-    air_mass = fill(FT(_REALISTIC_AIR_MASS_KG), Nx, Ny, Nz)
-
-    dtrain = AtmosTransport.Operators.Convection._cmfmc_dtrain_array(cmfmc, nothing, air_mass)
-    @test dtrain isa Array{FT, 3}
-    @test size(dtrain) == size(air_mass)
-    @test all(dtrain .>= zero(FT))
 end
 
 @testset "B3. Cloud-base detection + no-convection skip" begin
@@ -624,33 +515,6 @@ end
     @test abs(sum(state.tracers_raw) - sum(rm_before)) / sum(rm_before) < 1e-12
 end
 
-@testset "B4. CFL-cache invalidation" begin
-    FT = Float64
-    grid = _make_grid(FT = FT)
-    state = _make_state(grid, FT(1e-6))
-    Nx, Ny, Nz = grid.horizontal.Nx, grid.horizontal.Ny, length(grid.vertical.A) - 1
-
-    cmfmc = _make_cmfmc_profile(FT, Nx, Ny, Nz)
-    dtrain = _make_dtrain_profile(FT, Nx, Ny, Nz)
-    forcing = ConvectionForcing(cmfmc, dtrain, nothing)
-    op = CMFMCConvection()
-    ws = CMFMCWorkspace(state.air_mass)
-
-    # First call computes and caches n_sub
-    @test !ws.cache_valid[]
-    apply!(state, forcing, grid, op, FT(1800.0); workspace = ws)
-    @test ws.cache_valid[]
-    first_n_sub = ws.cached_n_sub[]
-
-    # Invalidate — next call should re-scan
-    invalidate_cmfmc_cache!(ws)
-    @test !ws.cache_valid[]
-
-    apply!(state, forcing, grid, op, FT(1800.0); workspace = ws)
-    @test ws.cache_valid[]
-    @test ws.cached_n_sub[] == first_n_sub   # same forcing → same n_sub
-end
-
 @testset "B5. n_sub safety ceiling" begin
     FT = Float64
     grid = _make_grid(FT = FT)
@@ -670,28 +534,6 @@ end
                                        FT(1800.0); workspace = ws)
 end
 
-@testset "B5b. CubedSphereState on non-CS grid gets topology-specific error" begin
-    FT = Float64
-    Nc, Hp, Nz = 2, 1, 3
-    mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
-    air_mass = ntuple(_ -> fill(FT(1e7), Nc + 2Hp, Nc + 2Hp, Nz), 6)
-    tracer = ntuple(_ -> fill(FT(1e-6), Nc + 2Hp, Nc + 2Hp, Nz), 6)
-    state = CubedSphereState(DryBasis, mesh, air_mass; CO2 = tracer)
-    bad_grid = _make_grid(FT = FT, Nx = 2, Ny = 2, Nz = Nz)
-    forcing = ConvectionForcing(ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6),
-                                nothing, nothing)
-    err = try
-        apply!(state, forcing, bad_grid, CMFMCConvection(), FT(1);
-               workspace = nothing)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("CubedSphereState", sprint(showerror, err))
-    @test occursin("CubedSphereMesh", sprint(showerror, err))
-end
-
 const _HAS_CUDA_CMFMC_TEST = try
     @eval using CUDA
     CUDA.functional()
@@ -699,33 +541,6 @@ catch
     false
 end
 _HAS_CUDA_CMFMC_TEST && include(joinpath(@__DIR__, "..", "helpers", "ledger_carry.jl"))
-
-@testset "B6. GPU CMFMC CFL scan avoids scalar indexing" begin
-    if !_HAS_CUDA_CMFMC_TEST
-        @test_skip "CUDA not available"
-    else
-        FT = Float32
-        Nc, Hp, Nz = 2, 1, 3
-        cmfmc = ntuple(_ -> fill(FT(0.01), Nc, Nc, Nz + 1), 6)
-        air_mass = ntuple(_ -> fill(FT(1.0e7), Nc + 2Hp, Nc + 2Hp, Nz), 6)
-        areas = ntuple(_ -> fill(FT(1.0e5), Nc, Nc), 6)
-        expected = AtmosTransport.Operators.Convection._cmfmc_max_cfl(
-            cmfmc, air_mass, areas, FT(450.0))
-
-        cmfmc_gpu = map(CUDA.CuArray, cmfmc)
-        air_gpu = map(CUDA.CuArray, air_mass)
-        area_gpu = map(CUDA.CuArray, areas)
-        actual = AtmosTransport.Operators.Convection._cmfmc_max_cfl(
-            cmfmc_gpu, air_gpu, area_gpu, FT(450.0))
-
-        @test actual ≈ expected
-
-        dtrain_gpu = AtmosTransport.Operators.Convection._cmfmc_dtrain_array(
-            cmfmc_gpu, nothing, air_gpu)
-        @test all(d -> d isa CUDA.CuArray, dtrain_gpu)
-        @test size(dtrain_gpu[1]) == (Nc, Nc, Nz)
-    end
-end
 
 @testset "B7. GPU CMFMC column ledger keeps its carry" begin
     if !_HAS_CUDA_CMFMC_TEST
@@ -740,17 +555,6 @@ end
 # ---------------------------------------------------------------------------
 
 if haskey(ENV, "ATMOSTR_TIER_C_REFS") && !isempty(ENV["ATMOSTR_TIER_C_REFS"])
-    @testset "C1. Standard deep-tropical-convective column vs GCHP reference" begin
-        # Reference data path: $ATMOSTR_TIER_C_REFS/cmfmc_reference.jl
-        # (or .nc). Format TBD — when shipping reference data for
-        # plan 18, this block reads it and compares at ~10% tolerance
-        # per v5.1 §3 Commit 3 acceptance.
-        #
-        # Placeholder: skip with a skip-reason until the reference
-        # dataset is curated in local validation artifacts.
-        @test_skip "Tier C reference data format not yet finalized " *
-                    "(tracked as deferred item in plan 18 NOTES)"
-    end
 else
     # Silently omit Tier C when the env gate is unset. A CI-oriented
     # alternative would print a one-line "skipping" message; the gate

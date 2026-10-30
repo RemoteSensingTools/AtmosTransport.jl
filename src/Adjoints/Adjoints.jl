@@ -57,15 +57,14 @@ using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWo
     _vertical_diffusion_cs_single_adjoint_kernel!,
     _vertical_diffusion_cs_single_dkg_adjoint_kernel!,
     surface_flux_coupling, surface_flux_center!, LocalHoltslagBovilleKzField
-using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
-    NoConvection, TM5Convection, TM5Workspace,
-    CMFMCMatrixConvection, CMFMCMatrixWorkspace,
-    invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!,
-    _get_or_compute_n_sub!, _ensure_tm5_scratch!,
-    _tm5_diagnose_cloud_dims, _tm5_build_conv1!, _tm5_lu!, _tm5_factorize!,
-    _tm5_identity_pivots, _tm5_column_sum, _tm5_restore_column_mass!,
-    _launch_cmfmc_matrix_derivation!,
-    _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
+using ..Operators.Convection.CMFMC: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
+    CMFMCMatrixConvection, CMFMCMatrixWorkspace, invalidate_cmfmc_cache!,
+    invalidate_cmfmc_matrix_cache!, _get_or_compute_n_sub!, _refresh_cmfmc_matrix_rates!,
+    _cmfmc_matrix_synthetic_forcing, _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
+using ..Operators.Convection.CMFMC: _cmfmc_cs_panel_column_single_adjoint_kernel!
+using ..Operators.Convection.TM5: _tm5_cs_panel_column_adjoint_kernel!
+using ..Operators.Convection: NoConvection
+using ..Operators.Convection.TM5: TM5Convection, TM5Workspace, _ensure_tm5_scratch!
 using ..State: AbstractCubedSphereField,
     AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
@@ -77,7 +76,7 @@ using ..State: CubedSphereState, CubedSphereFaceFluxState
 using ..Operators: AbstractAdvectionScheme, apply!
 using ..Operators.SurfaceFlux: NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource
 using ..Operators.Chemistry: AbstractChemistryOperator, NoChemistry
-using ..Operators.Convection: CMFMCEdgeCloudBase
+using ..Operators.Convection.CMFMC: CMFMCEdgeCloudBase
 # The step plan the adjoint replays and the recorder hooks its tape recorder
 # implements (Operators/StepPlan, Operators/StepRecording.jl).
 using ..Operators.StepPlans: StepPlan, StepOperators, StepTiming, AbstractStepStage,

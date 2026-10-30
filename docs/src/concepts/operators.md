@@ -167,6 +167,11 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | `CMFMCMatrixConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | Implicit matrix solve assembled from GEOS cloud-mass flux and detrainment. |
 | `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
 
+The convection facade re-exports the CMFMC and TM5 operator families from
+`Operators.Convection.CMFMC` and `Operators.Convection.TM5`. Each family owns
+its forward and adjoint kernels. `Convection.convection_workspace_for` builds
+the runtime workspace; checkpoint storage uses the shared Operators interface.
+
 The convection subtypes consume a `ConvectionForcing` carrier (declared in
 `src/MetDrivers/ConvectionForcing.jl`) — different physics, identical
 plumbing. `_refresh_forcing!` populates `model.convection_forcing`

@@ -10,7 +10,7 @@ using AtmosTransport.Models: current_qv
 using AtmosTransport.State: CubedSphereField
 using AtmosTransport.Operators.Diffusion: WindowPBLKzField, LocalHoltslagBovilleKzField
 using AtmosTransport.Operators.Advection: CSLinRoodAdvectionWorkspace
-using AtmosTransport.Operators.Convection: TM5Workspace
+using AtmosTransport.Operators.Convection.TM5: TM5Workspace
 
 function rewrite_cs_header!(path::AbstractString; updates = Dict{String, Any}())
     open(path, "r+") do io

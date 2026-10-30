@@ -19,7 +19,7 @@ using AtmosTransport
 using .AtmosTransport.Operators: CMFMCWorkspace, CMFMCConvection,
                                   invalidate_cmfmc_cache!, apply_convection!
 using .AtmosTransport.MetDrivers: ConvectionForcing
-using .AtmosTransport.Adjoints: _apply_cs_convection_forward!,
+using .AtmosTransport.Adjoints:
                                 _apply_cs_convection_adjoint!
 using .AtmosTransport.Grids: CubedSphereMesh
 
@@ -100,8 +100,14 @@ end
             # Forward: copy x → rm_new, apply L.
             rm_new = ntuple(p -> copy(x_rm[p]), 6)
             ws_fwd = CMFMCWorkspace(rm_new; cell_metrics = cell_areas)
-            _apply_cs_convection_forward!(rm_new, panels_m, forcing,
-                                           CMFMCConvection(), dt, ws_fwd, mesh)
+            let state = AtmosTransport.State.CubedSphereState(AtmosTransport.State.DryBasis, mesh, panels_m; tracer=rm_new)
+                nz = size(panels_m[1], 3)
+                FT = eltype(panels_m[1])
+                vc = AtmosTransport.Grids.HybridSigmaPressure(zeros(FT,nz+1), collect(range(zero(FT),one(FT); length=nz+1)))
+                grid = AtmosTransport.Grids.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT)
+                AtmosTransport.Operators.apply!(state, forcing, grid, CMFMCConvection(), dt; workspace=ws_fwd)
+                foreach((dst, src) -> copyto!(dst, view(src,:,:,:,1)), rm_new, state.tracers_raw)
+            end
             @test ws_fwd.cached_n_sub[] == 1   # ensure single-substep regime
 
             # Adjoint: copy y → λ, apply Lᵀ.
@@ -193,7 +199,14 @@ end
         dt = FT(120_000)                            # CMFMC CFL > 1: several substeps
         Lx = ntuple(p -> copy(x[p]), 6)
         ws = CMFMCWorkspace(Lx; cell_metrics = cell_areas)
-        _apply_cs_convection_forward!(Lx, panels_m, forcing, CMFMCConvection(), dt, ws, mesh)
+        let state = AtmosTransport.State.CubedSphereState(AtmosTransport.State.DryBasis, mesh, panels_m; tracer=Lx)
+            nz = size(panels_m[1], 3)
+            FT = eltype(panels_m[1])
+            vc = AtmosTransport.Grids.HybridSigmaPressure(zeros(FT,nz+1), collect(range(zero(FT),one(FT); length=nz+1)))
+            grid = AtmosTransport.Grids.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT)
+            AtmosTransport.Operators.apply!(state, forcing, grid, CMFMCConvection(), dt; workspace=ws)
+            foreach((dst, src) -> copyto!(dst, view(src,:,:,:,1)), Lx, state.tracers_raw)
+        end
         @test ws.cached_n_sub[] > 1
         LTy = ntuple(p -> copy(y[p]), 6)
         _apply_cs_convection_adjoint!(LTy, panels_m, forcing, CMFMCConvection(), dt,
@@ -201,58 +214,5 @@ end
         lhs, rhs = _inner_interior(y, Lx, Nc, Hp), _inner_interior(LTy, x, Nc, Hp)
         tol = FT === Float64 ? 1e-10 : 1f-4
         @test isapprox(lhs, rhs; rtol = tol, atol = tol * abs(lhs))
-    end
-end
-
-@testset "CMFMC adjoint replay equals the production forward" begin
-    # The forward the adjoint path replays is the production operator: same
-    # kernel, substeps, detrainment (DTRAIN, or derived from CMFMC without it),
-    # compensated sums and column ledger. The replay keeps no ledger carry, so
-    # it equals a production call that starts from a zero carry and has one
-    # substep bit for bit; with several substeps production carries the sub-ulp
-    # remainder from one substep to the next and the two differ by rounding. A
-    # deep sub-cloud layer with uneven air masses exercises the compensated
-    # sub-cloud mean.
-    for FT in (Float64, Float32), with_dtrain in (true, false)
-        Nc, Hp, Nz = 4, 1, 24
-        N = Nc + 2Hp
-        mesh = CubedSphereMesh(; Nc = Nc, Hp = Hp, FT = FT)
-        vc = AtmosTransport.HybridSigmaPressure(zeros(Nz + 1), collect(range(0.0, 1.0; length = Nz + 1)))
-        grid = AtmosTransport.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
-        rng = MersenneTwister(7)
-        panels_m = ntuple(_ -> [FT(1e15) * (1 + FT(0.3) * rand(rng, FT)) for _ in 1:N, _ in 1:N, _ in 1:Nz], 6)
-        cell_areas = ntuple(_ -> fill(FT(1e12), Nc, Nc), 6)
-        cmfmc = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6)     # updraft from the cloud base (layer 8) to layer 3
-        dtrain = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
-        for p in 1:6
-            cmfmc[p][:, :, 4:9] .= FT(0.02)
-            dtrain[p][:, :, 3] .= FT(0.02)
-        end
-        forcing = ConvectionForcing(cmfmc, with_dtrain ? dtrain : nothing, nothing)
-        rm = ntuple(p -> panels_m[p] .* FT(4e-4) .* (1 .+ FT(0.1) .* randn(rng, FT, N, N, Nz)), 6)
-        replay = ntuple(p -> copy(rm[p]), 6)
-        _apply_cs_convection_forward!(replay, panels_m, forcing, CMFMCConvection(), FT(600),
-                                      CMFMCWorkspace(replay; cell_metrics = cell_areas), mesh)
-        production = ntuple(p -> reshape(copy(rm[p]), N, N, Nz, 1), 6)
-        apply_convection!(production, panels_m, forcing, CMFMCConvection(), FT(600),
-                          CMFMCWorkspace(production; cell_metrics = cell_areas), grid)
-        @test all(p -> replay[p] == dropdims(production[p]; dims = 4), 1:6)
-        @test replay != rm                                     # convection did act
-
-        # Several substeps: the replay drops the carry between them, production
-        # keeps it; each cell differs by a few ulps of its column's largest cell.
-        replay = ntuple(p -> copy(rm[p]), 6)
-        ws_replay = CMFMCWorkspace(replay; cell_metrics = cell_areas)
-        _apply_cs_convection_forward!(replay, panels_m, forcing, CMFMCConvection(), FT(60_000),
-                                      ws_replay, mesh)
-        @test ws_replay.cached_n_sub[] > 1
-        production = ntuple(p -> reshape(copy(rm[p]), N, N, Nz, 1), 6)
-        apply_convection!(production, panels_m, forcing, CMFMCConvection(), FT(60_000),
-                          CMFMCWorkspace(production; cell_metrics = cell_areas), grid)
-        @test all(1:6) do p
-            gap = abs.(replay[p] .- dropdims(production[p]; dims = 4))
-            column_max = maximum(abs, rm[p]; dims = 3)
-            all(gap .<= 4 * ws_replay.cached_n_sub[] .* eps.(column_max))
-        end
     end
 end

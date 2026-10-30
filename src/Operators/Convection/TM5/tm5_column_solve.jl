@@ -1,3 +1,5 @@
+@inline _tm5_effective_cloud_top(icltop, icllfs) = min(icllfs, max(icltop, 2) - 1)
+
 # ---------------------------------------------------------------------------
 # TM5 column solver.
 #
@@ -143,7 +145,7 @@ function _tm5_build_conv1!(conv1::AbstractMatrix{FT},
     #   updraft entries) with `k_atm = Nz+1-k_tm5`. The implicit
     #   "TM5 row 0" / surface row at index Nz+1 is treated as zero;
     #   no shape needs to materialize it.
-    icltop_eff = min(Int(icllfs), max(Int(icltop), 2) - 1)
+    icltop_eff = _tm5_effective_cloud_top(Int(icltop), Int(icllfs))
     k_lo = max(icltop_eff, 1)
 
     # `f` may alias `conv1` and can contain stale values from the previous
@@ -398,43 +400,6 @@ end
     return nothing
 end
 
-"""
-    _tm5_solve!(rm_col, conv1, pivots, Nz, Nt) -> nothing
-
-Apply the factored `conv1` + stored pivots to `rm_col` (shape
-`(Nz, Nt)`). Back-substitutes in place for each tracer `1..Nt`.
-"""
-function _tm5_solve!(rm_col::AbstractMatrix{FT},
-                     conv1::AbstractMatrix{FT},
-                     pivots::AbstractVector{<:Integer},
-                     Nz::Integer,
-                     Nt::Integer;
-                     icltop_eff::Integer = 1) where {FT}
-    Nz == 0 && return nothing
-    # Rows [1, icltop_eff-1] are identity, so
-    # rm_col[1:icltop_eff-1, :] passes through unchanged. Lower-left
-    # quadrant `conv1[k ≥ icltop_eff, j < icltop_eff] == 0`, so the
-    # forward solve's `j` loop can start at icltop_eff. Pivots are
-    # only written by `_tm5_lu!` for `k ≥ icltop_eff`; entries below
-    # are unchanged from the previous column's run, so we must skip
-    # them here too.
-    k_lo = max(Int(icltop_eff), 1)
-    for t in 1:Nt
-        _tm5_solve_shared_tracer!(rm_col, conv1, pivots, Nz, k_lo, t)
-    end
-    return nothing
-end
-
-# ---------------------------------------------------------------------------
-# Column mass ledger. Float32 elimination on the near-identity convection
-# matrix loses 1–2e-8 of the active column per solve, always with the same
-# sign (≈1e-5 of every tracer per month on the L40S). Compensated sums of the
-# active window (`lo:n`, slot `slot` of `q`) before and after the solve give
-# the residual, a few ulps of the largest cell, which is added back there;
-# spread over the column it would round away again. The part below that
-# cell's spacing is returned as the column's new carry (`_ledger_deposit`),
-# which the caller keeps for the column's next solve.
-# ---------------------------------------------------------------------------
 @inline _tm5_column_sum(q, lo, n, slot) = _neumaier_sum(k -> @inbounds(q[k, slot]), lo:n, eltype(q))
 
 @inline function _tm5_restore_column_mass!(q, lo, n, slot, before, carry)
@@ -529,13 +494,6 @@ matrix.
     return _tm5_restore_column_mass!(q, lo, n, tracer, before, carry)
 end
 
-function _tm5_solve_bidiagonal!(q, A, Nz, Nt; icltop_eff=1)
-    lo = max(Int(icltop_eff), 1)
-    for tracer in 1:Nt
-        _tm5_solve_bidiagonal_tracer!(q, A, Nz, lo, tracer)
-    end
-    return nothing
-end
 
 """
     _tm5_solve_column!(rm_col, m_col, entu_col, detu_col, entd_col, detd_col,
@@ -596,7 +554,7 @@ function _tm5_solve_column!(rm_col::AbstractMatrix{FT},
     # in `_tm5_build_conv1!`. Proven correct by
     # `test/core/test_tm5_sparsity_above_icltop.jl`. The `max(icltop, 2)`
     # guard keeps the formula well-defined at icltop = 1 (no skip).
-    icltop_eff = min(Int(icllfs), max(Int(icltop), 2) - 1)
+    icltop_eff = _tm5_effective_cloud_top(Int(icltop), Int(icllfs))
 
     _tm5_build_conv1!(conv1_buf,
                       entu_col, detu_col, entd_col, detd_col, m_col,

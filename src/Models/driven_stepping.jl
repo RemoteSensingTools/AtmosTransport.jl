@@ -321,7 +321,6 @@ end
 # substep; the window-end mass reset is the same for both cadences, so an A/B
 # comparison on one binary changes only where physics runs. `sim.plan`
 # (`StepPlan`) encodes this schedule.
-@inline _binary_window_contract(sim::DrivenSimulation) = uses_binary_substep_contract(sim.driver)
 
 # `physics_cadence` (`:window`, `:substep` or `nothing` for `:window`) is
 # resolved by `Operators.StepPlans._resolve_physics_cadence`.
