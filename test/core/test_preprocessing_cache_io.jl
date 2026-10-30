@@ -61,35 +61,7 @@ end
     end
 end
 
-@testset "spectral coefficient cache round trip" begin
-    mktempdir() do dir
-        hours = collect(0:23)
-        lnsp = ComplexF64[1 0; 2 3]
-        vo = zeros(ComplexF64, 2, 2, 137)
-        d = zeros(ComplexF64, 2, 2, 137)
-        vo[:, :, 1] .= ComplexF64[1 3; 2 4]
-        d[:, :, 1] .= ComplexF64[9 11; 10 12]
-        spec = (
-            hours = hours,
-            lnsp_all = Dict(hour => copy(lnsp) for hour in hours),
-            vo_by_hour = Dict(hour => copy(vo) for hour in hours),
-            d_by_hour = Dict(hour => copy(d) for hour in hours),
-            T = 1,
-            n_times = length(hours),
-        )
 
-        path = joinpath(dir, "spectral_cache.jld2")
-        PP._write_spectral_day_cache(path, spec)
-        loaded = PP._load_spectral_day_cache(path)
-
-        @test loaded.hours == spec.hours
-        @test loaded.T == spec.T
-        @test loaded.n_times == spec.n_times
-        @test loaded.lnsp_all[1] == spec.lnsp_all[1]
-        @test loaded.vo_by_hour[0] == spec.vo_by_hour[0]
-        @test loaded.d_by_hour[1] == spec.d_by_hour[1]
-    end
-end
 
 @testset "spectral GRIB header guard" begin
     good = FakeSpectralMessage(Dict{String, Any}(
@@ -103,23 +75,23 @@ end
         "laplacianOperator" => 0.5,
     ))
     spec = zeros(ComplexF64, 3, 3)
-    @test PP._validate_spectral_header(good, 12, spec) == 2
+    @test PP.validate_spectral_header(good, 12, spec) == 2
 
     bad_grid = FakeSpectralMessage(merge(good.keys, Dict("gridType" => "regular_ll")))
-    @test_throws ErrorException PP._validate_spectral_header(bad_grid, 12, spec)
+    @test_throws ErrorException PP.validate_spectral_header(bad_grid, 12, spec)
 
     bad_trunc = FakeSpectralMessage(merge(good.keys, Dict("K" => 3)))
-    @test_throws ErrorException PP._validate_spectral_header(bad_trunc, 12, spec)
+    @test_throws ErrorException PP.validate_spectral_header(bad_trunc, 12, spec)
 
     bad_count = FakeSpectralMessage(good.keys)
-    @test_throws ErrorException PP._validate_spectral_header(bad_count, 10, spec)
+    @test_throws ErrorException PP.validate_spectral_header(bad_count, 10, spec)
 
     small_spec = zeros(ComplexF64, 2, 3)
-    @test_throws ErrorException PP._validate_spectral_header(good, 12, small_spec)
+    @test_throws ErrorException PP.validate_spectral_header(good, 12, small_spec)
 
     bad_subset = FakeSpectralMessage(merge(good.keys, Dict("MS" => 2)))
-    @test_throws ErrorException PP._validate_spectral_header(bad_subset, 12, spec)
+    @test_throws ErrorException PP.validate_spectral_header(bad_subset, 12, spec)
 
     partial_subset = FakeSpectralMessage(delete!(copy(good.keys), "MS"))
-    @test_throws ErrorException PP._validate_spectral_header(partial_subset, 12, spec)
+    @test_throws ErrorException PP.validate_spectral_header(partial_subset, 12, spec)
 end

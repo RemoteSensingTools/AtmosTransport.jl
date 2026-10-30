@@ -214,7 +214,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 run_cache = nothing)
     t_start = time()
     Nc = cs_grid.Nc
-    _validate_column_balance_weights(column_balance_weights, "regrid_ll_binary_to_cs")
+    validate_column_balance_weights(column_balance_weights, "regrid_ll_binary_to_cs")
 
     # --- Open LL binary reader ---
     reader = TransportBinaryReader(ll_binary_path; FT=FT)
@@ -377,7 +377,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     # error without leaving a bad binary at `out_path`. Renamed to the
     # final name on success.
     mkpath(dirname(out_path))
-    tmp_path = _open_preprocessing_staging(out_path)
+    tmp_path = open_preprocessing_staging(out_path)
     inner_writer = open_streaming_cs_transport_binary(
         tmp_path, Nc, CS_PANEL_COUNT, Nz, Nt, vc_merged;
         FT=FT,
@@ -394,7 +394,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         tm5_convection_mass_basis=tm5_convection_mass_basis(reader),
         cs_geometry_tags(cs_grid.mesh)...,
         planet_radius=cs_grid.mesh.radius,
-        extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
+        extra_header=with_replay_record(with_column_weights_record(merge(Dict{String, Any}(
             "preprocessor"      => "regrid_ll_binary_to_cs",
             "source_type"       => "ll_transport_binary",
             "source_path"       => ll_binary_path,

@@ -37,16 +37,16 @@ end
 @testset "spectral coverage fails closed" begin
     hours = 0:2
     complete = Dict(hour => trues(3) for hour in hours)
-    @test Prep._validate_spectral_coverage(
+    @test Prep.validate_spectral_coverage(
         hours, complete, deepcopy(complete); expected_hours=hours, nlevels=3) == collect(hours)
 
     missing_level = deepcopy(complete)
     missing_level[1][2] = false
-    @test_throws ArgumentError Prep._validate_spectral_coverage(
+    @test_throws ArgumentError Prep.validate_spectral_coverage(
         hours, missing_level, complete; expected_hours=hours, nlevels=3)
 
     missing_hour = Dict(0 => trues(3), 2 => trues(3))
-    @test_throws ArgumentError Prep._validate_spectral_coverage(
+    @test_throws ArgumentError Prep.validate_spectral_coverage(
         hours, missing_hour, complete; expected_hours=hours, nlevels=3)
     @test Prep.SPECTRAL_DAY_CACHE_VERSION == 2
 end

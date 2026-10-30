@@ -412,7 +412,7 @@ function process_day(date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
-    _check_spectral_column_weights(grid, settings)
+    check_spectral_column_weights(grid, settings)
     settings.include_qv && throw(ArgumentError(
         "reduced-Gaussian preprocessing does not support output.include_qv=true; " *
         "set include_qv=false (humidity may still be used internally for dry-basis conversion)"))
@@ -423,8 +423,8 @@ function process_day(date::Date,
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     date_str = Dates.format(date, "yyyymmdd")
 
-    vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
-    lnsp_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+    vo_d_path = era5_spectral_paths(settings.spectral_dir, date).vo_d
+    lnsp_path = era5_spectral_paths(settings.spectral_dir, date).lnsp
 
     if !isfile(vo_d_path) || !isfile(lnsp_path)
         @warn "Missing GRIB files for $date_str, skipping"
@@ -479,7 +479,7 @@ function process_day(date::Date,
 
     # Stage to a unique sibling file; the driver atomically publishes it after every gate
     # passed and deletes it on failure, so a failed day never touches `bin_path`.
-    tmp_path = _open_preprocessing_staging(bin_path)
+    tmp_path = open_preprocessing_staging(bin_path)
     metadata = Dict{String, Any}(
         "preprocessor"     => "preprocess_transport_binary.jl",
         "source_type"      => "era5_spectral",
@@ -513,9 +513,9 @@ function process_day(date::Date,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
         surface_pressure_basis = TotalSurfacePressure(),
-        extra_header = _with_replay_record(
-            _with_column_weights_record(metadata,
-                _check_spectral_column_weights(grid, settings)),
+        extra_header = with_replay_record(
+            with_column_weights_record(metadata,
+                check_spectral_column_weights(grid, settings)),
             write_replay_on))
 
     bytes_per_window = writer.elems_per_window * sizeof(eltype(writer.pack_buffer))

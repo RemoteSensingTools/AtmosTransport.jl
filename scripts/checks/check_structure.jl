@@ -680,6 +680,34 @@ function relocate_c1_layers(before, file)
     return migrated
 end
 
+# PP1 relocates the existing preprocessing dependency budget to ordered stages.
+# This applies only to LAYERS identities; clone/private/docstring debt still
+# shrinks exactly. A base already containing Core gets no special treatment.
+function relocate_pp1_layers(before, file)
+    file == "src/LAYERS.toml" || return before
+    parent = "AtmosTransport.Preprocessing"
+    modules = get(before, "modules", Dict())
+    haskey(modules, parent * ".Core") && return before
+    haskey(modules, parent) || return before
+    migrated = deepcopy(before)
+    for (table, home, sep) in (("modules", parent, "."),
+                               ("folders", "src/Preprocessing", "/"))
+        budgets = get(migrated, table, Dict())
+        haskey(budgets, home) || continue
+        children = [home * sep * name for name in ("Core", "Vertical", "Spectral")]
+        prior = copy(budgets[home])
+        lower = filter(d -> d != home && !startswith(d, home * sep), prior)
+        for deps in values(budgets)
+            home in deps && append!(deps, children)
+        end
+        budgets[home] = [prior; children]
+        for i in eachindex(children)
+            budgets[children[i]] = [lower; children[1:i-1]]
+        end
+    end
+    return migrated
+end
+
 # A1 retains one module because the fenced root workspaces/Lin-Rood kernels
 # and the topology files share types. Split its existing folder budget only;
 # sibling dependencies remain Reconstruction <- Structured <- CubedSphere.
@@ -762,6 +790,7 @@ function allowance_growth(before, after, file)
     before = relocate_o1_layers(before, file)
     before = relocate_m1_layers(before, file)
     before = relocate_c1_layers(before, file)
+    before = relocate_pp1_layers(before, file)
     before = relocate_a1_layers(before, file)
     before = relocate_t1_layers(before, file)
     if file == "src/LAYERS.toml"

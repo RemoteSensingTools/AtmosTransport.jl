@@ -355,10 +355,9 @@ function compute_air_mass!(m_arr, dp, area, Nlon, Nlat, Nz)
 end
 
 """
-    compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps, dA, dB, grid, half_dt, Nz)
+    compute_mass_fluxes!(am, bm, u_stag, v_stag, ps, dA, dB, grid, half_dt, Nz)
 
-Compute the native-level horizontal mass fluxes `am`, `bm` and diagnose the
-native-level vertical flux `cm` from discrete continuity.
+Compute the native-level horizontal mass fluxes `am` and `bm`.
 
 ## Horizontal fluxes
 
@@ -392,24 +391,10 @@ the column balance would then re-route `bm` at every latitude (issue #58; the
 same zeroing was removed once before, see
 `docs/resources/bug_archive/SESSION1_GRID_CM_FIX_2026-04-03.md`, section 3).
 
-## Vertical flux
-
-`cm[i, j, k]` is diagnosed from the discrete continuity equation per column,
-with a B-coefficient redistribution term for the hybrid coordinate:
-
-    cm[k+1] = −Σ_{l=1}^{k} div_h[l] + B[k] × Σ_{l=1}^{Nz} div_h[l]
-
-where `div_h = (am[i] − am[i+1]) + (bm[j] − bm[j+1])` is the horizontal
-convergence. `cm[1] = 0` (TOA) and `cm[Nz+1] = 0` (surface) by construction.
-
-These raw `cm` values are only a staging estimate. Before writing a transport
-binary, the preprocessing path applies a column-integrated mass correction to
-the horizontal fluxes and diagnoses the stored `cm` from the explicit forward
-mass endpoint. The former per-layer horizontal Poisson correction was removed:
-without an independent vertical mass flux, it forced each layer's horizontal
-divergence to the complete mass tendency and left almost nothing for `cm`.
+The stored vertical flux is diagnosed after column balance from the explicit
+forward mass endpoint; no native vertical staging estimate is needed.
 """
-function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
+function compute_mass_fluxes!(am, bm, u_stag, v_stag, ps,
                               dA, dB, grid::LatLonTargetGeometry, half_dt, Nz)
     Nlon, Nlat = nlon(grid), nlat(grid)
     # The spectral wind synthesis above uses the IFS radius because vorticity
@@ -455,32 +440,6 @@ function compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps,
         end
     end
 
-    # --- Vertical flux cm: diagnosed from horizontal divergence via continuity ---
-    # cm[i, j, 1] = 0 (TOA boundary) and cm[i, j, Nz+1] = 0 (surface boundary).
-    fill!(cm, zero(eltype(cm)))
-    @inbounds for j in 1:Nlat, i in 1:Nlon
-        # Total column horizontal convergence (sum over all levels):
-        # pit = Σ_k div_h[k] = Σ_k [(am_east - am_west) + (bm_north - bm_south)]
-        pit = 0.0
-        for k in 1:Nz
-            pit += (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                   (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
-        end
-        # Accumulate cm from top (k=1) downward. At each interface k+1:
-        #   cm[k+1] = cm[k] − div_h[k] + dB[k] × pit
-        # where dB[k] = B[k+1] − B[k] redistributes the total-column
-        # divergence into the hybrid coordinate's ps-dependent component.
-        # This ensures cm[1] = 0 (TOA) and cm[Nz+1] ≈ 0 (surface) when
-        # the column-integrated horizontal fluxes are balanced.
-        acc = 0.0
-        for k in 1:Nz
-            div_h = (Float64(am[i + 1, j, k]) - Float64(am[i, j, k])) +
-                    (Float64(bm[i, j + 1, k]) - Float64(bm[i, j, k]))
-            acc = acc - div_h + Float64(dB[k]) * pit
-            cm[i, j, k + 1] = eltype(cm)(acc)
-        end
-    end
-
     return nothing
 end
 
@@ -496,7 +455,7 @@ available.
 """
 function spectral_to_native_fields!(
     m_arr::AbstractArray{<:Real, 3}, am::AbstractArray{<:Real, 3}, bm::AbstractArray{<:Real, 3},
-    cm::AbstractArray{<:Real, 3}, sp::AbstractMatrix{<:Real},
+    sp::AbstractMatrix{<:Real},
     u_cc::AbstractArray{<:Real, 3}, v_cc::AbstractArray{<:Real, 3},
     u_stag::AbstractArray{<:Real, 3}, v_stag::AbstractArray{<:Real, 3},
     dp::AbstractArray{<:Real, 3},
@@ -564,7 +523,7 @@ function spectral_to_native_fields!(
     stagger_winds!(u_stag, v_stag, u_cc, v_cc, Nlon, Nlat, Nz)
     compute_dp!(dp, sp, ab.dA, ab.dB, Nlon, Nlat, Nz)
     compute_air_mass!(m_arr, dp, grid.area, Nlon, Nlat, Nz)
-    compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, sp,
+    compute_mass_fluxes!(am, bm, u_stag, v_stag, sp,
                          ab.dA, ab.dB, grid, half_dt, Nz)
 
     return nothing
@@ -586,8 +545,8 @@ function recompute_native_mass_fields!(transform,
 
     compute_dp!(transform.dp, transform.sp, ab.dA, ab.dB, Nlon, Nlat, Nz)
     compute_air_mass!(transform.m_arr, transform.dp, grid.area, Nlon, Nlat, Nz)
-    compute_mass_fluxes!(transform.am_arr, transform.bm_arr, transform.cm_arr,
-                         transform.u_stag, transform.v_stag, transform.dp, transform.sp,
+    compute_mass_fluxes!(transform.am_arr, transform.bm_arr,
+                         transform.u_stag, transform.v_stag, transform.sp,
                          ab.dA, ab.dB, grid, half_dt, Nz)
     return nothing
 end

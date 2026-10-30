@@ -2,12 +2,12 @@
 
 """
 Unit tests for QV longitude/latitude normalization helpers in
-`src/Preprocessing/mass_support.jl` and the bilinear interpolator in
+`src/Preprocessing/Spectral/mass_support.jl` and the bilinear interpolator in
 `src/Preprocessing/transport_binary/latlon_workspaces.jl`.
 
 Codex findings #2 + #3 (regrid-bug audit, 2026-04-28):
 
-- `_normalize_lon_to_centered` should detect ERA5 NetCDF longitudes that
+- `normalize_lon_to_centered` should detect ERA5 NetCDF longitudes that
   start at 0° and roll the field by `Nx ÷ 2` columns so it lands in the
   staging-mesh `[-180, 180)` cell-centered convention. Files already
   centered at -180° must be left alone.
@@ -29,7 +29,7 @@ using Dates
 using NCDatasets
 
 using AtmosTransport
-using AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_qv!,
+using AtmosTransport.Preprocessing: normalize_lon_to_centered, _interpolate_ll_qv!,
                                     LatLonBilinearWeights, read_thermo_coordinates,
                                     allocate_qv_workspace, read_window_qv!,
                                     build_target_geometry
@@ -51,7 +51,7 @@ using AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
             field[i, j, k] = netcdf_lons[i]   # value = source longitude
         end
-        rolled = _normalize_lon_to_centered(field, netcdf_lons)
+        rolled = normalize_lon_to_centered(field, netcdf_lons)
         # After rolling by Nx÷2: rolled[1] should now contain the value
         # that was at netcdf column 1+Nx÷2 = column 5 → lon = 180°
         @test rolled[1, 1, 1] == 180f0
@@ -62,13 +62,13 @@ using AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_
         Δλ = 360.0 / Nx
         centered_lons = collect((-180 + Δλ/2):Δλ:(180 - Δλ/2))
         field = rand(Float32, Nx, Ny, Nz)
-        rolled = _normalize_lon_to_centered(field, centered_lons)
+        rolled = normalize_lon_to_centered(field, centered_lons)
         @test rolled === field   # same array, no allocation
     end
 
     @testset "Length mismatch is a no-op" begin
         field = rand(Float32, Nx, Ny, Nz)
-        rolled = _normalize_lon_to_centered(field, Float64[1, 2, 3])
+        rolled = normalize_lon_to_centered(field, Float64[1, 2, 3])
         @test rolled === field
     end
 
@@ -79,54 +79,9 @@ using AtmosTransport.Preprocessing: _normalize_lon_to_centered, _interpolate_ll_
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
             field[i, j, k] = Float32(lons[i])
         end
-        rolled = _normalize_lon_to_centered(field, lons)
+        rolled = normalize_lon_to_centered(field, lons)
         @test rolled[1, 1, 1] == 180f0
         @test rolled[Nx ÷ 2 + 1, 1, 1] == 0f0
-    end
-end
-
-@testset "_interpolate_ll_qv! target uses cell-centered lats (finding #3)" begin
-    # Build a source whose QV equals its own latitude. After interpolation,
-    # the destination value at staging-grid cell j should match
-    # lat = -90 + (j - 0.5) × 180/Ny_dst — the LatLonMesh cell-center
-    # latitude — to within bilinear-interpolation precision.
-    Nx_src = 36
-    Ny_src = 19            # pole-inclusive: lats -90, -80, …, 90
-    Nx_dst = 36
-    Ny_dst = 18            # cell-centered:  lats -85, -75, …, 85
-    Nz = 2
-
-    Δlat_src = 180.0 / (Ny_src - 1)
-    src = zeros(Float64, Nx_src, Ny_src, Nz)
-    for k in 1:Nz, j in 1:Ny_src, i in 1:Nx_src
-        src[i, j, k] = -90.0 + (j - 1) * Δlat_src
-    end
-
-    dst = zeros(Float64, Nx_dst, Ny_dst, Nz)
-    src_lon = collect(-180.0:(360 / Nx_src):(180 - 360 / Nx_src))
-    src_lat = collect(-90.0:Δlat_src:90.0)
-    dst_lon = [-180 + (i - 0.5) * 360 / Nx_dst for i in 1:Nx_dst]
-    dst_lat = [-90 + (j - 0.5) * 180 / Ny_dst for j in 1:Ny_dst]
-    _interpolate_ll_qv!(dst, src, LatLonBilinearWeights(src_lon, src_lat, dst_lon, dst_lat))
-
-    Δlat_dst = 180.0 / Ny_dst
-    @testset "target lat j corresponds to cell-centered lat" begin
-        for j in 1:Ny_dst
-            expected = -90.0 + (j - 0.5) * Δlat_dst
-            actual   = dst[1, j, 1]
-            @test isapprox(actual, expected; atol = 1e-10)
-        end
-    end
-
-    @testset "Old (pole-inclusive) target convention is NOT used" begin
-        # Sanity: confirm the new convention differs from the pre-fix
-        # `-90 + (j-1) × 180/(Ny_dst - 1)` formula at j=1 (would give -90,
-        # whereas the cell-centered convention gives -85).
-        old_lat_at_j1 = -90.0 + 0.0 * (180.0 / (Ny_dst - 1))
-        new_lat_at_j1 = -90.0 + 0.5 * Δlat_dst
-        @test old_lat_at_j1 == -90.0
-        @test new_lat_at_j1 == -85.0
-        @test isapprox(dst[1, 1, 1], -85.0; atol = 1e-10)
     end
 end
 

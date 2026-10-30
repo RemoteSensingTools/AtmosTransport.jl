@@ -8,7 +8,7 @@ transport binary (`format_version = 4`).
 
 All three target topologies (LL, RG, CS) run through the unified driver
 `run_unified_preprocessor_day!` with the source axis fixed to
-`ERA5SpectralReader` and the target axis chosen via `[grid].type`.
+spectral workspaces in `Preprocessing.Spectral` and the target axis chosen via `[grid].type`.
 
 ## Required input
 
@@ -107,7 +107,7 @@ M = \min\!\left(T, \left\lfloor \frac{N-1}{2} \right\rfloor\right),
 ```
 
 as one unnormalised inverse FFT of length `N`. The limit `M` is
-`ring_max_wavenumber` in `src/Preprocessing/spectral_synthesis.jl`; the
+`ring_max_wavenumber` in `src/Preprocessing/Spectral/spectral_synthesis.jl`; the
 lat-lon `spectral_to_grid!`, the reduced Gaussian `spectral_to_ring!` and the
 batched ERA5 N320 `synthesize_reduced!` all use it. Each wavenumber
 `1 ≤ m ≤ M` occupies the two FFT bins `m` and `N − m`. On an even ring the

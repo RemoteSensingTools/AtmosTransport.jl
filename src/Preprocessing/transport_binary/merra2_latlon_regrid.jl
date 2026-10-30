@@ -485,7 +485,7 @@ function _read_next_day_endpoint!(d::MERRA2DayDriver, nxt::MERRA2BlockState, cur
     pipe, Nc = nxt.pipe, d.grid.Nc
     endpoint = read_merra2_next_day_endpoint(d.handles, pipe.Nz; FT = eltype(nxt.m_dry[1]))
     if endpoint === nothing
-        _require_configured_terminal_day(
+        require_configured_terminal_day(
             d.handles.date, d.configured_last_day, "MERRA-2 preprocessor",
             "next-day inst3 endpoint for $(d.handles.date + Day(1))")
         # The configured archive boundary has no next-day inst3 file: the last
@@ -680,7 +680,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
                              nwindow, nsub, dt_window, steps, policy, mass_target,
                              mass_target_ps_dry_pa::Real, write_replay_on::Bool) where FT
     mkpath(dirname(out_path))
-    tmp_path = _open_preprocessing_staging(out_path)
+    tmp_path = open_preprocessing_staging(out_path)
     header = merge(_merra2_provenance(settings, handles, nsub), Dict{String, Any}(
         "preprocessor" => "process_merra2_to_cs_day",
         # Advection at the baked substep cadence; convection and chemistry once
@@ -716,7 +716,7 @@ function _open_merra2_writer(settings, handles, grid::CubedSphereTargetGeometry{
             include_pbl_eflux = has_pbl_eflux(settings),
             include_cmfmc_cloud_base = has_cmfmc_cloud_base(settings),
             cs_geometry_tags(grid.mesh)...,
-            planet_radius = grid.mesh.radius, extra_header = _with_replay_record(header, write_replay_on))
+            planet_radius = grid.mesh.radius, extra_header = with_replay_record(header, write_replay_on))
     catch
         abandon_atomic_staging(tmp_path)
         rethrow()

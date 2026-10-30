@@ -315,7 +315,7 @@ function _normalize_surface_ll!(field::AbstractMatrix{FT},
     end
     if haskey(ds, "longitude")
         tmp3 = reshape(out, size(out, 1), size(out, 2), 1)
-        out = @view _normalize_lon_to_centered(tmp3, Float64.(ds["longitude"][:]))[:, :, 1]
+        out = @view normalize_lon_to_centered(tmp3, Float64.(ds["longitude"][:]))[:, :, 1]
     end
     return Array{FT}(out)
 end

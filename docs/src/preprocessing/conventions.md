@@ -29,7 +29,7 @@ the two adjacent cell-center `(1 − qv)` values.
 
 | Path | Function | Where |
 |---|---|---|
-| Spectral ERA5 (LL/RG/CS) | `apply_dry_basis_native!` | `src/Preprocessing/mass_support.jl` — runs after spectral synthesis, before binary write. |
+| Spectral ERA5 (LL/RG/CS) | `apply_dry_basis_native!` | `src/Preprocessing/Spectral/mass_support.jl` — runs after spectral synthesis, before binary write. |
 | GEOS native CS | `endpoint_dry_mass!` (centers) + face-averaging | `src/Preprocessing/sources/geos_panels.jl` — runs at endpoint reconstruction. |
 | GEOS convection forcing (cmfmc / dtrain) | `_moist_to_dry_cmfmc!`, `_moist_to_dry_dtrain!` | `src/Preprocessing/sources/geos_read_window.jl` — runs in the convection-read block. |
 

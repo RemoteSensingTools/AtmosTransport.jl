@@ -51,7 +51,7 @@ function _write_fake_cs_spectral_cache!(spectral_dir::String,
     )
     path = Pre.spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path;
                                        T_target = 0)
-    Pre._write_spectral_day_cache(path, spec)
+    Pre.write_spectral_day_cache(path, spec)
     return path
 end
 

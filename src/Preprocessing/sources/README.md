@@ -8,8 +8,8 @@ source grid, and the trait methods the entry point and writers query. The
 writers that turn these fields into transport binaries live in
 [`../transport_binary/`](../transport_binary/README.md). ERA5 spectral input
 (VO/D/LNSP GRIB) does not go through this folder: `ERA5SpectralSettings` is in
-[`../met_sources.jl`](../met_sources.jl) and the GRIB reader in
-[`../spectral_io.jl`](../spectral_io.jl).
+[`../Core/met_sources.jl`](../Core/met_sources.jl) and the GRIB reader in
+[`../Spectral/spectral_io.jl`](../Spectral/spectral_io.jl).
 
 ## Entry Points
 
@@ -129,7 +129,7 @@ writers that turn these fields into transport binaries live in
 ## Tests
 
 In [`../../../test/core/`](../../../test/core/): `test_met_source_loader.jl`,
-`test_met_sources_trait.jl`, `test_met_readers.jl`, `test_geos_reader.jl`,
+`test_met_readers.jl`, `test_geos_reader.jl`,
 `test_geosfp_native_physics_fallback.jl`, `test_geos_convection.jl`,
 `test_era5_n320_reader.jl`, `test_era5_n320_window_reader.jl`,
 `test_era5_n320_dry_mass.jl`, `test_era5_n320_convection.jl`,

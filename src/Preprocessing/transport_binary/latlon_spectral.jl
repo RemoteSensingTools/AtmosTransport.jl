@@ -255,7 +255,7 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
                            workspace.steps_schedule, contract, substep_policy;
                            write_replay_on = workspace.write_replay_on,
-                           weights = _spectral_column_weights(grid, settings, vertical))
+                           weights = spectral_column_weights(grid, settings, vertical))
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (begin
             amount_seconds = settings.met_interval / (2 * workspace.steps_schedule[win_idx])
@@ -309,7 +309,7 @@ function process_day(date::Date,
                              adaptive_substeps = false,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
-    _check_spectral_column_weights(grid, settings)
+    check_spectral_column_weights(grid, settings)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -318,8 +318,8 @@ function process_day(date::Date,
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
     date_str = Dates.format(date, "yyyymmdd")
 
-    vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
-    lnsp_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+    vo_d_path = era5_spectral_paths(settings.spectral_dir, date).vo_d
+    lnsp_path = era5_spectral_paths(settings.spectral_dir, date).lnsp
 
     if !isfile(vo_d_path) || !isfile(lnsp_path)
         @warn "Missing GRIB files for $date_str, skipping"
@@ -370,7 +370,7 @@ function process_day(date::Date,
     # written with the gate off is not reused by a run with it on) and the
     # workspace carries it to the gate.
     write_replay_on = write_replay_check
-    _with_replay_record(header, write_replay_on)
+    with_replay_record(header, write_replay_on)
     expected_sections = expected_payload_sections(settings)
     skip, reason = existing_output_schema_matches(
         bin_path, byte_sizes.total_bytes, expected_sections, header)
@@ -407,7 +407,7 @@ function process_day(date::Date,
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
     try
-        tmp_path = _open_preprocessing_staging(bin_path)
+        tmp_path = open_preprocessing_staging(bin_path)
         writer = LatLonDeferredBinaryWriter(
             tmp_path, header, workspace, settings, FT,
             State.mass_basis(Symbol(settings.mass_basis));

@@ -326,18 +326,27 @@ end
                 vo_by_hour = Dict(h => zeros(ComplexF64, 2, 2, 137) for h in hours),
                 d_by_hour = Dict(h => zeros(ComplexF64, 2, 2, 137) for h in hours),
                 T = 1, n_times = length(hours))
+        spec.vo_by_hour[0][:, :, 1] .= ComplexF64[1 3; 2 4]
+        spec.d_by_hour[1][:, :, 1] .= ComplexF64[9 11; 10 12]
         path = joinpath(dir, "cache", "spectral.jld2")
-        write_cache() = PP._write_spectral_day_cache(path, spec)
+        write_cache() = PP.write_spectral_day_cache(path, spec)
         result = Sys.iswindows() ? write_cache() : with_umask(write_cache, 0o027)
         @test result == path
         Sys.iswindows() || @test mode_of(path) == 0o640
-        @test PP._load_spectral_day_cache(path).hours == hours
+        loaded = PP.load_spectral_day_cache(path)
+        @test loaded.T == spec.T
+        @test loaded.n_times == spec.n_times
+        @test loaded.hours == spec.hours
+        @test loaded.lnsp_all == spec.lnsp_all
+        @test loaded.vo_by_hour == spec.vo_by_hour
+        @test loaded.d_by_hour == spec.d_by_hour
+        @test PP.load_spectral_day_cache(path).hours == hours
         @test readdir(dirname(path)) == ["spectral.jld2"]
 
         # A spec that fails mid-write keeps the previous cache and leaves no staging file.
         broken = (; spec.hours, spec.lnsp_all)
-        @test_throws Exception PP._write_spectral_day_cache(path, broken)
-        @test PP._load_spectral_day_cache(path).hours == hours
+        @test_throws Exception PP.write_spectral_day_cache(path, broken)
+        @test PP.load_spectral_day_cache(path).hours == hours
         @test readdir(dirname(path)) == ["spectral.jld2"]
     end
 end

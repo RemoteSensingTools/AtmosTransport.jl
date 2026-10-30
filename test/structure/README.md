@@ -134,6 +134,12 @@ baseline migration inherits the old lower dependencies and maps existing
 consumers to the children. CMFMC may call the earlier TM5 solve; no new reverse
 edge, clone digest, private-use allowance or folder budget is accepted.
 
+PP1 splits the preprocessing dependency budget into Core, Vertical and Spectral.
+The LAYERS-only migration grants each child the former lower dependencies;
+Vertical may call Core and Spectral may call Core and Vertical. Existing facade
+consumers may follow the moved bindings. No child may import the parent or a
+later stage, and no reverse exception or clone/private/docstring allowance is
+added. The migration does not apply when the base already contains Core.
 T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
 Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
 inherits the existing lower dependency budgets and permits facade child

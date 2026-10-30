@@ -431,6 +431,27 @@ end
     @test StructureCheck.relocate_m1_layers(debt, "private") == debt
 end
 
+@testset "PP1 relocates ordered preprocessing stages without accepting reverse edges" begin
+    parent = "AtmosTransport.Preprocessing"
+    core, vertical, spectral = [parent * "." * n for n in ("Core", "Vertical", "Spectral")]
+    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids"],
+                                    "AtmosTransport" => [parent]),
+                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/sources"]))
+    after = StructureCheck.relocate_pp1_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test vertical in after["modules"][spectral]
+    @test !(parent in after["modules"][core])
+    @test !("src/Preprocessing/sources" in after["folders"]["src/Preprocessing/Core"])
+    for (from, to) in ((core, vertical), (vertical, spectral), (core, parent))
+        expanded = deepcopy(after)
+        push!(expanded["modules"][from], to)
+        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+        @test !isempty(StructureCheck.allowance_growth(after, expanded, "src/LAYERS.toml"))
+    end
+    debt = Dict("allow" => Dict("old" => "unchanged debt"))
+    @test StructureCheck.relocate_pp1_layers(debt, "clone") == debt
+end
+
 @testset "A1 shared-module folder wiring preserves sibling order" begin
     home = StructureCheck.A1_HOME
     children = StructureCheck.A1_CHILDREN

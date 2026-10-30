@@ -256,7 +256,7 @@ identical on either basis — what changes is the meaning of the stored `m`:
 Conversions happen at the boundaries:
 
 - **Preprocessing.** `apply_dry_basis_native!` in
-  `src/Preprocessing/mass_support.jl` multiplies cell-centered
+  `src/Preprocessing/Spectral/mass_support.jl` multiplies cell-centered
   `m, dp, ps` and face-averaged `am, bm` by `(1 − qv_face)` with the
   appropriate face-averaging convention. After this step every payload
   field in the binary is dry.
@@ -289,7 +289,7 @@ well before any windows actually step.
 | Write-time replay gate | `src/MetDrivers/ReplayContinuity.jl::verify_window_continuity_*!` |
 | `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl` |
 | Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |
-| Dry-basis correction | `src/Preprocessing/mass_support.jl::apply_dry_basis_native!` |
+| Dry-basis correction | `src/Preprocessing/Spectral/mass_support.jl::apply_dry_basis_native!` |
 | Basis-mismatch enforcement | `src/Models/DrivenSimulation.jl` (construction) |
 
 ## What's next

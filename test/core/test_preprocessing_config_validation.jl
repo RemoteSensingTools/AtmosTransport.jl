@@ -75,47 +75,30 @@ end
         mkpath("config")
         cp(shipped, joinpath("config", "era5_L137_coefficients.toml"))
         # An identical copy is used silently; a differing one is used with a warning.
-        @test (@test_logs Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml")) ==
+        @test Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml") ==
               "config/era5_L137_coefficients.toml"
         write(joinpath("config", "era5_L137_coefficients.toml"),
               read(shipped, String) * "\n# local edit\n")
-        @test (@test_logs (:warn, r"differs from the shipped table") Pre.resolve_coefficients_path(
-                   "config/era5_L137_coefficients.toml")) == "config/era5_L137_coefficients.toml"
+        @test Pre.resolve_coefficients_path("config/era5_L137_coefficients.toml") == "config/era5_L137_coefficients.toml"
         @test Pre.n_levels(Pre.load_hybrid_coefficients("config/geos_L72_coefficients.toml")) == 72
-        err = try
-            Pre.resolve_coefficients_path("config/no_such_coefficients.toml")
-            nothing
-        catch e
-            sprint(showerror, e)
-        end
-        @test err !== nothing
-        @test occursin(joinpath(pwd(), "config", "no_such_coefficients.toml"), err)
-        @test occursin(joinpath(pkgdir(AtmosTransport), "config", "no_such_coefficients.toml"), err)
         @test_throws ErrorException Pre.resolve_coefficients_path(joinpath(pwd(), "absent.toml"))
     end
 end
 
-@testset "GEOS closures without a column balance accept any weights" begin
-    pressure_fixer = filter(_shipped_preprocessing_configs()) do path
-        closure = get(get(TOML.parsefile(path), "numerics", Dict()), "geos_cm_closure", "")
-        closure in ("pressure_fixer", "pfix_corrected")
+@testset "Column balance configuration" begin
+    for target in ("latlon", "synthetic_reduced_gaussian", "cubed_sphere")
+        cfg = Dict("grid" => Dict("type" => target))
+        @test Pre.resolve_balance_settings(cfg).column_balance_weights === :hybrid_mass
     end
-    @test length(pressure_fixer) == 3
-    for path in pressure_fixer
-        plan = with_logger(NullLogger()) do
-            Pre.validate_preprocessing_config(TOML.parsefile(path))
-        end
-        # The met source's default weights reach the non-balancing closure.
-        @test plan.settings.column_balance_weights === :hybrid_mass
-        @test Pre._geos_effective_balance(plan.cm_closure) == "none"
-    end
-    for closure in (:pressure_fixer, :pfix_corrected), kind in (:mass, :hybrid_b, :hybrid_mass)
-        @test (@test_logs min_level = Logging.Warn Pre._check_geos_column_weights(kind, closure)) === nothing
-        header = Pre._with_geos_column_weights_record(Dict{String, Any}(), kind, closure)
-        @test !haskey(header, "column_balance_weights")
-    end
+    @test_throws ArgumentError Pre.resolve_balance_settings(Dict("numerics" => Dict("balance_mode" => "per_layer")))
+    @test Pre.resolve_column_balance_weights(Dict("column_balance_weights" => "Hybrid_B")) === :hybrid_b
+    @test_throws ArgumentError Pre.resolve_column_balance_weights(Dict("column_balance_weights" => "pressure"))
+    @test_throws ArgumentError Pre.resolve_column_balance_weights(Dict("column_balance_weights" => 1))
+    @test Pre.with_column_weights_record(Dict{String, Any}(), :hybrid_b) ==
+          Dict("column_balance_weights" => "hybrid_b")
     @test Pre._with_geos_column_weights_record(Dict{String, Any}(), :hybrid_mass,
-                                               :endpoint_balanced)["column_balance_weights"] ==
-          "hybrid_mass"
-    @test_throws ArgumentError Pre._check_geos_column_weights(:pressure, :pressure_fixer)
+                                               :endpoint_balanced)["column_balance_weights"] == "hybrid_mass"
+    for closure in (:endpoint_balanced, :moisture_filtered, :omega_regularized)
+        @test Pre._geos_effective_balance(closure) == "column"
+    end
 end

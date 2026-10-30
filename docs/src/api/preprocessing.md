@@ -7,7 +7,10 @@ per-source pages [ERA5 spectral path](@ref) and
 [GEOS native cubed-sphere](@ref).
 
 ```@autodocs
-Modules = [AtmosTransport.Preprocessing]
+Modules = [AtmosTransport.Preprocessing,
+           AtmosTransport.Preprocessing.Core,
+           AtmosTransport.Preprocessing.Vertical,
+           AtmosTransport.Preprocessing.Spectral]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

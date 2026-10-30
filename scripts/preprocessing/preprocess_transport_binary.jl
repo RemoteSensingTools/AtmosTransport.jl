@@ -114,7 +114,7 @@ function main(args::Vector{String} = ARGS)
     cfg_path, day_override, start_date, end_date = parsed
     cfg = TOML.parsefile(cfg_path)
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited = false)
-    return with_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger)) do
+    return with_logger(AtmosTransport.Preprocessing.FlushingLogger(base_logger)) do
         process_day(cfg; day_override = day_override,
                          start_date   = start_date,
                          end_date     = end_date)

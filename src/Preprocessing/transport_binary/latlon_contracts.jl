@@ -38,7 +38,7 @@ function next_day_merged_fields(next_day_hour0,
     @info "  Computing next day hour 0 for last-window delta..."
 
     spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.cm_arr, transform.sp,
+        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
         transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
         next_day_hour0.lnsp, next_day_hour0.vo, next_day_hour0.d,
         next_day_hour0.T, vertical.level_range, vertical.ab, grid, settings.half_dt,
