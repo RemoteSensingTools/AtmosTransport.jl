@@ -44,8 +44,8 @@ mass basis, supported operators, and load-time consistency gates.
   `Quantities -> Parameters ->`
   `Grids -> State -> Output -> Observations -> MetDrivers -> Operators -> Tape -> Adjoints ->`
   `Regridding -> GriddedIO -> Preprocessing -> Visualization -> Models ->`
-  `Analysis -> Downloads`. `Footprint/` and `Inversion/` are not modules:
-  `Adjoints.jl` includes their files.
+  `Analysis -> Downloads`. `Adjoints.Footprint` and `Adjoints.Inversion` are submodules; Inversion
+  separates observation binding/IO from the solver.
 - `GriddedIO` owns the conventions of native gridded input files (coordinate
   names, fill policy, lat-lon orientation, source meshes, time decoding, flux
   units, `cs_native` and lat-lon flux-file schemas); initial-condition and

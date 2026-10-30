@@ -32,7 +32,7 @@ cache per `(read role, panel shapes)` pair, so the two operands that one
 reverse kernel reads together (the air mass and tracer mass of a limited-PPM
 sweep record) are always distinct buffers. Subtypes carry the fields
 `read_template` (a zero-size array on the source backend, or `nothing`) and
-`read_caches`.
+`read_caches`, plus a `synchronize` hook (`nothing` or a zero-argument callable).
 """
 abstract type AbstractHostCSTapeStorage <: AbstractCSTapeStorage end
 
@@ -187,15 +187,15 @@ finalize_tape!(::AbstractCSTapeStorage; quiet::Bool = false,
 # same role.
 _tape_panels(slot::CSTapeSlot, ::AbstractTapeReadRole) = slot.panels
 
-function _sync_pinned_tape_storage!(storage::PinnedHostCSTapeStorage)
+function _sync_host_tape_storage!(storage::AbstractHostCSTapeStorage)
     storage.synchronize === nothing || storage.synchronize()
     return nothing
 end
 
-_after_tape_stage!(storage::PinnedHostCSTapeStorage) =
-    _sync_pinned_tape_storage!(storage)
-_after_tape_read!(storage::PinnedHostCSTapeStorage) =
-    _sync_pinned_tape_storage!(storage)
+_after_tape_stage!(storage::AbstractHostCSTapeStorage) =
+    _sync_host_tape_storage!(storage)
+_after_tape_read!(storage::AbstractHostCSTapeStorage) =
+    _sync_host_tape_storage!(storage)
 
 _host_tape_panel(a::AbstractArray{T,N}) where {T,N} =
     Array{T,N}(undef, size(a))

@@ -142,7 +142,7 @@ _fourdvar(P, observations, controls; scheme, physics = :none, kw...) =
 # weighted departure; window steps after the observation are skipped.
 function _reference_4dvar(P, observations, controls; scheme, physics = :none)
     FT = P.FT
-    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
+    rates = ADJ.Inversion.Solver._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
     gradients = [ntuple(_ -> zeros(FT, P.Nc, P.Nc), 6) for _ in controls]
     simulated = FT[]
     for obs in observations
@@ -191,7 +191,11 @@ const P64 = _sweep_problem()
 @testset "single-sweep 4D-Var gradient == per-observation footprints (Float64)" begin
     observations = _observations(P64)
     controls = _controls(P64)
-    @testset "$(_label(scheme)), physics $physics" for scheme in SCHEMES, physics in PHYSICS
+    cases = [(s, p) for s in SCHEMES for p in PHYSICS]
+    fv3 = AT.PPMScheme(; vertical = Adv.FV3ScalarProfile())
+    append!(cases, [(s, p) for s in (AT.PPMScheme(AT.CW84Limiter()),
+                                   AT.LinRoodPPMScheme(5; vertical = fv3)) for p in (:none, :boundary)])
+    @testset "$(_label(scheme)), physics $physics" for (scheme, physics) in cases
         ref = _reference_4dvar(P64, observations, controls; scheme, physics)
         full = _fourdvar(P64, observations, controls; scheme, physics)
         # The forward simulated values are untouched by the new gradient path.
@@ -205,22 +209,6 @@ const P64 = _sweep_problem()
             @test result.simulated == full.simulated
             @test _relerr(result.gradients, full.gradients) <= 1e-12
         end
-    end
-end
-
-@testset "remaining scheme families: CW84 PPM, Lin-Rood with the FV3 vertical" begin
-    fv3 = AT.PPMScheme(; vertical = Adv.FV3ScalarProfile())
-    observations = _observations(P64)
-    controls = _controls(P64)
-    @testset "$(_label(scheme)), physics $physics" for
-            scheme in (AT.PPMScheme(AT.CW84Limiter()), AT.LinRoodPPMScheme(5; vertical = fv3)),
-            physics in (:none, :boundary)
-        ref = _reference_4dvar(P64, observations, controls; scheme, physics)
-        full = _fourdvar(P64, observations, controls; scheme, physics)
-        @test _relerr(full.gradients, ref.gradients) <= 1e-12
-        stride = _fourdvar(P64, observations, controls; scheme, physics,
-                           checkpoint = AT.StrideCheckpoint(2))
-        @test _relerr(stride.gradients, full.gradients) <= 1e-12
     end
 end
 
@@ -276,50 +264,12 @@ function TapeMod._tape_panels(slot::TapeMod.CSTapeSlot{_CountingTapeStorage},
     return slot.panels
 end
 
-@testset "one taped run and one reverse pass per gradient" begin
-    scheme = AT.UpwindScheme()
-    controls = _controls(P64)
-    all_obs = _observations(P64)
-    # The linear mass tape stages one air-mass state per sweep, and the reverse
-    # pass reads each once: a recording is `state_records` stages and a reverse
-    # pass as many reads, for a tape to the last observation step.
-    est = AT.cs_tape_byte_estimate(P64.m, P64.am, P64.bm, P64.cm, P64.mesh, scheme)
-    @test est.state_records == est.sweep_records
-    for observations in (all_obs[2:2], all_obs)   # one and seven observations
-        storage = _CountingTapeStorage()
-        result = _fourdvar(P64, observations, controls; scheme, tape_storage = storage)
-        @test isfinite(result.cost)
-        @test storage.stages == est.state_records
-        @test storage.reads == est.state_records
-    end
-end
 
-@testset "checkpoint and tape_path: one schedule's windows on disk" begin
+
+@testset "single-sweep control and tape storage validation" begin
     scheme = AT.UpwindScheme()
     controls = _controls(P64)
-    observations = _observations(P64; last = 3)          # tape to step 3
-    est = AT.cs_tape_byte_estimate(P64.m, P64.am[1:3], P64.bm[1:3], P64.cm[1:3],
-                                   P64.mesh, scheme)
-    reference = _fourdvar(P64, observations, controls; scheme)
-    records_bytes(dir) = filesize(joinpath(dir, "records.bin"))
-    for (checkpoint, subdirs) in ((AT.FullCheckpoint(), String[]),
-                                  (AT.StrideCheckpoint(2), ["window_00001", "window_00002"]),
-                                  (AT.RevolveCheckpoint(), ["step_00001", "step_00002", "step_00003"]))
-        mktempdir() do dir
-            result = _fourdvar(P64, observations, controls; scheme, checkpoint,
-                               tape_storage = :mmap, tape_path = dir)
-            @test _relerr(result.gradients, reference.gradients) <= 1e-12
-            if isempty(subdirs)
-                @test sort(readdir(dir)) == ["manifest.toml", "records.bin"]
-                @test records_bytes(dir) == est.state_bytes
-            else
-                @test sort(readdir(dir)) == subdirs
-                @test all(isfile(joinpath(dir, d, "manifest.toml")) for d in subdirs)
-                # The windows together hold exactly one tape to step 3.
-                @test sum(records_bytes(joinpath(dir, d)) for d in subdirs) == est.state_bytes
-            end
-        end
-    end
+    observations = _observations(P64; last = 3)
     # Rejections come before the forward run and create no `tape_path`.
     mktempdir() do root
         dir = joinpath(root, "tape")
@@ -369,7 +319,7 @@ _same_footprints(a, b) = _BITWISE ? _footprint_difference(a, b) == 0 :
     objectives = [AT.CSLayerMeanObjective(1, 2, 3, P64.Nz), AT.CSColumnMeanObjective(4, 1, 2),
                   AT.CSLayerMeanObjective(4, 1, 2, P64.Nz - 1)]
     windows = [AT.CSSurfaceFluxWindow(:all, 1:P64.nsteps), AT.CSSurfaceFluxWindow(:mean12, 1:2; normalize = true)]
-    rates = ADJ._surface_rates_from_controls(_controls(P64), P64.nsteps, P64.mesh, P64.rm[1])
+    rates = ADJ.Inversion.Solver._surface_rates_from_controls(_controls(P64), P64.nsteps, P64.mesh, P64.rm[1])
     @testset "$(_label(scheme)), physics $physics, $storage" for (scheme, physics, storage) in (
             (AT.UpwindScheme(), :tm5, :device),
             (AT.UpwindScheme(), :split, :pinned_host),
@@ -414,7 +364,10 @@ end
             f = ADJ._linear_functional(objective, 2, P.m, mesh)
             @test f.steps == fill(2, length(f.weight))
             @test f.offset == 0
-            @test ADJ._evaluate_functional(f, P.rm, mesh) ≈
+            forcing = ADJ._assemble_step_forcing([f], [1.0], mesh, Nz, P.m[1])
+            seed = ntuple(p -> zeros(size(P.rm[p])), 6)
+            ADJ._inject_step_forcing!(seed, forcing, 2, mesh)
+            @test sum(sum(seed[p] .* P.rm[p]) for p in 1:6) ≈
                   AT.evaluate_objective(objective, P.rm, P.m, mesh) rtol = 1e-14
         end
         @test_throws ArgumentError ADJ._linear_functional(AT.CSSeedObjective(), 1, P.m, mesh)

@@ -1,213 +1,52 @@
 # Adjoints
 
-Reverse-mode (discrete adjoint) kernels for cubed-sphere transport. This
-module also hosts the footprint and 4D-Var code.
-
-`Adjoints` is the module that contains this folder,
-[`../Footprint/`](../Footprint/), and [`../Inversion/`](../Inversion/). Files in
-this folder hold support policy, objective seeding, operator-adjoint wiring
-and the Lin-Rood tape. Numerical advection, diffusion and convection kernels
-live next to their forward operators.
-Meteorology (air mass and fluxes) is fixed input. Only tracer mass is
-differentiated. The forward model the reverse pass transposes is the
-production `StepPlan` (`../Operators/StepPlan/`), replayed with the production
-operators; [`AdjointSupport.jl`](AdjointSupport.jl) is the setup guard that
-rejects a plan with an operator the tape cannot transpose. The runtime
-(`Models`) uses only `CSStepSchedule` and `require_adjoint_support` (for a
-`DrivenSimulation`, `../Models/adjoint_schedule.jl`); the adjoint is called by
-scripts, tests, and user code.
-
-## How It Is Loaded
-
-[`../AtmosTransport.jl`](../AtmosTransport.jl) includes `Tape/Tape.jl` and then
-`Adjoints/Adjoints.jl` (after `Operators`), followed by `using .Adjoints`.
-[`Adjoints.jl`](Adjoints.jl) includes files in an order that matters,
-because later files use types defined earlier:
-`ObjectiveSeeding.jl`, `Footprint/FootprintResult.jl` and
-`Footprint/StepForcing.jl`; then the
-`Inversion/` type, IO, covariance, and preconditioner files; then inline
-helpers; then the operator-adjoint wiring files in this folder ending
-with `LinRoodTape.jl`; then `Footprint/StepReplay.jl`, `AdjointSupport.jl`
-and the remaining `Footprint/` files; and finally `Inversion/Jacobian.jl`, `CostGradient.jl`,
-and `Optimizer.jl`. The export block at the end of `Adjoints.jl` is the
-public surface for all three folders. `AtmosTransport` makes these names
-reachable as `AtmosTransport.<name>` but does not re-export them.
-
-## Entry Points
-
-- Scheme support unions assembled in [`Adjoints.jl`](Adjoints.jl) from
-  Advection-owned sweep unions:
-  `CSAdjointLinearScheme` (`UpwindScheme`, `SlopesScheme{NoLimiter}`,
-  `PPMScheme{NoLimiter, SameAsHorizontal}`), `CSAdjointNonlinearScheme`
-  (`PPMScheme{MonotoneLimiter}` and `PPMScheme{CW84Limiter}`, both with
-  `SameAsHorizontal`), `CSAdjointFV3Vertical` (`PPMScheme` with
-  `FV3ScalarProfile`, recorded only as Lin-Rood's vertical sweep),
-  `CSAdjointLinRoodScheme` (`LinRoodPPMScheme` with upwind or FV3 vertical
-  sweeps), and their union `CSAdjointSupportedScheme`. The split-sweep
-  `PPMScheme` with the FV3 vertical profile is not supported.
-  `require_adjoint_support(scheme)` is the dispatch-based gate on this union:
-  it returns a supported scheme and otherwise throws an error naming the
-  missing piece (used by the inversion driver for its `[advection]` table).
-- The setup guard in [`AdjointSupport.jl`](AdjointSupport.jl):
-  `adjoint_support(x)` (`nothing` for a supported plan stage, scheme or
-  operator, otherwise the reason; unsupported is the fallback) and
-  `require_adjoint_support(plan, ops...)`, which every entry point calls
-  before recording and which throws an error naming every unsupported
-  piece.
-- `CSAdjointWorkspace(mesh, prototype; column_scratch = false)` from
-  [`Advection/CubedSphere/adjoint_workspace.jl`](../Operators/Advection/CubedSphere/adjoint_workspace.jl),
-  imported and exported by `Adjoints.jl`: per-panel transpose scratch, the 12-seam seed
-  cache, and (with `column_scratch = true`) the per-column storage of the FV3
-  vertical sweep's reverse pass.
-- Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):
-  `CSLayerMeanObjective`, `CSColumnMeanObjective`, `CSPlacedPointObjective`
-  (an in-situ sample placed in the column; its layer is chosen per sampled
-  state from the column meteorology, so only `cs_surface_flux_4dvar` takes
-  it), `CSSeedObjective`, and `evaluate_objective`.
-- Reverse kernels called by `_walk_window_reverse!`
-  (`../Footprint/ReverseLoop.jl`): `_adjoint_scheme_sweep!`,
-  `_adjoint_fill_panel_halos!`, `_apply_cs_diffusion_adjoint!`,
-  `_apply_cs_convection_adjoint!`, `_apply_cs_linrood_horizontal_adjoint!`.
-- User-facing drivers live in `../Footprint/` (`cs_surface_emission_footprint`)
-  and `../Inversion/` (`cs_surface_flux_4dvar`).
+`AtmosTransport.Adjoints` owns objective seeding, sparse linear functionals,
+step forcing, support checks, panel allocation helpers, and operator-adjoint
+wiring. Its children are `Footprint` and `Inversion`; their public names
+remain available through Adjoints and as qualified AtmosTransport names.
 
 ## File Map
 
-- [`Adjoints.jl`](Adjoints.jl) — module, imports from `Operators`/`Tape`,
-  support unions, include order, workspace imports, exports
-- [`AdjointSupport.jl`](AdjointSupport.jl) — the setup guard
-  (`adjoint_support`, `require_adjoint_support` for a plan and its operators
-  and for a replay)
-- [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl) — objective types, forward
-  evaluation, final-time seed `_seed_objective!` (zero the adjoint state, then
-  add the objective's linear functional from `../Footprint/StepForcing.jl`;
-  the seed values are unchanged), per-step surface read-out
-  `_accumulate_surface_footprint!`
-- Numerical advection transposes: [Advection/CubedSphere/](../Operators/Advection/CubedSphere/README.md)
-  owns `AdvectionAdjoint.jl`, `HaloAdjoint.jl`, `CubedSphereSeamsAdjoint.jl`
-  and `adjoint_workspace.jl`; Adjoints imports their reverse entrypoints.
-- [`DiffusionAdjoint.jl`](DiffusionAdjoint.jl) — input validation and launch wiring for
-  CS diffusion; numerical Kz/Dkg transpose kernels live in Diffusion,
-  plus input validation
-- [`ConvectionAdjoint.jl`](ConvectionAdjoint.jl) — supported-variant checks,
-  workspace/forcing validation and tape dispatch. Numerical convection
-  transposes live beside their forward kernels in
-  [`../Operators/Convection/CMFMC/`](../Operators/Convection/CMFMC/README.md) and
-  [`../Operators/Convection/TM5/`](../Operators/Convection/TM5/README.md).
-
-- [`LinRoodTape.jl`](LinRoodTape.jl) — `_CSLinRoodHorizRecord` (built from
-  the production `fv_tp_2d_cs!`'s recorder hooks) and
-  `_apply_cs_linrood_horizontal_adjoint!`. The per-kernel Lin-Rood adjoints
-  live in `../Operators/Advection/linrood_adjoint_*.jl`.
-
-## Common Tasks
-
-- Supporting a new advection scheme: add it to a `CSAdjoint*Scheme` union,
-  add face-coefficient and `_add_*_face_adjoint!` methods in
-  [`AdvectionAdjoint.jl`](../Operators/Advection/CubedSphere/AdvectionAdjoint.jl), and extend the
-  `_record_sweep!` dispatch in `../Footprint/TapeRecording.jl`.
-- Supporting a new convection or diffusion variant: add the adjoint arm
-  (`_apply_cs_convection_adjoint!` or `_apply_cs_diffusion_adjoint!`) and an
-  `adjoint_support` method returning `nothing` in
-  [`AdjointSupport.jl`](AdjointSupport.jl). The forward is production's: the
-  replay calls the operator's `apply!` through the step plan.
-- Supporting a new plan stage or operator type: the guard rejects it until it
-  has an `adjoint_support` method, a recorder hook in production, a tape
-  record and a reverse arm in `_walk_window_reverse!`.
-- Debugging a footprint/finite-difference mismatch: run
-  `test_cs_adjoint_step_plan_parity.jl` (replay == production), then the
-  kernel-level identity tests listed below.
-
-## Invariants
-
-- Each reverse kernel is the transpose of the forward operator the tape
-  replays. For monotone PPM, Lin-Rood and the FV3 vertical profile, it
-  transposes the linearization around the recorded state, so limiter branches
-  are frozen. Kernel tests check `⟨y, L·x⟩ = ⟨Lᵀ·y, x⟩` to rounding error.
-- The forward replay is production: `_replay_steps!`
-  (`../Footprint/StepReplay.jl`) executes the production `StepPlan` with the
-  production operators and their persistent state (the surface source's Kahan
-  compensation, the TM5/CMFMC/Dkg ledger carries, the CMFMC CFL cache, all
-  reset to a fresh run's at replay start and saved with every checkpoint),
-  and the tape is recorded through the production step's recorder hooks.
-  `test_cs_adjoint_step_plan_parity.jl` checks replay, recording and
-  checkpoint restarts against the production `DrivenSimulation` bit for bit.
-  The ledger carries and the Kahan compensation shape the forward's rounding
-  only; the reverse kernels transpose the exact operators.
-  The FV3 reverse replays the forward profile functions themselves, on
-  `_LinearForm` numbers, so its branches are the forward's.
-- A sweep record holds the state entering the sweep: the reverse
-  coefficients divide by the pre-sweep donor mass. The production
-  palindromes call `record_sweep!` before each sweep.
-- Forward settings that the adjoint cannot transpose are rejected by the
-  guard before recording: `CMFMCConvection(clamp = true)` or an archived cloud
-  base; `TM5Convection` with `use_collab_lu`, `lmax_conv != 0`, or
-  `n_merge != 1`; GEOS-Chem non-local VDIFF (`GCHPNonlocalPBLField`);
-  chemistry other than `NoChemistry`; any stage, scheme or operator without an
-  `adjoint_support` method. A Holtslag-Boville `Kz` cache that is all zero or
-  non-finite is rejected by the diffusion input validation.
-- Lin-Rood tapes accept only `tape_storage = :device`; `tape_path` is
-  rejected.
-- The reverse walk reads staged states with a read role
-  (`_tape_panels(slot, AirMassRead())`, `TracerMassRead()` for a limited
-  sweep's tracer mass): host-side tape storage keeps one device cache per
-  role, so one kernel's two staged operands are distinct buffers.
-- Level `Nz` is the surface layer. The surface source adds its rates to
-  level `Nz`, and footprints are read from `lambda[:, :, Nz]` on the interior
-  `Hp+1:Hp+Nc` cells.
-- `FT` is taken from the panel eltype. `dt` and `flux_scale` are converted
-  to `FT`. Kernels use KernelAbstractions, so CPU and GPU share one code
-  path.
-- Reverse kernels add no explicit host barrier between operations of one
-  task. A walk queues its kernels and device copies in order on the task's
-  device queue (a CPU launch finishes before it returns), so buffers that
-  several panels or operators reuse (`CSAdjointWorkspace.lambda_A`, the seam
-  seed cache, the diffusion and convection scratch) need none between uses.
-  `_walk_window_reverse!` synchronizes once at its end. Explicit barriers
-  remain where the host reads device data (`evaluate_objective`), in
-  host-side tape staging and reads, in the recorder hooks that stage into
-  host-side tape storage, and in `_share_lr_seam_faces!`, which the Lin-Rood
-  reverse shares with the forward. A backend may also wait inside its own
-  copies (Metal's `copyto!`).
-
-## Related Docs And Tests
-
-- [`../../docs/src/theory/adjoint_status.md`](../../docs/src/theory/adjoint_status.md),
-  [`../../docs/src/getting_started/adjoints.md`](../../docs/src/getting_started/adjoints.md),
-  [`../../docs/src/api/adjoints.md`](../../docs/src/api/adjoints.md)
-- Kernel transpose tests in [`../../test/core/`](../../test/core/):
-  `test_linrood_kernel_adjoints.jl` (Lin-Rood), `test_cmfmc_adjoint_identity.jl`,
-  `test_cmfmc_matrix_convection.jl`, `test_tm5_hessenberg.jl`,
-  `test_tm5_bidiagonal_solve.jl` (convection),
-  `test_diffusion_mass_flux_conservation.jl`,
-  `test_precomputed_dkg_binary_payload.jl` (diffusion),
-  `test_cs_seam_exchange.jl`, `test_cubed_sphere_advection.jl` (seams),
-  `test_cs_linrood_fv3_adjoint.jl` (FV3 vertical sweep), and
-  `test_fv3_vertical_profile.jl` (which schemes are supported)
-- End-to-end footprint tests: see [`../Footprint/README.md`](../Footprint/README.md).
-  Opt-in GPU checks: `../../test/diagnostic/test_cs_transport_adjoint_gpu.jl`
-  and `test_linrood_adjoint_integration.jl`
+- `Adjoints.jl`: imports, supported scheme unions, child modules and re-exports.
+- `ObjectiveSeeding.jl`: layer, column, placed, retrieval and cell-average
+  objectives, evaluation, final seeds and surface readout.
+- `StepForcing.jl`: `CSLinearFunctional`, `CSStepForcing`, `NoStepForcing`,
+  assembly and deterministic injection, shared by objective seeds and 4D-Var.
+- `PanelArrays.jl`: copy and zero allocation for six-panel tuples and surfaces.
+- `AdjointSupport.jl`: scheme, stage and operator support policy.
+- `DiffusionAdjoint.jl`, `ConvectionAdjoint.jl`: validation and launch wiring.
+- `LinRoodTape.jl`: Lin–Rood horizontal record and reverse composition (fenced).
+- `Footprint/`: production-step replay, recording, reverse walk, checkpointing.
+- `Inversion/`: observation binding/sampling/IO and surface-flux solvers.
 
 ## Depends on
 
-Grids, State, Operators, MetDrivers, Architectures, Parameters and Tape.
-Diffusion transpose kernels are imported from Operators/Diffusion; no lower
-module imports Adjoints.
+Grids, State, Parameters, MetDrivers, Operators (including StepPlans), Tape,
+and Observations (placement and retrieval types). External: KernelAbstractions.
+Child includes and re-exports assemble the facade; core implementation never
+calls Footprint or Inversion. Numerical transposes live beside the forward
+operators; Lin–Rood composition remains here until its readiness work.
 
 ## Used by
 
-Models, Footprint and Inversion compose schedules, recording and reverse walks.
-Backend extensions supply tape/adjoint backend hooks.
+Footprint, Inversion, Models (support checks and the re-exported
+`CSStepSchedule`), inversion scripts, and adjoint/finite-difference tests.
 
 ## Shared helpers owned here
 
-Objective seeding, `adjoint_support`, `require_adjoint_support`, schedules and
-operator-adjoint wiring remain here. Advection, diffusion and convection numerical kernels have one home beside
-their forward operators. CSAdjointWorkspace is re-exported from Advection.
+Objective types, `evaluate_objective`, `adjoint_support`,
+`require_adjoint_support`, scheme unions and `CSAdjointWorkspace`.
+The following internal interfaces serve the child modules: objective
+validation/seeding, fixed sparse functionals and forcing injection, panel
+allocation, diffusion/convection validation, and operator reverse launchers.
+The Lin–Rood record and storage gate are shared without changing that file.
 
 ## Forward<->adjoint mirrors
 
-Diffusion's `diffusion_kernels.jl` / `conservative_dkg.jl` now pair with
-`Operators/Diffusion/adjoint_kernels.jl`. `DiffusionAdjoint.jl` retains tape
-validation, sequence lookup and the launch wiring. Other mirrors are recorded
-in `test/structure/mirrors.toml`.
+The reverse launchers transpose the production advection, diffusion and
+convection operators. Objective evaluation and seeding use the same mass
+floor. Forcing assembly adds entries in a fixed order; one work item owns
+one cell. The step-plan parity, kernel identities, gradient identities and
+finite-difference tests are the numerical gate.
+
+# shared: AbstractCSFootprintObjective, AbstractStepForcing, CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective, CSColumnMeanObjective, CSLayerMeanObjective, CSLinearFunctional, CSPlacedPointObjective, CSRetrievalColumnObjective, CSSeedObjective, NoStepForcing, _CSLinRoodHorizRecord, _RmTapedSweepScheme, _accumulate_surface_footprint!, _apply_cs_convection_adjoint!, _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _assemble_step_forcing, _cell_average_needs_4dvar, _copy_panel_tuple, _inject_step_forcing!, _linear_functional, _linrood_validate_tape_storage, _objective_mass_floor, _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met, _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing, _zero_panel_tuple_like, _zero_surface_rates, evaluate_objective, require_adjoint_support

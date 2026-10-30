@@ -140,3 +140,10 @@ Vertical may call Core and Spectral may call Core and Vertical. Existing facade
 consumers may follow the moved bindings. No child may import the parent or a
 later stage, and no reverse exception or clone/private/docstring allowance is
 added. The migration does not apply when the base already contains Core.
+T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
+Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
+inherits the existing lower dependency budgets and permits facade child
+wiring; it removes the old folder-cycle exceptions. Clone, private-use and
+size identities receive no new allowances. Explicit relative imports resolve
+local child modules before inherited aliases, so Inversion.Observations and
+the package's Observations module remain distinct owners.

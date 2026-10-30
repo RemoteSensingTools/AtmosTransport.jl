@@ -247,3 +247,6 @@ transposes are owned by Operators/Diffusion; Models contains no adjoint kernels.
 
 Convection workspace allocation is owned by
 `Operators.Convection.convection_workspace_for` (`../Operators/Convection/workspace_factory.jl`).
+
+Driven stepping and adjoint replay share StepPlans.window_clock and
+StepPlans.window_step_dt, with the same conversions and operation order.

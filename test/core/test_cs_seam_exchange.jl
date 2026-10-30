@@ -170,9 +170,9 @@ end
         end
         gradient = map(copy, seed)
         if scheme isa PPMScheme{MonotoneLimiter}
-            Adj._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, aws, 1.0)
+            CSSeamAdv._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, aws, 1.0)
         else
-            Adj._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, aws, 1.0)
+            CSSeamAdv._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, aws, 1.0)
         end
         Adj._adjoint_fill_panel_halos!(gradient, mesh)
         expected = sum(dot(gradient[p], direction[p]) for p in 1:6)

@@ -2,7 +2,7 @@
 # Tape records for the CS adjoint reverse loop.
 #
 # Each forward-recorded operation pushes one record type onto the tape;
-# the reverse-loop driver in `src/Footprint/ReverseLoop.jl` dispatches on
+# the reverse-loop driver in `src/Adjoints/Footprint/ReverseLoop.jl` dispatches on
 # these record types and calls the appropriate per-physics adjoint kernel.
 #
 # Notes on the scheme parameter:
@@ -19,7 +19,7 @@
 #
 # `_CSLinRoodHorizRecord` is defined separately in
 # `src/Adjoints/LinRoodTape.jl` and is
-# **not** part of the `_CSTapeOp` union below. The reverse-loop driver
+# handled directly by the reverse-loop driver. The driver
 # handles it via an explicit branch alongside the union dispatch.
 # ---------------------------------------------------------------------------
 
@@ -126,13 +126,3 @@ struct _CSAirMassResetRecord{T}
     panels_old_m::T
     panels_new_m::T
 end
-
-const _CSTapeOp = Union{
-    _CSSweepRecord,
-    _CSHaloRecord,
-    _CSMidpointRecord,
-    _CSStepEndRecord,
-    _CSDiffusionRecord,
-    _CSConvectionRecord,
-    _CSAirMassResetRecord,
-}

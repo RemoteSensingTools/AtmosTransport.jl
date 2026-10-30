@@ -14,7 +14,7 @@ function _maybe_advance_window!(sim::DrivenSimulation)
         sim.current_window_index = next_window
         sim.steps_per_window = sim.steps_per_window_schedule[next_window]
         sim.current_window_end_iteration = sim.iteration + sim.steps_per_window
-        sim.Δt = sim.window_dt / typeof(sim.Δt)(sim.steps_per_window)
+        sim.Δt = window_step_dt(sim.window_dt, sim.steps_per_window)
         _take_prefetched_window!(sim, next_window)
         _stage_surface_flux_window!(sim)
         # The plan's window-advance stages: the air-mass reset to the window
@@ -178,7 +178,7 @@ function DrivenSimulation(model::TransportModel,
     isfinite(window_dt(driver)) && window_dt(driver) > 0 || throw(ArgumentError(
         "DrivenSimulation driver window_dt must be finite and positive"))
     steps_current = step_schedule[Int(start_window)]
-    Δt = FT(window_dt(driver)) / FT(steps_current)
+    Δt = window_step_dt(FT(window_dt(driver)), steps_current)
     nsteps_total = sum(@view step_schedule[Int(start_window):Int(stop_window)])
 
     flux_interp = interpolate_fluxes_within_window === nothing ?
@@ -289,10 +289,8 @@ _clock_time(sim::DrivenSimulation) =
     _window_clock(sim, sim.current_window_index - sim.start_window,
                   (sim.iteration - sim.current_window_start_iteration) / sim.steps_per_window)
 
-# The run clock `fraction` of the way through the window `offset` windows after
-# `start_window`.
 _window_clock(sim::DrivenSimulation, offset::Integer, fraction::Float64) =
-    sim.start_time + Float64(sim.window_dt) * (offset + fraction)
+    window_clock(sim.start_time, sim.window_dt, offset, fraction)
 
 # Run-clock interval `[t0, t1]` of the current met window: `_clock_time` at the
 # window's first and last step boundary.

@@ -121,8 +121,7 @@ regularization of unresolved high-frequency modes.
   edge artefacts.
 - The FFT path is CPU-only.
 - The struct carries mutable `fft_buf` / `fft_scratch` scratch
-  buffers reused by every `apply_B_half!` / `_adjoint!` /
-  `_inverse!` call. As a consequence the covariance is **not
+  buffers reused by every `apply_B_half!` / `apply_B_half_adjoint!` call. As a consequence the covariance is **not
   thread-safe** — concurrent calls on the same instance race on
   the scratch. Build one instance per worker thread if needed.
 """
@@ -134,7 +133,7 @@ struct IsotropicGaussianCSCovariance{FT, A, P, IP} <: AbstractCSSurfaceFluxCovar
     # eigenvalues. Real, non-negative, length `Nc × Nc` per panel.
     L_transfer_sqrt::Matrix{FT}
     # Pre-allocated scratch buffers + pre-built FFTW plans reused by
-    # every `apply_B_half!` / `_adjoint!` / `_inverse!` call.
+    # every square-root / adjoint call.
     # Avoids per-call matrix allocations (~50 KB at C48) and per-call
     # FFTW-plan construction (plain `fft!` / `ifft!` rebuild a plan on
     # every invocation). Mirrors the `LLPoissonWorkspace` pattern in
@@ -344,93 +343,6 @@ function apply_B_half_adjoint!(g_chi::NTuple{6, A},
                         cov.L_transfer_sqrt, cov.fft_plan, cov.ifft_plan)
     end
     return g_chi
-end
-
-# ---------------------------------------------------------------------------
-# Inverse — `B^(-1/2)`. Needed by the preconditioner to map a
-# physical-space initial guess back into χ-space and for the
-# LogNormal bijection. `apply_B_half_inverse!` is `D^(-1) · L^(-1)`:
-# elementwise divide by σ, then deconvolve via spectral `1/sqrt(C̃)`.
-#
-# For `DiagonalCSCovariance` the inverse is exact and self-adjoint.
-# For `IsotropicGaussianCSCovariance`, the symmetric `L` is its own
-# inverse in spectral space (multiplication by `1/sqrt(C̃)`); the
-# composition `L · L^(-1) = I` is exact up to FFT roundoff, but
-# applying `L^(-1)` to a noisy input amplifies any signal that lies
-# in the high-frequency tail where `transfer_sqrt` is tiny. Callers
-# are responsible for keeping input clean.
-# ---------------------------------------------------------------------------
-
-"""
-    apply_B_half_inverse!(y::NTuple{6, AbstractMatrix},
-                          cov::AbstractCSSurfaceFluxCovariance,
-                          x::NTuple{6, AbstractMatrix}) -> y
-
-Apply `B^(-1/2)` to `x` and write the result into `y`. With the
-factorization `B^(1/2) = D · L` (`D` diagonal, `L` symmetric),
-`B^(-1/2) = L^(-1) · D^(-1)`. Used by the preconditioner to invert
-the change of variables `x = x_b + B^(1/2) χ` (Linear) or
-`x = x_b ⊙ exp(B^(1/2) χ)` (LogNormal).
-
-The Gaussian inverse is regularized in the high-frequency tail by the
-precision-scaled spectral floor documented on
-[`IsotropicGaussianCSCovariance`](@ref). It is finite for arbitrary finite
-inputs, but poorly resolved high-frequency modes remain sensitive to
-roundoff.
-"""
-function apply_B_half_inverse! end
-
-function apply_B_half_inverse!(y::NTuple{6, A},
-                                cov::DiagonalCSCovariance{FT, A},
-                                x::NTuple{6, A}) where {FT, A}
-    _validate_panel_shapes(y, cov.Nc, "y")
-    _validate_panel_shapes(x, cov.Nc, "x")
-    @inbounds for p in 1:6
-        @. y[p] = x[p] / cov.sigma[p]
-    end
-    return y
-end
-
-# Apply `L^(-1)` to a single panel in-place via 2D FFT. Real input,
-# real output. Mirror of `_apply_L_panel!` but divides by
-# `transfer_sqrt` instead of multiplying.
-function _apply_L_inverse_panel!(buf::Matrix{Complex{FT}},
-                                 input::AbstractMatrix{FT},
-                                 output::AbstractMatrix{FT},
-                                 transfer_sqrt::Matrix{FT},
-                                 fft_plan, ifft_plan) where FT
-    Nc = size(transfer_sqrt, 1)
-    @inbounds for j in 1:Nc, i in 1:Nc
-        buf[i, j] = Complex{FT}(input[i, j])
-    end
-    fft_plan * buf
-    @inbounds for j in 1:Nc, i in 1:Nc
-        # Construction applies a precision-scaled positive spectral
-        # floor, so division is finite while still damping unsupported
-        # high-frequency inverse modes.
-        buf[i, j] /= transfer_sqrt[i, j]
-    end
-    ifft_plan * buf
-    @inbounds for j in 1:Nc, i in 1:Nc
-        output[i, j] = real(buf[i, j])
-    end
-    return output
-end
-
-function apply_B_half_inverse!(y::NTuple{6, A},
-                                cov::IsotropicGaussianCSCovariance{FT, A},
-                                x::NTuple{6, A}) where {FT, A}
-    _validate_panel_shapes(y, cov.Nc, "y")
-    _validate_panel_shapes(x, cov.Nc, "x")
-    @inbounds for p in 1:6
-        # B^(-1/2) = L^(-1) · D^(-1). Divide by σ first, then
-        # deconvolve via `1/sqrt(C̃)` in spectral space.
-        @. cov.fft_scratch = x[p] / cov.sigma[p]
-        _apply_L_inverse_panel!(cov.fft_buf, cov.fft_scratch, y[p],
-                                cov.L_transfer_sqrt,
-                                cov.fft_plan, cov.ifft_plan)
-    end
-    return y
 end
 
 # ---------------------------------------------------------------------------

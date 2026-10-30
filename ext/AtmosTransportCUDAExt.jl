@@ -8,7 +8,7 @@ module AtmosTransportCUDAExt
 
 import AtmosTransport
 import CUDA
-import AtmosTransport.Adjoints:
+import AtmosTransport.Tape:
     PinnedHostCSTapeStorage,
     PinnedHostCSTapeSlot,
     MmapCSTapeStorage,

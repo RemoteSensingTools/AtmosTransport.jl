@@ -13,10 +13,14 @@ to the caller's validation code. `CSFootprintResult` contains `objective`,
 `footprints`, `lag_steps`, `dt`, and `initial_adjoint`.
 
 ```@autodocs
-Modules = [AtmosTransport.Adjoints]
+Modules = [AtmosTransport.Adjoints, AtmosTransport.Adjoints.Footprint,
+           AtmosTransport.Adjoints.Inversion.Observations, AtmosTransport.Adjoints.Inversion.Solver]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
+
+The solver exposes the forward preconditioner and its adjoint. The unused
+inverse and tangent interfaces have been removed. Reopened mmap tapes are read-only.
 
 ## Tape and checkpointing
 

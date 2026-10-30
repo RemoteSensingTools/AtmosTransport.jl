@@ -164,5 +164,5 @@ end
 _footprint_kwargs(inp) = (; Base.structdiff(inp.kw, NamedTuple{(:surface_flux, :emission_rates)})...,
                           base_emission_rates = inp.kw.emission_rates)
 
-_replay(inp; kw...) = first(ADJ._cs_replay_for_call(inp.rm0, inp.m0, inp.am, inp.bm, inp.cm, MESH;
+_replay(inp; kw...) = first(ADJ.Footprint._cs_replay_for_call(inp.rm0, inp.m0, inp.am, inp.bm, inp.cm, MESH;
                                                      inp.kw..., kw...))

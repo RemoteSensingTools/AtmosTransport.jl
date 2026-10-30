@@ -14,14 +14,9 @@
 #                                      remain strictly positive, e.g.
 #                                      emission rates.)
 #
-# The preconditioner exposes four primitives:
+# The preconditioner exposes two primitives:
 #
 #   * `apply_preconditioner!(x, prec, χ)`        — forward T(χ).
-#   * `apply_preconditioner_inverse!(χ, prec, x)` — inverse T^(-1)(x).
-#   * `apply_preconditioner_tangent!(δx, prec, x, δχ)`
-#                                                  — tangent-linear δx
-#                                                    = T'(χ) · δχ at
-#                                                    base point x.
 #   * `apply_preconditioner_adjoint!(g_χ, prec, x, g_phys)`
 #                                                  — adjoint g_χ =
 #                                                    T'(χ)^T · g_phys
@@ -91,7 +86,7 @@ and — for `LogNormalOptimType` — requires every `background` entry
 to be strictly positive (else `log(x ./ x_b)` is undefined and the
 log-normal transform is meaningless). It also pre-allocates a
 panel-tuple scratch buffer reused by
-`apply_preconditioner_inverse!` and the LogNormal variant of
+the LogNormal variant of
 `apply_preconditioner_adjoint!`. **The preconditioner is therefore
 not thread-safe** — build one instance per worker thread if you
 intend to call these methods concurrently.
@@ -101,8 +96,7 @@ struct CSSurfaceFluxPreconditioner{FT, A, O <: AbstractCSOptimType,
     covariance::C
     background::NTuple{6, A}
     optim_type::O
-    # Pre-allocated panel-tuple scratch reused by `apply_preconditioner_inverse!`
-    # (both optim types) and `apply_preconditioner_adjoint!` (LogNormal).
+    # Pre-allocated panel-tuple scratch reused by the LogNormal adjoint.
     # Avoids the per-call `ntuple(p -> ..., 6)` allocation that dominated
     # the χ-space gradient evaluation cost.
     panel_scratch::NTuple{6, A}
@@ -165,80 +159,6 @@ function apply_preconditioner!(x::NTuple{6, A},
         @. x[p] = prec.background[p] * exp(x[p])
     end
     return x
-end
-
-# ---------------------------------------------------------------------------
-# Inverse: x → χ
-# ---------------------------------------------------------------------------
-
-"""
-    apply_preconditioner_inverse!(chi, prec, x) -> chi
-
-Inverse change of variables. Linear: `χ = B^(-1/2) (x - x_b)`.
-LogNormal: `χ = B^(-1/2) log(x ⊙ inv(x_b))`. LogNormal requires
-`x > 0` everywhere (else `log` is undefined); the function throws
-`ArgumentError` on a non-positive entry.
-
-For a non-trivial Gaussian covariance, `B^(-1/2)` is numerically
-unstable for inputs with significant energy in the high-frequency
-tail of the spectrum where the correlation transfer is tiny.
-Round-trip `T^(-1)(T(χ))` is exact (the FFT factors cancel
-bit-exactly up to roundoff), but applying the inverse to arbitrary
-user data may amplify noise. Use the bijection on clean round-trip
-inputs.
-"""
-function apply_preconditioner_inverse!(chi::NTuple{6, A},
-                                        prec::CSSurfaceFluxPreconditioner{FT, A, LinearOptimType},
-                                        x::NTuple{6, A}) where {FT, A}
-    @inbounds for p in 1:6
-        @. prec.panel_scratch[p] = x[p] - prec.background[p]
-    end
-    apply_B_half_inverse!(chi, prec.covariance, prec.panel_scratch)
-    return chi
-end
-
-function apply_preconditioner_inverse!(chi::NTuple{6, A},
-                                        prec::CSSurfaceFluxPreconditioner{FT, A, LogNormalOptimType},
-                                        x::NTuple{6, A}) where {FT, A}
-    @inbounds for p in 1:6
-        all(>(0), x[p]) || throw(ArgumentError(
-            "apply_preconditioner_inverse! with LogNormalOptimType " *
-            "requires strictly positive x; panel $p has a non-positive " *
-            "entry"))
-        @. prec.panel_scratch[p] = log(x[p] / prec.background[p])
-    end
-    apply_B_half_inverse!(chi, prec.covariance, prec.panel_scratch)
-    return chi
-end
-
-# ---------------------------------------------------------------------------
-# Tangent: δχ → δx at base x
-# ---------------------------------------------------------------------------
-
-"""
-    apply_preconditioner_tangent!(delta_x, prec, x, delta_chi) -> delta_x
-
-Tangent-linear of the forward map at the base point `x = T(χ)`.
-Linear: `δx = B^(1/2) δχ`. LogNormal: `δx = x ⊙ (B^(1/2) δχ)`.
-`x` is ignored for Linear but is part of the uniform API.
-"""
-function apply_preconditioner_tangent!(delta_x::NTuple{6, A},
-                                       prec::CSSurfaceFluxPreconditioner{FT, A, LinearOptimType},
-                                       x::NTuple{6, A},
-                                       delta_chi::NTuple{6, A}) where {FT, A}
-    apply_B_half!(delta_x, prec.covariance, delta_chi)
-    return delta_x
-end
-
-function apply_preconditioner_tangent!(delta_x::NTuple{6, A},
-                                       prec::CSSurfaceFluxPreconditioner{FT, A, LogNormalOptimType},
-                                       x::NTuple{6, A},
-                                       delta_chi::NTuple{6, A}) where {FT, A}
-    apply_B_half!(delta_x, prec.covariance, delta_chi)
-    @inbounds for p in 1:6
-        @. delta_x[p] *= x[p]
-    end
-    return delta_x
 end
 
 # ---------------------------------------------------------------------------

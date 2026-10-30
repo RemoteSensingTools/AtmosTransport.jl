@@ -19,7 +19,7 @@ using ..Grids
 using ..Operators
 # The step plan (Operators/StepPlan): `TransportModel.step!` and
 # `DrivenSimulation` execute it; the cubed-sphere adjoint records the same plan.
-using ..Operators.StepPlans: TransportStage, ConvectionStage, ChemistryBeforeStage,
+using ..Operators.StepPlans: window_clock, window_step_dt, TransportStage, ConvectionStage, ChemistryBeforeStage,
                              ChemistryAfterStage, StepDt, WindowDt,
                              WindowStartAirMass, WindowEndAirMass,
                              execute_stage!, execute_window_advance!,

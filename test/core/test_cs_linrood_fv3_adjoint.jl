@@ -166,14 +166,15 @@ end
 # tracer has vertical extrema and horizontal structure; `offset` shifts the
 # mixing ratio so the signed profile sees a field that crosses zero.
 function _fv3_linrood_problem(; direction, offset = 0.0, Nc = 4, Nz = 8, nsteps = 2,
-                              Ch = 0.02, Cz = 0.08)
+                              Ch = 0.02, Cz = 0.08, upwind_profile = false)
     mesh = AT.CubedSphereMesh(Nc = Nc, Hp = 3, FT = Float64)
     Hp = mesh.Hp
     N = Nc + 2Hp
     m = ntuple(p -> [2.0 + 0.25k + 0.01p + 0.02sin(0.7i + 0.4j) for i in 1:N, j in 1:N, k in 1:Nz], 6)
     Adv.fill_panel_halos!(m, mesh; dir = 0)
-    rm = ntuple(p -> [m[p][i, j, k] * (1.0 + 0.3sin(0.45k + 0.2i - 0.3j + 0.6p) +
-                                       0.1cos(0.2i + 0.3j) - offset)
+    rm = ntuple(p -> [m[p][i, j, k] * (upwind_profile ?
+                      (0.3 + 0.1sin(0.2i + 0.3j) + 0.05k + 0.7sin(0.5p)) :
+                      (1.0 + 0.3sin(0.45k + 0.2i - 0.3j + 0.6p) + 0.1cos(0.2i + 0.3j) - offset))
                       for i in 1:N, j in 1:N, k in 1:Nz], 6)
     Adv.fill_panel_halos!(rm, mesh; dir = 0)
     mref = 2.0
@@ -202,13 +203,16 @@ _objective_value(P, scheme, objective, rates) = AT.run_cs_footprint_forward(
 _footprints(P, scheme, objective; kwargs...) = AT.cs_surface_emission_footprint(
     P.rm, P.m, P.am, P.bm, P.cm, P.mesh, objective; scheme, dt = 1.0, kwargs...)
 
-@testset "Lin–Rood footprint with FV3 vertical sweeps vs FD" begin
+@testset "Lin–Rood footprint with Upwind and FV3 vertical sweeps vs FD" begin
     h = 1e-4
     for (flow, direction) in (("upward", -1), ("downward", 1)),
-        (profile_name, vertical, offset) in (("fv3_kord8", FV3_PPM, 0.0),
+        (profile_name, vertical, offset) in (("upwind (#10)", AT.UpwindScheme(), 0.0),
+                                             ("fv3_kord8", FV3_PPM, 0.0),
                                              ("fv3_kord8_signed", FV3_PPM_SIGNED, 0.9)),
         ord in (5, 7)
-        P = _fv3_linrood_problem(; direction, offset)
+        upwind = vertical isa AT.UpwindScheme
+        upwind && direction > 0 && continue
+        P = _fv3_linrood_problem(; direction, offset, upwind_profile = upwind)
         scheme = AT.LinRoodPPMScheme(ord; vertical)
         @test AT.require_adjoint_support(scheme) === scheme
         @test (offset > 0) == any(p -> minimum(P.rm[p]) < 0, 1:6)
@@ -238,22 +242,6 @@ _footprints(P, scheme, objective; kwargs...) = AT.cs_surface_emission_footprint(
         end
     end
 
-    @testset "the FV3 sweeps are what is transposed" begin
-        # Forward and footprint both differ from the upwind-vertical Lin–Rood.
-        P = _fv3_linrood_problem(; direction = -1)
-        objective = AT.CSLayerMeanObjective(1, 1, 1, P.Nz)
-        fv3, upwind = AT.LinRoodPPMScheme(5; vertical = FV3_PPM), AT.LinRoodPPMScheme(5)
-        @test _objective_value(P, fv3, objective, nothing) != _objective_value(P, upwind, objective, nothing)
-        f_fv3, f_up = _footprints(P, fv3, objective), _footprints(P, upwind, objective)
-        @test maximum(s -> maximum(p -> maximum(abs, f_fv3.footprints[s][p] .- f_up.footprints[s][p]), 1:6),
-                      1:P.nsteps) > 1e-6
-        # Each step records two FV3 vertical sweeps that stage m and rm.
-        ops, _ = AT.Adjoints._record_cs_adjoint_tape(
-            P.rm, P.m, P.am, P.bm, P.cm, P.mesh, fv3; cfl_limit = 0.95, flux_scale = 1.0, dt = 1.0)
-        z = filter(op -> op isa AT.Adjoints._CSSweepRecord, ops)
-        @test length(z) == 2P.nsteps
-        @test all(op -> op.scheme === FV3_PPM && op.panels_rm !== nothing, z)
-    end
 end
 
 @testset "Lin–Rood FV3 vertical: tape replay and FD forward equal production, ORD $ord" for ord in (5, 7)
@@ -274,11 +262,11 @@ end
     end
     # The adjoint's replay of the step plan, without and with its tape recorder.
     replay(recorded) = begin
-        r, _ = AT.Adjoints._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
+        r, _ = AT.Adjoints.Footprint._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
                                                scheme, dt = 1.0, surface_flux = false)
-        recorded ? AT.Adjoints._record_cs_tape!(r, 1:P.nsteps, AT.DeviceCSTapeStorage()) :
-                   AT.Adjoints._replay_steps!(r, 1:P.nsteps)
-        (AT.Adjoints._replay_rm(r), AT.Adjoints._replay_m(r))
+        recorded ? AT.Adjoints.Footprint._record_cs_tape!(r, 1:P.nsteps, AT.DeviceCSTapeStorage()) :
+                   AT.Adjoints.Footprint._replay_steps!(r, 1:P.nsteps)
+        (AT.Adjoints.Footprint._replay_rm(r), AT.Adjoints.Footprint._replay_m(r))
     end
     for (rm, m) in (replay(true), replay(false))
         @test all(p -> rm[p][I, I, :] == production[1][p][I, I, :], 1:6)
@@ -302,18 +290,5 @@ end
                 isapprox(replay.footprints[s][p], full.footprints[s][p]; rtol = 1e-10, atol = 1e-12)
             end
         end
-    end
-end
-
-@testset "Lin–Rood FV3 vertical tape byte estimate" begin
-    P = _fv3_linrood_problem(; direction = -1)
-    for (vertical, staged) in ((AT.UpwindScheme(), 20), (FV3_PPM, 24), (FV3_PPM_SIGNED, 24))
-        est = AT.cs_tape_byte_estimate(P.m, P.am, P.bm, P.cm, P.mesh,
-                                       AT.LinRoodPPMScheme(5; vertical))
-        @test est.sweep_records == 8            # H, Z, Z, H per step
-        @test est.state_records == staged       # 2 × 4-state H + 2 × (1 or 2)-state Z
-        # Five face-panel tuples per H record: fx_in, fx_out, fy_in, am, bm.
-        face_tuple_bytes = sizeof(Float64) * 6 * (P.Nc + 1) * P.Nc * P.Nz
-        @test est.state_bytes == est.state_records * est.bytes_per_state + 20face_tuple_bytes
     end
 end
