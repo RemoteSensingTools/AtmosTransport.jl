@@ -2,14 +2,14 @@
 # computed cell areas and air masses (`planet_radius_m`); the runtime builds its
 # mesh on that sphere, and runtime regridding puts the source lat-lon mesh on
 # the same sphere. Binaries without the key read as EARTH_RADIUS, the radius the
-# runtime used for them before. ATMSNAP snapshots record the radius too.
+# runtime used for them before. ATMSNAP snapshots record the radius too
+# (test_output_snapshots.jl).
 
 using Test
 using JSON3
 using NCDatasets
 using AtmosTransport
 using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
-using AtmosTransport.Output: SnapshotFrame, write_snapshot_binary
 const MD = AtmosTransport.MetDrivers
 
 const VERTICAL = HybridSigmaPressure([0.0, 500.0, 0.0], [0.0, 0.5, 1.0])
@@ -128,22 +128,6 @@ end
             rewrite_header!(h -> h["planet_radius_m"] = bad, path)
             @test_throws ArgumentError MD.TransportBinaryReader(path; FT = Float64)
         end
-    end
-end
-
-@testset "ATMSNAP snapshots record the mesh radius" begin
-    mktempdir() do dir
-        mesh = CubedSphereMesh(; FT = Float32, Nc = 2, radius = IFS_EARTH_RADIUS)
-        grid = AtmosGrid(mesh, HybridSigmaPressure(Float32[0, 1], Float32[0, 1]), CPU();
-                         FT = Float32, radius = IFS_EARTH_RADIUS)
-        air = ntuple(_ -> ones(Float32, 2, 2, 1), 6)
-        frame = SnapshotFrame(0.0, air, Dict(:tracer => air), :dry)
-        path = write_snapshot_binary(joinpath(dir, "r.atmsnap"), [frame], grid; mass_basis = :dry)
-        header = open(path, "r") do io
-            read(io, 8)
-            JSON3.read(String(read(io, Int(read(io, UInt64)))), Dict{String, Any})
-        end
-        @test header["grid"]["planet_radius_m"] == IFS_EARTH_RADIUS
     end
 end
 

@@ -32,7 +32,7 @@ None recorded.
 
 ## `src`
 
-Size: **84137 bytes / 24039.1 tokens**. Public names: **66**.
+Size: **86158 bytes / 24616.6 tokens**. Public names: **69**.
 
 Depends on: `src/Adjoints`, `src/Diagnostics`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/Extras/Visualization`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Observations`, `src/Operators`, `src/Output`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Quantities`, `src/Regridding`, `src/State`, `src/Tape`.
 
@@ -43,7 +43,7 @@ Files:
 - `Architectures.jl` (41668 bytes)
 - `AtmosTransport.jl` (14678 bytes)
 - `AtomicFiles.jl` (8586 bytes)
-- `ConfigChecks.jl` (5309 bytes)
+- `ConfigChecks.jl` (7330 bytes)
 - `LogLevels.jl` (2371 bytes)
 - `SectionTimer.jl` (11525 bytes)
 
@@ -804,7 +804,7 @@ None recorded.
 
 ## `src/Output`
 
-Size: **119239 bytes / 34068.3 tokens**. Public names: **51**.
+Size: **118885 bytes / 33967.1 tokens**. Public names: **51**.
 
 Depends on: `src`, `src/Grids`, `src/Parameters`, `src/State`.
 
@@ -812,18 +812,17 @@ Used by: `src`, `src/Diagnostics`, `src/Extras/Analysis`, `src/GriddedIO`, `src/
 
 Files:
 
-- `Output.jl` (4353 bytes)
-- `binary_reader.jl` (4772 bytes)
-- `binary_writer.jl` (8849 bytes)
+- `Output.jl` (4117 bytes)
+- `binary_reader.jl` (4613 bytes)
+- `binary_writer.jl` (8823 bytes)
 - `diagnostics.jl` (4620 bytes)
-- `netcdf_schema.jl` (21176 bytes)
+- `netcdf_schema.jl` (21153 bytes)
 - `netcdf_stream.jl` (6157 bytes)
-- `netcdf_writer.jl` (33039 bytes)
-- `output_config.jl` (1902 bytes)
-- `runtime_output.jl` (16418 bytes)
+- `netcdf_writer.jl` (33268 bytes)
+- `runtime_output.jl` (18254 bytes)
 - `selected_snapshots.jl` (8051 bytes)
 - `snapshot_totals.jl` (426 bytes)
-- `snapshots.jl` (9476 bytes)
+- `snapshots.jl` (9403 bytes)
 
 Forward ↔ adjoint mirrors:
 

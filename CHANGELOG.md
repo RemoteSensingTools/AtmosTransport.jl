@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `[output]` settings are validated more strictly: `layers`, `split` and
+  `format` must be strings, numeric settings reject Booleans, floats where an
+  integer is required (e.g. `deflate_level = 1.0`) and numbers given as
+  strings. Valid configurations parse exactly as before.
 - The packed cubed-sphere palindrome (`strang_split_cs_mt!`) skips the three
   halo exchanges per subcycle whose halos no sweep reads (after the forward Y
   sweep and after both reverse horizontal sweeps); the adjoint tape drops

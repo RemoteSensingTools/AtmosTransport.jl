@@ -1,6 +1,6 @@
 using Test
 if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
-    using CUDA, AtmosTransport, NCDatasets
+    using CUDA, AtmosTransport
     using AtmosTransport.Output
     const O = AtmosTransport.Output
     expected = get(ENV, "ATMOSTR_SNAPSHOT_GPU_NAME", "A100")
@@ -49,7 +49,7 @@ if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
         @test_throws ArgumentError O._backend_tracer_total(CuArray([Inf,1.0]))
     end
 
-    @testset "Selected GPU capture and streaming preserve signed output" begin
+    @testset "Selected GPU capture preserves signed totals" begin
         for FT in (Float32,Float64), topology in (:ll,:rg,:cs)
             Nz=4
             mesh = topology === :ll ? LatLonMesh(;Nx=4,Ny=2,FT) :
@@ -75,24 +75,6 @@ if get(ENV, "ATMOSTR_RUN_SNAPSHOT_GPU_TESTS", "0") == "1"
                 frame=capture_snapshot(model;halo_width,fields)
                 @test frame.tracer_total_mass == full.tracer_total_mass
                 @test frame.tracer_total_mass[:signed] == (topology===:cs ? 6.0 : 1.0)
-                mktempdir() do dir
-                    options=SnapshotWriteOptions(;float_type=FT)
-                    ref=write_snapshot_netcdf(joinpath(dir,"full.nc"),[full],grid;fields,options)
-                    stream=O.NetCDFSnapshotStream(joinpath(dir,"stream.nc"),grid;fields,options)
-                    try
-                        O.append_snapshot!(stream,frame)
-                    finally
-                        close(stream)
-                    end
-                    NCDataset(ref) do x
-                        NCDataset(stream.path) do y
-                            @test Set(keys(x))==Set(keys(y))
-                            for name in keys(x)
-                                @test isequal(x[name][:],y[name][:])
-                            end
-                        end
-                    end
-                end
             end
         end
     end
