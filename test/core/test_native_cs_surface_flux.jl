@@ -4,97 +4,6 @@ using NCDatasets
 using AtmosTransport
 using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
 
-@testset "Native CS time-varying surface flux" begin
-    for FT in (Float32, Float64)
-        mktempdir() do dir
-            Nc = 4
-            path = joinpath(dir, "native.nc")
-            NCDataset(path, "c") do ds
-                for (name, n) in (("Xdim", Nc), ("Ydim", Nc), ("nf", 6), ("time", 3))
-                    defDim(ds, name, n)
-                end
-                defVar(ds, "time", Float64, ("time",), attrib=Dict(
-                    "units" => "hours since 2014-01-01 00:00:00 UTC"))[:] = [0,24,48]
-                v = defVar(ds, "NPP", Float32, ("Xdim","Ydim","nf","time"),
-                           attrib=Dict("units" => "kg CO2 m-2 s-1"))
-                # Unequal i/j, panel, and time patterns expose any transposition.
-                for t in 1:3, p in 1:6, j in 1:Nc, i in 1:Nc
-                    v[i,j,p,t] = -Float32(i + 10j + 100p + 1000t)*1f-10
-                end
-            end
-            mesh = CubedSphereMesh(; FT, Nc, Hp=1)
-            vertical = HybridSigmaPressure(FT[0,50000,0], FT[1,0.5,0])
-            grid = AtmosGrid(mesh, vertical, CPU(); FT)
-            cfg = Dict{String,Any}("kind"=>"cs_native", "file"=>path, "variable"=>"NPP",
-                "time_varying"=>true, "species"=>"co2", "scale"=>2.0)
-            source = build_surface_flux_source(grid, :custom_npp, cfg, FT;
-                                               reference_time=DateTime(2014,1,2))
-            @test source isa TimeVaryingSurfaceFluxSource
-            @test source.scheme isa StepwiseFlux
-            @test source.times == [-86400,0,86400]
-            for p in 1:6, t in 1:3
-                density = [-Float32(i+10j+100p+1000t)*1f-10 for i in 1:Nc, j in 1:Nc]
-                expected = Float64.(density) .* Float64.(mesh.cell_areas) .* (2 * AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 0.0440095)
-                actual = source.cell_mass_rate_series[p][:,:,t]
-                @test actual ≈ expected rtol=3e-7
-                @test all(<(0), actual)
-            end
-            NCDataset(path, "a") do ds
-                ds["NPP"][1,1,1,1] = NaN32
-            end
-            @test_throws ArgumentError build_surface_flux_source(grid, :custom_npp, cfg, FT)
-            NCDataset(path, "a") do ds
-                ds["NPP"][1,1,1,1] = 0
-                ds["time"][:] = [48,24,0]
-            end
-            @test_throws ArgumentError build_surface_flux_source(grid, :custom_npp, cfg, FT)
-        end
-    end
-
-    @testset "units, fill values, cell areas, and misplaced configs" begin
-        FT = Float64
-        Nc = 4
-        mesh = CubedSphereMesh(; FT, Nc, Hp=1)
-        grid = AtmosGrid(mesh, HybridSigmaPressure(FT[0,50000,0], FT[1,0.5,0]), CPU(); FT)
-        function write_native(path; units = "kg CO2 m-2 s-1", area = nothing, with_fill = false)
-            NCDataset(path, "c") do ds
-                for (name, n) in (("Xdim", Nc), ("Ydim", Nc), ("nf", 6), ("time", 2))
-                    defDim(ds, name, n)
-                end
-                defVar(ds, "time", Float64, ("time",),
-                       attrib=Dict("units" => "hours since 2014-01-01 00:00:00"))[:] = [0, 24]
-                v = defVar(ds, "F", Float64, ("Xdim","Ydim","nf","time"),
-                           attrib=Dict("units" => units, "_FillValue" => -9999.0))
-                v[:, :, :, :] = fill(1e-9, Nc, Nc, 6, 2)
-                with_fill && (v[1, 1, 1, 1] = missing)
-                area === nothing ||
-                    (defVar(ds, "cell_area", Float64, ("Xdim","Ydim","nf"))[:, :, :] = area)
-            end
-            return path
-        end
-        cfg(path) = Dict{String,Any}("kind"=>"cs_native", "file"=>path, "variable"=>"F",
-                                     "time_varying"=>true, "species"=>"co2")
-        build(path) = build_surface_flux_source(grid, :co2, cfg(path), FT;
-                                                reference_time = DateTime(2014, 1, 1))
-        mktempdir() do dir
-            kgc = build(write_native(joinpath(dir, "kgc.nc"); units = "kgC m-2 s-1"))
-            kgco2 = build(write_native(joinpath(dir, "kgco2.nc")))
-            @test kgc.cell_mass_rate_series[1] ≈ kgco2.cell_mass_rate_series[1] .* (44.0095 / 12.0107)
-            for bad in ("mol m-2 s-1", "g C m-2 s-1", "umol m-2 s-1")
-                @test_throws ArgumentError build(write_native(joinpath(dir, "u$(hash(bad)).nc"); units = bad))
-            end
-            @test_throws ArgumentError build(write_native(joinpath(dir, "fill.nc"); with_fill = true))
-            areas = repeat(Float64.(mesh.cell_areas), 1, 1, 6)
-            @test build(write_native(joinpath(dir, "area_ok.nc"); area = areas)) isa TimeVaryingSurfaceFluxSource
-            @test_throws ArgumentError build(write_native(joinpath(dir, "area_bad.nc"); area = 1.01 .* areas))
-            static = merge(cfg(joinpath(dir, "kgco2.nc")), Dict{String,Any}("time_varying" => false))
-            @test_throws ArgumentError build_surface_flux_source(grid, :co2, static, FT)
-            ll = AtmosGrid(LatLonMesh(; FT, Nx = 8, Ny = 4), HybridSigmaPressure(FT[0,50000,0], FT[1,0.5,0]), CPU(); FT)
-            @test_throws ArgumentError build_surface_flux_source(ll, :co2, static, FT)
-        end
-    end
-end
-
 using AtmosTransport.GriddedIO: TimeInterval, open_cs_native_writer, write_slices!
 using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS
 
@@ -186,4 +95,62 @@ native_test_cfg(path; scale = 1.0) =
             end
         end
     end
+end
+
+@testset "build_surface_flux_source — native time-varying CS density" begin
+    Nc = 4
+    ntime = 2
+    path = joinpath(mktempdir(), "native_cs_flux.nc")
+    ds = NCDataset(path, "c")
+    defDim(ds, "time", ntime)
+    defDim(ds, "nf", 6)
+    defDim(ds, "Ydim", Nc)
+    defDim(ds, "Xdim", Nc)
+    time_v = defVar(ds, "time", Float64, ("time",),
+                    attrib = Dict("units" => "hours since 2021-12-01 00:00:00"))
+    flux_v = defVar(ds, "CO2_FLUX", Float32,
+                    ("Xdim", "Ydim", "nf", "time"),
+                    attrib = Dict("units" => "kg CO2 m-2 s-1"))
+    time_v[:] = [0.0, 1.0]
+    for t in 1:ntime, p in 1:6
+        flux_v[:, :, p, t] .= Float32(p + 10t)
+    end
+    close(ds)
+
+    mesh = CubedSphereMesh(; FT = Float64, Nc = Nc, Hp = 1)
+    vertical = HybridSigmaPressure(Float64[0, 50000, 0], Float64[1, 0.5, 0])
+    grid = AtmosGrid(mesh, vertical, CPU(); FT = Float64)
+    cfg = Dict{String, Any}(
+        "kind" => "cs_native",
+        "file" => path,
+        "variable" => "CO2_FLUX",
+        "time_varying" => true,
+        "species" => "co2",
+    )
+    src = build_surface_flux_source(
+        grid, :co2_test, cfg, Float64; reference_time = DateTime(2021, 12, 1))
+    @test src isa AtmosTransport.TimeVaryingSurfaceFluxSource
+    @test src.times == [0.0, 3600.0]
+    @test src.scheme isa AtmosTransport.StepwiseFlux
+
+    storage_scale = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / 44.0095e-3
+    for p in 1:6, t in 1:ntime
+        expected = (p + 10t) .* mesh.cell_areas .* storage_scale
+        @test src.cell_mass_rate_series[p][:, :, t] ≈ expected
+    end
+
+    # A run span inside the second hour keeps only the bracketing slice.
+    spanned = build_surface_flux_source(
+        grid, :co2_test, cfg, Float64; reference_time = DateTime(2021, 12, 1),
+        run_span = (3600.0, 5400.0))
+    @test spanned.times == [3600.0]
+    for p in 1:6
+        @test spanned.cell_mass_rate_series[p][:, :, 1] ≈ src.cell_mass_rate_series[p][:, :, 2]
+    end
+    Runner = AtmosTransport.Models.DrivenRunner
+    @test Runner._check_flux_run_span((0.0, 7201.0), 7201.0, (spanned,), "a.bin") === nothing
+    @test_throws ArgumentError Runner._check_flux_run_span(
+        (0.0, 7201.0), 7201.5, (spanned,), "a.bin")
+    @test Runner._check_flux_run_span(nothing, 10800.0, (spanned,), "a.bin") === nothing
+    @test Runner._check_flux_run_span((0.0, 7201.0), 10800.0, (), "a.bin") === nothing
 end

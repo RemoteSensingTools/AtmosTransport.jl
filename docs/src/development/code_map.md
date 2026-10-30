@@ -36,7 +36,7 @@ Size: **84137 bytes / 24039.1 tokens**. Public names: **66**.
 
 Depends on: `src/Adjoints`, `src/Diagnostics`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/Extras/Visualization`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Observations`, `src/Operators`, `src/Output`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Quantities`, `src/Regridding`, `src/State`, `src/Tape`.
 
-Used by: `ext`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/GriddedIO`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/Regridding`, `src/State`.
+Used by: `ext`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/GriddedIO`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/Regridding`, `src/State`.
 
 Files:
 
@@ -57,7 +57,7 @@ Size: **70869 bytes / 20248.3 tokens**. Public names: **10**.
 
 Depends on: `src/Adjoints/Footprint`, `src/Adjoints/Inversion`, `src/Grids`, `src/MetDrivers`, `src/Observations`, `src/Observations/Retrievals`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`, `src/Tape`.
 
-Used by: `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Models`.
+Used by: `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Models`, `src/Models/Core`.
 
 Files:
 
@@ -82,7 +82,7 @@ Size: **94184 bytes / 26909.7 tokens**. Public names: **7**.
 
 Depends on: `src`, `src/Adjoints`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/Tape`.
 
-Used by: `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Models`.
+Used by: `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Models`, `src/Models/Core`.
 
 Files:
 
@@ -165,18 +165,18 @@ None recorded.
 
 ## `src/Diagnostics`
 
-Size: **62027 bytes / 17722.0 tokens**. Public names: **14**.
+Size: **61897 bytes / 17684.9 tokens**. Public names: **14**.
 
-Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Operators`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`.
+Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/SurfaceFlux`, `src/Output`.
 
 Used by: `src`, `src/Extras/Analysis`.
 
 Files:
 
-- `Diagnostics.jl` (2659 bytes)
-- `budget_closure.jl` (33176 bytes)
+- `Diagnostics.jl` (3001 bytes)
+- `budget_closure.jl` (33144 bytes)
 - `mass_totals.jl` (4964 bytes)
-- `run_context.jl` (12732 bytes)
+- `run_context.jl` (12292 bytes)
 - `snapshot_series.jl` (8496 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -263,18 +263,19 @@ None recorded.
 
 ## `src/GriddedIO`
 
-Size: **155124 bytes / 44321.1 tokens**. Public names: **77**.
+Size: **159760 bytes / 45645.7 tokens**. Public names: **86**.
 
 Depends on: `src`, `src/Grids`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Output`, `src/Parameters`.
 
-Used by: `src`, `src/Diagnostics`, `src/Extras/Visualization`, `src/Models`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`.
+Used by: `src`, `src/Diagnostics`, `src/Extras/Visualization`, `src/Models/InitialConditions`, `src/Models/Runner`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`.
 
 Files:
 
-- `GriddedIO.jl` (6435 bytes)
+- `GriddedIO.jl` (6667 bytes)
 - `coordinates.jl` (11894 bytes)
 - `cs_native_flux.jl` (27484 bytes)
 - `flux_units.jl` (16584 bytes)
+- `initial_condition_conventions.jl` (4404 bytes)
 - `latlon_flux.jl` (12712 bytes)
 - `source_meshes.jl` (13085 bytes)
 - `staging.jl` (4365 bytes)
@@ -291,7 +292,7 @@ Size: **125860 bytes / 35960.0 tokens**. Public names: **130**.
 
 Depends on: `src/Parameters`.
 
-Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Diagnostics`, `src/Extras/Visualization`, `src/GriddedIO`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/StepPlan`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/Regridding`, `src/State`.
+Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Diagnostics`, `src/Extras/Visualization`, `src/GriddedIO`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/StepPlan`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/Regridding`, `src/State`.
 
 Files:
 
@@ -318,17 +319,17 @@ None recorded.
 
 ## `src/MetDrivers`
 
-Size: **40989 bytes / 11711.1 tokens**. Public names: **29**.
+Size: **41015 bytes / 11718.6 tokens**. Public names: **29**.
 
 Depends on: `src`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/State`.
 
-Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/transport_binary`.
+Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/transport_binary`.
 
 Files:
 
-- `AbstractMetDriver.jl` (6642 bytes)
+- `AbstractMetDriver.jl` (6647 bytes)
 - `ConvectionForcing.jl` (10571 bytes)
-- `MetDrivers.jl` (3360 bytes)
+- `MetDrivers.jl` (3381 bytes)
 - `ReplayContinuity.jl` (18635 bytes)
 - `SurfaceForcing.jl` (1781 bytes)
 
@@ -342,7 +343,7 @@ Size: **166184 bytes / 47481.1 tokens**. Public names: **81**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Parameters`, `src/State`.
 
-Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/runner`, `src/Preprocessing`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
+Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Preprocessing`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
 
 Files:
 
@@ -362,20 +363,20 @@ None recorded.
 
 ## `src/MetDrivers/BinaryReaders`
 
-Size: **96428 bytes / 27550.9 tokens**. Public names: **51**.
+Size: **96755 bytes / 27644.3 tokens**. Public names: **53**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/State`.
 
-Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/Models`, `src/Models/runner`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
+Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/Models`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
 
 Files:
 
-- `BinaryReaders.jl` (4000 bytes)
-- `cubed_sphere_driver.jl` (24842 bytes)
-- `cubed_sphere_reader.jl` (9336 bytes)
+- `BinaryReaders.jl` (4021 bytes)
+- `cubed_sphere_driver.jl` (24819 bytes)
+- `cubed_sphere_reader.jl` (9314 bytes)
 - `driver.jl` (26073 bytes)
 - `inspect.jl` (5319 bytes)
-- `reader.jl` (26858 bytes)
+- `reader.jl` (27209 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -383,74 +384,105 @@ None recorded.
 
 ## `src/Models`
 
-Size: **293403 bytes / 83829.4 tokens**. Public names: **77**.
+Size: **5909 bytes / 1688.3 tokens**. Public names: **1**.
 
-Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`, `src/Regridding`, `src/State`, `src/State/Fields`.
+Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations`, `src/Operators`, `src/Operators/Convection`, `src/Operators/StepPlan`, `src/Output`, `src/Parameters`, `src/Regridding`, `src/State`.
 
-Used by: `src`, `src/Diagnostics`, `src/Models/initial_conditions`, `src/Models/runner`.
+Used by: `src`, `src/Diagnostics`, `src/Models/Runner`.
+
+Files:
+
+- `Models.jl` (5909 bytes)
+
+Forward ↔ adjoint mirrors:
+
+None recorded.
+
+## `src/Models/Core`
+
+Size: **55546 bytes / 15870.3 tokens**. Public names: **21**.
+
+Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`.
+
+Used by: `src/Models`, `src/Models/Physics`, `src/Models/Runner`.
+
+Files:
+
+- `Callbacks.jl` (7393 bytes)
+- `Simulation.jl` (2256 bytes)
+- `TransportModel.jl` (17032 bytes)
+- `adjoint_schedule.jl` (9798 bytes)
+- `driven_stepping.jl` (19067 bytes)
+
+Forward ↔ adjoint mirrors:
+
+- `src/Models/Core/driven_stepping.jl` ↔ `src/Models/Core/adjoint_schedule.jl`
+
+## `src/Models/InitialConditions`
+
+Size: **140177 bytes / 40050.6 tokens**. Public names: **23**.
+
+Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Regridding`, `src/State`.
+
+Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner`.
+
+Files:
+
+- `InitialConditionIO.jl` (45694 bytes)
+- `cubed_sphere.jl` (26960 bytes)
+- `surface_flux.jl` (49611 bytes)
+- `surface_flux_native.jl` (4302 bytes)
+- `surface_flux_regridding.jl` (13610 bytes)
+
+Forward ↔ adjoint mirrors:
+
+None recorded.
+
+## `src/Models/Physics`
+
+Size: **78505 bytes / 22430.0 tokens**. Public names: **38**.
+
+Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Runner`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/State/Fields`.
+
+Used by: `src/Diagnostics`, `src/Models`, `src/Models/Core`, `src/Models/Runner`.
+
+Files:
+
+- `RuntimePhysicsMetadata.jl` (6850 bytes)
+- `RuntimePhysicsRecipe.jl` (20340 bytes)
+- `RuntimePhysicsSpecs.jl` (35162 bytes)
+- `RuntimeRecipeStyles.jl` (983 bytes)
+- `driven_physics_refresh.jl` (15170 bytes)
+
+Forward ↔ adjoint mirrors:
+
+None recorded.
+
+## `src/Models/Runner`
+
+Size: **196787 bytes / 56224.9 tokens**. Public names: **23**.
+
+Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`, `src/State`.
+
+Used by: `src/Diagnostics`, `src/Models`, `src/Models/Core`, `src/Models/Physics`.
 
 Files:
 
 - `BinaryPathExpander.jl` (6535 bytes)
-- `Callbacks.jl` (7393 bytes)
-- `DrivenRunner.jl` (64353 bytes)
+- `DrivenRunner.jl` (64795 bytes)
 - `DrivenSimulation.jl` (9480 bytes)
-- `InitialConditionIO.jl` (48206 bytes)
-- `InputStaging.jl` (12434 bytes)
-- `Models.jl` (4829 bytes)
-- `RuntimePhysicsMetadata.jl` (6846 bytes)
-- `RuntimePhysicsRecipe.jl` (20711 bytes)
-- `RuntimePhysicsSpecs.jl` (35237 bytes)
-- `RuntimeRecipeStyles.jl` (845 bytes)
-- `Simulation.jl` (2256 bytes)
-- `TransportModel.jl` (17340 bytes)
-- `adjoint_schedule.jl` (9836 bytes)
-- `driven_physics_refresh.jl` (15170 bytes)
-- `driven_stepping.jl` (18962 bytes)
-- `driven_window_state.jl` (12970 bytes)
-
-Forward ↔ adjoint mirrors:
-
-None recorded.
-
-## `src/Models/initial_conditions`
-
-Size: **95853 bytes / 27386.6 tokens**. Public names: **6**.
-
-Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Models`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Regridding`, `src/State`.
-
-Used by: `src/Diagnostics`, `src/Models`, `src/Models/runner`.
-
-Files:
-
-- `cubed_sphere.jl` (27988 bytes)
-- `surface_flux.jl` (50063 bytes)
-- `surface_flux_native.jl` (4302 bytes)
-- `surface_flux_regridding.jl` (13500 bytes)
-
-Forward ↔ adjoint mirrors:
-
-None recorded.
-
-## `src/Models/runner`
-
-Size: **89863 bytes / 25675.1 tokens**. Public names: **2**.
-
-Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Output`, `src/State`.
-
-Used by: `src/Diagnostics`, `src/Models`.
-
-Files:
-
-- `config_keys.jl` (17615 bytes)
-- `configuration.jl` (20458 bytes)
+- `InputStaging.jl` (12456 bytes)
+- `config_keys.jl` (17825 bytes)
+- `configuration.jl` (19134 bytes)
+- `driven_window_state.jl` (12555 bytes)
 - `logging.jl` (2494 bytes)
-- `model_setup.jl` (9828 bytes)
+- `model_setup.jl` (9710 bytes)
 - `observations.jl` (13405 bytes)
-- `output.jl` (14315 bytes)
+- `output.jl` (13699 bytes)
 - `progress.jl` (8396 bytes)
 - `resources.jl` (1296 bytes)
-- `summary.jl` (2056 bytes)
+- `run_layout.jl` (1622 bytes)
+- `summary.jl` (3385 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -462,7 +494,7 @@ Size: **4727 bytes / 1350.6 tokens**. Public names: **0**.
 
 Depends on: `src/Observations/Retrievals`, `src/Observations/Sampling`, `src/Observations/Sources`.
 
-Used by: `src`, `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models`.
+Used by: `src`, `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models`, `src/Models/Runner`.
 
 Files:
 
@@ -495,7 +527,7 @@ Size: **176540 bytes / 50440.0 tokens**. Public names: **114**.
 
 Depends on: `src`, `src/Grids`, `src/Observations/Retrievals`, `src/Observations/Sources`, `src/Output`, `src/Parameters`, `src/State`.
 
-Used by: `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models`, `src/Models/runner`, `src/Observations`.
+Used by: `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models/Runner`, `src/Observations`.
 
 Files:
 
@@ -517,7 +549,7 @@ Size: **78746 bytes / 22498.9 tokens**. Public names: **54**.
 
 Depends on: `src`, `src/Observations/Retrievals`.
 
-Used by: `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models`, `src/Models/runner`, `src/Observations`, `src/Observations/Sampling`.
+Used by: `src/Adjoints/Inversion/Observations`, `src/GriddedIO`, `src/Models/Runner`, `src/Observations`, `src/Observations/Sampling`.
 
 Files:
 
@@ -536,7 +568,7 @@ Size: **12292 bytes / 3512.0 tokens**. Public names: **4**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators/Advection`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`.
 
-Used by: `ext`, `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Models`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`.
+Used by: `ext`, `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Models`, `src/Models/Core`, `src/Models/Runner`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`.
 
 Files:
 
@@ -555,7 +587,7 @@ Size: **141009 bytes / 40288.3 tokens**. Public names: **18**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`.
 
-Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Models`, `src/Operators`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
+Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Models/Core`, `src/Models/Physics`, `src/Operators`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
 
 Files:
 
@@ -618,7 +650,7 @@ Size: **76824 bytes / 21949.7 tokens**. Public names: **18**.
 
 Depends on: `src/Operators`, `src/Parameters`.
 
-Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Models`, `src/Models/runner`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
+Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
 
 Files:
 
@@ -637,7 +669,7 @@ Size: **60420 bytes / 17262.9 tokens**. Public names: **4**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`.
 
-Used by: `src/Models`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`.
+Used by: `src/Models/Core`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`.
 
 Files:
 
@@ -659,7 +691,7 @@ Size: **12897 bytes / 3684.9 tokens**. Public names: **4**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/State`, `src/State/Fields`.
 
-Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Operators`, `src/Operators/StepPlan`.
+Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models/Core`, `src/Models/Physics`, `src/Operators`, `src/Operators/StepPlan`.
 
 Files:
 
@@ -676,7 +708,7 @@ Size: **14088 bytes / 4025.1 tokens**. Public names: **4**.
 
 Depends on: `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/State`.
 
-Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Solver`, `src/Models`, `src/Models/runner`, `src/Operators`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/StepPlan`.
+Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Solver`, `src/Models`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/StepPlan`.
 
 Files:
 
@@ -696,7 +728,7 @@ Size: **99739 bytes / 28496.9 tokens**. Public names: **9**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/State`.
 
-Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Models/runner`, `src/Operators/Convection`.
+Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators/Convection`.
 
 Files:
 
@@ -718,7 +750,7 @@ Size: **117275 bytes / 33507.1 tokens**. Public names: **3**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Convection`, `src/State`.
 
-Used by: `ext`, `src/Adjoints`, `src/Models`, `src/Models/runner`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`.
+Used by: `ext`, `src/Adjoints`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`.
 
 Files:
 
@@ -740,7 +772,7 @@ Size: **135592 bytes / 38740.6 tokens**. Public names: **22**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
-Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Solver`, `src/Models`, `src/Models/runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`.
+Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Solver`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`.
 
 Files:
 
@@ -771,7 +803,7 @@ Size: **26995 bytes / 7712.9 tokens**. Public names: **26**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
-Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Models/runner`, `src/Operators`.
+Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Models/Core`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`.
 
 Files:
 
@@ -787,7 +819,7 @@ Size: **74121 bytes / 21177.4 tokens**. Public names: **21**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Operators/Diffusion`, `src/State`, `src/State/Fields`.
 
-Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Models`, `src/Models/initial_conditions`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
+Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/StepPlan`.
 
 Files:
 
@@ -808,7 +840,7 @@ Size: **119239 bytes / 34068.3 tokens**. Public names: **51**.
 
 Depends on: `src`, `src/Grids`, `src/Parameters`, `src/State`.
 
-Used by: `src`, `src/Diagnostics`, `src/Extras/Analysis`, `src/GriddedIO`, `src/Models`, `src/Models/runner`, `src/Observations/Sampling`.
+Used by: `src`, `src/Diagnostics`, `src/Extras/Analysis`, `src/GriddedIO`, `src/Models`, `src/Models/Runner`, `src/Observations/Sampling`.
 
 Files:
 
@@ -835,7 +867,7 @@ Size: **26460 bytes / 7560.0 tokens**. Public names: **77**.
 
 Depends on: none.
 
-Used by: `ext`, `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Diagnostics`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/Extras/Downloads/sources`, `src/Extras/Visualization`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Observations/Sampling`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Diffusion`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/State/Fields`.
+Used by: `ext`, `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/Inversion/Solver`, `src/Extras/Analysis`, `src/Extras/Downloads`, `src/Extras/Downloads/sources`, `src/Extras/Visualization`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations/Sampling`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Operators/Diffusion`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`, `src/State/Fields`.
 
 Files:
 
@@ -1061,7 +1093,7 @@ Size: **62165 bytes / 17761.4 tokens**. Public names: **18**.
 
 Depends on: `src`, `src/Grids`, `src/Quantities`.
 
-Used by: `src`, `src/Extras/Visualization`, `src/Models`, `src/Models/initial_conditions`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
+Used by: `src`, `src/Extras/Visualization`, `src/Models`, `src/Models/InitialConditions`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
 
 Files:
 
@@ -1082,7 +1114,7 @@ Size: **43029 bytes / 12294.0 tokens**. Public names: **36**.
 
 Depends on: `src`, `src/Grids`, `src/State/Fields`.
 
-Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/initial_conditions`, `src/Models/runner`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
+Used by: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Structured`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/sources`, `src/Preprocessing/transport_binary`.
 
 Files:
 
@@ -1103,7 +1135,7 @@ Size: **25341 bytes / 7240.3 tokens**. Public names: **14**.
 
 Depends on: `src/Parameters`.
 
-Used by: `src/Adjoints`, `src/Models`, `src/Operators/Chemistry`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`.
+Used by: `src/Adjoints`, `src/Models/Physics`, `src/Operators/Chemistry`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`.
 
 Files:
 

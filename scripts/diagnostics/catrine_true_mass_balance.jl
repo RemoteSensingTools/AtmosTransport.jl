@@ -180,11 +180,11 @@ end
 function mass_balance(run::AtmosTransportRun)
     cfg = TOML.parsefile(run.config)
     haskey(cfg, "deposition") && error("deposition is not accounted for; the residual would include it")
-    FT = DR._cfg_float_type(cfg)
+    FT = DR.configured_float_type(cfg)
     driver = AT.MetDrivers.TransportBinaryDriver(first(AT.expand_binary_paths(cfg["input"])); FT, arch = AT.CPU(), Hp = 1)
-    specs = DR._parse_tracer_specs(cfg)
+    specs = DR.parse_tracer_specs(cfg)
     sources = ICIO.build_surface_flux_sources(AT.MetDrivers.driver_grid(driver), specs, FT;
-                                              reference_time = DR._run_reference_time(cfg))
+                                              reference_time = DR.run_reference_time(cfg))
     source = Dict(s.tracer_name => s for s in sources)
     window = Float64(AT.MetDrivers.window_dt(driver))      # met window T (s); decay is applied once per window
     chem = get(cfg, "chemistry", Dict{String, Any}())

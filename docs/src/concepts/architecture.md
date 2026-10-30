@@ -212,7 +212,11 @@ src/
 ├── State/           air mass, conservative tracer storage, forcing fields, and accessors
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
 ├── MetDrivers/      version-4 binary reader, driver, and window carriers
-├── Models/          typed model, runtime recipes, driven runner, initial conditions
+├── Models/          runtime composition; stable Models and child-module paths
+│   ├── Core/        model, simulation, callbacks, stepping and adjoint schedule
+│   ├── Physics/     runtime specs, recipes, metadata and forcing refresh
+│   ├── InitialConditions/  IC and surface-flux loading
+│   └── Runner/      driven simulation, binary paths, staging and runtime orchestration
 ├── Diagnostics/     core run budgets, snapshot series and mass drift
 ├── SectionTimer.jl  foundation timing and optional NVTX instrumentation
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers

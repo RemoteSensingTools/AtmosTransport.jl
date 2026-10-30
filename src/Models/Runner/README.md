@@ -4,12 +4,12 @@ Support code for `run_driven_simulation(cfg)`: config validation, model setup,
 capability checks, output and observation glue, resource ownership, and progress
 reporting.
 
-These files are not a module. [`../DrivenRunner.jl`](../DrivenRunner.jl) includes
-them in this order: `progress`, `configuration`, `config_keys`, `summary`,
-`resources`, `output`, `observations`, `model_setup`. `DrivenRunner.jl` keeps the public entry point and
-the two transport loops: `_run_driven_simulation_structured` for lat-lon and
-reduced Gaussian, and `_run_driven_simulation_cs`. The parent overview, including
-how a TOML option reaches an operator, is [`../README.md`](../README.md).
+This is a plain Models subfolder with the existing `DrivenRunner`,
+`BinaryPathExpander` and `InputStaging` child modules. The driven type and window
+state share Models with Core/Physics; see the parent README for the cycle.
+`DrivenRunner.jl` includes `progress`, `logging`, `configuration`, `config_keys`,
+`summary`, `resources`, `output`, `observations`, `model_setup`, then `run_layout`.
+It retains the structured and CS transport loops.
 
 ## Entry Points
 
@@ -67,18 +67,17 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
 - [`configuration.jl`](configuration.jl) — tracer specs, `[numerics] float_type`,
   architecture, table-shape and window-bound checks, `validate_config`,
   multi-file window-range guard; `validate_config` also parses the physics,
-  run and output settings. It also holds the ANSI and advection-label helpers
-  used by the summary.
+  run and output settings.
 - [`config_keys.jl`](config_keys.jl) — the keys each runtime table may hold
   and `_config_key_findings`: unknown keys (with suggestions) are errors of
   `validate_config`, keys the chosen kind leaves unread are its warnings
 - [`model_setup.jl`](model_setup.jl) — GPU residency assertion, flux allocation,
   LL/RG model build, per-tracer CS dry-state packing, convection-capability
   dispatch
-- [`output.jl`](output.jl) — binary date labels, default output span, duplicate
+- [`output.jl`](output.jl) — binary date labels, runtime window layout and span, duplicate
   daily-path guard, output path/schedule checks (snapshot hours on window
   ends), `RunSnapshotOutput`, single-file stream, background daily writes
-- [`observations.jl`](observations.jl) — run origin, sampler construction and
+- [`observations.jl`](observations.jl) — observation origin, sampler construction and
   ownership, per-binary day switch, window-end sampling with optional VDIFF
   temperature
 - [`resources.jl`](resources.jl) — `_with_run_resource`, `RunInputResources`
@@ -88,8 +87,16 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   summary adds GC time, JIT compilation time and allocated memory over the run
 - [`logging.jl`](logging.jl) — `[logging]` (log level, progress reporter) and
   `[checks]` (the NaN checker callback)
-- [`summary.jl`](summary.jl) — diffusion and schedule labels, multi-line runtime
+- [`summary.jl`](summary.jl) — ANSI, advection, diffusion and schedule labels, multi-line runtime
   summary
+
+- `DrivenRunner.jl`: library entry point, absolute run origin and transport loops.
+- `DrivenSimulation.jl`: driven type, compatibility checks, storage allocation/scaling.
+- `driven_window_state.jl`: payload copies, staging, prefetch and reusable buffers.
+- `InputStaging.jl`: rolling local copies, identity checks, directory ownership.
+- `BinaryPathExpander.jl`: explicit paths or folder/date-range binary selection.
+- `run_layout.jl`: public aliases for runtime layout/clock/terrain and
+  `run_tracer_specs` shared with Diagnostics and scripts.
 
 ## Common Tasks
 
@@ -101,8 +108,8 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   fallback throws.
 - To change how tracers are initialised, edit `_make_structured_model` for
   LL/RG or `_initialize_cs_dry_state` for CS. The builders themselves live in
-  [`../initial_conditions/`](../initial_conditions/README.md) and
-  [`../InitialConditionIO.jl`](../InitialConditionIO.jl).
+  [`../InitialConditions/`](../InitialConditions/README.md) and
+  [`../InitialConditions/InitialConditionIO.jl`](../InitialConditions/InitialConditionIO.jl).
 - To add an output resource, give it a `close` method and own it through
   `RunSnapshotOutput` or `_with_run_resource`, so failure paths close it too.
 - To debug "daily output would be written for both ...", look at
@@ -122,7 +129,7 @@ how a TOML option reaches an operator, is [`../README.md`](../README.md).
   calls `release_payload!` on its mmap.
 - The binary's `mass_basis` sets the state basis. Initial tracer storage is dry
   VMR × air mass:
-  - LL/RG pass no `qv`, so `pack_initial_tracer_mass` rejects moist binaries.
+  - LL/RG pass window-start `qv` when available for moist-basis packing.
   - The CS runner rejects moist binaries explicitly.
 - Explicit `[run].Hp` and `halo_padding` must be integers ≥ 1; Boolean values
   are rejected. Input dates accept TOML dates or date strings, including
@@ -154,3 +161,27 @@ window ranges), `test_async_output_lifetime.jl` (background writes, sampler clos
 Output owns the `[output]` key tables and `check_output_targets`; this folder
 reports findings and orchestrates the writers. Observation APIs are imported
 from `AtmosTransport.Observations`.
+
+## Depends on
+
+Core/Physics through Models; InitialConditionIO, ConfigChecks, Architectures,
+MetDrivers, Output, Observations, GriddedIO, State, Grids, Operators,
+AtomicFiles, Parameters, LogLevels and SectionTimer.
+
+## Used by
+
+`scripts/run_transport.jl`, Diagnostics (and its Analysis facade), diagnostic,
+inversion and flux-building scripts, runtime tests.
+
+## Shared helpers owned here
+
+`run_layout.jl` exports the public shared run interface, re-exported by Models.
+Legacy qualified aliases still resolve to the same generic. Their original
+names are documented here so the static checker resolves public aliases too:
+
+# shared: _binary_date_label, _cfg_float_type, _check_multifile_window_count, _layout_run_hours, _parse_tracer_specs, _run_reference_time, _run_time_origin, _run_time_span, _run_window_index, _runtime_window_layout, _structured_tracer_specs, _runtime_output_origin, _window_end_hours, _observation_terrain, _finish_window_prefetch!
+
+## Forward<->adjoint mirrors
+
+None in DrivenRunner. Core captures the driven window forcing for adjoint
+replay; resource cleanup drains prefetch before closing its input binary.

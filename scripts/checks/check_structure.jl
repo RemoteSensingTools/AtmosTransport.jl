@@ -815,6 +815,62 @@ function relocate_t1_layers(before, file)
     return migrated
 end
 
+# MD1 uses plain folders where Models still shares runtime types. Translate
+# historical file identities only; helper names, digests and ceilings never grow.
+const MD1_HOME = "src/Models"
+const MD1_FOLDERS = MD1_HOME .* ["/Physics", "/Core", "/InitialConditions", "/Runner"]
+const MD1_FILES = Dict(
+    "Core" => ("TransportModel", "Simulation", "Callbacks", "driven_stepping", "adjoint_schedule"),
+    "Physics" => ("RuntimeRecipeStyles", "RuntimePhysicsSpecs", "RuntimePhysicsRecipe",
+                  "RuntimePhysicsMetadata", "driven_physics_refresh"),
+    "InitialConditions" => ("InitialConditionIO",),
+    "Runner" => ("DrivenRunner", "DrivenSimulation", "driven_window_state", "InputStaging", "BinaryPathExpander"))
+
+function md1_path(path)
+    path = replace(path, "src/Models/initial_conditions/" => "src/Models/InitialConditions/",
+                         "src/Models/runner/" => "src/Models/Runner/")
+    for (folder, files) in MD1_FILES, file in files
+        path == "$MD1_HOME/$file.jl" && return "$MD1_HOME/$folder/$file.jl"
+    end
+    return path
+end
+
+function relocate_md1_baseline(before, file)
+    if file == "src/LAYERS.toml"
+        folders = get(before, "folders", Dict())
+        haskey(folders, MD1_HOME) || return before
+        haskey(folders, first(MD1_FOLDERS)) && return before
+        migrated = deepcopy(before)
+        old_family = (MD1_HOME, MD1_HOME * "/initial_conditions", MD1_HOME * "/runner")
+        new_family = [MD1_HOME; MD1_FOLDERS]
+        expand(f) = f in old_family ? new_family : [f]
+        budgets = migrated["folders"]
+        for (f, deps) in folders
+            f in old_family && continue
+            budgets[f] = unique(reduce(vcat, expand.(deps); init = String[]))
+        end
+        # All these files already shared the Models dependency budget. Keep
+        # only its former lower dependencies plus internal folder wiring.
+        prior = unique(reduce(vcat, (get(folders, f, String[]) for f in old_family)))
+        prior = filter(f -> f ∉ old_family, prior)
+        for f in new_family
+            budgets[f] = filter(!=(f), [prior; new_family])
+        end
+        for f in old_family[2:end]
+            delete!(budgets, f)
+        end
+        exceptions = get(migrated, "folder_order_allow", Dict())
+        for id in ("$(old_family[2])|$MD1_HOME", "$(old_family[3])|$MD1_HOME")
+            delete!(exceptions, id)
+        end
+        return migrated
+    end
+    haskey(before, "allow") || return before
+    entries = Dict(join(md1_path.(split(id, '|')), '|') => reason
+                   for (id, reason) in before["allow"])
+    return merge(before, Dict("allow" => entries))
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
@@ -826,6 +882,7 @@ function allowance_growth(before, after, file)
     before = relocate_pp2_layers(before, file)
     before = relocate_a1_layers(before, file)
     before = relocate_t1_layers(before, file)
+    before = relocate_md1_baseline(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")
@@ -922,7 +979,15 @@ function check_folders!(errors, inv, found, layers; io = stdout)
         shared_advection_wiring = a == A1_HOME && b in A1_CHILDREN &&
             all(inv.files[f] == "AtmosTransport.Operators.Advection"
                 for f in get(folders, b, String[]))
-        if !child_wiring && !shared_advection_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
+        # MD1's explicitly permitted plain-folder fallback: Core stepping and
+        # Physics refresh dispatch on Runner's DrivenSimulation, whose model is
+        # Core.TransportModel. This is one existing module, not new module edges.
+        # Only these shared Models files bypass folder ordering; child modules
+        # and every dependency outside Models still obey the usual rules.
+        shared_models_wiring = a in [MD1_HOME; MD1_FOLDERS] && b in [MD1_HOME; MD1_FOLDERS] &&
+            any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, a, String[])) &&
+            any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, b, String[]))
+        if !child_wiring && !shared_advection_wiring && !shared_models_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
             push!(errors, "T1 reference to later folder: $a -> $b")
         end
     end

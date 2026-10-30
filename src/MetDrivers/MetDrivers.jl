@@ -60,7 +60,7 @@ export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc
 export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
 export binary_dry_mass_target
-export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
+export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base, has_dtrain, has_dkg
 export mass_basis, binary_mass_basis, grid_type, horizontal_topology
 export surface_pressure_basis
 export uses_binary_substep_contract

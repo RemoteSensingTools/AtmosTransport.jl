@@ -82,7 +82,7 @@ time-varying field contracts consumed by operators.
   `eachtracer`, and `allocate_face_fluxes`
 - Debugging basis mismatches:
   read [`Basis.jl`](Basis.jl) and basis checks in
-  [`../Models/DrivenSimulation.jl`](../Models/DrivenSimulation.jl)
+  [`../Models/Runner/DrivenSimulation.jl`](../Models/Runner/DrivenSimulation.jl)
 - Debugging cubed-sphere storage:
   start with [`CubedSphereState.jl`](CubedSphereState.jl) and
   [`FaceFluxState.jl`](FaceFluxState.jl), not the operators

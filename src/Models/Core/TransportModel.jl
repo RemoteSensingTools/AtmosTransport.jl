@@ -108,6 +108,18 @@ end
 
 @doc _TRANSPORT_MODEL_OVERVIEW TransportModel
 
+# All constructors keep their topology-specific workspace and preflight order.
+# Only the final concrete type/field construction is shared.
+function _construct_model(state, fluxes, grid, advection, workspace, chemistry,
+                          diffusion, emissions, convection, convection_forcing)
+    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
+                          typeof(advection), typeof(workspace), typeof(chemistry),
+                          typeof(diffusion), typeof(emissions), typeof(convection),
+                          typeof(convection_forcing)}(
+        state, fluxes, grid, advection, workspace, chemistry, diffusion,
+        emissions, convection, convection_forcing)
+end
+
 function _rebuild_model(model::TransportModel;
                         state = model.state,
                         fluxes = model.fluxes,
@@ -119,12 +131,8 @@ function _rebuild_model(model::TransportModel;
                         emissions = model.emissions,
                         convection = model.convection,
                         convection_forcing = model.convection_forcing)
-    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
-                          typeof(advection), typeof(workspace), typeof(chemistry),
-                          typeof(diffusion), typeof(emissions), typeof(convection),
-                          typeof(convection_forcing)}(
-        state, fluxes, grid, advection, workspace, chemistry, diffusion,
-        emissions, convection, convection_forcing)
+    return _construct_model(state, fluxes, grid, advection, workspace, chemistry,
+                            diffusion, emissions, convection, convection_forcing)
 end
 
 function TransportModel(state::CellState{B},
@@ -141,12 +149,8 @@ function TransportModel(state::CellState{B},
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
         convection_ws = convection_workspace_for(convection, state, grid))
-    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
-                          typeof(advection), typeof(workspace_model),
-                          typeof(chemistry), typeof(diffusion), typeof(emissions),
-                          typeof(convection), typeof(convection_forcing)}(
-        state, fluxes, grid, advection, workspace_model,
-        chemistry, diffusion, emissions, convection, convection_forcing)
+    return _construct_model(state, fluxes, grid, advection, workspace_model, chemistry,
+                            diffusion, emissions, convection, convection_forcing)
 end
 
 function TransportModel(state::CellState{B},
@@ -163,12 +167,8 @@ function TransportModel(state::CellState{B},
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
         convection_ws = convection_workspace_for(convection, state, grid))
-    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
-                          typeof(advection), typeof(workspace_model),
-                          typeof(chemistry), typeof(diffusion), typeof(emissions),
-                          typeof(convection), typeof(convection_forcing)}(
-        state, fluxes, grid, advection, workspace_model,
-        chemistry, diffusion, emissions, convection, convection_forcing)
+    return _construct_model(state, fluxes, grid, advection, workspace_model, chemistry,
+                            diffusion, emissions, convection, convection_forcing)
 end
 
 function TransportModel(state::CellState{B},
@@ -205,12 +205,8 @@ function TransportModel(state::CubedSphereState{B},
     workspace_model = TransportModelWorkspace(
         advection_workspace, diffusion_workspace;
         convection_ws = convection_workspace_for(convection, state, grid))
-    return TransportModel{typeof(state), typeof(fluxes), typeof(grid),
-                          typeof(advection), typeof(workspace_model),
-                          typeof(chemistry), typeof(diffusion), typeof(emissions),
-                          typeof(convection), typeof(convection_forcing)}(
-        state, fluxes, grid, advection, workspace_model,
-        chemistry, diffusion, emissions, convection, convection_forcing)
+    return _construct_model(state, fluxes, grid, advection, workspace_model, chemistry,
+                            diffusion, emissions, convection, convection_forcing)
 end
 
 """

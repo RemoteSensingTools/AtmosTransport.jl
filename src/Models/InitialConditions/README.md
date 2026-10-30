@@ -4,7 +4,7 @@ Cubed-sphere initial-condition builders and the file-based surface-flux sources
 for every topology.
 
 These files are included into the `InitialConditionIO` module at the end of
-[`../InitialConditionIO.jl`](../InitialConditionIO.jl). The parent file owns the
+[`InitialConditionIO.jl`](InitialConditionIO.jl). That file owns the
 lat-lon and reduced-Gaussian `build_initial_mixing_ratio` methods,
 `pack_initial_tracer_mass`, the NetCDF IC loader
 `_load_file_initial_condition_source`, and the conservative hybrid-coordinate remap
@@ -25,7 +25,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   halo.
 - Runner-private CS helpers: `_build_cs_initial_mixing_ratio(..., vmr; surface_pressure)`
   (reuses an interior buffer) and `_cs_pack_interior_into_halo!`. Both are called
-  by `_initialize_cs_dry_state` in [`../runner/model_setup.jl`](../runner/model_setup.jl).
+  by `_initialize_cs_dry_state` in [`../Runner/model_setup.jl`](../Runner/model_setup.jl).
 - [`surface_flux.jl`](surface_flux.jl): `build_surface_flux_source(grid, tracer_name,
   cfg, FT; reference_time)` (methods for lat-lon, reduced-Gaussian, and cubed-sphere
   grids) and `build_surface_flux_sources(grid, tracer_specs, FT; reference_time)`. They
@@ -96,6 +96,8 @@ in `test/core/test_initial_condition_io.jl` measures a −0.000153 ppm C90
 near-surface difference for a uniform 400 Pa surface-pressure shift.
 
 ## File Map
+
+- `InitialConditionIO.jl`: module, LL/RG builders, shared file-column remap and storage packing.
 
 - [`cubed_sphere.jl`](cubed_sphere.jl) — CS `build_initial_mixing_ratio`
   (analytic, file, `cs_native`, `pressure_layer`), CS dry/moist halo packing
@@ -268,3 +270,31 @@ Under [`../../../test/core/`](../../../test/core/): `test_initial_condition_io.j
 `test_config_matrix_contract.jl` (every shipped config's fluxes have a species).
 The file conventions are tested under `test_gridded_io_*.jl` and
 `test_flux_units.jl`.
+
+## Depends on
+
+GriddedIO (native file metadata, vertical order, Pa units, year inference),
+Grids, Regridding, State, ConfigChecks, Parameters and Operators.SurfaceFlux.
+The `InitialConditionIO` module keeps its original qualified path.
+
+## Used by
+
+DrivenRunner, Diagnostics, surface-inventory scripts and IC/flux-ingestion tests.
+
+## Shared helpers owned here
+
+Public builders, `uniform_background`, `load_file_surface_flux_field` and
+`conservative_surface_flux_rate` and `surface_flux_storage_scale`. The runner reuses these internal seams:
+
+# shared: _build_cs_initial_mixing_ratio, _cs_pack_interior_into_halo!, _regridding_method, _surface_flux_kind, _hold_outside_coverage, _load_file_surface_flux_field, _conservative_surface_flux_rate, _surface_flux_storage_scale
+
+`INITIAL_CONDITION_KINDS` is the shared alias-to-spec table for parsers, builders
+and runner key checks; Gaussian parameter reads and scalar evaluation also have
+one home here. `HybridRemapScratch` and `_file_ic_column!` own the shared file-IC column step;
+all pressure/cumulative scratch stays Float64. Legacy qualified metadata helper
+names import the same functions now owned by GriddedIO.
+
+## Forward<->adjoint mirrors
+
+None. Initial state and surface sources are built once; Core captures the
+materialized emission rates for the adjoint.

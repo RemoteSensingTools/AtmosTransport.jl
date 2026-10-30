@@ -30,6 +30,11 @@ same generic for settings. Header coefficients are `reader.header.A_ifc` and
 `reader.header.B_ifc`. `binary_mass_basis` returns a Symbol; State's `mass_basis`
 returns a basis instance.
 
+`has_dtrain(reader_or_capabilities)` and `has_dkg(reader)` own the DTRAIN/Dkg
+payload-membership predicates shared by Models and the CS reader/driver. The
+predicates retain the exact section-membership checks; Models retains its
+existing topology fallback methods.
+
 ## Forward<->adjoint mirrors
 
 No adjoint kernels live here. Forward and adjoint runners consume the same

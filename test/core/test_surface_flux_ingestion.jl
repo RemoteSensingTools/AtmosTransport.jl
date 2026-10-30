@@ -497,3 +497,387 @@ end
     ICIO._renormalize_surface_flux_rate!(rate, positive)
     @test rate == [2.0, 2.0, 0.0]
 end
+
+const _SYNTHETIC_SECONDS_JAN_2021 = 31 * 86400
+
+function _write_synthetic_lmdz_flux_file(path::AbstractString, year::Int, month::Int)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 2)
+        lon = defVar(ds, "longitude", Float64, ("longitude",))
+        lat = defVar(ds, "latitude", Float64, ("latitude",))
+        time = defVar(ds, "time", Float64, ("time",))
+        flux = defVar(ds, "flux_apos", Float32,
+                      ("longitude", "latitude", "time"))
+        lon[:] = [-135.0, -45.0, 45.0, 135.0]
+        lat[:] = [45.0, -45.0]
+        time[:] = [0.0, 3.0]
+        time.attrib["units"] = @sprintf("hours since %04d-%02d-01 00:00:00", year, month)
+        flux[:, :, 1] .= Float32(month)
+        flux[:, :, 2] .= Float32(month + 0.5)
+        flux.attrib["units"] = "kgC m-2 s-1"
+    finally
+        close(ds)
+    end
+end
+
+
+function _write_synthetic_monthly_gridfed_file(path::AbstractString, year::Int)
+    ds = NCDataset(path, "c")
+    try
+        defDim(ds, "longitude", 4)
+        defDim(ds, "latitude", 2)
+        defDim(ds, "time", 12)  # GridFED has a time dimension but no coordinate variable.
+        lon = defVar(ds, "longitude", Float64, ("longitude",))
+        lat = defVar(ds, "latitude", Float64, ("latitude",))
+        flux = defVar(ds, "TOTAL", Float64,
+                      ("longitude", "latitude", "time"))
+        lon[:] = [-135.0, -45.0, 45.0, 135.0]
+        lat[:] = [45.0, -45.0]
+        for month in 1:12
+            month_seconds = Dates.daysinmonth(year, month) * 86400.0
+            flux[:, :, month] .= month * month_seconds
+        end
+        flux.attrib["units"] = "kgCO2/month/m2"
+    finally
+        close(ds)
+    end
+end
+
+
+@testset "calendar-aware multi-month LMDZ and GridFED loaders" begin
+    mktempdir() do dir
+        @test ICIO._infer_year_from_path(
+            "GCP-GridFEDv2024.0_2022.short.nc") == 2022
+        @test ICIO._infer_year_from_path("GCP-GridFEDv2024.0_2021.short.nc") == 2021
+        @test ICIO._infer_year_from_path("flux_2021_v2024.nc") == 2021
+        @test ICIO._infer_year_from_path("z_cams_l_cams55_202112_FT24r2.nc") === nothing
+        @test_throws ArgumentError ICIO._infer_year_from_path("flux_2021_2022.nc")
+        for month in 1:12
+            _write_synthetic_lmdz_flux_file(
+                joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)),
+                2022, month)
+        end
+        lmdz_cfg = Dict{String, Any}(
+            "kind" => "lmdz_co2",
+            "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
+            "year" => 2022,
+            "time_varying" => true,
+        )
+        lmdz = ICIO._load_timevarying_surface_flux_field(
+            lmdz_cfg, Float32, DateTime(2022, 1, 1); species = :co2)
+        @test size(lmdz.raw_series) == (4, 2, 24)
+        @test lmdz.times_sec[1:2] == [0.0, 3 * 3600.0]
+        @test lmdz.times_sec[end] ==
+              Dates.value(DateTime(2022, 12, 1, 3) - DateTime(2022, 1, 1)) / 1000.0
+        c_to_co2 = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 /
+                   AtmosTransport.Parameters.CARBON_MOLAR_MASS
+        @test all(lmdz.raw_series[:, :, 1] .== Float32(c_to_co2))
+        @test all(lmdz.raw_series[:, :, 3] .== Float32(2 * c_to_co2))
+
+        gridfed_path = joinpath(dir, "gridfed_2022.nc")
+        _write_synthetic_monthly_gridfed_file(gridfed_path, 2022)
+        gridfed_cfg = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2",
+            "file" => gridfed_path,
+            "year" => 2022,
+            "time_varying" => true,
+        )
+        gridfed = ICIO._load_timevarying_surface_flux_field(
+            gridfed_cfg, Float64, DateTime(2022, 1, 1); species = :co2)
+        @test size(gridfed.raw_series) == (4, 2, 12)
+        @test gridfed.times_sec[1] == 0.0
+        @test gridfed.times_sec[2] == 31 * 86400.0
+        for month in 1:12
+            @test all(gridfed.raw_series[:, :, month] .== month)
+        end
+
+        # The ordinal fallback belongs only to the documented GridFED
+        # layout, even when another kind points at the same data variable.
+        not_gridfed = copy(gridfed_cfg)
+        not_gridfed["kind"] = "lmdz_co2"
+        not_gridfed["variable"] = "TOTAL"
+        @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+            not_gridfed, Float64, DateTime(2022, 1, 1); species = :co2)
+    end
+end
+
+@testset "per-month slices use CF coordinates, bounds, and calendar" begin
+    function write_permonth(path; times, values, calendar, bounds = nothing)
+        NCDataset(path, "c") do ds
+            defDim(ds, "longitude", 4)
+            defDim(ds, "latitude", 2)
+            defDim(ds, "time", length(times))
+            defVar(ds, "longitude", Float64, ("longitude",))[:] =
+                [-135.0, -45.0, 45.0, 135.0]
+            defVar(ds, "latitude", Float64, ("latitude",))[:] = [45.0, -45.0]
+            attrib = Dict("units" => "days since 2021-01-01", "calendar" => calendar)
+            bounds === nothing || (attrib["bounds"] = "time_bnds")
+            defVar(ds, "time", Float64, ("time",); attrib)[:] = times
+            if bounds !== nothing
+                defDim(ds, "nv", 2)
+                defVar(ds, "time_bnds", Float64, ("nv", "time"))[:, :] = bounds
+            end
+            flux = defVar(ds, "TOTAL", Float64,
+                          ("longitude", "latitude", "time"),
+                          attrib = Dict("units" => "kgCO2/month/m2"))
+            for t in eachindex(values)
+                flux[:, :, t] .= values[t]
+            end
+        end
+        return path
+    end
+
+    mktempdir() do dir
+        # A partial year in file order April, February, March. Bounds assign
+        # each amount its duration; the coordinate sorts the returned series.
+        bounds = [90.0 31.0 59.0; 120.0 59.0 90.0]
+        markers = [4.0, 2.0, 3.0]
+        values = markers .* vec(bounds[2, :] .- bounds[1, :]) .* 86400
+        path = write_permonth(joinpath(dir, "partial_out_of_order.nc");
+                              times = vec(sum(bounds; dims = 1) ./ 2), values,
+                              calendar = "proleptic_gregorian", bounds)
+        cfg = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2", "file" => path,
+            "time_varying" => true)
+        series = ICIO._load_timevarying_surface_flux_field(
+            cfg, Float64, DateTime(2021, 1, 1); species = :co2)
+        @test size(series.raw_series, 3) == 3
+        @test all(series.raw_series[:, :, 1] .== 2.0)
+        @test all(series.raw_series[:, :, 2] .== 3.0)
+        @test all(series.raw_series[:, :, 3] .== 4.0)
+        # Stepwise slices switch at interval starts, not their mid-month
+        # coordinate stamps.
+        @test series.times_sec == [31.0, 59.0, 90.0] .* 86400
+
+        # Julian bounds are instants: Julian 2021-01-01 is proleptic
+        # Gregorian 2021-01-14, so each switch is 13 days after the
+        # Julian calendar fields, as for the decoded coordinate.
+        julian_bounds = [0.0 31.0 59.0; 31.0 59.0 90.0]
+        julian = write_permonth(joinpath(dir, "julian.nc");
+                                times = vec(sum(julian_bounds; dims = 1) ./ 2),
+                                values = [1.0, 2.0, 3.0] .*
+                                         vec(julian_bounds[2, :] .- julian_bounds[1, :]) .* 86400,
+                                calendar = "julian", bounds = julian_bounds)
+        julian_series = ICIO._load_timevarying_surface_flux_field(
+            Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => julian,
+                              "time_varying" => true),
+            Float64, DateTime(2021, 1, 1); species = :co2)
+        @test julian_series.times_sec == ([0.0, 31.0, 59.0] .+ 13) .* 86400
+        for month in 1:3
+            @test all(julian_series.raw_series[:, :, month] .== month)
+        end
+
+        # time_index remains explicitly positional: slice 1 is April.
+        static_cfg = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2", "file" => path, "time_index" => 1)
+        static = ICIO._load_file_surface_flux_field(
+            static_cfg, Float64; species = :co2)
+        @test all(static.raw .== 4.0)
+
+        # month is semantic when a coordinate exists, even though the
+        # partial-year file is out of order.
+        february = ICIO._load_file_surface_flux_field(
+            Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                              "month" => 2), Float64; species = :co2)
+        @test all(february.raw .== 2.0)
+        @test_throws ArgumentError ICIO._load_file_surface_flux_field(
+            Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => path,
+                              "month" => 1), Float64; species = :co2)
+
+        # Fixed-unit bounds must span exactly the represented calendar
+        # month; a daily interval cannot normalize a monthly amount.
+        bad_bounds = [31.0 59.0 90.0; 32.0 60.0 91.0]
+        bad = write_permonth(joinpath(dir, "daily_bounds.nc");
+                             times = vec(sum(bad_bounds; dims = 1) ./ 2),
+                             values = ones(3), calendar = "proleptic_gregorian",
+                             bounds = bad_bounds)
+        @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+            Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => bad,
+                              "time_varying" => true),
+            Float64, DateTime(2021, 1, 1); species = :co2)
+
+        # Without bounds, month length comes from the coordinate's own
+        # 360_day calendar: February is 30 days, not Gregorian 28 days.
+        values360 = [m * 30 * 86400.0 for m in 1:3]
+        path360 = write_permonth(joinpath(dir, "partial_360_day.nc");
+                                 times = [15.0, 45.0, 75.0], values = values360,
+                                 calendar = "360_day")
+        cfg360 = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2", "file" => path360,
+            "time_varying" => true)
+        series360 = ICIO._load_timevarying_surface_flux_field(
+            cfg360, Float64, DateTime(2021, 1, 1); species = :co2)
+        for month in 1:3
+            @test all(series360.raw_series[:, :, month] .== month)
+        end
+
+        # A coordinate-less partial year is not the legacy twelve-slice
+        # GridFED layout and therefore cannot fall back to ordinal months.
+        partial_no_coordinate = joinpath(dir, "partial_no_coordinate.nc")
+        NCDataset(partial_no_coordinate, "c") do ds
+            defDim(ds, "longitude", 4)
+            defDim(ds, "latitude", 2)
+            defDim(ds, "time", 3)
+            defVar(ds, "longitude", Float64, ("longitude",))[:] =
+                [-135.0, -45.0, 45.0, 135.0]
+            defVar(ds, "latitude", Float64, ("latitude",))[:] = [45.0, -45.0]
+            flux = defVar(ds, "TOTAL", Float64,
+                          ("longitude", "latitude", "time"),
+                          attrib = Dict("units" => "kgCO2/month/m2"))
+            flux[:, :, :] .= 1.0
+        end
+        partial_cfg = Dict{String, Any}(
+            "kind" => "gridfed_fossil_co2", "file" => partial_no_coordinate,
+            "time_varying" => true, "year" => 2021)
+        @test_throws ArgumentError ICIO._load_timevarying_surface_flux_field(
+            partial_cfg, Float64, DateTime(2021, 1, 1); species = :co2)
+    end
+end
+
+@testset "time-varying loaders read only the run period" begin
+    times = [0.0, 10.0, 20.0, 30.0]
+    @test ICIO._needed_slice_window(times, (12.0, 18.0)) == (10.0, 20.0)
+    @test ICIO._needed_slice_window(times, (10.0, 20.0)) == (10.0, 20.0)
+    @test ICIO._needed_slice_window(times, (-5.0, 3.0)) == (0.0, 10.0)
+    @test ICIO._needed_slice_window(times, (25.0, 99.0)) == (20.0, 30.0)
+    @test ICIO._needed_slice_window([30.0, 0.0, 10.0], (12.0, 18.0)) == (10.0, 30.0)
+    @test_throws ArgumentError ICIO._needed_slice_window(Float64[], (0.0, 1.0))
+    @test_throws ArgumentError ICIO._needed_slice_window(times, (5.0, 1.0))
+
+    mktempdir() do dir
+        for month in 1:12
+            _write_synthetic_lmdz_flux_file(
+                joinpath(dir, @sprintf("lmdz_%04d%02d.nc", 2022, month)), 2022, month)
+        end
+        # Each synthetic month holds two 3-hourly slices, so the files do
+        # not cover their months; this test is about slice selection.
+        cfg = Dict{String, Any}("kind" => "lmdz_co2",
+                                "file_pattern" => joinpath(dir, "lmdz_{YYYYMM}.nc"),
+                                "year" => 2022, "time_varying" => true,
+                                "hold_outside_coverage" => true)
+        ref = DateTime(2022, 1, 1)
+        full = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2)
+        sec(d) = Dates.value(d - ref) / 1000.0
+        # Mar 1 03:00 + 1 h to Apr 1 00:00: Mar 03:00 slice through the Apr 00:00 slice.
+        span = (sec(DateTime(2022, 3, 1, 4)), sec(DateTime(2022, 4, 1)))
+        sub = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2,
+                                                        run_span = span)
+        idx = findall(t -> sec(DateTime(2022, 3, 1, 3)) <= t <= sec(DateTime(2022, 4, 1)),
+                      full.times_sec)
+        @test length(idx) == 2
+        @test sub.times_sec == full.times_sec[idx]
+        @test sub.raw_series == full.raw_series[:, :, idx]
+        @test sub.lon == full.lon && sub.lat == full.lat
+        # Every scheme gives the same emitted increment from the subset: steps
+        # starting on and between knots, crossing knots, and at the run ends.
+        SF = AtmosTransport.Operators.SurfaceFlux
+        increment(field, segs) = sum(f * (w0 .* field.raw_series[:, :, i0] .+
+                                          w1 .* field.raw_series[:, :, i1])
+                                     for (i0, i1, w0, w1, f) in segs)
+        # Feb 1 01:00 to Mar 1 02:00 has knots inside (Feb 1 03:00, Mar 1 00:00).
+        span2 = (sec(DateTime(2022, 2, 1, 1)), sec(DateTime(2022, 3, 1, 2)))
+        sub2 = ICIO._load_timevarying_surface_flux_field(cfg, Float32, ref; species = :co2,
+                                                         run_span = span2)
+        @test length(sub2.times_sec) == 4
+        n_steps = 0
+        for (sp, field) in ((span, sub), (span2, sub2))
+            knots = filter(t -> sp[1] <= t <= sp[2], full.times_sec)
+            starts = sort(unique(vcat(knots, knots .- 1800, sp[1],
+                                      range(sp...; length = 9)[1:end-1])))
+            for scheme in (AtmosTransport.StepwiseFlux(), AtmosTransport.LinearInterpFlux(),
+                           AtmosTransport.ConservativeMeanFlux()),
+                t in starts, dt in (900.0, 4 * 3600.0, 3 * 86400.0)
+                sp[1] <= t && t + dt <= sp[2] || continue
+                n_steps += 1
+                @test increment(field, SF._flux_temporal_segments(scheme, field.times_sec, t, dt)) ==
+                      increment(full, SF._flux_temporal_segments(scheme, full.times_sec, t, dt))
+            end
+        end
+        @test n_steps > 60
+
+        gridfed_path = joinpath(dir, "gridfed_2022.nc")
+        _write_synthetic_monthly_gridfed_file(gridfed_path, 2022)
+        gcfg = Dict{String, Any}("kind" => "gridfed_fossil_co2", "file" => gridfed_path,
+                                 "year" => 2022, "time_varying" => true)
+        g = ICIO._load_timevarying_surface_flux_field(
+            gcfg, Float64, ref; species = :co2,
+            run_span = (sec(DateTime(2022, 6, 10)), sec(DateTime(2022, 7, 2))))
+        @test g.times_sec == [sec(DateTime(2022, m, 1)) for m in 6:8]
+        # Monthly totals divided by each slice's own month length.
+        for (k, month) in enumerate(6:8)
+            @test all(g.raw_series[:, :, k] .== month)
+        end
+    end
+end
+
+@testset "Float32 runtime window layout" begin
+    @test AtmosTransport.Models.runtime_window_layout([(3599.99988, 2)], Float32) ==
+          [(Float64(Float32(3599.99988)), 2)]
+end
+
+@testset "species of a surface flux" begin
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    MD = AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS
+    species = AtmosTransport.Models.InitialConditionIO.surface_flux_species
+    # `species` names an entry of SPECIES_MOLAR_MASS ...
+    @test species(:fossil, Dict("species" => "co2")) === :co2
+    @test species(:anything, Dict("species" => "sf6")) === :sf6
+    @test species(:co2, Dict("species" => "rn222")) === :rn222          # explicit wins
+    # ... or the tracer name implies it.
+    for (name, s) in ((:co2, :co2), (:co2_natural, :co2), (:co2_fossil, :co2),
+                      (:fossil_co2, :co2), (:sf6, :sf6), (:rn222, :rn222))
+        @test species(name, Dict{String, Any}()) === s
+    end
+    # Unknown species, unknown tracer names without `species`, and the removed
+    # molar_mass_kg_mol are errors naming the known species.
+    for (name, cfg) in ((:fossil, Dict("species" => "n2o")), (:fossil, Dict("species" => "CO2")),
+                        (:fossil, Dict("species" => 44.0)), (:fossil, Dict{String, Any}()),
+                        (:co2, Dict("molar_mass_kg_mol" => 0.0440095)))
+        err = try species(name, cfg); nothing catch e; e end
+        @test err isa ArgumentError
+    end
+    # The storage factor is DRY_AIR_MOLAR_MASS / M(species), bit for bit.
+    @test ICIO._surface_flux_storage_scale(:fossil, Dict("species" => "co2")) === MD / M.co2
+    @test ICIO._surface_flux_storage_scale(:sf6, Dict{String, Any}()) === MD / M.sf6
+    @test ICIO._surface_flux_storage_scale(:x, Dict("species" => "rn222")) === MD / M.rn222
+
+end
+
+@testset "time-varying loaders decode time axes through GriddedIO" begin
+    # Units are classified before any CFTime call: `months since` gives the
+    # first instant of each month (CFTime alone would use 30.44-day months),
+    # a noleap `days since` axis is accepted, `years since` is refused.
+    function write_series(path, units; calendar = nothing, times = [0.0, 1.0, 2.0])
+        NCDataset(path, "c") do ds
+            defDim(ds, "lon", 4); defDim(ds, "lat", 2); defDim(ds, "time", length(times))
+            defVar(ds, "lon", Float64, ("lon",))[:] = [45.0, 135.0, 225.0, 315.0]
+            defVar(ds, "lat", Float64, ("lat",))[:] = [-45.0, 45.0]
+            attrib = calendar === nothing ? Dict("units" => units) :
+                                            Dict("units" => units, "calendar" => calendar)
+            defVar(ds, "time", Float64, ("time",); attrib)[:] = times
+            v = defVar(ds, "flux_apos", Float64, ("lon", "lat", "time"),
+                       attrib = Dict("units" => "kg m-2 s-1"))
+            v[:, :, :] = ones(4, 2, length(times))
+        end
+        return path
+    end
+    ref = DateTime(2021, 1, 1)
+    load(path) = ICIO._load_timevarying_surface_flux_field(
+        Dict{String, Any}("kind" => "lmdz_co2", "time_varying" => true, "file" => path),
+        Float64, ref; species = :co2)
+    sec(t) = Dates.value(t - ref) / 1000.0
+    mktempdir() do dir
+        months = load(write_series(joinpath(dir, "months.nc"), "months since 2021-01-16 12:00:00";
+                                   calendar = "365_day"))
+        @test months.times_sec == sec.([DateTime(2021, 1, 1), DateTime(2021, 2, 1), DateTime(2021, 3, 1)])
+        noleap = load(write_series(joinpath(dir, "noleap.nc"), "days since 2021-02-27";
+                                   calendar = "noleap"))
+        @test noleap.times_sec == sec.([DateTime(2021, 2, 27), DateTime(2021, 2, 28), DateTime(2021, 3, 1)])
+        hours = load(write_series(joinpath(dir, "utc.nc"), "hours since 2021-01-01 00:00:00 UTC"))
+        @test hours.times_sec == [0.0, 3600.0, 7200.0]
+        @test_throws ArgumentError load(write_series(joinpath(dir, "years.nc"), "years since 2021-01-01"))
+    end
+end

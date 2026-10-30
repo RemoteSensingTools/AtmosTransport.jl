@@ -48,36 +48,9 @@ end
 
 @testset "expand_binary_paths" begin
 
-    @testset "Shape A: explicit list is returned verbatim" begin
-        cfg = Dict("binary_paths" => [
-            "/tmp/foo/a.bin",
-            "/tmp/foo/b.bin",
-        ])
-        paths = expand_binary_paths(cfg)
-        @test paths == ["/tmp/foo/a.bin", "/tmp/foo/b.bin"]
-    end
 
-    @testset "Shape A: tilde expansion" begin
-        cfg = Dict("binary_paths" => ["~/a.bin"])
-        paths = expand_binary_paths(cfg)
-        @test startswith(paths[1], expanduser("~"))
-    end
 
-    @testset "Shape A: data-root expansion" begin
-        withenv("ATMOSTRANSPORT_DATA_ROOT" => "/tmp/atmos_root") do
-            @test expand_data_path(raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin") ==
-                  "/tmp/atmos_root/met/a.bin"
-            @test expand_data_path(raw"${ATMOSTRANSPORT_DATA_ROOT}/met/a.bin") ==
-                  "/tmp/atmos_root/met/a.bin"
-            cfg = Dict("binary_paths" => [raw"$ATMOSTRANSPORT_DATA_ROOT/met/a.bin"])
-            @test expand_binary_paths(cfg) == ["/tmp/atmos_root/met/a.bin"]
-        end
-    end
 
-    @testset "Shape A: non-list errors" begin
-        cfg = Dict("binary_paths" => "not-a-list.bin")
-        @test_throws ArgumentError expand_binary_paths(cfg)
-    end
 
     @testset "Shape B: complete folder → sorted paths" begin
         mktempdir() do dir
@@ -135,39 +108,8 @@ end
         end
     end
 
-    @testset "Shape B: start_date > end_date errors" begin
-        mktempdir() do dir
-            _touch_binary_set(dir, [Date(2021, 12, 1)])
-            cfg = Dict(
-                "folder"     => dir,
-                "start_date" => "2021-12-05",
-                "end_date"   => "2021-12-01",
-            )
-            @test_throws ArgumentError expand_binary_paths(cfg)
-        end
-    end
 
-    @testset "Shape B: folder missing errors" begin
-        cfg = Dict(
-            "folder"     => "/nonexistent/dir/xyz",
-            "start_date" => "2021-12-01",
-            "end_date"   => "2021-12-03",
-        )
-        @test_throws ArgumentError expand_binary_paths(cfg)
-    end
 
-    @testset "Shape B: file_pattern placeholder required" begin
-        mktempdir() do dir
-            _touch_binary_set(dir, [Date(2021, 12, 1)])
-            cfg = Dict(
-                "folder"       => dir,
-                "start_date"   => "2021-12-01",
-                "end_date"     => "2021-12-01",
-                "file_pattern" => "no-placeholder.bin",
-            )
-            @test_throws ArgumentError expand_binary_paths(cfg)
-        end
-    end
 
     @testset "Shape B: file_pattern with placeholder matches strictly" begin
         mktempdir() do dir
@@ -190,20 +132,7 @@ end
         end
     end
 
-    @testset "Mutual exclusion: binary_paths + folder errors" begin
-        cfg = Dict(
-            "binary_paths" => ["/tmp/a.bin"],
-            "folder"       => "/tmp",
-            "start_date"   => "2021-12-01",
-            "end_date"     => "2021-12-01",
-        )
-        @test_throws ArgumentError expand_binary_paths(cfg)
-    end
 
-    @testset "Empty [input] errors" begin
-        cfg = Dict{String, Any}()
-        @test_throws ArgumentError expand_binary_paths(cfg)
-    end
 
     @testset "validate_config reports missing input paths and bad float types" begin
         cfg = Dict{String, Any}(

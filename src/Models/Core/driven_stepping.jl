@@ -323,6 +323,12 @@ end
 # `physics_cadence` (`:window`, `:substep` or `nothing` for `:window`) is
 # resolved by `Operators.StepPlans._resolve_physics_cadence`.
 
+@inline function _advance_clock!(sim::DrivenSimulation)
+    sim.iteration += 1
+    sim.time = _clock_time(sim)
+    return nothing
+end
+
 function step!(sim::DrivenSimulation)
     sim.iteration < sim.final_iteration ||
         throw(ArgumentError("DrivenSimulation has already completed all scheduled steps"))
@@ -342,8 +348,7 @@ function step!(sim::DrivenSimulation)
     timing = _step_timing(sim)
     substep == 1 && execute_window_start!(sim.plan, ops, timing, sim)
     execute_step_stages!(sim.plan, ops, timing, sim)
-    sim.iteration += 1
-    sim.time = _clock_time(sim)
+    _advance_clock!(sim)
     sim.iteration == sim.current_window_end_iteration &&
         execute_window_end!(sim.plan, ops, timing, sim)
     for callback in values(sim.callbacks)

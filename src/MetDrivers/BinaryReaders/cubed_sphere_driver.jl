@@ -3,7 +3,7 @@
 
 _supports_runtime_diffusion(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
-) = has_surface(reader) || :dkg in reader.header.payload_sections
+) = has_surface(reader) || has_dkg(reader)
 
 function _validate_replay_consistency_cs(
     reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},

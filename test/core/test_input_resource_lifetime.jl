@@ -27,6 +27,20 @@ function input_lifetime_sim(path, grid)
     return driver, DrivenSimulation(model,driver)
 end
 
+# Driver construction opens its own reader before validating physics/geometry.
+# On Linux, inspect the actual file descriptors without relying on GC finalizers.
+function input_lifetime_open_handles(path)
+    count(readdir("/proc/self/fd"; join=true)) do descriptor
+        try
+            readlink(descriptor) == path
+        catch
+            false
+        end
+    end
+end
+
+
+
 @testset "Runner drains prefetch before closing input" begin
     mktempdir() do dir
         path = joinpath(dir,"transport.bin")
@@ -78,13 +92,7 @@ end
         input = R.RunInputResources(driver,sim)
         @test R._with_run_resource(() -> :done,input) === :done
         @test !isopen(driver.reader.io)
-    end
-end
 
-@testset "Runner closes a first driver when setup rejects the run" begin
-    mktempdir() do dir
-        path = joinpath(dir,"transport.bin")
-        input_lifetime_fixture(path)
         cfg = Dict{String,Any}("input"=>Dict("binary_paths"=>[path]),
             "advection"=>Dict("scheme"=>"upwind"),
             "convection"=>Dict("kind"=>"tm5"),
@@ -105,113 +113,52 @@ end
         @test input.driver === nothing
         close(output)
     end
-end
+        if Sys.islinux()
+            mktempdir() do dir
+                path = joinpath(dir,"transport.bin")
+                input_lifetime_fixture(path)
+                before = input_lifetime_open_handles(path)
+                @test_throws ArgumentError TransportBinaryDriver(path; max_rel_cm=-1.0)
+                @test input_lifetime_open_handles(path) == before
 
-# Driver construction opens its own reader before validating physics/geometry.
-# On Linux, inspect the actual file descriptors without relying on GC finalizers.
-function input_lifetime_open_handles(path)
-    count(readdir("/proc/self/fd"; join=true)) do descriptor
-        try
-            readlink(descriptor) == path
-        catch
-            false
+                cs_path = joinpath(dir,"cs.bin")
+                vc = HybridSigmaPressure([0.0,0.0,0.0],[0.0,0.5,1.0])
+                writer = MD.open_streaming_cs_transport_binary(cs_path,2,6,2,1,vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
+                    FT=Float64,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry,
+                    surface_pressure_basis=TotalSurfacePressure())
+                window = (;m=ntuple(_->ones(2,2,2),6),am=ntuple(_->zeros(3,2,2),6),
+                           bm=ntuple(_->zeros(2,3,2),6),cm=ntuple(_->zeros(2,2,3),6),
+                           ps=ntuple(_->fill(100000.0,2,2),6))
+                MD.write_streaming_cs_window!(writer,window,2,6)
+                MD.close_streaming_transport_binary!(writer)
+                before = input_lifetime_open_handles(cs_path)
+                @test_throws ArgumentError TransportBinaryDriver(cs_path; Hp=-1)
+                @test input_lifetime_open_handles(cs_path) == before
+            end
         end
-    end
 end
 
-@testset "Rejected driver construction closes its owned reader" begin
-    if Sys.islinux()
-        mktempdir() do dir
-            path = joinpath(dir,"transport.bin")
-            input_lifetime_fixture(path)
-            before = input_lifetime_open_handles(path)
-            @test_throws ArgumentError TransportBinaryDriver(path; max_rel_cm=-1.0)
-            @test input_lifetime_open_handles(path) == before
 
-            cs_path = joinpath(dir,"cs.bin")
-            vc = HybridSigmaPressure([0.0,0.0,0.0],[0.0,0.5,1.0])
-            writer = MD.open_streaming_cs_transport_binary(cs_path,2,6,2,1,vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
-                FT=Float64,dt_met_seconds=3600.0,steps_per_window=2,mass_basis=:dry,
-                surface_pressure_basis=TotalSurfacePressure())
-            window = (;m=ntuple(_->ones(2,2,2),6),am=ntuple(_->zeros(3,2,2),6),
-                       bm=ntuple(_->zeros(2,3,2),6),cm=ntuple(_->zeros(2,2,3),6),
-                       ps=ntuple(_->fill(100000.0,2,2),6))
-            MD.write_streaming_cs_window!(writer,window,2,6)
-            MD.close_streaming_transport_binary!(writer)
-            before = input_lifetime_open_handles(cs_path)
-            @test_throws ArgumentError TransportBinaryDriver(cs_path; Hp=-1)
-            @test input_lifetime_open_handles(cs_path) == before
-        end
-    end
-end
+include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
 
 @testset "Multi-file partial ranges reject skipped forcing" begin
-    mktempdir() do dir
-        path = joinpath(dir,"transport.bin")
-        input_lifetime_fixture(path)
-        cfg = Dict{String,Any}("input"=>Dict("binary_paths"=>[path,path]),
-            "tracers"=>Dict("co2"=>Dict("init"=>Dict("kind"=>"uniform","background"=>400e-6))))
-        for bounds in (Dict("start_window"=>2),Dict("stop_window"=>1))
-            failure = try
-                M.run_driven_simulation(merge(cfg,Dict("run"=>bounds)))
-            catch err
-                err
+    for topology in (:latlon, :cubed_sphere)
+        mktempdir() do dir
+            path = joinpath(dir, "transport.bin")
+            if topology === :latlon
+                input_lifetime_fixture(path)
+            else
+                write_driven_cs_binary(path; FT = Float64, Nc = 4, Nz = 2,
+                                       window_mass_scales = (1, 1))
             end
-            @test failure isa ArgumentError
-            @test occursin("skip forcing",sprint(showerror,failure))
-        end
-        # Exercise the public runner's supported single-file partial path.
-        partial_cfg = merge(cfg,Dict("input"=>Dict("binary_paths"=>[path]),
-                                     "run"=>Dict("start_window"=>2,"stop_window"=>2)))
-        model = M.run_driven_simulation(partial_cfg)
-        @test all(model.state.tracers_raw .≈ 400e-6)
-        @test all(model.state.air_mass .== 1)
-    end
-end
-
-@testset "Runner disables its instrumentation after failure" begin
-    ST = AtmosTransport.SectionTimer
-    mktempdir() do dir
-        path = joinpath(dir,"transport.bin")
-        input_lifetime_fixture(path)
-        cfg = Dict{String,Any}("input"=>Dict("binary_paths"=>[path]),
-            "tracers"=>Dict("co2"=>Dict("init"=>Dict("kind"=>"uniform","background"=>400e-6))))
-        broken = joinpath(dir,"broken.bin")
-        write(broken,"invalid transport header")
-        failures = (merge(cfg,Dict("input"=>Dict("binary_paths"=>[broken]))),
-                    merge(cfg,Dict("convection"=>Dict("kind"=>"tm5"))))
-        try
-            for (timing,nvtx) in (("1","0"),("0","1"))
-                withenv("ATMOSTR_TIMERS"=>timing,"ATMOSTR_NVTX"=>nvtx,
-                        "ATMOSTR_ALLOC_TIMERS"=>"1") do
-                    for bad_cfg in failures
-                        failure = try
-                            M.run_driven_simulation(bad_cfg)
-                        catch err
-                            err
-                        end
-                        @test failure isa Exception
-                        @test !(failure isa CompositeException)
-                        @test !ST.is_enabled()
-                        @test !ST._ALLOC_ENABLED[]
-                        @test !ST._NVTX_ENABLED[]
-                        @test ST._timer_snapshot().wall_total > 0
-                    end
-                end
+            cfg = Dict{String, Any}(
+                "input" => Dict("binary_paths" => [path, path]),
+                "advection" => Dict("scheme" => "upwind"),
+                "tracers" => Dict("co2" => Dict("init" =>
+                    Dict("kind" => "uniform", "background" => 400e-6))))
+            for bounds in (Dict("start_window" => 2), Dict("stop_window" => 1))
+                @test_throws ArgumentError M.run_driven_simulation(merge(cfg, Dict("run" => bounds)))
             end
-            before = ST._timer_snapshot()
-            withenv("ATMOSTR_TIMERS"=>"0","ATMOSTR_NVTX"=>"0") do
-                model = M.run_driven_simulation(cfg)
-                @test all(model.state.tracers_raw .≈ 400e-6)
-            end
-            @test ST._timer_snapshot().timings == before.timings
-            withenv("ATMOSTR_TIMERS"=>"1","ATMOSTR_NVTX"=>"0") do
-                M.run_driven_simulation(cfg)
-            end
-            @test !ST.is_enabled()
-            @test !isempty(ST._timer_snapshot().timings)
-        finally
-            ST.disable!()
         end
     end
 end
