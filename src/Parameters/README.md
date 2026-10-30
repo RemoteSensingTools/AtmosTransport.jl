@@ -31,7 +31,8 @@ other AtmosTransport modules; every later module may import from it.
   - `R_DRY_AIR`, `CP_DRY_AIR`, `CP_OVER_R_DIATOMIC`, `DRY_AIR_MOLAR_MASS`,
     `VIRTUAL_TEMPERATURE_FACTOR`, `AVOGADRO`
   - `SPECIES_MOLAR_MASS`, the named tuple `(co2, sf6, rn222)` in kg mol⁻¹,
-    and `CARBON_MOLAR_MASS` (kgC → kgCO₂ by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`)
+    `SPECIES_CARBON_ATOMS` and `SPECIES_LABELS` (the carbon counts and flux-unit
+    spellings), and `CARBON_MOLAR_MASS` (kgC → kgCO₂ by `SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS`)
   - `RN222_HALF_LIFE` (3.8235 d = 330350.4 s)
   - `VON_KARMAN` (0.41) of the model's own boundary-layer schemes (the TM5
     and GEOS-Chem ports use their models' 0.4)
@@ -40,6 +41,7 @@ other AtmosTransport modules; every later module may import from it.
     `STANDARD_TROPOPAUSE_TEMPERATURE` (216.65 K)
   - `HYDROSTATIC_REFERENCE_TEMPERATURE` (260 K), the isothermal temperature of
     hydrostatic layer thicknesses when no temperature is available
+  - `SECONDS_PER_DAY` (86400 s), the day length used by gridded flux/time axes
   - `DAYS_PER_JULIAN_YEAR` (365.25), for annual totals given as rates
   - `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98325 Pa), the shared modern-reanalysis
     dry-mass fix target,

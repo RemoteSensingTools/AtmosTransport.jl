@@ -29,5 +29,6 @@ include("cs_mesh_coordinates.jl")
 include("cs_mesh_locate.jl")
 include("ReducedGaussianMesh.jl")
 include("CellAreas.jl")
+include("BilinearBrackets.jl")
 
 end # module Grids

@@ -1630,10 +1630,7 @@ end
     expected_area = [cell_area(mesh, i, j) for i in 1:4, j in 1:3]
     @test ICIO._lonlat_cell_areas_m2(lon, lat) == expected_area
     @test ICIO._lonlat_cell_areas_m2(lon, reverse(lat)) == expected_area[:, end:-1:1]
-    old_uniform = AtmosTransport.GriddedIO.source_latlon_mesh(
-        lon, lat, AtmosTransport.GriddedIO.UniformSpanFaces();
-        radius = AtmosTransport.Parameters.EARTH_RADIUS)
-    @test expected_area != [cell_area(old_uniform, i, j) for i in 1:4, j in 1:3]
+    @test mesh.φᶠ == [-90.0, -45.0, 45.0, 90.0]
     # A molar flux that names no substance is of the tracer's species
     # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
     M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS

@@ -141,9 +141,7 @@ function write_latlon_flux(path::AbstractString, mesh::LatLonMesh, variables;
     0 <= deflate <= 9 || throw(ArgumentError("deflate must be in 0:9; got $(deflate)"))
     units = canonical_units_string(species)
     specs = [_latlon_variable(v) for v in variables]
-    isempty(specs) && throw(ArgumentError("a flux file needs at least one variable"))
-    names = first.(specs)
-    allunique(names) || throw(ArgumentError("flux variable names must be unique; got $(names)"))
+    _check_flux_variable_names(first.(specs))
     shape = (mesh.Nx, mesh.Ny)
     for (name, data, _) in specs
         name in ("lon", "lat", "lon_bnds", "lat_bnds", "cell_area") &&

@@ -260,11 +260,11 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
 
 Under [`../../../test/core/`](../../../test/core/): `test_initial_condition_io.jl`,
 `test_cs_initial_state_packing.jl`, `test_cs_pressure_layer_initialization.jl`,
-`test_native_cs_surface_flux.jl`, `test_cs_native_flux_schema.jl` (the `cs_native`
-loader against a frozen copy of the pre-GriddedIO loader, bit for bit),
+`test_native_cs_surface_flux.jl` (units/storage factors and slice-selection matrix),
+`test_cs_native_flux_schema.jl` (schema round trip and reader gates),
 `test_cs_driven_builders.jl`,
 `test_binary_planet_radius.jl` (source-mesh radius, inventory totals),
-`test_regrid_cache_dir.jl`, `test_float32_conservation.jl` (source-mesh extents),
+`test_float32_conservation.jl` (source-mesh extents),
 `test_config_matrix_contract.jl` (every shipped config's fluxes have a species).
 The file conventions are tested under `test_gridded_io_*.jl` and
 `test_flux_units.jl`.

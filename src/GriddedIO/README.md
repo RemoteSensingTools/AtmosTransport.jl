@@ -20,10 +20,11 @@ and the methods dispatch on it.
 
 `src/AtmosTransport.jl` loads this folder after `Regridding` and before
 `Preprocessing`. It imports `Parameters` (`SPECIES_MOLAR_MASS`,
-`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`), `Grids` (the three mesh types,
+`CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`, `SECONDS_PER_DAY`,
+`SPECIES_CARBON_ATOMS`, `SPECIES_LABELS`), `Grids` (the three mesh types,
 `cell_area`, the reduced-Gaussian and cubed-sphere centre helpers), `Output`
-(`define_cs_horizontal_geometry!`, `define_provenance_attributes!`, and the
-observation-placement interfaces `ModelSurfaceHeight`,
+(`define_cs_horizontal_geometry!`, `define_provenance_attributes!`), `Observations`
+(the placement interfaces `ModelSurfaceHeight`,
 `AbstractPointElevation`, `point_elevation`, `terrain_source`, which it
 implements) and `AtomicFiles`, plus NCDatasets (and its CFTime), Dates and
 SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
@@ -35,7 +36,7 @@ SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 |---|---|
 | [`GriddedIO.jl`](GriddedIO.jl) | Module, imports, exports, includes. |
 | [`coordinates.jl`](coordinates.jl) | `AbstractAxis` (`LongitudeAxis`, `LatitudeAxis`, `TimeAxis`, `VerticalAxis`) and `find_coordinate`; `LatLonOrientation`, `latlon_orientation`, `orient`, `orient_coordinates`; `AbstractFillPolicy` (`MaskedAsZero`, `MaskedAsNaN`, `FillValueOnly`) and `read_raw([T,] ds, name, policy, idx...)`. |
-| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` and `source_latlon_mesh(ds, rule; radius)` with the face rules `AbstractFaceRule` (`SnappedFaces`: the runtime rule, with snapping, centre-on-0/180, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`; `UniformSpanFaces`: the legacy uniform-span reconstruction). |
+| [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` with `AbstractFaceRule` / `SnappedFaces`: snapping, centre-on-0/180, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`. |
 | [`time_axes.jl`](time_axes.jl) | `TimeInterval`, `MonthKey`, `interval`, `month_keys`, `seconds_since`, `check_last_month`; `AbstractTimeDecoder` (`CFDecoder`, `MonthsSince`, `DecimalYears`, `AuxiliaryTimeVariable`) with the stamp positions `MonthStart`, `MidMonth`, `MonthEnd`; `DEFAULT_TIME_DECODERS`, `decode_time`, `decode_time_bounds`, `decode_slice_intervals` (the interval each slice of a file stands for), `known_slice_intervals`, `stamp_intervals` (the regular step of a series of stamps over several files) and `STAMP_SPACING_TOLERANCE`, `decode_month_keys`, and bounds/calendar-aware `decode_month_seconds`; the flux writers' time axis (contiguous intervals → `time`, `time_bnds`). |
 | [`staging.jl`](staging.jl) | `stage_input(path; staging_dir)`: `.nc.gz` and single-member `.nc.tar.gz` decompressed through the system `gzip`/`tar`, cached, published atomically. |
 | [`flux_units.jl`](flux_units.jl) | `FluxUnits{S,A,T}` with `AbstractSubstance` (`TargetSpecies`, `Carbon`, `Species`), `AbstractAreaBasis` (`PerSquareMetre`, `PerCell`), `AbstractTimeBasis` (`PerSecond`, `PerDay`, `PerMonth`, `PerYear`); `parse_flux_units`, `kg_per_unit`, `period_seconds`, `mass_rate_factor`, `canonical_units_string`. |
@@ -74,15 +75,10 @@ bit.
 
 ### Source meshes
 
-`source_latlon_mesh(lon, lat, rule; radius)` takes a face rule
-(`AbstractFaceRule`): `SnappedFaces()` (the default, the rules below) or
-`UniformSpanFaces()`, the legacy uniform-span reconstruction. Runtime surface
-fluxes and file initial conditions use the default `SnappedFaces`. `UniformSpanFaces`
-builds a uniform mesh whose spacing is the mean spacing of the centres, with
-faces half a spacing outside the first and last centre and extents within
-`1e-3` of a cell of ±90° or a 360° span snapped to them; its faces carry the
-round-off of Float32-stored centres, and it does not bound pole-centred,
-truncated or Gaussian rows. `SnappedFaces`:
+`source_latlon_mesh(lon, lat, rule; radius)` takes `SnappedFaces()` as its
+face rule (the default). Callers find and read the coordinate vectors with
+`find_coordinate` before constructing a mesh. Runtime surface fluxes and file
+initial conditions use this rule:
 
 - **Regular global axes (snapping rule).** `res = 180/n` or `360/n`, origin
   `-90`/`+90` (ascending/descending latitude), `-180` (a negative longitude) or
@@ -102,10 +98,6 @@ truncated or Gaussian rows. `SnappedFaces`:
 - **Regional longitudes:** uniform faces from the first centre minus to the last
   plus half the mean spacing.
 - `lat_bnds`/`lon_bnds` are never read.
-- On exactly stored regular grids and regional grids the faces equal those of
-  `UniformSpanFaces` bit for bit. On Float32 centres `UniformSpanFaces` takes
-  its faces from the centres' span and carries their round-off (GridFED 0.1°:
-  west face 7.45e-10° instead of 0).
 
 ### Time axes
 
@@ -229,8 +221,7 @@ truncated or Gaussian rows. `SnappedFaces`:
   (layout, time axis, units, cell area) and selects the slices;
   `read_cs_native_flux!` reads them panel by panel (the chunk layout) straight
   into the caller's arrays, converting each value once to their element type,
-  with one panel-slab read buffer as its only array allocation (tested with
-  `@allocated`), so the runtime holds a series once. `read_cs_native_flux`
+  with one panel-slab read buffer, so the runtime holds a series once. `read_cs_native_flux`
   returns the whole series in one array (the builder's readback).
 - The runtime (`Models.InitialConditionIO`) adds only the slice times in
   seconds since the run start, the products density × `mesh.cell_areas` ×
@@ -288,14 +279,40 @@ truncated or Gaussian rows. `SnappedFaces`:
 `test_flux_units.jl`, `test_gridded_io_surface_height.jl` (surface height
 round trips on every topology and their grid gates, DEM lookups, axis order, the gridline seam, and the
 bathymetry and high-fill gates, `scripts/preprocessing/build_model_surface_height.jl`),
-`test_cs_native_flux_schema.jl` (writer → reader round
-trip, atomic publication, reader checks, the cell-area gate against a frozen
-copy of the runtime gate, the streaming reader and its one-slab allocation
-bound, and the migrated `cs_native` loader against a frozen copy of the old
-one, bit for bit), `test_latlon_flux_writer.jl` (static files, the runtime
-reading them, and the face gate). Each freezes
-the runtime code it replaces and compares bit for bit where the behaviour is
-preserved.
+`test_cs_native_flux_schema.jl` (writer → reader round trip, interval and
+reader checks, cell-area thresholds, streaming panel layout and precision),
+`test_native_cs_surface_flux.jl` (runtime units, scale, storage factor and
+slice selection across file precisions and time encodings), and
+`test_latlon_flux_writer.jl` (static-file round trip, runtime conservation and
+the face gate). Tests retain independent references for orientation and CF
+decoding; totals and mesh faces are asserted directly.
 
-Terrain interfaces belong to `Observations`; `Output` supplies snapshot/NetCDF
-geometry and provenance helpers. GriddedIO loads after Observations.
+## Depends on
+
+Parameters, Grids, Output, Observations and AtomicFiles; Dates, NCDatasets
+(with CFTime), and SHA. No Models or Preprocessing dependency.
+
+## Used by
+
+Models.InitialConditionIO and DrivenRunner, Preprocessing, Diagnostics,
+Visualization, and the surface-height and flux-file scripts.
+
+## Shared helpers owned here
+
+The exports in `GriddedIO.jl` define coordinate discovery, fill and orientation
+policies, source-face reconstruction, time decoding, flux units, staging and
+flux/terrain schemas. Geometry comes from Grids (`float64_twin`,
+`cell_centers`, and the bilinear brackets); species metadata comes from
+Parameters. MonthsSince index arithmetic and calendar-attribute reads each
+have one private helper in `time_axes.jl`.
+
+## Forward<->adjoint mirrors
+
+No adjoint kernels. Writer/reader pairs share the interval time-axis,
+canonical flux units and horizontal schema. Terrain interfaces belong to
+Observations; Output supplies NetCDF geometry and provenance helpers.
+
+Observation point-time decoding stays in Observations.Sources: unlike these
+gridded axes it ignores calendars, retains NaN times, and computes Unix seconds
+without millisecond rounding. Accepted unit/origin syntax differs too; merging
+these policies requires a stated-delta follow-up.

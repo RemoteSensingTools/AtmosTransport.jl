@@ -198,3 +198,12 @@ returns RG centres in native cell order with an explicit output precision.
 `unit_xyz_from_radians`, `unit3`, `arc3`, and `slerp3` preserve the preprocessing
 cos/sin and unfloored-normalization policies separately from degree-based
 projection and epsilon-floored mesh normalization.
+
+`BilinearBrackets.jl` owns `bilinear_bracket` (clamped nonperiodic) and
+`uniform_periodic_bilinear_bracket` for initial conditions, plus
+`half_cell_bilinear_bracket` and `longitude_bilinear_bracket` for DEM coverage.
+The latter support nonuniform centres and reject points beyond half a cell;
+the IC pair retains its uniform-longitude arithmetic and global edge clamps.
+
+`lonlat_chord_distance` in `SphereVectors.jl` supplies the unit-sphere centre
+comparison for terrain files, retaining degree-based vector arithmetic.

@@ -6,7 +6,6 @@
 # - default_regrid_cache_dir : the shared weight cache of runtime and builders
 # - save_regridder           : JLD2 round-trip, published atomically
 # - load_regridder           : JLD2 round-trip
-# - save_esmf_weights        : ESMF offline-weights NetCDF (S, row, col, frac_*)
 # - apply_regridder!         : n-D array wrapper around CR.jl regrid!
 # ---------------------------------------------------------------------------
 
@@ -184,107 +183,6 @@ function load_regridder(path::AbstractString)
     dst_temp = zeros(eltype(dst_areas), length(dst_areas))
     src_temp = zeros(eltype(src_areas), length(src_areas))
     return Regridder(intersections, dst_areas, src_areas, dst_temp, src_temp)
-end
-
-# --- ESMF NetCDF weights ------------------------------------------------------
-
-"""
-    save_esmf_weights(path, regridder;
-                      src_shape=nothing, dst_shape=nothing,
-                      src_grid_name="source", dst_grid_name="destination") -> path
-
-Export the regridder weights to an ESMF offline-weights NetCDF file.
-
-Format (ESMF convention):
-
-| variable | shape   | meaning                                                         |
-|----------|---------|-----------------------------------------------------------------|
-| `S`      | `(n_s,)`| weight value `S[k] = intersections[row[k], col[k]] / dst_areas[row[k]]` |
-| `row`    | `(n_s,)`| destination cell index (1-indexed)                              |
-| `col`    | `(n_s,)`| source cell index (1-indexed)                                   |
-| `frac_a` | `(n_a,)`| fraction of source cell covered by the destination grid         |
-| `frac_b` | `(n_b,)`| fraction of destination cell covered by the source grid         |
-| `area_a` | `(n_a,)`| source cell areas (mesh units, typically m²)                    |
-| `area_b` | `(n_b,)`| destination cell areas                                          |
-
-This format is what `xESMF` / `ESMF_RegridWeightGen` / GCHP's tile-file
-loader all consume, which lets the CR.jl output be diffed against xESMF
-fixtures at weight level and handed off to ESMF-based tooling.
-
-Optional `src_shape` / `dst_shape` tuples (e.g. `(Nx, Ny)`,
-`(Nc, Nc, 6)`) are stored as global attributes for provenance.
-"""
-function save_esmf_weights(path::AbstractString, r::Regridder;
-                           src_shape::Union{Nothing, Tuple} = nothing,
-                           dst_shape::Union{Nothing, Tuple} = nothing,
-                           src_grid_name::AbstractString = "source",
-                           dst_grid_name::AbstractString = "destination")
-    A         = r.intersections
-    src_areas = r.src_areas
-    dst_areas = r.dst_areas
-
-    n_a = length(src_areas)   # source cells
-    n_b = length(dst_areas)   # destination cells
-    size(A) == (n_b, n_a) ||
-        error("intersections matrix shape $(size(A)) does not match (n_b, n_a) = $((n_b, n_a))")
-
-    # Walk the sparse matrix column-by-column (CSC natural order).
-    rows = rowvals(A)
-    vals = nonzeros(A)
-    n_s  = length(vals)
-
-    row_out = Vector{Int64}(undef, n_s)
-    col_out = Vector{Int64}(undef, n_s)
-    S_out   = Vector{Float64}(undef, n_s)
-    covered_src = zeros(Float64, n_a)
-    covered_dst = zeros(Float64, n_b)
-
-    idx = 0
-    for col in 1:n_a
-        for ptr in nzrange(A, col)
-            idx += 1
-            d = rows[ptr]
-            a = Float64(vals[ptr])
-            row_out[idx] = d
-            col_out[idx] = col
-            S_out[idx]   = a / Float64(dst_areas[d])
-            covered_src[col] += a
-            covered_dst[d]   += a
-        end
-    end
-
-    frac_a = covered_src ./ Float64.(src_areas)
-    frac_b = covered_dst ./ Float64.(dst_areas)
-
-    mkpath(dirname(path))
-    NCDataset(path, "c") do ds
-        ds.dim["n_s"] = n_s
-        ds.dim["n_a"] = n_a
-        ds.dim["n_b"] = n_b
-
-        defVar(ds, "S",      S_out,                   ("n_s",); attrib = ["long_name" => "weight value"])
-        defVar(ds, "row",    row_out,                 ("n_s",); attrib = ["long_name" => "destination cell index (1-based)"])
-        defVar(ds, "col",    col_out,                 ("n_s",); attrib = ["long_name" => "source cell index (1-based)"])
-        defVar(ds, "frac_a", frac_a,                  ("n_a",); attrib = ["long_name" => "source cell fraction covered by destination grid"])
-        defVar(ds, "frac_b", frac_b,                  ("n_b",); attrib = ["long_name" => "destination cell fraction covered by source grid"])
-        defVar(ds, "area_a", Float64.(src_areas),     ("n_a",); attrib = ["long_name" => "source cell areas", "units" => "m^2"])
-        defVar(ds, "area_b", Float64.(dst_areas),     ("n_b",); attrib = ["long_name" => "destination cell areas", "units" => "m^2"])
-
-        ds.attrib["title"]             = "ConservativeRegridding.jl weights (ESMF format)"
-        ds.attrib["created_by"]        = "AtmosTransport.Regridding.save_esmf_weights"
-        ds.attrib["created_at"]        = string(now())
-        ds.attrib["source_grid"]       = String(src_grid_name)
-        ds.attrib["destination_grid"]  = String(dst_grid_name)
-        ds.attrib["normalization"]     = "destarea"
-        ds.attrib["map_method"]        = "Conservative remapping"
-        if src_shape !== nothing
-            ds.attrib["source_grid_shape"] = collect(Int64.(src_shape))
-        end
-        if dst_shape !== nothing
-            ds.attrib["destination_grid_shape"] = collect(Int64.(dst_shape))
-        end
-    end
-    return path
 end
 
 # --- apply_regridder! ---------------------------------------------------------

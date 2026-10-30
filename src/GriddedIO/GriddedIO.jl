@@ -24,8 +24,7 @@ methods dispatch on it.
   [`FillValueOnly`](@ref), [`MaskedAsNaN`](@ref) and [`MaskedAsZero`](@ref).
 - Source meshes (`source_meshes.jl`): [`source_latlon_mesh`](@ref), the cell
   faces of a file's latitude-longitude grid, by the face rule
-  [`SnappedFaces`](@ref) (on `Grids.LatLonMesh(λᶠ, φᶠ; radius)`) or
-  [`UniformSpanFaces`](@ref) (the legacy uniform-span reconstruction).
+  [`SnappedFaces`](@ref) (on `Grids.LatLonMesh(λᶠ, φᶠ; radius)`).
 - Time axes (`time_axes.jl`): [`decode_time`](@ref) with the decoders
   [`CFDecoder`](@ref), [`MonthsSince`](@ref), [`DecimalYears`](@ref) and
   [`AuxiliaryTimeVariable`](@ref), chosen from the raw `units` string before
@@ -67,20 +66,21 @@ cubed-sphere geometry and provenance blocks) and `AtomicFiles`. See
 """
 module GriddedIO
 
-using ..Grids: cell_centers, CS_PANEL_COUNT
+using ..Grids: cell_centers, CS_PANEL_COUNT, half_cell_bilinear_bracket, longitude_bilinear_bracket
 
 using ..Grids: cell_areas, float64_twin
 
-using ..Grids: lonlat_to_unit_xyz
+using ..Grids: lonlat_chord_distance
 
 using Dates
 using NCDatasets
 using NCDatasets: CFTime
 using SHA: sha1
 
-using ..Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR
-using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area, ncells, nrings,
-               ring_longitudes, cell_index, panel_cell_center_lonlat, cs_definition
+using ..Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR,
+                    SECONDS_PER_DAY, SPECIES_CARBON_ATOMS, SPECIES_LABELS
+using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area, ncells,
+               panel_cell_center_lonlat
 import ..Output
 import ..Observations
 using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!
@@ -94,7 +94,7 @@ export AbstractAxis, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
 export LatLonOrientation, latlon_orientation, orient, orient_coordinates
 export AbstractFillPolicy, FillValueOnly, MaskedAsNaN, MaskedAsZero, read_raw
 # source_meshes.jl
-export AbstractFaceRule, SnappedFaces, UniformSpanFaces, source_latlon_mesh
+export AbstractFaceRule, SnappedFaces, source_latlon_mesh
 # time_axes.jl
 export TimeInterval, MonthKey, month_keys, interval, seconds_since, check_last_month
 export AbstractTimeDecoder, CFDecoder, MonthsSince, DecimalYears, AuxiliaryTimeVariable,

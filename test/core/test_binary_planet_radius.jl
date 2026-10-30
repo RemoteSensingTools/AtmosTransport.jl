@@ -151,9 +151,9 @@ end
     GIO = AtmosTransport.GriddedIO
     lon, lat = collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)
     # The source mesh has no default radius: it takes the destination's.
-    @test_throws UndefKeywordError GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces())
+    @test_throws UndefKeywordError GIO.source_latlon_mesh(lon, lat)
     for radius in (EARTH_RADIUS, IFS_EARTH_RADIUS)
-        @test GIO.source_latlon_mesh(lon, lat, GIO.UniformSpanFaces(); radius).radius == radius
+        @test GIO.source_latlon_mesh(lon, lat; radius).radius == radius
     end
     # The runtime regridder builds it on the destination mesh's sphere.
     ICIO = AtmosTransport.Models.InitialConditionIO

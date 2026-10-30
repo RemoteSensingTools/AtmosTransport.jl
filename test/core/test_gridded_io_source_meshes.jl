@@ -10,12 +10,6 @@
 # -60.6316°), Gaussian latitudes (JSBACH) and bounds variables that must be
 # ignored.
 #
-# The runtime's former source mesh (`_build_source_latlon_mesh`) is frozen
-# below: the snapped faces equal it bit for bit on exactly stored regular grids
-# and regional grids; on Float32-stored centres (GridFED 0.1°) the old west face
-# carried the coordinate round-off (7.45e-10°), the snapped one does not. The
-# legacy face rule `UniformSpanFaces` reproduces it bit for bit everywhere.
-
 using Test
 using NCDatasets
 using FastGaussQuadrature: gausslegendre
@@ -23,31 +17,11 @@ using FastGaussQuadrature: gausslegendre
 using AtmosTransport
 using AtmosTransport.Grids: LatLonMesh, cell_areas_by_latitude, latitude_row_order
 using AtmosTransport.GriddedIO: source_latlon_mesh, latlon_orientation, orient_coordinates,
-                                SnappedFaces, UniformSpanFaces
+                                SnappedFaces, find_coordinate, LongitudeAxis, LatitudeAxis
 using AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
 
 const Gr = AtmosTransport.Grids
 const R = EARTH_RADIUS
-
-# ---- Frozen runtime source mesh (src/Models/initial_conditions/cubed_sphere.jl) ----
-function frozen_build_source_latlon_mesh(lon_src::Vector{Float64}, lat_src::Vector{Float64};
-                                         radius::Real = EARTH_RADIUS)
-    Nx_src = length(lon_src)
-    Ny_src = length(lat_src)
-    dlon = (lon_src[end] - lon_src[1]) / (Nx_src - 1)
-    dlat = (lat_src[end] - lat_src[1]) / (Ny_src - 1)
-    lon_west  = lon_src[1]   - dlon / 2
-    lon_east  = lon_src[end] + dlon / 2
-    lat_south = lat_src[1]   - dlat / 2
-    lat_north = lat_src[end] + dlat / 2
-    snap = 1e-3
-    lat_south < -90 + snap * dlat && (lat_south = -90.0)
-    lat_north >  90 - snap * dlat && (lat_north =  90.0)
-    lon_east - lon_west > 360 - snap * dlon && (lon_east = lon_west + 360)
-    return LatLonMesh(; FT = Float64, Nx = Nx_src, Ny = Ny_src,
-                      longitude = (lon_west, lon_east), latitude = (lat_south, lat_north),
-                      radius = Float64(radius))
-end
 
 function same_mesh(a, b)
     for name in fieldnames(LatLonMesh)
@@ -60,7 +34,7 @@ end
 full_sphere_area(m) = sum(cell_areas_by_latitude(m)) * m.Nx
 centres(n, x0, span) = [x0 + (k + 0.5) * span / n for k in 0:(n - 1)]
 
-@testset "regular grids: identical to the runtime mesh where it was exact" begin
+@testset "regular grids: explicit faces" begin
     cases = [
         ("CAMS 1°, oriented 0..360", collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)),
         ("0.5°, -180..180", collect(-179.75:0.5:179.75), collect(-89.75:0.5:89.75)),
@@ -72,8 +46,12 @@ centres(n, x0, span) = [x0 + (k + 0.5) * span / n for k in 0:(n - 1)]
     for (name, lon, lat) in cases
         @testset "$name" begin
             for radius in (EARTH_RADIUS, IFS_EARTH_RADIUS)
-                @test same_mesh(source_latlon_mesh(lon, lat; radius),
-                                frozen_build_source_latlon_mesh(lon, lat; radius))
+                m = source_latlon_mesh(lon, lat; radius)
+                @test m.λᶠ == collect((lon[1] - (lon[2] - lon[1]) / 2):
+                                     (lon[2] - lon[1]):(lon[end] + (lon[2] - lon[1]) / 2))
+                @test m.φᶠ == collect((lat[1] - (lat[2] - lat[1]) / 2):
+                                     (lat[2] - lat[1]):(lat[end] + (lat[2] - lat[1]) / 2))
+                @test m.radius == radius
             end
         end
     end
@@ -85,16 +63,6 @@ centres(n, x0, span) = [x0 + (k + 0.5) * span / n for k in 0:(n - 1)]
     @test m.λᶠ == [Float64(-180 * 3600 + 360j) / 3600 for j in 0:3600]   # from integers
     @test m.λᶠ[1] === -180.0 && m.λᶠ[end] === 180.0
     @test m.φᶠ[1] === -90.0 && m.φᶠ[end] === 90.0
-    # The runtime oriented the centres first (0.05 … 359.95, mod 360) and took
-    # the faces from their span: its west face was 7.45e-10°, not 0.
-    o = latlon_orientation(lon, lat)
-    lon_o, lat_o = orient_coordinates(lon, lat, o)
-    new = source_latlon_mesh(lon_o, lat_o; radius = R)
-    old = frozen_build_source_latlon_mesh(lon_o, lat_o)
-    @test new.λᶠ == [Float64(360j) / 3600 for j in 0:3600]
-    @test old.φᶠ == new.φᶠ
-    @test 7e-10 < old.λᶠ[1] < 8e-10
-    @test 0 < maximum(abs.(old.λᶠ .- new.λᶠ)) < 1e-9
     # Without the storage-precision allowance these centres would not snap:
     # their residual (3e-5 cells) exceeds the 1e-6 bound.
     @test abs((lon[1] + 180) / 0.1 - 0.5) > 1e-6
@@ -216,7 +184,8 @@ end
         defVar(ds, "lon_bnds", Float64, ("bnds", "lon"))[:, :] = lb
         defVar(ds, "lat_bnds", Float64, ("bnds", "lat"))[:, :] = hcat(lat .+ 0.471, lat .- 0.471)'
     end
-    m = NCDataset(ds -> source_latlon_mesh(ds; radius = R), path)
+    m = NCDataset(ds -> source_latlon_mesh(NCDatasets.variable(ds, find_coordinate(ds, LongitudeAxis()))[:],
+                                            NCDatasets.variable(ds, find_coordinate(ds, LatitudeAxis()))[:]; radius = R), path)
     @test same_mesh(m, source_latlon_mesh(lon, lat; radius = R))
     @test m.λᶠ[1] === -180.0 && m.λᶠ[end] === 180.0
     @test m.φᶠ[1] === -90.0 && m.φᶠ[end] === 90.0
@@ -228,7 +197,8 @@ end
         defVar(ds, "longitude", Float32, ("longitude",))[:] = Float32.(centres(3600, -180, 360))
         defVar(ds, "latitude", Float32, ("latitude",))[:] = Float32.(centres(1800, -90, 180))
     end
-    m = NCDataset(ds -> source_latlon_mesh(ds; radius = IFS_EARTH_RADIUS), path32)
+    m = NCDataset(ds -> source_latlon_mesh(NCDatasets.variable(ds, find_coordinate(ds, LongitudeAxis()))[:],
+                                            NCDatasets.variable(ds, find_coordinate(ds, LatitudeAxis()))[:]; radius = IFS_EARTH_RADIUS), path32)
     @test m.λᶠ[1] === -180.0 && m.φᶠ[end] === 90.0 && m.radius == IFS_EARTH_RADIUS
 end
 
@@ -243,47 +213,4 @@ end
     @test_throws ArgumentError source_latlon_mesh([0.0, 1.0, 3.0, 4.0], lat; radius = R)  # non-uniform
     @test_throws ArgumentError source_latlon_mesh(collect(0.0:2.0:720.0), lat; radius = R) # > 360°
     @test_throws ArgumentError source_latlon_mesh(lon, [NaN, 1.0]; radius = R)
-end
-
-@testset "UniformSpanFaces: the former runtime mesh, bit for bit" begin
-    oriented(lon, lat) = orient_coordinates(lon, lat, latlon_orientation(lon, lat))
-    gridfed = oriented(Float64.(Float32.(centres(3600, -180, 360))),
-                       Float64.(Float32.(centres(1800, -90, 180))))
-    cases = [
-        ("CAMS 1°, oriented", collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)),
-        ("GridFED Float32 0.1°, oriented", gridfed...),
-        ("Zhang 0.5°, oriented", oriented(Float64.(Float32.(collect(-179.75:0.5:179.75))),
-                                          Float64.(Float32.(collect(-89.75:0.5:89.75))))...),
-        # Pole-centred LMDZ rows (CATRINE SF6 initial state, 144 × 143): the
-        # uniform faces are shifted from the cells, as the former runtime had them.
-        ("LMDZ pole-centred", collect(0.0:2.5:357.5), collect(range(-90.0, 90.0; length = 143))),
-        ("regional", collect(0.5:1.0:29.5), collect(-9.5:1.0:9.5)),
-        ("regional, negative lon", collect(-99.5:1.0:-50.5), collect(20.5:1.0:49.5)),
-    ]
-    for (name, lon, lat) in cases, radius in (EARTH_RADIUS, IFS_EARTH_RADIUS)
-        @testset "$name, R = $radius" begin
-            @test same_mesh(source_latlon_mesh(lon, lat, UniformSpanFaces(); radius),
-                            frozen_build_source_latlon_mesh(lon, lat; radius))
-        end
-    end
-    lon, lat = gridfed
-    @test 7e-10 < source_latlon_mesh(lon, lat, UniformSpanFaces(); radius = R).λᶠ[1] < 8e-10
-    @test source_latlon_mesh(lon, lat, SnappedFaces(); radius = R).λᶠ[1] === 0.0
-    @test same_mesh(source_latlon_mesh(lon, lat, SnappedFaces(); radius = R),
-                    source_latlon_mesh(lon, lat; radius = R))          # the default rule
-    # Float32 centre vectors give the same mesh as their Float64 values.
-    @test same_mesh(source_latlon_mesh(Float32.(lon), Float32.(lat), UniformSpanFaces(); radius = R),
-                    source_latlon_mesh(Float64.(Float32.(lon)), Float64.(Float32.(lat)),
-                                       UniformSpanFaces(); radius = R))
-    # The dataset form reads the coordinates by name.
-    path = joinpath(mktempdir(), "cams_like.nc")
-    NCDataset(path, "c") do ds
-        defDim(ds, "longitude", 360); defDim(ds, "latitude", 180)
-        defVar(ds, "longitude", Float64, ("longitude",))[:] = collect(0.5:1.0:359.5)
-        defVar(ds, "latitude", Float64, ("latitude",))[:] = collect(-89.5:1.0:89.5)
-    end
-    @test same_mesh(NCDataset(ds -> source_latlon_mesh(ds, UniformSpanFaces(); radius = R), path),
-                    frozen_build_source_latlon_mesh(collect(0.5:1.0:359.5), collect(-89.5:1.0:89.5)))
-    @test_throws ArgumentError source_latlon_mesh([0.5], collect(-89.5:1.0:89.5), UniformSpanFaces(); radius = R)
-    @test_throws UndefKeywordError source_latlon_mesh(lon, lat, UniformSpanFaces())
 end

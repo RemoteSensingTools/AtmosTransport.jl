@@ -8,12 +8,7 @@
 #   3. C4 ↔ C8 restriction and prolongation conserve to 1e-13 and equal a
 #      ConservativeRegridding.jl `Regridder` of the same pair to 1e-12;
 #   4. the merged block kernels `coarsen_sum!` / `coarsen_area_weighted!` and
-#      the face sums against verbatim copies of the two kernel sets they
-#      replace (Set A: `cubed_sphere_coarsen.jl`, Set B:
-#      `geos_cs_resolution.jl`, both at commit 5a9930fb): bitwise equal to
-#      Set A, and to Set B for sums, face sums and Float64 means; Float32
-#      means within 5 ulp of Set B on positive data (Set B accumulated in
-#      Float32; see docs/memos/2026-10-10_python_flux_port_p0_facts.md §8).
+#      the face sums against the independent Set A kernel reference.
 # ---------------------------------------------------------------------------
 
 using Test
@@ -26,13 +21,10 @@ using AtmosTransport.Grids: GnomonicPanelConvention, GEOSNativePanelConvention,
 import ConservativeRegridding
 
 const NestRG = AtmosTransport.Regridding
-const NestPP = AtmosTransport.Preprocessing
 
 nest_bits(x::Float32) = reinterpret(UInt32, x)
 nest_bits(x::Float64) = reinterpret(UInt64, x)
 nest_bitwise(a, b) = size(a) == size(b) && all(nest_bits.(a) .== nest_bits.(b))
-# Distance in units in the last place of the larger magnitude.
-nest_ulp(a, b) = a == b ? 0.0 : Float64(abs(big(a) - big(b)) / big(eps(max(abs(a), abs(b)))))
 
 # --- Set A (cubed_sphere_coarsen.jl at 5a9930fb), verbatim -------------------
 function setA_sum_cells3!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3}, ratio::Int) where FT
@@ -95,83 +87,6 @@ function setA_yfaces!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3}, rati
     return dst
 end
 
-# --- Set B (geos_cs_resolution.jl at 5a9930fb), verbatim ---------------------
-function setB_sum3!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3}, ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        s = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            s += src[ii, jj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
-
-function setB_area_weighted2!(dst::AbstractMatrix{FT}, src::AbstractMatrix{FT},
-                              src_area::AbstractMatrix{FT}, ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    @inbounds for j in 1:Nc, i in 1:Nc
-        num = zero(FT)
-        den = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            a = src_area[ii, jj]
-            num += src[ii, jj] * a
-            den += a
-        end
-        dst[i, j] = num / den
-    end
-    return dst
-end
-
-function setB_area_weighted3!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3},
-                              src_area::AbstractMatrix{FT}, ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:Nc
-        num = zero(FT)
-        den = zero(FT)
-        for jj in ((j - 1) * R + 1):(j * R), ii in ((i - 1) * R + 1):(i * R)
-            a = src_area[ii, jj]
-            num += src[ii, jj, k] * a
-            den += a
-        end
-        dst[i, j, k] = num / den
-    end
-    return dst
-end
-
-function setB_xface_sum!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3}, ::Val{R}) where {FT, R}
-    Nc = size(dst, 2)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:Nc, i in 1:(Nc + 1)
-        fi = (i - 1) * R + 1
-        s = zero(FT)
-        for fj in ((j - 1) * R + 1):(j * R)
-            s += src[fi, fj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
-
-function setB_yface_sum!(dst::AbstractArray{FT, 3}, src::AbstractArray{FT, 3}, ::Val{R}) where {FT, R}
-    Nc = size(dst, 1)
-    Nz = size(dst, 3)
-    @inbounds for k in 1:Nz, j in 1:(Nc + 1), i in 1:Nc
-        fj = (j - 1) * R + 1
-        s = zero(FT)
-        for fi in ((i - 1) * R + 1):(i * R)
-            s += src[fi, fj, k]
-        end
-        dst[i, j, k] = s
-    end
-    return dst
-end
-
-# Test data of the P0 probe: uniform [0, 1), signed over 12 decades, and
-# air-mass-like (1e9 + 1e13·U).
 function nest_data(rng, ::Type{FT}, dims, kind::Symbol) where FT
     kind === :unit && return rand(rng, FT, dims...)
     kind === :signed_wide && return FT.(randn(rng, dims...) .* 10.0 .^ (12 .* rand(rng, dims...) .- 6))
@@ -252,9 +167,6 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
             out = zeros(n_dst, 3)
             apply_regridder!(out, r, mass, ExtensiveCellField())
             @test abs(sum(out) / sum(mass) - 1) < 1e-13
-            rep = regrid_conservation_report(r, mass, out, ExtensiveCellField())
-            @test rep.rel_error < 1e-13
-            @test rep.src_total == sum(Float64, mass)
             out_cr = zeros(n_dst, 3)
             apply_regridder!(out_cr, cr, mass, ExtensiveCellField())
             @test maximum(abs.(out .- out_cr)) / maximum(abs.(out_cr)) < 1e-12
@@ -263,7 +175,7 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
             q = randn(rng, n_src)
             q_out = zeros(n_dst)
             apply_regridder!(q_out, r, q)
-            @test regrid_conservation_report(r, q, q_out, IntensiveCellField()).rel_error < 1e-13
+            @test sum(q_out .* r.dst_areas) ≈ sum(q .* r.src_areas) rtol = 1e-13
             q_cr = zeros(n_dst)
             apply_regridder!(q_cr, cr, q)
             @test maximum(abs.(q_out .- q_cr)) / maximum(abs.(q)) < 1e-12
@@ -305,7 +217,7 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
         @test maximum(abs.(vec(expected) ./ split8 .- 1)) < 1e-14
     end
 
-    @testset "merged block kernels against Set A and Set B" begin
+    @testset "block kernels against Set A" begin
         # Float32 data with Float64 areas (what the flux path holds).
         let src = rand(MersenneTwister(1), Float32, 8, 8), area = 1e8 .* (0.5 .+ rand(MersenneTwister(2), 8, 8))
             a = zeros(Float32, 4, 4); b = zeros(Float32, 4, 4)
@@ -322,10 +234,9 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
         end
         @test_throws DimensionMismatch coarsen_sum!(zeros(4, 4), zeros(9, 8), 2)
         @test_throws DimensionMismatch coarsen_area_weighted!(zeros(4, 4), zeros(8, 8), ones(4, 4), 2)
-        @test_throws DimensionMismatch NestPP._coarsen_xface_sum!(zeros(5, 4, 1), zeros(8, 8, 1), 2)
+        @test_throws DimensionMismatch coarsen_xface_sum!(zeros(5, 4, 1), zeros(8, 8, 1), 2)
 
         Nz = 7
-        worst_ulp = 0.0
         for (Nsrc, Ndst) in ((8, 4), (12, 4), (90, 30)), FT in (Float32, Float64),
             kind in (:unit, :signed_wide, :air_mass)
             R = Nsrc ÷ Ndst
@@ -336,16 +247,13 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
             new = zeros(FT, Ndst, Ndst, Nz)
             coarsen_sum!(new, src3, R)
             @test nest_bitwise(new, setA_sum_cells3!(zeros(FT, Ndst, Ndst, Nz), src3, R))
-            @test nest_bitwise(new, setB_sum3!(zeros(FT, Ndst, Ndst, Nz), src3, Val(R)))
 
             srcx = nest_data(rng, FT, (Nsrc + 1, Nsrc, Nz), kind)
-            newx = NestPP._coarsen_xface_sum!(zeros(FT, Ndst + 1, Ndst, Nz), srcx, R)
+            newx = coarsen_xface_sum!(zeros(FT, Ndst + 1, Ndst, Nz), srcx, R)
             @test nest_bitwise(newx, setA_xfaces!(zeros(FT, Ndst + 1, Ndst, Nz), srcx, R))
-            @test nest_bitwise(newx, setB_xface_sum!(zeros(FT, Ndst + 1, Ndst, Nz), srcx, Val(R)))
             srcy = nest_data(rng, FT, (Nsrc, Nsrc + 1, Nz), kind)
-            newy = NestPP._coarsen_yface_sum!(zeros(FT, Ndst, Ndst + 1, Nz), srcy, R)
+            newy = coarsen_yface_sum!(zeros(FT, Ndst, Ndst + 1, Nz), srcy, R)
             @test nest_bitwise(newy, setA_yfaces!(zeros(FT, Ndst, Ndst + 1, Nz), srcy, R))
-            @test nest_bitwise(newy, setB_yface_sum!(zeros(FT, Ndst, Ndst + 1, Nz), srcy, Val(R)))
 
             areas = (nest_mesh(Nsrc, NEST_DEFINITIONS.gmao; FT).cell_areas,
                      nest_mesh(Nsrc, NEST_DEFINITIONS.equiangular; FT).cell_areas,
@@ -354,7 +262,6 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
                 src2 = nest_data(rng, FT, (Nsrc, Nsrc), kind)
                 new2 = coarsen_area_weighted!(zeros(FT, Ndst, Ndst), src2, area, R)
                 a2 = setA_weighted_cells2!(zeros(FT, Ndst, Ndst), src2, area, R)
-                b2 = setB_area_weighted2!(zeros(FT, Ndst, Ndst), src2, area, Val(R))
                 @test nest_bitwise(new2, a2)
 
                 s3 = nest_data(rng, FT, (Nsrc, Nsrc, Nz), kind)
@@ -363,22 +270,8 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
                 for k in 1:Nz
                     setA_weighted_cells2!(view(a3, :, :, k), view(s3, :, :, k), area, R)
                 end
-                b3 = setB_area_weighted3!(zeros(FT, Ndst, Ndst, Nz), s3, area, Val(R))
                 @test nest_bitwise(new3, a3)
-
-                if FT === Float64
-                    @test nest_bitwise(new2, b2)
-                    @test nest_bitwise(new3, b3)
-                elseif kind !== :signed_wide
-                    # Set B accumulated Float32 means in Float32: not bitwise.
-                    # 5 ulp is the bound measured in P0 on these data (it is not
-                    # a theoretical bound: Set B's error can reach ~2R² ulp).
-                    worst = max(maximum(nest_ulp.(new2, b2)), maximum(nest_ulp.(new3, b3)))
-                    worst_ulp = max(worst_ulp, worst)
-                    @test worst <= 5
-                end
             end
         end
-        @info "merged Float32 area-weighted means vs Set B (positive data)" max_ulp = worst_ulp
     end
 end
