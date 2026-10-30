@@ -47,7 +47,7 @@ _geos_effective_balance(cm_closure::Symbol) =
 # the met source's weights (default `hybrid_mass`) do not apply: they are
 # validated and otherwise ignored, never an error.
 function _check_geos_column_weights(kind::Symbol, cm_closure::Symbol)
-    _validate_column_balance_weights(kind, "GEOS")
+    validate_column_balance_weights(kind, "GEOS")
     _geos_effective_balance(cm_closure) == "none" &&
         @info "GEOS geos_cm_closure = $(repr(cm_closure)) keeps the native horizontal " *
               "fluxes; column_balance_weights = $(kind) does not apply"
@@ -62,7 +62,7 @@ _check_native_closure_config(settings::AbstractGEOSSettings, cm_closure::Symbol)
 function _with_geos_column_weights_record(header::AbstractDict, kind::Symbol,
                                           cm_closure::Symbol)
     _geos_effective_balance(cm_closure) == "none" && return header
-    return _with_column_weights_record(header, kind)
+    return with_column_weights_record(header, kind)
 end
 
 _geos_balance_description(balance::AbstractString) =
@@ -264,7 +264,7 @@ function _process_day_geos_cs_unified(date::Date,
         @info "  Level orientation: $(reader.handles.orientation)  (next-day endpoint: $(_geos_next_endpoint_available(reader.handles)))"
 
         mkpath(dirname(out_path))
-        tmp_path = _open_preprocessing_staging(out_path)
+        tmp_path = open_preprocessing_staging(out_path)
 
         # The header records it and the gate uses it.
         write_replay_on = write_replay_check
@@ -284,7 +284,7 @@ function _process_day_geos_cs_unified(date::Date,
             include_pbl_eflux  = has_pbl_eflux(settings),
             cs_geometry_tags(grid.mesh)...,
             planet_radius      = grid.mesh.radius,
-            extra_header = _with_replay_record(_with_geos_column_weights_record(Dict{String, Any}(
+            extra_header = with_replay_record(_with_geos_column_weights_record(Dict{String, Any}(
                 "preprocessor" => "geos_native_to_cs",
                 "preprocessor_contract" => "plan41_variable_substeps",
                 "runtime_substep_contract" => "binary_schedule",
@@ -382,7 +382,6 @@ function _process_day_geos_cs_unified(date::Date,
                        split_stats.ratio_z)
 
         final_m = chain_mass ? ntuple(p -> copy(workspace.m_cur[p]), npanel) : nothing
-        set_end_of_day_seed!(reader, final_m)
 
         return (
             elapsed = elapsed,

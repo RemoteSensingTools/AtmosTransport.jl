@@ -6,8 +6,8 @@ By default each workflow balances window fluxes against the forward endpoint
 mass, diagnoses `cm`, verifies the window contract, and streams to a staged
 file that is promoted after the gates (the exceptions, such as the GEOS
 diagnostic closures and the RG direct write, are listed in
-[`../README.md`](../README.md)). [`../binary_pipeline.jl`](../binary_pipeline.jl)
-includes `core.jl` through `entrypoint.jl`; the GEOS, coarsen, N320, and MERRA-2
+[`../README.md`](../README.md)). [`../Preprocessing.jl`](../Preprocessing.jl)
+includes `core.jl` through `entrypoint.jl`; [`../Core/binary_pipeline.jl`](../Core/binary_pipeline.jl) owns the shared pipeline protocols; the GEOS, coarsen, N320, and MERRA-2
 files are included from [`../Preprocessing.jl`](../Preprocessing.jl) after the source readers.
 
 ## Entry Points

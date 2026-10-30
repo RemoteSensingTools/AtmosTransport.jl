@@ -5,12 +5,8 @@ Accumulate a native-level cell field onto merged output levels using the
 native-to-merged level map `mm`.
 """
 function merge_cell_field!(merged::Array{FT, 3}, native::Array{FT, 3}, mm::Vector{Int}) where FT
-    Threads.@threads for km in 1:size(merged, 3)
-        @views merged[:, :, km] .= zero(FT)
-    end
-    @inbounds for k in 1:length(mm)
-        @views merged[:, :, mm[k]] .+= native[:, :, k]
-    end
+    sum_merged_layers!(merged, native, mm)
+    return nothing
 end
 
 @inline vertical_mapping_method(vertical) =
@@ -62,7 +58,7 @@ function remap_extensive_field_pressure_overlap!(dst::Array{FT, 3},
 
     Threads.@threads for j in 1:Ny
         @inbounds for i in 1:Nx
-            _remap_extensive_column_pressure_overlap!(
+            remap_extensive_column_pressure_overlap!(
                 view(dst, i, j, :), view(src, i, j, :), Float64(ps[i, j]), src_vc, dst_vc)
         end
     end
@@ -72,7 +68,7 @@ end
 # One column of `remap_extensive_field_pressure_overlap!` at surface pressure
 # `psij`; shared with the write-time flux-fidelity check, which evaluates only
 # the sampled columns.
-function _remap_extensive_column_pressure_overlap!(dst::AbstractVector{FT},
+function remap_extensive_column_pressure_overlap!(dst::AbstractVector{FT},
                                                    src::AbstractVector,
                                                    psij::Float64,
                                                    src_vc::HybridSigmaPressure,
@@ -138,20 +134,20 @@ function fill_xface_surface_pressure!(ps_xface::AbstractMatrix{<:Real},
     size(ps_xface) == (Nx + 1, Ny) ||
         throw(DimensionMismatch("x-face ps shape $(size(ps_xface)) != ($Nx+1, $Ny)"))
     @inbounds for j in 1:Ny, i in 1:(Nx + 1)
-        ps_xface[i, j] = _xface_surface_pressure(ps_cell, i, j)
+        ps_xface[i, j] = xface_surface_pressure(ps_cell, i, j)
     end
     return ps_xface
 end
 
 # Surface pressure of x-face `(i, j)` (periodic in longitude) and of y-face
 # `(i, j)` (pole rows copy the adjacent cell), as `fill_*face_surface_pressure!`.
-@inline function _xface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+@inline function xface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
     Nx = size(ps_cell, 1)
     il = i == 1 ? Nx : i - 1
     ir = i <= Nx ? i : 1
     return _geometric_mean_ps(ps_cell[il, j], ps_cell[ir, j])
 end
-@inline function _yface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
+@inline function yface_surface_pressure(ps_cell::AbstractMatrix{<:Real}, i::Int, j::Int)
     Ny = size(ps_cell, 2)
     j == 1 && return Float64(ps_cell[i, 1])
     j == Ny + 1 && return Float64(ps_cell[i, Ny])
@@ -172,7 +168,7 @@ function fill_yface_surface_pressure!(ps_yface::AbstractMatrix{<:Real},
     size(ps_yface) == (Nx, Ny + 1) ||
         throw(DimensionMismatch("y-face ps shape $(size(ps_yface)) != ($Nx, $Ny+1)"))
     @inbounds for j in 1:(Ny + 1), i in 1:Nx
-        ps_yface[i, j] = _yface_surface_pressure(ps_cell, i, j)
+        ps_yface[i, j] = yface_surface_pressure(ps_cell, i, j)
     end
     return ps_yface
 end
@@ -420,7 +416,7 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         error("balance_column_mass_fluxes!: m shape $(size(m)) incompatible with am $(size(am))")
     size(dm_dt) == size(m) ||
         error("balance_column_mass_fluxes!: dm_dt shape $(size(dm_dt)) incompatible with m $(size(m))")
-    _check_weight_levels(weights, Nz)
+    check_column_weight_levels(weights, Nz)
 
     col_am = zeros(FT, Nx + 1, Ny, 1)
     col_bm = zeros(FT, Nx, Ny + 1, 1)
@@ -561,7 +557,7 @@ function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::In
         if size(q, 2) == Ny && lat[1] > lat[end]
             q = q[:, end:-1:1, :]
         end
-        q = _normalize_lon_to_centered(q, lon)
+        q = normalize_lon_to_centered(q, lon)
         return q
     end
 end
@@ -583,7 +579,7 @@ function read_thermo_coordinates(thermo_path::String)
         lon_file = _coordinate_values(lon_raw, "longitude")
         lat = _coordinate_values(lat_raw, "latitude")
         lat[1] > lat[end] && reverse!(lat)
-        lon = vec(_normalize_lon_to_centered(reshape(lon_file, :, 1, 1), lon_file))
+        lon = vec(normalize_lon_to_centered(reshape(lon_file, :, 1, 1), lon_file))
         return mod.(lon .+ 180, 360) .- 180, lat
     end
 end
@@ -595,7 +591,7 @@ function _coordinate_values(values::AbstractVector, name::AbstractString)
 end
 
 """
-    _normalize_lon_to_centered(field, lons) -> field
+    normalize_lon_to_centered(field, lons) -> field
 
 Roll a 3D `(Nx, Ny, Nz)` field along the longitude axis into the
 `[-180, 180)` order. Detects the source longitude convention from the
@@ -609,7 +605,7 @@ Returns `field` unchanged when `length(lons) ≠ size(field, 1)` (mismatch
 that the caller will catch downstream) or when the source is already in
 the staging convention.
 """
-function _normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
+function normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
                                      lons::AbstractVector{<:Real})
     Nx = size(field, 1)
     length(lons) == Nx || return field
@@ -621,11 +617,11 @@ function _normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
     return field
 end
 
-function _normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
+function normalize_lon_to_centered(field::AbstractArray{<:Real, 3},
                                      lons::AbstractVector)
     any(ismissing, lons) &&
         throw(ArgumentError("longitude coordinate contains missing values; cannot normalize QV longitude order"))
-    return _normalize_lon_to_centered(field, Float64.(lons))
+    return normalize_lon_to_centered(field, Float64.(lons))
 end
 
 """
@@ -728,7 +724,7 @@ function apply_dry_basis_native!(m::AbstractArray{<:Real, 3},
     Nx, Ny, Nz = size(m)
 
     @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        q = clamp(qv[i, j, k], 0.0, 0.999999)
+        q = clamp(qv[i, j, k], 0.0, MAX_SPECIFIC_HUMIDITY)
         m[i, j, k] *= (1.0 - q)
     end
 
@@ -736,7 +732,7 @@ function apply_dry_basis_native!(m::AbstractArray{<:Real, 3},
         i_l = i == 1 ? Nx : i - 1
         i_r = i <= Nx ? i : 1
         q_face = 0.5 * (qv[i_l, j, k] + qv[i_r, j, k])
-        q_face = clamp(q_face, 0.0, 0.999999)
+        q_face = clamp(q_face, 0.0, MAX_SPECIFIC_HUMIDITY)
         am[i, j, k] *= (1.0 - q_face)
     end
 
@@ -745,7 +741,7 @@ function apply_dry_basis_native!(m::AbstractArray{<:Real, 3},
             bm[i, j, k] = 0.0
         else
             q_face = 0.5 * (qv[i, j - 1, k] + qv[i, j, k])
-            q_face = clamp(q_face, 0.0, 0.999999)
+            q_face = clamp(q_face, 0.0, MAX_SPECIFIC_HUMIDITY)
             bm[i, j, k] *= (1.0 - q_face)
         end
     end
@@ -870,7 +866,7 @@ function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
         dry_ps_col = 0.0
         alpha_col = 0.0
         for k in 1:Nz
-            q = clamp(qv_columns[c, k], 0.0, 0.999999)
+            q = clamp(qv_columns[c, k], 0.0, MAX_SPECIFIC_HUMIDITY)
             dry_ps_col += (Float64(dA[k]) + Float64(dB[k]) * ps_c) * (1.0 - q)
             alpha_col += Float64(dB[k]) * (1.0 - q)
         end
@@ -882,13 +878,13 @@ function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
 
     mean_dry_ps_current = sum_dry_ps_area / sum_area
     mean_alpha = sum_alpha_area / sum_area
-    offset = _mass_target_offset(target_ps_dry_pa, mean_dry_ps_current, mean_alpha)
+    offset = mass_target_offset(target_ps_dry_pa, mean_dry_ps_current, mean_alpha)
     @. sp += offset
     return offset
 end
 
 """
-    _mass_target_offset(target, current, sensitivity) -> Float64
+    mass_target_offset(target, current, sensitivity) -> Float64
 
 Solve the linear dry-mass pin shared by the spectral and native paths,
 
@@ -903,7 +899,7 @@ units and `sensitivity` is their change per pascal. For a hybrid layer,
 algebra in one function ensures the spectral surface-pressure pin and every
 native mass pin solve the same physical correction.
 """
-function _mass_target_offset(target::Real, current::Real, sensitivity::Real)
+function mass_target_offset(target::Real, current::Real, sensitivity::Real)
     target_f = Float64(target)
     current_f = Float64(current)
     sensitivity_f = Float64(sensitivity)

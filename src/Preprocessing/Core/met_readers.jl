@@ -1,0 +1,225 @@
+"""Type tag for cross-day seed policy."""
+abstract type AbstractChainPolicy end
+
+"""
+    NoChain <: AbstractChainPolicy
+
+The reader does not carry mass state across days. Day N starts from the
+raw source endpoint. The seed slot is `nothing`.
+"""
+struct NoChain <: AbstractChainPolicy end
+
+"""
+    ChainedMass{T} <: AbstractChainPolicy
+
+The reader carries an end-of-day mass field of shape `T` into the next
+day's open. The shape `T` is the seed array type (e.g.
+`NTuple{6, Array{Float32, 3}}`); the actual seed VALUE lives in the
+reader struct, but its STATIC type is encoded here so seed access has a known type.
+"""
+struct ChainedMass{T} <: AbstractChainPolicy end
+
+# ---------------------------------------------------------------------------
+# Abstract reader surface.
+# ---------------------------------------------------------------------------
+
+"""
+    AbstractMetReader{FT, S, CP}
+
+Typed met-reader nominal. Bundles a met-source's settings, per-day handle
+context, and chained-mass-policy carry into one struct that the unified
+preprocessor driver dispatches on. Type parameters:
+
+- `FT <: AbstractFloat` — preprocessing float type (`Float32` for GPU,
+  `Float64` for diagnostic runs).
+- `S <: AbstractMetSettings` — concrete settings type (`GEOSITSettings`,
+  `GEOSFPSettings`, `ERA5SpectralSettings`, …).
+- `CP <: AbstractChainPolicy` — `NoChain` or `ChainedMass{T}` for some
+  seed array type `T`.
+
+Concrete readers implement open, close, and per-window access.
+"""
+abstract type AbstractMetReader{FT <: AbstractFloat,
+                                  S <: AbstractMetSettings,
+                                  CP <: AbstractChainPolicy} end
+
+"""
+    open_reader(settings::AbstractMetSettings, date::Date, ::Type{FT};
+                seed = nothing, next_day_handle::Bool = true)
+        → reader::AbstractMetReader{FT, typeof(settings), CP}
+
+Construct a typed met-reader for one calendar day. The reader owns the
+underlying day-handle context (file handles, vertical coefficients,
+chained-mass seed) and exposes the per-window trait surface.
+
+`seed` carries cross-day mass state for chained-mass readers; pass the
+previous day workflow’s `final_m` result. For `NoChain`
+readers, `seed` must be `nothing`.
+
+`next_day_handle` controls whether the reader opens a handle into the
+next day's first-hour instantaneous file. Required when the day produces
+endpoint mass for the last window (the standard case for hourly sources).
+
+Dispatch by `settings` type to select the concrete reader; concrete
+readers register their own method.
+"""
+function open_reader end
+
+"""
+    close_reader!(reader::AbstractMetReader) → nothing
+
+Close all per-day file handles and release scratch held by the reader.
+Idempotent — safe to call from a `finally` block. Concrete readers
+implement.
+"""
+function close_reader! end
+
+# `windows_per_day` and `read_window!` are already declared as generic
+# functions in `met_sources.jl` (the `AbstractMetSettings` surface). This
+# file adds reader-typed methods on them; redeclaring the generics here
+# would warn-replace the existing docstrings.
+
+# ---------------------------------------------------------------------------
+# GEOSNativeReader — concrete reader for GEOS-IT / GEOS-FP native NetCDF.
+#
+# Wraps the existing `(GEOSSettings, GEOSDayHandles)` pair plus a typed
+# chained-mass slot. `read_window!` delegates to the existing
+# `read_window!(::RawWindow, ::GEOSSettings, ::GEOSDayHandles, date, w)`
+# so bit-exact behavior with today's `cubed_sphere_geos.jl::process_day`
+# is preserved.
+# ---------------------------------------------------------------------------
+
+"""
+    GEOSNativeReader{FT, S, CP, V, H} <: AbstractMetReader{FT, S, CP}
+
+Typed reader wrapping `(GEOSSettings, handles)` for one day, plus
+optional chained-mass state. Type parameters:
+
+  - `FT` — preprocessing float type.
+  - `S <: AbstractGEOSSettings` — concrete settings (GEOSITSettings /
+    GEOSFPSettings / …).
+  - `CP <: AbstractChainPolicy` — `NoChain` or `ChainedMass{T}`.
+  - `V` — seed-field slot type. `Nothing` for `NoChain`;
+    `Union{Nothing, NTuple{6, Array{FT, 3}}}` for `ChainedMass`. The V
+    parameter is fixed at construction (Julia-style review round-1:
+    value-dependent V was the type-instability foot-gun; we pin V
+    to the unconditional Union on the chained path so the inner
+    constructor specializes once).
+  - `H` — concrete handles type. Pinned to `typeof(open_day(...))` at
+    construction so `reader.handles` access is type-stable (replaces
+    the previous `:: Any` field). Different GEOS flavors produce
+    different handle structs (`GEOSDayHandles` for GEOS-IT,
+    `GEOSFPNativeDayHandles` for GEOS-FP); each becomes its own
+    concrete reader type via this parameter.
+
+Constructor: `open_reader(settings::AbstractGEOSSettings, date, FT;
+seed, next_day_handle)`. See the function docstring.
+"""
+mutable struct GEOSNativeReader{FT, S <: AbstractGEOSSettings,
+                                  CP <: AbstractChainPolicy, V, H} <:
+                AbstractMetReader{FT, S, CP}
+    settings :: S
+    handles  :: H           # concrete handle struct, typed via the H parameter
+    date     :: Date
+    seed     :: V           # Nothing (NoChain) or Union{Nothing, NTuple{6,Array{FT,3}}}
+end
+
+function open_reader(settings::AbstractGEOSSettings, date::Date, ::Type{FT};
+                     seed = nothing,
+                     next_day_handle::Bool = true,
+                     chain_mass::Bool = true,
+                     adjacent_omega::Bool = false) where {FT <: AbstractFloat}
+    # `adjacent_omega` opens the prev/next-day A3dyn+I3 handles the
+    # `:omega_consistent` cm closure needs to interpolate across midnight; every
+    # other closure leaves them `nothing` (no extra file opens on the default path).
+    handles = open_day(settings, date; next_day_handle = next_day_handle,
+                       adjacent_omega = adjacent_omega)
+    H = typeof(handles)
+    # `chain_mass = false` opts out of cross-day carry entirely (NoChain).
+    # Otherwise the policy is `ChainedMass{NTuple{6, Array{FT,3}}}`.
+    if !chain_mass
+        return GEOSNativeReader{FT, typeof(settings), NoChain, Nothing, H}(
+            settings, handles, date, nothing)
+    end
+    # ChainedMass with NTuple{6, Array{FT,3}} seed shape. Julia-style
+    # review round-1: V was previously value-dependent
+    # (`V = typeof(seed_value)` vs `Union{Nothing, NTuple{...}}` when
+    # `seed === nothing`), which made the compiler unable to specialize
+    # the constructor. Pin V unconditionally to the Union so the
+    # specialization happens once per (FT, S) pair.
+    V = Union{Nothing, NTuple{6, Array{FT, 3}}}
+    seed isa V ||
+        throw(ArgumentError("GEOSNativeReader: seed must be `nothing` or " *
+                             "`NTuple{6, Array{$FT, 3}}`; got $(typeof(seed))."))
+    CP = ChainedMass{NTuple{6, Array{FT, 3}}}
+    return GEOSNativeReader{FT, typeof(settings), CP, V, H}(
+        settings, handles, date, seed)
+end
+
+@inline windows_per_day(reader::GEOSNativeReader) =
+    windows_per_day(reader.settings, reader.date)
+
+@inline function read_window!(raw::RawWindow{FT}, reader::GEOSNativeReader{FT},
+                                w::Int) where FT
+    return read_window!(raw, reader.settings, reader.handles, reader.date, w)
+end
+
+@inline function close_reader!(reader::GEOSNativeReader)
+    close_day!(reader.handles)
+    return nothing
+end
+
+# Source/target support matrix for the TOML entrypoint. Methods live here
+# because all participating types (`ERA5SpectralSettings`,
+# `AbstractGEOSSettings`, and the target geometries) are visible by the time
+# this file is included.
+preprocessor_pair_supported(::LatLonTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::ReducedGaussianTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::ERA5SpectralSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractGEOSSettings) = true
+preprocessor_pair_supported(::CubedSphereTargetGeometry, ::AbstractERA5GRIBSettings) = true
+
+"""
+    supports_day_threading(settings) -> Bool
+
+True when `process_day(date, grid, settings, ...)` is genuinely day-local and
+the unified driver may launch `Threads.@threads` over a date range. Sources
+that maintain cross-day state (e.g. GEOS pressure-flux endpoint chaining)
+must keep the serial default. The driver still respects `chain_mass=true` —
+threading is enabled only when this trait AND `!chain_mass` both hold.
+"""
+supports_day_threading(::AbstractMetSettings) = false
+supports_day_threading(::AbstractERA5GRIBSettings) = true
+
+function day_threading_enabled(settings, ndays::Integer, chain_mass::Bool,
+                                global_mass_pin::Bool,
+                                configured_global_mass_target_kg::Real)
+    return Threads.nthreads() > 1 && ndays > 1 &&
+           supports_day_threading(settings) && !chain_mass &&
+           !(global_mass_pin && !isfinite(configured_global_mass_target_kg))
+end
+
+function require_configured_terminal_day(date::Date,
+                                          configured_last_day::Union{Nothing, Date},
+                                          source::AbstractString,
+                                          missing_endpoint::AbstractString)
+    configured_last_day === nothing && error(
+        "$source cannot use a zero-tendency endpoint on $date because no configured " *
+        "last day was supplied; missing $missing_endpoint")
+    date == configured_last_day || error(
+        "$source is missing $missing_endpoint for $date, but the configured last day " *
+        "is $configured_last_day; refusing a zero-tendency endpoint before the " *
+        "configured archive boundary")
+    return nothing
+end
+
+"""
+    supports_initial_endpoint_mass_pin(settings) -> Bool
+
+True when the source's `process_day` implements `[mass_fix] mode =
+"initial_endpoint"`: the dry mass at the start of the first window becomes the
+pin target of every later window, carried across the days of one run. Only
+the GEOS native path does; the other native sources pin to an explicit target.
+"""
+supports_initial_endpoint_mass_pin(::AbstractMetSettings) = false
+supports_initial_endpoint_mass_pin(::AbstractGEOSSettings) = true

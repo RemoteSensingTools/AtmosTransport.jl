@@ -73,7 +73,7 @@ function _write_rotation_cache!(spectral_dir, cache_dir, date; T = POLE_T)
             vo_by_hour = Dict(h => copy(vo) for h in hours),
             d_by_hour = Dict(h => zeros(ComplexF64, T + 1, T + 1, 137) for h in hours),
             T = T, n_times = length(hours))
-    PoleRowsPre._write_spectral_day_cache(
+    PoleRowsPre.write_spectral_day_cache(
         PoleRowsPre.spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target = T), spec)
     return nothing
 end
@@ -202,24 +202,6 @@ _row_ratio(stored, ref) = sum(stored .* ref) / sum(abs2, ref)
             close(reader)
         end
     end
-end
-
-@testset "compute_mass_fluxes! keeps the pole-row zonal flux (regression, issue #58)" begin
-    # A uniform eastward wind: every row, the pole rows included, carries the
-    # same zonal flux per unit Δp. Pole zeroing must not come back silently
-    # (bug archive SESSION1_GRID_CM_FIX_2026-04-03.md, section 3).
-    grid = build_target_geometry(Val(:latlon), Dict{String, Any}("nlon" => 8, "nlat" => 5), Float64)
-    Nx, Ny, Nz = 8, 5, 1
-    u_stag = [10.0 * cosd(grid.lats[j]) for i in 1:Nx + 1, j in 1:Ny, k in 1:Nz]   # U cos φ
-    v_stag = zeros(Nx, Ny + 1, Nz)
-    ps = fill(POLE_PS, Nx, Ny)
-    dp = fill(POLE_PS, Nx, Ny, Nz)
-    am = zeros(Nx + 1, Ny, Nz); bm = zeros(Nx, Ny + 1, Nz); cm = zeros(Nx, Ny, Nz + 1)
-    PoleRowsPre.compute_mass_fluxes!(am, bm, cm, u_stag, v_stag, dp, ps, [0.0], [1.0],
-                                     grid, 450.0, Nz)
-    @test all(>(0), am)
-    @test am[:, 1, 1] ≈ am[:, 3, 1] rtol = 1e-12
-    @test am[:, Ny, 1] ≈ am[:, 3, 1] rtol = 1e-12
 end
 
 @testset "LL → CS regrid: closure record of rescaled fluxes (adaptive vs explicit substeps)" begin

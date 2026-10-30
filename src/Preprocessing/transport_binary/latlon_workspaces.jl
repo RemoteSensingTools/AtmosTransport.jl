@@ -15,7 +15,6 @@ struct SpectralTransformWorkspace
     m_arr      :: Array{Float64, 3}
     am_arr     :: Array{Float64, 3}
     bm_arr     :: Array{Float64, 3}
-    cm_arr     :: Array{Float64, 3}
     sp         :: Matrix{Float64}
     P_buf      :: Matrix{Float64}
     fft_buf    :: Vector{ComplexF64}
@@ -185,7 +184,6 @@ function allocate_transform_workspace(grid::LatLonTargetGeometry, T::Int, Nz_nat
     m_arr = Array{Float64}(undef, Nx, Ny, Nz_native)
     am_arr = Array{Float64}(undef, Nx + 1, Ny, Nz_native)
     bm_arr = Array{Float64}(undef, Nx, Ny + 1, Nz_native)
-    cm_arr = Array{Float64}(undef, Nx, Ny, Nz_native + 1)
     sp = Array{Float64}(undef, Nx, Ny)
 
     nt = Threads.nthreads()
@@ -202,7 +200,7 @@ function allocate_transform_workspace(grid::LatLonTargetGeometry, T::Int, Nz_nat
     bfft_plans = [plan_bfft(fft_buf_t[i]) for i in 1:nt_max]
 
     return SpectralTransformWorkspace(u_cc, v_cc, u_stag, v_stag, dp,
-                                      m_arr, am_arr, bm_arr, cm_arr, sp,
+                                      m_arr, am_arr, bm_arr, sp,
                                       P_buf, fft_buf, field_2d,
                                       P_buf_t, fft_buf_t, fft_out_t,
                                       u_spec_t, v_spec_t, field_2d_t,
@@ -629,7 +627,7 @@ function process_window!(win_idx::Int,
     t0 = time()
 
     spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.cm_arr, transform.sp,
+        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
         transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
         spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
         spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt,

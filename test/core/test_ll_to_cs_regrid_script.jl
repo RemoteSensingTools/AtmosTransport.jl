@@ -593,8 +593,8 @@ end
 
     @testset "a skipped write-time replay gate is recorded and reported" begin
         Pre = AtmosTransport.Preprocessing
-        @test Pre._with_replay_record(Dict{String, Any}(), true) == Dict{String, Any}()
-        @test Pre._with_replay_record(Dict{String, Any}(), false) ==
+        @test Pre.with_replay_record(Dict{String, Any}(), true) == Dict{String, Any}()
+        @test Pre.with_replay_record(Dict{String, Any}(), false) ==
               Dict{String, Any}("write_replay_check" => false)
         # `[numerics] write_replay_check` of a preprocessing config (default on).
         resolve(numerics) = Pre._resolve_write_replay_check(Dict{String, Any}("numerics" => numerics))

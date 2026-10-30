@@ -294,7 +294,7 @@ function main(args = ARGS)
     generated_workdir = parsed.workdir === nothing
     keep = parsed.keep || !generated_workdir
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited = false)
-    global_logger(AtmosTransport.Preprocessing._FlushingLogger(base_logger))
+    global_logger(AtmosTransport.Preprocessing.FlushingLogger(base_logger))
 
     try
         rm(baseline_dir; recursive = true, force = true)

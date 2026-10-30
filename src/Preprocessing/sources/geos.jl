@@ -51,7 +51,6 @@
 #     diagnose `cm` from that same target for replay.
 # ===========================================================================
 
-abstract type AbstractGEOSSettings <: AbstractMetSettings end
 
 """
     GEOSSettings{flavor} <: AbstractGEOSSettings

@@ -251,12 +251,12 @@ per-window balance.
 The `staging_nlon × staging_nlat` fields define an internal LL grid used for
 spectral synthesis before conservative regridding to CS panels.
 """
-struct CubedSphereTargetGeometry{FT, M <: CubedSphereMesh{FT}} <: AbstractTargetGeometry
+struct CubedSphereTargetGeometry{FT, M <: CubedSphereMesh{FT}, S} <: AbstractTargetGeometry
     mesh             :: M
     Nc               :: Int
     face_table       :: CSGlobalFaceTable
     cell_degree      :: Vector{Int}
-    poisson_scratch  :: CSPoissonScratch
+    poisson_scratch  :: S
     tangent_basis    :: NTuple{6, NTuple{4, Matrix{FT}}}
     cache_dir        :: String
     staging_nlon     :: Int
@@ -269,7 +269,7 @@ supports_spectral_massflux_preprocessing(::CubedSphereTargetGeometry) = true
 panel_convention_tag(grid::CubedSphereTargetGeometry) =
     panel_convention_tag(grid.mesh)
 
-_cs_definition_tag(grid::CubedSphereTargetGeometry) =
+target_definition_tag(grid::CubedSphereTargetGeometry) =
     String(cs_definition_tag(cs_definition(grid.mesh)))
 _cs_coordinate_law_tag(grid::CubedSphereTargetGeometry) =
     coordinate_law_tag(coordinate_law(grid.mesh))
@@ -289,7 +289,7 @@ function target_header_metadata(grid::CubedSphereTargetGeometry)
         "planet_radius_m" => Float64(grid.mesh.radius),
         "Nc" => grid.Nc,
         "npanel" => 6,
-        "cs_definition" => _cs_definition_tag(grid),
+        "cs_definition" => target_definition_tag(grid),
         "cs_coordinate_law" => _cs_coordinate_law_tag(grid),
         "cs_center_law" => _cs_center_law_tag(grid),
         "longitude_offset_deg" => longitude_offset_deg(cs_definition(grid.mesh)),
@@ -300,7 +300,7 @@ end
 function target_summary(grid::CubedSphereTargetGeometry)
     nc = 6 * grid.Nc^2
     conv = panel_convention_tag(grid)
-    def = _cs_definition_tag(grid)
+    def = target_definition_tag(grid)
     return "C$(grid.Nc) cubed sphere ($(nc) cells, $(def), $(conv), staging $(grid.staging_nlon)×$(grid.staging_nlat))"
 end
 
@@ -345,11 +345,10 @@ function build_target_geometry(::Val{:cubed_sphere}, cfg_grid, ::Type{FT}) where
 
     conn = mesh.connectivity
     ft = build_cs_global_face_table(Nc, conn)
-    degree = cs_cell_face_degree(ft)
-    scratch = CSPoissonScratch(ft.nc)
+    degree, scratch = target_balance_geometry(ft)
     tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), 6)
 
-    return CubedSphereTargetGeometry{FT, typeof(mesh)}(
+    return CubedSphereTargetGeometry{FT, typeof(mesh), typeof(scratch)}(
         mesh, Nc, ft, degree, scratch, tangent_basis, cache_dir,
         staging_nlon, staging_nlat,
     )

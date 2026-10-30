@@ -1,5 +1,5 @@
 # HybridSigmaPressure, n_levels, pressure_at_interface, level_thickness
-# are imported from ..Grids via the parent Preprocessing module.
+# are imported from Grids by Vertical.
 
 """
     merge_thin_levels(vc; min_thickness_Pa=1000, p_surface=STANDARD_PRESSURE)
@@ -43,15 +43,7 @@ function merge_thin_levels(vc::HybridSigmaPressure{FT};
     keep[1] == 1 || pushfirst!(keep, 1)
 
     merged_vc = HybridSigmaPressure(FT[vc.A[k] for k in keep], FT[vc.B[k] for k in keep])
-    Nz_merged = n_levels(merged_vc)
-    mm = Vector{Int}(undef, Nz)
-    km = 1
-    for k in 1:Nz
-        while km < Nz_merged && keep[km + 1] <= k
-            km += 1
-        end
-        mm[k] = km
-    end
+    mm = _merge_map_from_kept_interfaces(keep, Nz)
 
     return merged_vc, mm
 end
@@ -104,14 +96,7 @@ function select_levels_echlevs(vc_native::HybridSigmaPressure{FT},
                                       FT[vc_native.B[k] for k in keep])
     Nz_selected = n_levels(selected_vc)
 
-    mm = Vector{Int}(undef, Nz_native)
-    km = 1
-    for k in 1:Nz_native
-        while km < Nz_selected && keep[km + 1] <= k
-            km += 1
-        end
-        mm[k] = km
-    end
+    mm = _merge_map_from_kept_interfaces(keep, Nz_native)
 
     @info "echlevs level selection: $(Nz_native) → $(Nz_selected) levels " *
           "($(length(echlevs)) interfaces)"
@@ -166,7 +151,7 @@ neither place is an error naming both locations.
 """
 function resolve_coefficients_path(path::AbstractString)
     expanded = expand_data_path(path)
-    shipped = isabspath(expanded) ? expanded : _package_path(expanded)
+    shipped = isabspath(expanded) ? expanded : package_path(expanded)
     if isfile(expanded)
         if shipped != abspath(expanded) && isfile(shipped) && read(shipped) != read(expanded)
             @warn "Hybrid coefficients: $(abspath(expanded)) (working directory) differs from " *
@@ -181,39 +166,37 @@ function resolve_coefficients_path(path::AbstractString)
           "(relative to the AtmosTransport package root)")
 end
 
-function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
+# Shared TOML decode. Validation still belongs to the full/sliced coordinate
+# constructors, so a sliced read does not validate unused interfaces.
+function _read_hybrid_coefficients(coeff_path::String)
     cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
-    a_all = Float64.(cfg["coefficients"]["a"])
-    b_all = Float64.(cfg["coefficients"]["b"])
-    return HybridSigmaPressure(a_all[level_top:level_bot+1], b_all[level_top:level_bot+1])
+    return Float64.(cfg["coefficients"]["a"]), Float64.(cfg["coefficients"]["b"])
 end
 
-"""
-    load_hybrid_coefficients(coeff_path::String) -> HybridSigmaPressure
-
-Load all hybrid sigma-pressure interface coefficients from a TOML file.
-Unlike `load_era5_vertical_coordinate`, this does not slice — useful for
-sources whose level count comes from the file rather than a config knob
-(e.g. GEOS-72, MERRA-2, native ERA5 L137 without sub-tropo selection).
-"""
+"""Load all hybrid sigma-pressure interface coefficients from TOML."""
 function load_hybrid_coefficients(coeff_path::String)
-    cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
-    return HybridSigmaPressure(Float64.(cfg["coefficients"]["a"]),
-                               Float64.(cfg["coefficients"]["b"]))
+    A, B = _read_hybrid_coefficients(coeff_path)
+    return HybridSigmaPressure(A, B)
 end
 
-function load_ab_coefficients(coeff_path::String, level_range)
-    cfg = TOML.parsefile(resolve_coefficients_path(coeff_path))
-    a_all = Float64.(cfg["coefficients"]["a"])
-    b_all = Float64.(cfg["coefficients"]["b"])
-    Nz = length(level_range)
-    i_start = level_range[1]
-    i_end = level_range[end] + 1
-    a_ifc = a_all[i_start:i_end]
-    b_ifc = b_all[i_start:i_end]
-    dA = diff(a_ifc)
-    dB = diff(b_ifc)
-    A_center = [(a_ifc[k] + a_ifc[k + 1]) / 2 for k in 1:Nz]
-    B_center = [(b_ifc[k] + b_ifc[k + 1]) / 2 for k in 1:Nz]
-    return (; a_ifc, b_ifc, dA, dB, A_center, B_center)
+function load_era5_vertical_coordinate(coeff_path::String, level_top::Int, level_bot::Int)
+    A, B = _read_hybrid_coefficients(coeff_path)
+    return HybridSigmaPressure(A[level_top:level_bot+1], B[level_top:level_bot+1])
+end
+
+ab_coefficients(A, B) = (dA = diff(A), dB = diff(B), b_ifc = B)
+ab_coefficients(vc::HybridSigmaPressure) = ab_coefficients(vc.A, vc.B)
+
+
+function _merge_map_from_kept_interfaces(keep, Nz)
+    Nz_out = length(keep) - 1
+    mm = Vector{Int}(undef, Nz)
+    km = 1
+    for k in 1:Nz
+        while km < Nz_out && keep[km + 1] <= k
+            km += 1
+        end
+        mm[k] = km
+    end
+    return mm
 end

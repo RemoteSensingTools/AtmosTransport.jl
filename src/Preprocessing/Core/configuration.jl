@@ -1,17 +1,4 @@
 """
-    parse_day_filter(args) -> Union{Nothing, Date}
-
-Extract the optional `--day YYYY-MM-DD` filter from the script argument list.
-Returns `nothing` when no day filter is requested.
-"""
-function parse_day_filter(args)
-    idx = findfirst(==("--day"), args)
-    idx === nothing && return nothing
-    idx == length(args) && error("Missing date after --day")
-    return Date(args[idx + 1])
-end
-
-"""
     resolve_mass_basis(cfg) -> (thermo_dir, include_qv, mass_basis)
 
 Parse humidity-related runtime choices from the TOML configuration.
@@ -59,7 +46,7 @@ resolve_output_float_type(cfg) =
 
 Parse the optional global dry-surface-pressure mass-fix settings.
 """
-function _checked_mass_fix_config(cfg)
+function checked_mass_fix_config(cfg)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     stale = filter(key -> haskey(mass_fix_cfg, key),
                    ("target_ps_dry_pa", "target_total_kg"))
@@ -75,7 +62,7 @@ function _checked_mass_fix_config(cfg)
 end
 
 function resolve_mass_fix_settings(cfg)
-    mass_fix_cfg = _checked_mass_fix_config(cfg)
+    mass_fix_cfg = checked_mass_fix_config(cfg)
     return (
         mass_fix_enable = _config_bool(mass_fix_cfg, "enable", true, "[mass_fix].enable"),
         target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
@@ -195,19 +182,8 @@ directly on the spectral staging grid.
 """
 function resolve_spectral_flux_settings(cfg)
     numerics = get(cfg, "numerics", Dict{String, Any}())
-    option(key, default) = Symbol(lowercase(String(get(numerics, key, default))))
-    face_fluxes = option("face_fluxes", "vector")
-    face_lengths = option("face_lengths", "edge")
-    face_fluxes === :vector && face_lengths === :cell_centerline &&
-        haskey(numerics, "face_lengths") && throw(ArgumentError(
-            "[numerics] face_fluxes = \"vector\" always uses face edge lengths; " *
-            "remove face_lengths = \"cell_centerline\""))
-    return (face_lengths,
-            face_fluxes,
-            face_interpolation = option("face_interpolation",
-                                        face_fluxes === :vector ? "fv3" : "linear"),
-            wind_regrid = option("wind_regrid", "cartesian"),
-            flux_time_sampling = option("flux_time_sampling", "window_mean"))
+    return merge(parse_flux_construction(numerics, "[numerics]"),
+                 (flux_time_sampling = Symbol(lowercase(String(get(numerics, "flux_time_sampling", "window_mean")))),))
 end
 
 """
@@ -253,18 +229,16 @@ how the column balance spreads its correction over the levels, `:hybrid_mass`
 their met-source `[preprocessing]` table instead.
 """
 function resolve_column_balance_weights(numerics::AbstractDict)
-    raw = get(numerics, "column_balance_weights", "hybrid_mass")
-    raw isa AbstractString || throw(ArgumentError(
-        "[numerics].column_balance_weights must be a string; got $(repr(raw))"))
-    return _validate_column_balance_weights(Symbol(lowercase(raw)), "[numerics]")
+    return validate_column_balance_weights(
+        parse_column_balance_weights(numerics, "[numerics]"), "[numerics]")
 end
 
 # `kind` must name an entry of `COLUMN_WEIGHT_KINDS`; `source` names the met
 # source or table in the error.
-function _validate_column_balance_weights(kind::Symbol, source::AbstractString)
-    haskey(COLUMN_WEIGHT_KINDS, kind) || throw(ArgumentError(
+function validate_column_balance_weights(kind::Symbol, source::AbstractString)
+    kind in COLUMN_WEIGHT_NAMES || throw(ArgumentError(
         "$source column_balance_weights must be one of " *
-        join(keys(COLUMN_WEIGHT_KINDS), ", ") * "; got :$(kind)"))
+        join(COLUMN_WEIGHT_NAMES, ", ") * "; got :$(kind)"))
     return kind
 end
 
@@ -273,17 +247,17 @@ end
 # callers. Every target's column balance (lat-lon FFT, reduced-Gaussian CG,
 # cubed-sphere CG) spreads its correction with `spread_column_correction!`, so
 # every weighting applies to every target.
-_check_spectral_column_weights(::AbstractTargetGeometry, settings) =
-    _validate_column_balance_weights(get(settings, :column_balance_weights, :hybrid_mass), "[numerics]")
+check_spectral_column_weights(::AbstractTargetGeometry, settings) =
+    validate_column_balance_weights(get(settings, :column_balance_weights, :hybrid_mass), "[numerics]")
 
 # The column weights of an ERA5 spectral run on its output levels (`vertical.merged_vc`).
-_spectral_column_weights(grid::AbstractTargetGeometry, settings, vertical) =
-    column_weights(_check_spectral_column_weights(grid, settings), vertical.merged_vc.B)
+spectral_column_weights(grid::AbstractTargetGeometry, settings, vertical) =
+    column_weights(check_spectral_column_weights(grid, settings), vertical.merged_vc.B)
 
 # Record every non-mass weighting in a binary header. This deliberately records
 # the new `hybrid_mass` default: legacy keyless binaries remain identifiable as
 # mass-weighted, rather than changing the meaning of an absent provenance key.
-function _with_column_weights_record(header::AbstractDict, kind::Symbol)
+function with_column_weights_record(header::AbstractDict, kind::Symbol)
     kind === :mass || (header["column_balance_weights"] = String(kind))
     return header
 end
@@ -291,7 +265,7 @@ end
 # Record a skipped write-time replay gate (`[numerics] write_replay_check =
 # false`) in a binary header. A binary that passed the gate records nothing, so
 # default headers are unchanged.
-function _with_replay_record(header::AbstractDict, write_replay_on::Bool)
+function with_replay_record(header::AbstractDict, write_replay_on::Bool)
     write_replay_on || (header["write_replay_check"] = false)
     return header
 end
@@ -334,152 +308,6 @@ function resolve_runtime_settings(cfg)
        resolve_preprocessing_cache_settings(cfg),
        resolve_balance_settings(cfg),
        resolve_spectral_flux_settings(cfg))
-end
-
-"""
-    _resolve_target_vertical_coordinate(cfg_grid) -> (name, coeff_path) or `nothing`
-
-Resolve an optional target hybrid vertical coordinate from the grid config.
-
-Supported forms:
-
-```toml
-[grid]
-target_vertical = "geos_l72"
-```
-
-or, for a custom coefficient file:
-
-```toml
-[grid]
-target_vertical = "custom"
-target_coefficients = "config/some_LN_coefficients.toml"
-```
-"""
-function _resolve_target_vertical_coordinate(cfg_grid)
-    target_name = lowercase(String(get(cfg_grid, "target_vertical", "")))
-    target_path = String(get(cfg_grid, "target_coefficients", ""))
-    isempty(target_name) && isempty(target_path) && return nothing
-
-    if isempty(target_path)
-        target_path = if target_name in ("geos_l72", "geos-it_l72", "geosfp_l72",
-                                         "geos_fp_l72", "gmao_l72")
-            _package_path(joinpath("config", "geos_L72_coefficients.toml"))
-        else
-            error("grid.target_vertical='$target_name' needs grid.target_coefficients")
-        end
-    end
-
-    return (name = isempty(target_name) ? "custom" : target_name,
-            coeff_path = expand_data_path(target_path))
-end
-
-"""
-    build_vertical_setup(coeff_path, level_range, min_dp, cfg_grid) -> NamedTuple
-
-Construct the native and output vertical-coordinate metadata for the current
-run.
-
-Two vertical mapping modes are supported:
-
-* `:merge_map` collapses native ERA5 layers onto selected/native-derived
-  output layers using a native-level `merge_map`.
-* `:pressure_overlap` remaps native ERA5 layer integrals onto an independent
-  target hybrid coordinate, e.g. GEOS-IT L72, by pressure-thickness overlap:
-
-  ```math
-  X^{target}_k = \\sum_s X^{source}_s
-      \\frac{\\max(0, \\min(p^s_{s+1}, p^t_{k+1})
-                    - \\max(p^s_s, p^t_k))}
-           {p^s_{s+1} - p^s_s}
-  ```
-
-  where `p = A + B p_s`. For face-centered fluxes the same formula is applied
-  with the face surface pressure used by the spectral flux construction.
-"""
-function build_vertical_setup(coeff_path::String, level_range, min_dp::Float64, cfg_grid)
-    ab = load_ab_coefficients(coeff_path, level_range)
-    vc_native = load_era5_vertical_coordinate(coeff_path, first(level_range), last(level_range))
-    echlevs_name = get(cfg_grid, "echlevs", "")
-    target_vertical = _resolve_target_vertical_coordinate(cfg_grid)
-
-    if target_vertical !== nothing && !isempty(echlevs_name)
-        error("Choose either grid.target_vertical/grid.target_coefficients or grid.echlevs, not both")
-    end
-
-    merged_vc, merge_map, mapping_method =
-        if !isempty(echlevs_name)
-            selected_vc, mm =
-                select_levels_echlevs(vc_native, echlevs_preset(echlevs_name))
-            selected_vc, mm, :merge_map
-        elseif target_vertical !== nothing
-            target_vc = load_hybrid_coefficients(target_vertical.coeff_path)
-            @info "target vertical coordinate: $(target_vertical.name) " *
-                  "($(n_levels(vc_native)) native → $(n_levels(target_vc)) target levels, pressure-overlap remap)"
-            target_vc, Int[], :pressure_overlap
-        else
-            merged, mm = merge_thin_levels(vc_native; min_thickness_Pa=min_dp)
-            merged, mm, :merge_map
-        end
-
-    return (
-        ab = ab,
-        level_range = level_range,
-        vc_native = vc_native,
-        merged_vc = merged_vc,
-        merge_map = merge_map,
-        vertical_mapping_method = mapping_method,
-        target_vertical_name = target_vertical === nothing ? "" : target_vertical.name,
-        target_coefficients = target_vertical === nothing ? "" : target_vertical.coeff_path,
-        Nz_native = n_levels(vc_native),
-        Nz = n_levels(merged_vc),
-    )
-end
-
-"""
-    available_spectral_dates(spectral_dir) -> Vector{Date}
-
-Discover all processing dates available in the spectral-input directory by
-scanning for `era5_spectral_YYYYMMDD_lnsp.gb`.
-"""
-function available_spectral_dates(spectral_dir::String)
-    dates = Date[]
-    for f in readdir(spectral_dir)
-        m = match(r"era5_spectral_(\d{8})_lnsp\.gb", f)
-        m !== nothing && push!(dates, Date(m[1], dateformat"yyyymmdd"))
-    end
-    sort!(dates)
-    isempty(dates) && error("No spectral GRIB files found in $spectral_dir")
-    return dates
-end
-
-"""
-    select_processing_dates(dates, day_filter) -> Vector{Date}
-
-Apply the optional single-day filter to the discovered date list.
-"""
-function select_processing_dates(dates, day_filter)
-    day_filter === nothing && return dates
-    filtered = filter(==(day_filter), dates)
-    isempty(filtered) && error("Date $day_filter not found in spectral data")
-    return filtered
-end
-
-"""
-    next_day_hour0(date, dates, spectral_dir, T_target)
-
-Load the next day's hour-0 spectral fields when available so the final window of
-the current day can form forward differences for `dam`, `dbm`, and `dm`.
-Returns `nothing` when no next-day file is available.
-"""
-function next_day_hour0(date::Date, dates, spectral_dir::String, T_target::Int;
-                        cache_dir::AbstractString="")
-    next_day = date + Day(1)
-    next_path = joinpath(spectral_dir, "era5_spectral_$(Dates.format(next_day, "yyyymmdd"))_lnsp.gb")
-    if next_day in dates || isfile(next_path)
-        return read_hour0_spectral(spectral_dir, next_day; T_target, cache_dir)
-    end
-    return nothing
 end
 
 """
@@ -528,4 +356,26 @@ function log_preprocessor_configuration(settings, grid::AbstractTargetGeometry, 
     Spectral cache: $(spectral_cache_summary)
     QV preload:    $(qv_preload_summary)
     """
+end
+
+# Native callers deliberately defer choice validation until keyword overrides
+# have been applied to settings, as before this extraction.
+function parse_column_balance_weights(table, label::AbstractString)
+    raw = get(table, "column_balance_weights", "hybrid_mass")
+    raw isa AbstractString || throw(ArgumentError(
+        "$label.column_balance_weights must be a string; got $(repr(raw))"))
+    return Symbol(lowercase(raw))
+end
+
+function parse_flux_construction(table, label::AbstractString)
+    option(key, default) = Symbol(lowercase(String(get(table, key, default))))
+    face_fluxes = option("face_fluxes", "vector")
+    face_lengths = option("face_lengths", "edge")
+    face_fluxes === :vector && face_lengths === :cell_centerline &&
+        haskey(table, "face_lengths") && throw(ArgumentError(
+            "$label face_fluxes = \"vector\" always uses face edge lengths; " *
+            "remove face_lengths = \"cell_centerline\""))
+    return (face_lengths, face_fluxes,
+            face_interpolation = option("face_interpolation", face_fluxes === :vector ? "fv3" : "linear"),
+            wind_regrid = option("wind_regrid", "cartesian"))
 end

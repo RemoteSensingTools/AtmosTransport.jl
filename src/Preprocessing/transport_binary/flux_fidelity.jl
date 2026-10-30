@@ -1188,7 +1188,7 @@ function _map_structured_fidelity_column!(column::AbstractVector{FT}, native::Ab
 end
 _map_structured_fidelity_column!(column, native, vertical, ps_face::Float64,
                                  ::Val{:pressure_overlap}) =
-    _remap_extensive_column_pressure_overlap!(column, native, ps_face,
+    remap_extensive_column_pressure_overlap!(column, native, ps_face,
                                               vertical.vc_native, vertical.merged_vc)
 
 """
@@ -1237,12 +1237,12 @@ function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler
             for k in 1:Nz_native
                 thick = abs(Float64(dA[k]) + Float64(dB[k]) * ps_face)
                 qfactor = dry ? 1 - clamp(0.5 * (Float64(qfield[il, j, k]) +
-                                                 Float64(qfield[ir, j, k])), 0.0, 0.999999) : 1.0
+                                                 Float64(qfield[ir, j, k])), 0.0, MAX_SPECIFIC_HUMIDITY) : 1.0
                 native[k] = FT(Float64(transform.u_stag[i, j, k]) / Float64(grid.cos_lat[j]) *
                                thick * R_g * dlat * dt_amount * qfactor)
             end
             _map_structured_fidelity_column!(column, native, vertical,
-                                             _xface_surface_pressure(sp, i, j), mapping)
+                                             xface_surface_pressure(sp, i, j), mapping)
             reference_column = view(am, i, j, :)
         else
             i, j = Tuple(CartesianIndices((Nx, Ny + 1))[f - na])
@@ -1253,12 +1253,12 @@ function capture_structured_wind_flux_samples(sampler::StructuredFidelitySampler
                     ps_face = exp((log(sp[i, j - 1]) + log(sp[i, j])) / 2)
                     thick = abs(Float64(dA[k]) + Float64(dB[k]) * ps_face)
                     qfactor = dry ? 1 - clamp(0.5 * (Float64(qfield[i, j - 1, k]) +
-                                                     Float64(qfield[i, j, k])), 0.0, 0.999999) : 1.0
+                                                     Float64(qfield[i, j, k])), 0.0, MAX_SPECIFIC_HUMIDITY) : 1.0
                     FT(Float64(transform.v_stag[i, j, k]) * thick * R_g * dlon * dt_amount * qfactor)
                 end
             end
             _map_structured_fidelity_column!(column, native, vertical,
-                                             _yface_surface_pressure(sp, i, j), mapping)
+                                             yface_surface_pressure(sp, i, j), mapping)
             (j == 1 || j == Ny + 1) && fill!(column, zero(FT))
             reference_column = view(bm, i, j, :)
         end

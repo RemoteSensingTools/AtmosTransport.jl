@@ -21,13 +21,6 @@
 # regrid to a cubed-sphere target and the per-window pipeline.
 # ===========================================================================
 
-"""
-    AbstractERA5GRIBSettings <: AbstractMetSettings
-
-Abstract supertype for ERA5 native-GRIB sources. Concrete subtypes pick the
-source mesh via the `flavor` parameter on [`ERA5GRIBSettings`](@ref).
-"""
-abstract type AbstractERA5GRIBSettings <: AbstractMetSettings end
 
 """
     ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
@@ -309,3 +302,6 @@ windows_per_day(::AbstractERA5GRIBSettings, ::Date) = round(Int, 86400 / ERA5_ME
 has_surface(::AbstractERA5GRIBSettings)      = false
 has_convection(::AbstractERA5GRIBSettings)   = false
 has_vdiff_fields(::AbstractERA5GRIBSettings) = false
+
+# Static thread schedules inside the N320 workflow preclude threading days.
+supports_day_threading(::ERA5GRIBSettings{:n320}) = false

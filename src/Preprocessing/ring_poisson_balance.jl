@@ -286,7 +286,7 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
         throw(DimensionMismatch("m_next $(size(m_next)) ≠ m_cur $(size(m_cur))"))
     size(hflux) == (length(face_left), Nz) ||
         throw(DimensionMismatch("hflux $(size(hflux)) ≠ (nfaces, Nz) = $((length(face_left), Nz))"))
-    _check_weight_levels(weights, Nz)
+    check_column_weight_levels(weights, Nz)
     inv_scale = 1.0 / (2.0 * steps_per_window)
     psi = scratch.psi
     rhs = scratch.rhs

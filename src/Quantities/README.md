@@ -56,9 +56,9 @@ traits:
   a `ConservativeRegridding.Regridder`, an `IdentityRegrid` and a
   `NestedCubedSphereRegrid` all carry them.
 - Vertical layer-merging uses a separate trait family:
-  `AbstractFieldKind` (`MassField`, `IntensiveCenterField`, `PressureFluxField`,
+  `AbstractFieldKind` (`MassField`, `IntensiveCenterField`, `ConvectionInterfaceFlux`,
   ...) in
-  [`../Preprocessing/vertical_transforms.jl`](../Preprocessing/vertical_transforms.jl).
+  [`../Preprocessing/Vertical/vertical_transforms.jl`](../Preprocessing/Vertical/vertical_transforms.jl).
   The two families are not interchangeable.
 
 ## Tests And Docs
