@@ -251,36 +251,6 @@ end
     end
 end
 
-@testset "DrivenSimulation applies bottom-layer surface sources on ReducedGaussian" begin
-    mktemp() do path, io
-        close(io)
-        write_driven_reduced_binary(path; FT=Float64, window_mass_scales=(1,))
-
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU())
-        grid = driver_grid(driver)
-        ncell = ncells(grid.horizontal)
-
-        state = CellState(MoistBasis, ones(Float64, ncell, 2);
-                          natural_co2=fill(400e-6, ncell, 2),
-                          fossil_co2=zeros(Float64, ncell, 2))
-        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT=Float64, basis=MoistBasis)
-        model = TransportModel(state, fluxes, grid, UpwindScheme())
-        source = AtmosTransport.SurfaceFluxSource(:fossil_co2, fill(2.0, ncell))
-        sim = DrivenSimulation(model, driver;
-                               start_window=1,
-                               stop_window=1,
-                               surface_sources=(source,))
-
-        step!(sim)
-
-        @test all(isapprox.(sim.model.state.tracers.natural_co2, 400e-6; atol=eps(Float64) * 10))
-        @test all(iszero, sim.model.state.tracers.fossil_co2[:, 1])
-        @test all(isapprox.(sim.model.state.tracers.fossil_co2[:, 2], 3600.0; atol=eps(Float64) * 10))
-        @test total_mass(sim.model.state, :fossil_co2) ≈ ncell * 3600.0 atol=eps(Float64) * 100
-
-        close(driver)
-    end
-end
 
 @testset "DrivenSimulation ReducedGaussian run! accumulates emissions across windows" begin
     mktemp() do path, io

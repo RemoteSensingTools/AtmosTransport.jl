@@ -117,6 +117,9 @@ export write_latlon_flux, check_latlon_cell_area
 # surface_height.jl
 export write_model_surface_height, read_model_surface_height, LatLonPointElevation, read_point_elevation
 
+export hybrid_surface_first, validate_ap_units, VERTICAL_ORDERS, parse_vertical_order, PRESSURE_UNITS, HEIGHT_UNITS, file_vertical_order, infer_year_from_path, infer_year_from_time_units
+
+include("initial_condition_conventions.jl")
 include("coordinates.jl")
 include("source_meshes.jl")
 include("time_axes.jl")

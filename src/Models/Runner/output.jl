@@ -264,23 +264,12 @@ end
 function _write_frames_to_disk(spec::RuntimeOutputSpec, path::AbstractString,
                                frames::AbstractVector{<:AbstractSnapshotFrame}, grid, mass_basis::Symbol)
     isempty(frames) && return path
-    _write_frames_to_disk(spec.format, spec, path, frames, grid, mass_basis)
+    _write_output_frames!(spec.format, spec, path, frames, grid, mass_basis)
     return path
 end
 
-function _write_frames_to_disk(::BinaryMmapOutput, spec, path, frames, grid, mass_basis)
-    write_snapshot_binary(path, frames, grid; mass_basis = mass_basis,
-                          options = spec.options,
-                          physics_attributes = spec.metadata.physics_attributes,
-                          time_origin = spec.metadata.time_origin)
-end
-function _write_frames_to_disk(::NetCDFOutput, spec, path, frames, grid, mass_basis)
-    # The writer takes the shared NetCDF lock itself.
-    write_snapshot_netcdf(path, frames, grid; mass_basis = mass_basis,
-                          options = spec.options, fields = spec.fields,
-                          physics_attributes = spec.metadata.physics_attributes,
-                          time_origin = spec.metadata.time_origin)
-end
+_write_frames_to_disk(format::Union{BinaryMmapOutput,NetCDFOutput}, spec, path, frames, grid, mass_basis) =
+    _write_output_frames!(format, spec, path, frames, grid, mass_basis)
 
 function _start_daily_output!(output::RunSnapshotOutput, spec::RuntimeOutputSpec,
                               path::AbstractString, frames, grid, mass_basis::Symbol)

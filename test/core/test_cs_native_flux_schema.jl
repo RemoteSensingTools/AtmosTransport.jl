@@ -340,3 +340,25 @@ end
         @test_throws ArgumentError read_cs_native_flux(rpath, "F"; mesh = other)    # areas differ
     end
 end
+
+@testset "runtime native flux refuses static and structured-grid configs" begin
+    mktempdir() do dir
+        path = joinpath(dir, "native.nc")
+        mesh = CubedSphereMesh(; Nc = 4, Hp = 1, FT = Float64)
+        grid = AtmosGrid(mesh, HybridSigmaPressure([0.0, 50000, 0], [1.0, 0.5, 0]), CPU(); FT = Float64)
+        NCDataset(path, "c") do ds
+            for (name, n) in (("Xdim", 4), ("Ydim", 4), ("nf", 6), ("time", 2))
+                defDim(ds, name, n)
+            end
+            defVar(ds, "time", Float64, ("time",),
+                   attrib = Dict("units" => "hours since 2014-01-01 00:00:00"))[:] = [0, 24]
+            defVar(ds, "F", Float64, ("Xdim", "Ydim", "nf", "time"),
+                   attrib = Dict("units" => "kg CO2 m-2 s-1"))[:, :, :, :] = fill(1e-9, 4, 4, 6, 2)
+        end
+        cfg = Dict{String, Any}("kind" => "cs_native", "file" => path, "variable" => "F",
+                                "time_varying" => false, "species" => "co2")
+        @test_throws ArgumentError build_surface_flux_source(grid, :co2, cfg, Float64)
+        ll = AtmosGrid(LatLonMesh(; Nx = 8, Ny = 4), grid.vertical, CPU(); FT = Float64)
+        @test_throws ArgumentError build_surface_flux_source(ll, :co2, cfg, Float64)
+    end
+end

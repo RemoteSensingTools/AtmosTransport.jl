@@ -26,7 +26,7 @@ separate where their storage and numerical kernels genuinely differ.
 ## Runtime Composition Today
 
 - A [`StepPlan`](StepPlan/README.md) holds the composition.
-  [`TransportModel.step!`](../Models/TransportModel.jl) executes the `step`
+  [`TransportModel.step!`](../Models/Core/TransportModel.jl) executes the `step`
   stages of the substep plan:
   - first constant-rate decay half-step
   - transport block: advection, with diffusion and surface flux embedded
@@ -96,7 +96,7 @@ submodules before assuming it is cosmetic.
   read the submodule README first, then check the corresponding
   `State/`, `Grids/`, and `Models/TransportModel.jl` runtime boundary
 - Tracing a live runtime path:
-  start at [`../Models/TransportModel.jl`](../Models/TransportModel.jl),
+  start at [`../Models/Core/TransportModel.jl`](../Models/Core/TransportModel.jl),
   then follow the relevant operator `apply!`
 - Understanding what is actually production-live:
   consult [`TOPOLOGY_SUPPORT.md`](TOPOLOGY_SUPPORT.md) (canonical
@@ -110,16 +110,16 @@ submodules before assuming it is cosmetic.
   accessors used by topology-specific kernels
 - [`../MetDrivers/`](../MetDrivers/) provides transport-window timing,
   `current_time`, and convection forcing containers
-- [`../Models/TransportModel.jl`](../Models/TransportModel.jl) decides
+- [`../Models/Core/TransportModel.jl`](../Models/Core/TransportModel.jl) decides
   block ordering and which operator families are actually executed
-- [`../Models/driven_stepping.jl`](../Models/driven_stepping.jl) (the
+- [`../Models/Core/driven_stepping.jl`](../Models/Core/driven_stepping.jl) (the
   `DrivenSimulation` constructor) installs operator configuration into the
   model runtime
 
 ## Related Docs And Tests
 
 - Runtime/block ordering:
-  [`../Models/TransportModel.jl`](../Models/TransportModel.jl) and
+  [`../Models/Core/TransportModel.jl`](../Models/Core/TransportModel.jl) and
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)
 - Runtime walkthrough:
   [`../../docs/20_RUNTIME_FLOW.md`](../../docs/20_RUNTIME_FLOW.md)

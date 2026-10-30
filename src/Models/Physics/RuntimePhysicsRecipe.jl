@@ -1,3 +1,8 @@
+# The runtime-style traits (`AbstractRuntimeRecipeStyle` + the LatLon/RG/CS
+# variants) now live in `RuntimeRecipeStyles.jl`, included before this file (the
+# `RuntimePhysicsSpecs.jl` `materialize` methods dispatch on them). The
+# `_runtime_recipe_style(grid/driver/reader)` resolvers stay below.
+
 """
     RuntimePhysicsRecipe
 
@@ -15,12 +20,6 @@ The recipe layer separates:
 This keeps the CLI scripts thin and prevents topology-specific
 `if/elseif` trees from growing in parallel.
 """
-
-# The runtime-style traits (`AbstractRuntimeRecipeStyle` + the LatLon/RG/CS
-# variants) now live in `RuntimeRecipeStyles.jl`, included before this file (the
-# `RuntimePhysicsSpecs.jl` `materialize` methods dispatch on them). The
-# `_runtime_recipe_style(grid/driver/reader)` resolvers stay below.
-
 struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT, CheckT <: AbstractBinaryCFLCheck}
     advection  :: AdvT
     diffusion  :: DiffT
@@ -28,13 +27,6 @@ struct RuntimePhysicsRecipe{AdvT, DiffT, ConvT, ChemT, CheckT <: AbstractBinaryC
     chemistry  :: ChemT
     binary_cfl_check :: CheckT   # `[advection] check_binary_cfl`
 end
-
-# The flat-411 `catrine_co2` stub is gone. CS tracers
-# now flow through the same `build_initial_mixing_ratio` +
-# `pack_initial_tracer_mass` pipeline as LL/RG; `kind = "catrine_co2"`
-# loads the Catrine NetCDF and regrids + remaps it conservatively onto
-# the CS grid. Historical flat-411 behaviour is now expressed as
-# `kind = "uniform" background = 4.11e-4`.
 
 # The `[advection]` table. Its keys used to be accepted in `[run]` as well; that
 # location is gone, and an error names the new one.
@@ -151,7 +143,7 @@ _runtime_has_precomputed_dkg(_context) = false
 _runtime_has_precomputed_dkg(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) =
-    :dkg in reader.header.payload_sections
+    MetDrivers.has_dkg(reader)
 _runtime_has_precomputed_dkg(driver::TransportBinaryDriver) =
     _runtime_has_precomputed_dkg(driver.reader)
 
@@ -210,7 +202,7 @@ end
 @inline _runtime_has_cmfmc(reader::TransportBinaryReader) = MetDrivers.has_cmfmc(reader)
 @inline _runtime_has_cmfmc(driver::TransportBinaryDriver) = MetDrivers.has_cmfmc(driver.reader)
 @inline _runtime_has_dtrain(reader::TransportBinaryReader) =
-    :dtrain in reader.header.payload_sections
+    MetDrivers.has_dtrain(reader)
 @inline _runtime_has_dtrain(driver::TransportBinaryDriver) =
     _runtime_has_dtrain(driver.reader)
 @inline _runtime_has_cmfmc_cloud_base(_context) = false
@@ -428,7 +420,7 @@ end
 #     rm  = pack_initial_tracer_mass(grid, air_mass, vmr;
 #                                    mass_basis = DryBasis())
 #
-# See `src/Models/InitialConditionIO.jl`.
+# See `src/Models/InitialConditions/InitialConditionIO.jl`.
 
 export RuntimePhysicsRecipe
 export build_runtime_advection, build_runtime_diffusion, build_runtime_convection

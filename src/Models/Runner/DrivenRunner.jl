@@ -65,7 +65,7 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ..Models: _config_bool, _spec_int, Callback, NaNChecker, WindowInterval,
+using ..Models: DEFAULT_AIR_MASS_RESET_MODE, _config_bool, _spec_int, Callback, NaNChecker, WindowInterval,
                 AbstractInitialConditionSpec, initial_condition_spec
 using Dates: Dates, Date, DateTime, Day, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
@@ -98,9 +98,14 @@ using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!, same_window_layout,
-                     surface_pressure_basis, supports_moisture,
+                     surface_pressure_basis, supports_moisture, has_dtrain,
                      TransportBinaryReader, load_vdiff_qv_window!
-using ..InitialConditionIO: _regridding_method, _surface_flux_kind, surface_flux_species,
+using ..InitialConditionIO: INITIAL_CONDITION_KINDS,
+                            UniformInitialConditionSpec, LatitudeStepInitialConditionSpec,
+                            BoundaryLayerEnhancedInitialConditionSpec, GaussianBlobInitialConditionSpec,
+                            FileInitialConditionSpec, CatrineCO2InitialConditionSpec,
+                            CSNativeInitialConditionSpec, PressureLayerInitialConditionSpec,
+                            _regridding_method, _surface_flux_kind, surface_flux_species,
                             _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
@@ -145,15 +150,15 @@ using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
-include("runner/progress.jl")
-include("runner/logging.jl")
-include("runner/configuration.jl")
-include("runner/config_keys.jl")
-include("runner/summary.jl")
-include("runner/resources.jl")
-include("runner/output.jl")
-include("runner/observations.jl")
-include("runner/model_setup.jl")
+include("progress.jl")
+include("logging.jl")
+include("configuration.jl")
+include("config_keys.jl")
+include("summary.jl")
+include("resources.jl")
+include("output.jl")
+include("observations.jl")
+include("model_setup.jl")
 
 # ===========================================================================
 # run_driven_simulation — top-level entry
@@ -508,7 +513,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
                             "run.air_mass_reset_mode = \"none\", " *
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
-    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
     callbacks = run_checks(cfg)
@@ -825,7 +830,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
                             "run.air_mass_reset_mode = \"none\", " *
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
-    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")
+    air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
     callbacks = run_checks(cfg)
@@ -1150,5 +1155,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     end
     return model
 end
+
+include("run_layout.jl")
 
 end # module DrivenRunner

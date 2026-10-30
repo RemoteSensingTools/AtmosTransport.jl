@@ -290,7 +290,7 @@ well before any windows actually step.
 | `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl` |
 | Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |
 | Dry-basis correction | `src/Preprocessing/mass_support.jl::apply_dry_basis_native!` |
-| Basis-mismatch enforcement | `src/Models/DrivenSimulation.jl` (construction) |
+| Basis-mismatch enforcement | `src/Models/Runner/DrivenSimulation.jl` (construction) |
 
 ## What's next
 

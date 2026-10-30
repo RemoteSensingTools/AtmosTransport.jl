@@ -131,7 +131,7 @@ tracers takes 0.77 ms instead of 1.14 ms (12 launches), C24 with 12 tracers
   `_flux_temporal_segments`
 - Tracing runtime installation:
   start from the `DrivenSimulation` constructor in
-  [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl),
+  [`../../Models/Core/driven_stepping.jl`](../../Models/Core/driven_stepping.jl),
   which turns `surface_sources` into a `SurfaceFluxOperator`; the same file
   stages each window's flux slices (`_stage_surface_flux_window!`)
 - Checking device memory or upload counts of a time-varying source:
@@ -146,7 +146,7 @@ tracers takes 0.77 ms instead of 1.14 ms (12 launches), C24 with 12 tracers
   [`../Advection/Structured/multitracer_strang.jl`](../Advection/Structured/multitracer_strang.jl) and
   [`../Advection/Structured/strang_apply.jl`](../Advection/Structured/strang_apply.jl)
   embed surface flux at the transport midpoint
-- [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl) (the
+- [`../../Models/Core/driven_stepping.jl`](../../Models/Core/driven_stepping.jl) (the
   `DrivenSimulation` constructor) validates and installs sim-level surface sources
 - [`../../Grids/`](../../Grids/) determines the active topology and
   source-shape expectations
@@ -156,7 +156,7 @@ tracers takes 0.77 ms instead of 1.14 ms (12 launches), C24 with 12 tracers
 - Topology coverage:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Runtime/block ordering:
-  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Tests:
   - [`../../../test/core/test_per_tracer_flux_map.jl`](../../../test/core/test_per_tracer_flux_map.jl)

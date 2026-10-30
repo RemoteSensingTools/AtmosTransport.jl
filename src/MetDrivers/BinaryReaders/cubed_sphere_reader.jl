@@ -35,14 +35,14 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
     panels_hflux = surface_present ? _transport_allocate(reader, :pbl_hflux) : nothing
     panels_t2m   = surface_present ? _transport_allocate(reader, :t2m) : nothing
     panels_cmfmc = :cmfmc in h.payload_sections ? _transport_allocate(reader, :cmfmc) : nothing
-    panels_dtrain = :dtrain in h.payload_sections ? _transport_allocate(reader, :dtrain) : nothing
+    panels_dtrain = has_dtrain(reader) ? _transport_allocate(reader, :dtrain) : nothing
     vdiff_present = all(s in h.payload_sections for s in GCHP_VDIFF_PAYLOAD_SECTIONS)
     panels_vdiff_u  = vdiff_present ? _transport_allocate(reader, :vdiff_u) : nothing
     panels_vdiff_v  = vdiff_present ? _transport_allocate(reader, :vdiff_v) : nothing
     panels_vdiff_t  = vdiff_present ? _transport_allocate(reader, :vdiff_t) : nothing
     panels_vdiff_qv = vdiff_present ? _transport_allocate(reader, :vdiff_qv) : nothing
 
-    dkg_present = :dkg in h.payload_sections
+    dkg_present = has_dkg(reader)
     panels_dkg = dkg_present ? _transport_allocate(reader, :dkg) : nothing
     optional_2d = Dict(s => _transport_allocate(reader, s)
                        for s in CS_OPTIONAL_2D_SECTIONS if s in h.payload_sections)

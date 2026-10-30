@@ -47,7 +47,7 @@ include("inspect.jl")
 export TransportBinaryDriver, TransportBinaryReader, air_mass_basis, air_mass_sampling,
        binary_capabilities, binary_dry_mass_target, binary_geometry, binary_mass_basis, copy_fluxes!,
        delta_semantics, driver_grid, expected_air_mass!, flux_kind, flux_sampling, grid_type, has_cmfmc,
-       has_cmfmc_cloud_base, has_flux_delta, has_pbl_eflux, has_qv_endpoints, has_surface,
+       has_cmfmc_cloud_base, has_dtrain, has_dkg, has_flux_delta, has_pbl_eflux, has_qv_endpoints, has_surface,
        has_tm5_convection, has_vdiff_fields, horizontal_topology, humidity_sampling, inspect_binary,
        interpolate_fluxes!, interpolate_qv!, load_flux_delta_window!, load_grid, load_qv_pair_window!,
        load_surface_window!, load_tm5_convection_window!, load_transport_window, load_transport_window!,

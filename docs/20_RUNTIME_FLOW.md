@@ -33,7 +33,7 @@ input. Completed prefetch failures are observed once without swapping buffers.
 NetCDF capture selects requested layers and column diagnostics while preserving
 compensated tracer totals. Single-file output appends records without a frame
 history. Daily output owns at most one background write and drains it on exit.
-See `src/Models/runner/resources.jl` and `runner/output.jl` for resource lifetime;
+See `src/Models/Runner/resources.jl` and `runner/output.jl` for resource lifetime;
 numerical stepping remains in `DrivenSimulation` and `TransportModel`.
 
 ## One `DrivenSimulation.step!`
@@ -49,7 +49,7 @@ step!(sim)
 └── invoke callbacks
 ```
 
-The implementation lives in `src/Models/driven_stepping.jl`; the schedule is
+The implementation lives in `src/Models/Core/driven_stepping.jl`; the schedule is
 the simulation's `StepPlan` (`sim.plan`, `src/Operators/StepPlan/`), built once
 from `physics_cadence`, the driver's window contract and
 `air_mass_reset_mode`. In simplified form:
@@ -113,7 +113,7 @@ available as `sim.driver` when a capability check is needed.
 
 ## Model blocks
 
-`step!(model, dt; meteo)` in `src/Models/TransportModel.jl` executes the
+`step!(model, dt; meteo)` in `src/Models/Core/TransportModel.jl` executes the
 `step` phases of the substep `StepPlan` on `step_operators(model)`, in order:
 
 1. `ChemistryBeforeStage`: exponential decay half-step, otherwise no-op.

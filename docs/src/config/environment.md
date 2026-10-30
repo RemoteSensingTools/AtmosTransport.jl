@@ -15,7 +15,7 @@ package reads no others.
 | `ATMOSTR_SCRATCH_DIR`, `ATMOSTR_TMPDIR`, `SCRATCH`, `TMPDIR`, `TEMP`, `TMP` | Candidate directories, in this order, for extracting ERA5 surface archives. | `src/Preprocessing/era5_surface_reader.jl` |
 | `ATMOSTR_INSTITUTION` | `institution` attribute of NetCDF snapshot and observation files. | `src/Output/netcdf_schema.jl`, `src/Observations/Sampling/observation_netcdf.jl` |
 | `USER`, `USERNAME` | `user` attribute of NetCDF snapshot files. | `src/Output/netcdf_schema.jl` |
-| `NO_COLOR`, `TERM` | ANSI colors in the run summary only when `NO_COLOR` is unset or empty and `TERM` is set and not `dumb`. | `src/Models/runner/configuration.jl` |
+| `NO_COLOR`, `TERM` | ANSI colors in the run summary only when `NO_COLOR` is unset or empty and `TERM` is set and not `dumb`. | `src/Models/Runner/configuration.jl` |
 
 ## Profiling and diagnostics
 

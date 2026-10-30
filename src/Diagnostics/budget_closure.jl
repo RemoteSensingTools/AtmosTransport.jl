@@ -529,7 +529,7 @@ end
 
 function _initial_carrier(::UniformInitialConditionSpec, spec::TransportTracerSpec,
                           ::Real, ::Real)
-    return Float64(get(spec.init_cfg, "background", DEFAULT_BACKGROUND_VMR))
+    return uniform_background(spec.init_cfg)
 end
 
 function _initial_carrier(::AbstractInitialConditionSpec, ::TransportTracerSpec,

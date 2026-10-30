@@ -28,9 +28,7 @@ using AtmosTransport
 using AtmosTransport.MetDrivers: TransportBinaryDriver, driver_grid
 using AtmosTransport.Grids: panel_cell_center_lonlat, cell_area
 using AtmosTransport.Models.InitialConditionIO:
-    build_surface_flux_source, _surface_flux_storage_scale,
-    _load_file_surface_flux_field, _load_timevarying_surface_flux_field,
-    _build_surface_flux_regridder, _apply_surface_flux_regridder
+    build_surface_flux_source, surface_flux_storage_scale
 using AtmosTransport.Operators.SurfaceFlux:
     SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
     StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux
@@ -93,7 +91,7 @@ stack_panels(panels) = cat(panels...; dims = 3)
 
 function our_static_field(grid, name::Symbol, cfg)
     src = build_surface_flux_source(grid, name, cfg, FT)
-    scale = FT(_surface_flux_storage_scale(name, cfg))
+    scale = FT(surface_flux_storage_scale(name, cfg))
     panels = src.cell_mass_rate                       # NTuple{6} Nc x Nc, storage units
     phys = ntuple(p -> panels[p] ./ scale, 6)         # physical kg/s
     return stack_panels(phys)
@@ -106,7 +104,7 @@ end
 function our_timevarying_field(grid, name::Symbol, cfg, t_sec::Float64)
     src = build_surface_flux_source(grid, name, cfg, FT)
     @assert src isa TimeVaryingSurfaceFluxSource
-    scale = FT(_surface_flux_storage_scale(name, cfg))
+    scale = FT(surface_flux_storage_scale(name, cfg))
     times = src.times
     scheme = src.scheme
     # two-slice blend at time t (dt=0 -> point evaluation, matches a 3-hourly
@@ -213,7 +211,7 @@ function main()
         is_tv = get(cfg, "time_varying", false)
 
         # build OUR source once (also report molar-mass / storage scale)
-        scale = _surface_flux_storage_scale(name, cfg)
+        scale = surface_flux_storage_scale(name, cfg)
         @info @sprintf("  storage_scale(M_dryair/M_%s) = %.6f", String(name), scale)
 
         @printf("  %-19s | %-13s | %-13s | %-8s | %-9s | %-9s | %-7s | %-6s\n",

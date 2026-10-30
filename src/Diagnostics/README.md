@@ -63,7 +63,7 @@ All in [`../SectionTimer.jl`](../SectionTimer.jl):
 ## How A Run Uses It
 
 - `_run_driven_simulation` in
-  [`../Models/DrivenRunner.jl`](../Models/DrivenRunner.jl) does four things:
+  [`../Models/Runner/DrivenRunner.jl`](../Models/Runner/DrivenRunner.jl) does four things:
   1. Calls `maybe_enable_from_env!()` before opening inputs.
   2. Calls `disable!()` in a `finally` block.
   3. Calls `report(stderr)`.
@@ -99,5 +99,24 @@ All in [`../SectionTimer.jl`](../SectionTimer.jl):
 - [`../../test/core/test_section_timer.jl`](../../test/core/test_section_timer.jl):
   concurrent recording, report and CSV output, epoch rejection
 - [`../../test/core/test_input_resource_lifetime.jl`](../../test/core/test_input_resource_lifetime.jl):
-  the runner disables instrumentation after a failed run
+  runner input cleanup, prefetch drain and partial-file forcing guards
 - API page: [`../../docs/src/api/infrastructure.md`](../../docs/src/api/infrastructure.md)
+
+## Depends on
+
+The public Models runtime-layout/tracer interface, MetDrivers, State, Grids,
+GriddedIO, Operators.SurfaceFlux, Output, Parameters and Architectures.
+
+## Used by
+
+The package facade, Analysis re-exports, diagnostic scripts and budget tests.
+
+## Shared helpers owned here
+
+Exported `RunContext`, snapshot-series, budget-closure, drift and reporting APIs.
+RunContext reads the runner's public aliases; diagnostic accumulated clocks
+retain their original arithmetic rather than switching to StepPlans.window_clock.
+
+## Forward<->adjoint mirrors
+
+None. These host diagnostics compare forward transport budgets and snapshots.

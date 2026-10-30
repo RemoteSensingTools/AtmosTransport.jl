@@ -104,8 +104,7 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
             push!(forcing, window_forcing)
             push!(diffusion_op, window_op)
             push!(diffusion_workspace, window_ws)
-            sim.iteration += 1
-            sim.time = _clock_time(sim)
+            _advance_clock!(sim)
         end
     finally
         _finish_window_prefetch!(sim)

@@ -298,7 +298,7 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
             "\"none\", \"preserve_vmr\", or \"preserve_tracer_mass\"")
         _capture_config_error!(errors) do
             _normalize_air_mass_reset_mode(get(run_cfg, "air_mass_reset_mode",
-                                               "preserve_tracer_mass"))
+                                               DEFAULT_AIR_MASS_RESET_MODE))
         end
         _capture_config_error!(() -> _resolve_physics_cadence(get(run_cfg, "physics_cadence", nothing)),
                                errors)
@@ -398,33 +398,6 @@ function _check_decay_tracers!(cfg, errors)
     end
     return errors
 end
-
-@inline _ansi_enabled() =
-    get(ENV, "NO_COLOR", "") == "" && get(ENV, "TERM", "dumb") != "dumb"
-
-@inline function _ansi_style(text::AbstractString, code::AbstractString)
-    return _ansi_enabled() ? string("\e[", code, "m", text, "\e[0m") : String(text)
-end
-
-@inline _bold(text::AbstractString) = _ansi_style(text, "1")
-@inline _cyan(text::AbstractString) = _ansi_style(text, "1;36")
-
-# Labels dispatch on the `vertical` field itself: methods specialised on a
-# type parameter whose bound differs from the declared one are ambiguous or
-# silently lose to the generic method.
-_advection_label(scheme) = String(nameof(typeof(scheme)))
-_advection_label(s::LinRoodPPMScheme{ORD}) where ORD = "Lin-Rood PPM$(ORD)" * _vertical_suffix(s.vertical)
-_advection_label(s::PPMScheme) = "PPM" * _limiter_suffix(s.limiter) * _vertical_suffix(s.vertical)
-_advection_label(::SlopesScheme) = "Slopes"
-_advection_label(::UpwindScheme) = "Upwind"
-_limiter_suffix(::Any) = ""
-_limiter_suffix(::CW84Limiter) = ", CW84"
-_vertical_suffix(::Any) = ""
-_vertical_suffix(v::PPMScheme) = _vertical_suffix(v.vertical)          # Lin-Rood's vertical sweeps
-_vertical_suffix(::FV3ScalarProfile{true}) = ", FV3 kord 8 vertical"
-_vertical_suffix(::FV3ScalarProfile{false}) = ", FV3 kord 8 vertical (signed)"
-
-_diffusion_label(op) = String(nameof(typeof(op)))
 
 # A partial window range across files skips forcing between handoffs while
 # carrying tracer state forward. Restrict these ranges to single-file debugging.

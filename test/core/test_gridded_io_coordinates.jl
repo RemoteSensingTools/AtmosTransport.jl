@@ -23,7 +23,7 @@ using AtmosTransport.GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, Ti
                                 orient_coordinates, read_raw, FillValueOnly, MaskedAsNaN,
                                 MaskedAsZero
 
-# ---- Frozen runtime behaviour (src/Models/InitialConditionIO.jl and the
+# ---- Frozen runtime behaviour (src/Models/InitialConditions/InitialConditionIO.jl and the
 # ---- static/time-varying surface-flux loaders, before the GriddedIO move) ----
 
 # The lat-flip / lon-roll block of `_load_file_surface_flux_field` (raw field
