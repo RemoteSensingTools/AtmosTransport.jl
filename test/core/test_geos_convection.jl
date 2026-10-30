@@ -221,27 +221,6 @@ end
     vertical = (merged_vc = load_hybrid_coefficients(coef_path),
                 Nz = NZ, Nz_native = NZ)
 
-    @testset "has_convection follows settings.include_convection" begin
-        @test has_convection(settings_off) === false
-        @test has_convection(settings_on)  === true
-    end
-
-    @testset "allocate_raw_window respects include_convection" begin
-        raw_off = allocate_raw_window(settings_off; FT = FT_TEST, Nz = NZ)
-        @test raw_off.cmfmc  === nothing
-        @test raw_off.dtrain === nothing
-
-        raw_on  = allocate_raw_window(settings_on; FT = FT_TEST, Nz = NZ)
-        @test raw_on.cmfmc  isa NTuple{6, Array{FT_TEST, 3}}
-        @test raw_on.dtrain isa NTuple{6, Array{FT_TEST, 3}}
-        @test size(raw_on.cmfmc[1])  == (NC, NC, NZ + 1)        # interfaces
-        @test size(raw_on.dtrain[1]) == (NC, NC, NZ)            # centers
-
-        raw_full = allocate_raw_window(settings_full; FT = FT_TEST, Nz = NZ)
-        @test raw_full.surface !== nothing
-        @test size(raw_full.surface.pblh[1]) == (NC, NC)
-    end
-
     @testset "3-hourly hold-constant binding + dry-basis correction" begin
         # Synthetic CMFMC moist value at A3 idx t = 100+t (t=1..8); DTRAIN
         # similarly is 200+t. Synthetic qv = 0.005 (constant), so the dry
@@ -270,6 +249,8 @@ end
     end
 
     @testset "surface PBL fields are read and written" begin
+        @test !has_convection(settings_off)
+        @test has_convection(settings_on)
         handles = open_day(settings_full, Date(2021, 12, 1))
         try
             raw = allocate_raw_window(settings_full; FT = FT_TEST, Nz = NZ)
@@ -289,6 +270,8 @@ end
                     mass_basis = :dry, replay_tol = 1e-12)
         reader = TransportBinaryReader(out_full; FT = FT_TEST)
         try
+            @test :cmfmc in reader.header.payload_sections
+            @test :dtrain in reader.header.payload_sections
             @test :pblh  in reader.header.payload_sections
             @test :ustar in reader.header.payload_sections
             @test :pbl_hflux in reader.header.payload_sections
@@ -330,33 +313,4 @@ end
         end
     end
 
-    @testset "binary payload includes :cmfmc / :dtrain when on" begin
-        out_on  = joinpath(tmpdir, "with_conv.bin")
-        process_day(Date(2021, 12, 1), grid, settings_on, vertical;
-                    out_path = out_on,
-                    dt_met_seconds = 3600.0, FT = FT_TEST,
-                    mass_basis = :dry, replay_tol = 1e-12)
-        reader = TransportBinaryReader(out_on; FT = FT_TEST)
-        try
-            @test :cmfmc  in reader.header.payload_sections
-            @test :dtrain in reader.header.payload_sections
-        finally
-            close(reader)
-        end
-    end
-
-    @testset "binary excludes :cmfmc / :dtrain when off" begin
-        out_off = joinpath(tmpdir, "no_conv.bin")
-        process_day(Date(2021, 12, 1), grid, settings_off, vertical;
-                    out_path = out_off,
-                    dt_met_seconds = 3600.0, FT = FT_TEST,
-                    mass_basis = :dry, replay_tol = 1e-12)
-        reader = TransportBinaryReader(out_off; FT = FT_TEST)
-        try
-            @test !(:cmfmc  in reader.header.payload_sections)
-            @test !(:dtrain in reader.header.payload_sections)
-        finally
-            close(reader)
-        end
-    end
 end

@@ -556,3 +556,61 @@ end
     @test all(all(==(FT(2)), destination.vdiff.qv[p]) for p in 1:6)
     @test all(all(==(FT(2)), destination.dkg[p]) for p in 1:6)
 end
+
+using AtmosTransport
+include(joinpath(@__DIR__, "..", "helpers", "convection_runtime.jl"))
+
+@testset "binary substep contract keeps chemistry at window cadence" begin
+    FT = Float64
+
+    driver_step, _, _ = _make_convection_window_driver(
+        FT = FT, steps = 4, binary_contract = false)
+    state_step = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
+                           CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
+    fluxes_step = allocate_face_fluxes(driver_step.grid.horizontal, 5; FT = FT, basis = DryBasis)
+    model_step = TransportModel(state_step, fluxes_step, driver_step.grid, UpwindScheme())
+    chem_step = _CountingChemistry(Ref(0), Ref(0.0))
+    sim_step = DrivenSimulation(model_step, driver_step;
+                                start_window = 1, stop_window = 1,
+                                chemistry = chem_step)
+    run!(sim_step)
+
+    @test chem_step.calls[] == 4
+    @test chem_step.total_dt[] == 1800.0
+
+    driver_window, _, _ = _make_convection_window_driver(
+        FT = FT, steps = 4, binary_contract = true)
+    state_window = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
+                             CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
+    fluxes_window = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
+    model_window = TransportModel(state_window, fluxes_window, driver_window.grid, UpwindScheme())
+    chem_window = _CountingChemistry(Ref(0), Ref(0.0))
+    sim_window = DrivenSimulation(model_window, driver_window;
+                                  start_window = 1, stop_window = 1,
+                                  chemistry = chem_window)
+    run!(sim_window)
+
+    @test chem_window.calls[] == 1
+    @test chem_window.total_dt[] == 1800.0
+
+    # `[run] physics_cadence = "substep"` runs chemistry every advection substep on
+    # the same binary-contract driver (cadence A/B comparisons).
+    state_sub = CellState(fill(FT(_REALISTIC_AIR_MASS_KG), 4, 3, 5);
+                          CO2 = fill(FT(1e-6 * _REALISTIC_AIR_MASS_KG), 4, 3, 5))
+    fluxes_sub = allocate_face_fluxes(driver_window.grid.horizontal, 5; FT = FT, basis = DryBasis)
+    model_sub = TransportModel(state_sub, fluxes_sub, driver_window.grid, UpwindScheme())
+    chem_sub = _CountingChemistry(Ref(0), Ref(0.0))
+    sim_sub = DrivenSimulation(model_sub, driver_window; start_window = 1, stop_window = 1,
+                               chemistry = chem_sub, physics_cadence = "substep")
+    run!(sim_sub)
+    @test chem_sub.calls[] == 4
+    @test chem_sub.total_dt[] == 1800.0
+    # Both cadences keep the binary's window-end air-mass reset.
+    @test AtmosTransport.MetDrivers.uses_binary_substep_contract(sim_sub.driver)
+    SP = AtmosTransport.Operators.StepPlans
+    @test sim_sub.plan.cadence isa SP.SubstepPhysics
+    @test sim_window.plan.cadence isa SP.WindowPhysics
+    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_sub.plan.window_end)
+    @test any(s -> s isa SP.AirMassResetStage{SP.WindowEndAirMass}, sim_window.plan.window_end)
+
+end

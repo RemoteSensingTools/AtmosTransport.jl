@@ -48,29 +48,22 @@
 # LatLon — (Nx, Ny, Nz+1) cmfmc, (Nx, Ny, Nz) dtrain/entu/detu
 # =========================================================================
 
-@kernel function _derive_cmfmc_matrix_rates_ll_kernel!(
-    entu_out,                     # (Nx, Ny, Nz) — written
-    detu_out,                     # (Nx, Ny, Nz) — written
-    @Const(cmfmc),                # (Nx, Ny, Nz+1) at interfaces
-    @Const(dtrain),               # (Nx, Ny, Nz)   at centers
-    Nz::Int,
-)
-    i, j = @index(Global, NTuple)
+@inline function _derive_cmfmc_matrix_rates_column!(entu_out, detu_out, cmfmc, dtrain, Nz, cell...)
     FT = eltype(entu_out)
     sum_e = zero(FT)
     sum_d = zero(FT)
     @inbounds for k in 1:Nz
-        d_k = dtrain[i, j, k]
-        ec = cmfmc[i, j, k] - cmfmc[i, j, k + 1]
+        d_k = dtrain[cell..., k]
+        ec = cmfmc[cell..., k] - cmfmc[cell..., k + 1]
         raw_E = ec + d_k
         if raw_E >= zero(FT)
-            entu_out[i, j, k] = raw_E
-            detu_out[i, j, k] = d_k
+            entu_out[cell..., k] = raw_E
+            detu_out[cell..., k] = d_k
             sum_e += raw_E
             sum_d += d_k
         else
-            entu_out[i, j, k] = zero(FT)
-            detu_out[i, j, k] = d_k - raw_E
+            entu_out[cell..., k] = zero(FT)
+            detu_out[cell..., k] = d_k - raw_E
             sum_d += d_k - raw_E
         end
     end
@@ -83,87 +76,23 @@
     # zero on a small surface raw_E).
     delta = sum_d - sum_e
     if delta > zero(FT)
-        @inbounds entu_out[i, j, Nz] += delta
+        @inbounds entu_out[cell..., Nz] += delta
     elseif delta < zero(FT)
-        @inbounds detu_out[i, j, Nz] -= delta
+        @inbounds detu_out[cell..., Nz] -= delta
     end
+    return nothing
 end
 
-# =========================================================================
-# Face-indexed ReducedGaussian — (ncells, Nz+1) / (ncells, Nz)
-# =========================================================================
+@kernel function _derive_cmfmc_matrix_rates_ll_kernel!(
+    entu_out, detu_out, @Const(cmfmc), @Const(dtrain), Nz::Int)
+    i, j = @index(Global, NTuple)
+    _derive_cmfmc_matrix_rates_column!(entu_out, detu_out, cmfmc, dtrain, Nz, i, j)
+end
 
 @kernel function _derive_cmfmc_matrix_rates_rg_kernel!(
-    entu_out,                     # (ncells, Nz) — written
-    detu_out,                     # (ncells, Nz) — written
-    @Const(cmfmc),                # (ncells, Nz+1)
-    @Const(dtrain),               # (ncells, Nz)
-    Nz::Int,
-)
+    entu_out, detu_out, @Const(cmfmc), @Const(dtrain), Nz::Int)
     c = @index(Global)
-    FT = eltype(entu_out)
-    sum_e = zero(FT)
-    sum_d = zero(FT)
-    @inbounds for k in 1:Nz
-        d_k = dtrain[c, k]
-        ec = cmfmc[c, k] - cmfmc[c, k + 1]
-        raw_E = ec + d_k
-        if raw_E >= zero(FT)
-            entu_out[c, k] = raw_E
-            detu_out[c, k] = d_k
-            sum_e += raw_E
-            sum_d += d_k
-        else
-            entu_out[c, k] = zero(FT)
-            detu_out[c, k] = d_k - raw_E
-            sum_d += d_k - raw_E
-        end
-    end
-    delta = sum_d - sum_e
-    if delta > zero(FT)
-        @inbounds entu_out[c, Nz] += delta
-    elseif delta < zero(FT)
-        @inbounds detu_out[c, Nz] -= delta
-    end
-end
-
-# =========================================================================
-# CubedSphere panel — (Nc, Nc, Nz+1) / (Nc, Nc, Nz). Forcings are halo-free
-# per panel; entu_out / detu_out have the same shape.
-# =========================================================================
-
-@kernel function _derive_cmfmc_matrix_rates_cs_panel_kernel!(
-    entu_out,                     # (Nc, Nc, Nz) — written
-    detu_out,                     # (Nc, Nc, Nz) — written
-    @Const(cmfmc),                # (Nc, Nc, Nz+1)
-    @Const(dtrain),               # (Nc, Nc, Nz)
-    Nz::Int,
-)
-    i, j = @index(Global, NTuple)
-    FT = eltype(entu_out)
-    sum_e = zero(FT)
-    sum_d = zero(FT)
-    @inbounds for k in 1:Nz
-        d_k = dtrain[i, j, k]
-        ec = cmfmc[i, j, k] - cmfmc[i, j, k + 1]
-        raw_E = ec + d_k
-        if raw_E >= zero(FT)
-            entu_out[i, j, k] = raw_E
-            detu_out[i, j, k] = d_k
-            sum_e += raw_E
-            sum_d += d_k
-        else
-            entu_out[i, j, k] = zero(FT)
-            detu_out[i, j, k] = d_k - raw_E
-            sum_d += d_k - raw_E
-        end
-    end
-    delta = sum_d - sum_e
-    if delta > zero(FT)
-        @inbounds entu_out[i, j, Nz] += delta
-    elseif delta < zero(FT)
-        @inbounds detu_out[i, j, Nz] -= delta
-    end
+    _derive_cmfmc_matrix_rates_column!(entu_out, detu_out, cmfmc, dtrain, Nz, c)
 end
 
 # =========================================================================
@@ -233,7 +162,7 @@ end
         size(dtrain[p])   == (Nc, Nc, Nz)     || throw(DimensionMismatch(
             "_launch_cmfmc_matrix_derivation!: dtrain panel $p shape mismatch."))
     end
-    kernel = _derive_cmfmc_matrix_rates_cs_panel_kernel!(backend)
+    kernel = _derive_cmfmc_matrix_rates_ll_kernel!(backend)
     for p in 1:6
         kernel(entu_out[p], detu_out[p], cmfmc[p], dtrain[p], Int(Nz);
                ndrange = (Nc, Nc))

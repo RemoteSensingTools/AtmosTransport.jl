@@ -172,7 +172,7 @@ backend preload.
 Matrix-convection solver eligibility is checked when the state backend,
 precision, and vertical depth are known. Parsing `use_collab_lu=true` is a
 request, not proof that a particular GPU kernel will run; see
-[`../Operators/Convection/TM5Convection.jl`](../Operators/Convection/TM5Convection.jl)
+[`../Operators/Convection/TM5/TM5Convection.jl`](../Operators/Convection/TM5/TM5Convection.jl)
 for the support gates and fallback diagnostics.
 
 - Changing operator block order:
@@ -244,3 +244,6 @@ public Diffusion staged APIs.
 
 `adjoint_schedule.jl` captures production stepping for Adjoints. Numerical diffusion
 transposes are owned by Operators/Diffusion; Models contains no adjoint kernels.
+
+Convection workspace allocation is owned by
+`Operators.Convection.convection_workspace_for` (`../Operators/Convection/workspace_factory.jl`).

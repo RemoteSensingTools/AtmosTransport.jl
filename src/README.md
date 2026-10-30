@@ -142,3 +142,9 @@ exported. This declaration also works on the minimum supported Julia 1.10.
 `Architectures.compensated_total` is the public compensated Float64 reduction
 for arrays and tuples of arrays, used by State mass diagnostics and Output
 snapshot totals. Backend summation policies remain unchanged.
+
+Architectures also owns the persistent column-ledger arithmetic shared by
+convection and diffusion. Its residual, deposit and carry helpers retain the
+original precision and compensated-sum policy.
+
+# shared: _ledger_residual, _ledger_deposit, _load_ledger_carry, _store_ledger_carry!

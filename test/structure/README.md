@@ -128,3 +128,8 @@ MetDrivers binary unit with BinaryFormat and BinaryReaders, inheriting only
 its earlier dependencies and parent interfaces. The ERA5 geometry facade
 binding follows its moved Preprocessing source. This migration applies only
 to LAYERS edges; private uses, duplicates, clones and byte ceilings only shrink.
+
+C1 splits Convection into the facade and TM5/CMFMC children. The LAYERS-only
+baseline migration inherits the old lower dependencies and maps existing
+consumers to the children. CMFMC may call the earlier TM5 solve; no new reverse
+edge, clone digest, private-use allowance or folder budget is accepted.

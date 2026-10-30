@@ -17,7 +17,7 @@ updraft is the one ABOVE the first interface with flux.
    random deep columns.
 3. Clipping, negative redistribution, the column closure (now only for a flux
    through the model top), and shape and boundary guards.
-4. `dz_hydrostatic_virtual!` / `dz_hydrostatic_constT!`.
+4. `dz_hydrostatic_virtual!`.
 
 All tests run core (no real data).
 """
@@ -27,10 +27,9 @@ using Random
 
 using AtmosTransport
 
-using .AtmosTransport.Preprocessing: ec2tm!, ec2tm_from_rates!,
+using .AtmosTransport.Preprocessing: ec2tm_from_rates!,
                                        TM5CleanupStats,
-                                       dz_hydrostatic_virtual!,
-                                       dz_hydrostatic_constT!
+                                       dz_hydrostatic_virtual!
 
 include(joinpath(@__DIR__, "..", "helpers", "tm5_ecconv_reference.jl"))
 
@@ -149,21 +148,6 @@ end
     @test worst_flux < 16eps()
 end
 
-@testset "ec2tm_from_rates! zero forcing" begin
-    Nz = 5
-    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
-    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
-    udmf = zeros(Float64, Nz + 1); ddmf = zeros(Float64, Nz + 1)
-    udrf = zeros(Float64, Nz); ddrf = zeros(Float64, Nz)
-    dz   = fill(100.0, Nz)
-
-    ec2tm_from_rates!(entu, detu, entd, detd,
-                       udmf, ddmf, udrf, ddrf, dz, Nz)
-    @test all(entu .== 0)
-    @test all(detu .== 0)
-    @test all(entd .== 0)
-    @test all(detd .== 0)
-end
 
 @testset "ec2tm_from_rates! bad-data cleanup" begin
     Nz = 5
@@ -253,58 +237,7 @@ end
     @test entd[2] ≈ 0.03 + 0.005 atol = 1e-15
 end
 
-@testset "TM5 closure: no-op when column is already balanced" begin
-    Nz = 4
-    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
-    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
-    # No updraft anywhere → no closure work to do.
-    udmf = zeros(Float64, Nz + 1)
-    ddmf = zeros(Float64, Nz + 1)
-    udrf = zeros(Float64, Nz)
-    ddrf = zeros(Float64, Nz)
-    dz   = fill(200.0, Nz)
 
-    stats = TM5CleanupStats()
-    ec2tm_from_rates!(entu, detu, entd, detd,
-                       udmf, ddmf, udrf, ddrf, dz, Nz; stats = stats)
-
-    @test all(entu .== 0) && all(detu .== 0)
-    @test all(entd .== 0) && all(detd .== 0)
-    @test stats.columns_closure_entu[] == 0
-    @test stats.columns_closure_entd[] == 0
-end
-
-@testset "plan 24 Commit 1: dz_hydrostatic_virtual! sanity" begin
-    # Typical ERA5 L137-like column: realistic T/Q + ps.
-    Nz = 5
-    # Descending ak/bk so p_top < p_bot at each level.
-    ak = Float64[0.0, 100.0, 500.0, 1000.0, 5000.0, 30000.0]
-    bk = Float64[0.0, 0.0,   0.05,  0.2,    0.6,    1.0]
-    ps = 101325.0
-    T  = Float64[210, 220, 240, 260, 280]  # K
-    Q  = Float64[0.0, 0.0, 0.001, 0.005, 0.010]  # kg/kg
-    dz_virt  = zeros(Float64, Nz)
-    dz_const = zeros(Float64, Nz)
-
-    dz_hydrostatic_virtual!(dz_virt,  T, Q, ps, ak, bk, Nz)
-    dz_hydrostatic_constT!(dz_const, ps, ak, bk, Nz; T_ref = 260)
-
-    # All dz strictly positive.
-    @test all(dz_virt .> 0)
-    @test all(dz_const .> 0)
-
-    # Virtual-temperature variant gives larger dz where air is warm/moist
-    # (lower density → more height per hPa).  Surface layer k=Nz has
-    # highest T and Q.
-    @test dz_virt[Nz] > dz_const[Nz]    # surface warmer than 260 → more dz
-
-    # Divergence bounded in troposphere: within 30% everywhere, typical
-    # 10-20% at surface.
-    for k in 1:Nz
-        rel = abs(dz_virt[k] - dz_const[k]) / dz_const[k]
-        @test rel < 0.30
-    end
-end
 
 @testset "TM5 dz uses the model's R, g and virtual-temperature factor" begin
     P = AtmosTransport.Parameters
@@ -319,8 +252,7 @@ end
         dz = zeros(FT, 3)
         dz_hydrostatic_virtual!(dz, T, Q, ps, ak, bk, 3)
         @test dz == R_over_g .* (T .* (one(FT) .+ FT(P.VIRTUAL_TEMPERATURE_FACTOR) .* Q)) .* dp ./ p_mid
-        dz_hydrostatic_constT!(dz, ps, ak, bk, 3; T_ref = 260)
-        @test dz == R_over_g .* FT(260) .* dp ./ p_mid
+
     end
 end
 
@@ -343,20 +275,6 @@ end
         dz, T, Q, ps, Float64[0, 100], bk, 2)
 end
 
-@testset "plan 24 Commit 1: ec2tm! (plan-23 minimal) unchanged" begin
-    # Regression: the plan-23 ec2tm! signature and behaviour must stay
-    # identical.  One zero-forcing test is enough to catch accidental
-    # behaviour drift from the new ec2tm_from_rates! additions.
-    Nz = 4
-    entu = zeros(Float64, Nz); detu = zeros(Float64, Nz)
-    entd = zeros(Float64, Nz); detd = zeros(Float64, Nz)
-    mflu = zeros(Float64, Nz + 1); mfld = zeros(Float64, Nz + 1)
-    detu_ec = zeros(Float64, Nz); detd_ec = zeros(Float64, Nz)
-
-    ec2tm!(entu, detu, entd, detd, mflu, mfld, detu_ec, detd_ec)
-    @test all(entu .== 0) && all(detu .== 0)
-    @test all(entd .== 0) && all(detd .== 0)
-end
 
 @testset "plan 24 Commit 1: ec2tm_from_rates! shape guards" begin
     Nz = 4

@@ -39,6 +39,8 @@ const README_DIRS = [
     "src/Operators/Diffusion",
     "src/Operators/SurfaceFlux",
     "src/Operators/Convection",
+    "src/Operators/Convection/CMFMC",
+    "src/Operators/Convection/TM5",
     "src/Operators/Chemistry",
     # State and its sub-tree
     "src/State",

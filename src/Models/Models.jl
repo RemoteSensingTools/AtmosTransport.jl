@@ -5,6 +5,8 @@ Minimal standalone runtime layer for `src`.
 """
 module Models
 
+using ..Operators.Convection: convection_workspace_for
+
 using ..State: panel_interior
 
 using ..State: basis_symbol

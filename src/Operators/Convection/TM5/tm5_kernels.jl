@@ -205,22 +205,6 @@ const _TM5_COLLAB_MAX_DEPTH_FLOAT32 = 85
 # 48 KiB budget. The CUDA extension returns it from `_tm5_collab_max_depth`.
 const _TM5_COLLAB_MAX_DEPTH_FLOAT64_CUDA = 73
 
-"""
-    _tm5_collab_supports(lmax_conv, Nt) -> Bool
-
-Whether the effective matrix dimension fits the collaborative kernels and
-there is at least one tracer. Tracers are processed in fixed-capacity batches
-against one LU factorization, so there is no upper tracer-count limit here.
-
-The matrix dimension must be in 1..`_TM5_COLLAB_MAX_DEPTH_FLOAT32` (85) to fit
-the 32 KiB shared-memory budget.
-This gate uses the effective convection depth after any vertical aggregation,
-not the full model Nz. Configured truncation/aggregation remains a scientific
-choice that must cover the forcing's active depth; batching requires neither.
-"""
-@inline _tm5_collab_supports(lmax_conv::Integer, Nt::Integer) =
-    lmax_conv > 0 && lmax_conv <= _TM5_COLLAB_MAX_DEPTH_FLOAT32 && Nt > 0
-
 # Backends opt into additional precisions only within their static shared-memory
 # budget. Float32 retains the portable 32 KiB envelope; CUDA adds Float64.
 @inline _tm5_collab_max_depth(::Type, backend) = 0
@@ -228,25 +212,12 @@ choice that must cover the forcing's active depth; batching requires neither.
 @inline _tm5_collab_supports(L::Integer, Nt::Integer, ::Type{FT}, backend) where FT =
     0 < L <= _tm5_collab_max_depth(FT, backend) && Nt > 0
 
-# The collaborative-solve body is inlined verbatim into all three
-# topology kernels below. We tried sharing it via a Julia macro and a
-# `@inline` helper, but KA's `@kernel` only recognises `@synchronize`
-# / `@index` / `@localmem` when they appear directly in its own AST —
-# it does not re-process macro expansions, so a shared helper produces
-# unbound-`__ctx__` errors at runtime.
-#
-# The trade-off: ~150 lines of mechanical duplication per topology vs.
-# a fragile macro that depends on KA's internals. Duplication is the
-# safer choice given the bit-exact contract.
-#
-# Topology-specific differences across the three copies are limited
-# to four lines per kernel:
-#   - the index decode (LL → (i, j); RG → c; CS → (c1, c2))
-#   - the `cell_areas_*[…]` lookup
-#   - the `_tm5_read_*` / `_tm5_write_q!` Val tag (:ll / :rg / :cs)
-#   - the halo offset Hp (always 0 for LL / RG; mesh.Hp for CS)
-# Everything else (boundary init, cloud-dim diagnosis, bmass, build,
-# LU, pivot-apply, forward/back solve, store-back) is identical.
+# KA requires @synchronize, @index and @localmem directly in each @kernel
+# AST. The wrappers therefore retain the barrier-separated phases. Their
+# cloud scans and serial plume builds share the inline bodies below.
+# Topology differences: index decode, area lookup, forcing/mass/tracer readers,
+# halo offset (zero for LL/RG), and the ledger carry's column index tuple.
+# Local memory keeps the original FT buffers and Int32 pivots/cloud indices.
 #
 # Shared-memory allocations per kernel:
 #   A_loc      : @localmem FT (LMAX_CONV, LMAX_CONV)
@@ -259,11 +230,89 @@ choice that must cover the forcing's active depth; batching requires neither.
 #   icl_lfs    : @localmem Int32   (1,)
 
 
-# LatLon collaborative kernel.  `q_raw :: (Nx, Ny, Nz, Nt)`.
-# One workgroup per column, WG_SIZE threads cooperate; ndrange
-# = WG_SIZE × (Nx · Ny).  The kernel body is inlined verbatim
-# below; see the comment block above for why we don't share a
-# helper.
+@inline function _tm5_collab_cloud_dims!(icl_top, icl_lfs, detu, entd,
+                                        i, j, Hp, k_shift, LMAX_CONV, ::Type{FT}, topology) where FT
+    icl_top[1] = Int32(LMAX_CONV + 1)
+    icl_lfs[1] = Int32(LMAX_CONV + 1)
+    @inbounds for k in 1:LMAX_CONV
+        d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, topology)
+        if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
+            icl_top[1] = Int32(k)
+        end
+        e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, topology)
+        if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
+            icl_lfs[1] = Int32(k)
+        end
+    end
+    return nothing
+end
+
+@inline function _tm5_collab_plumes!(A_loc, amu_loc, amd_loc, bmass_loc,
+                                    entu, detu, entd, detd, i, j, Hp, k_shift,
+                                    LMAX_CONV, icltop, icllfs, ::Type{FT}, topology) where FT
+    # Updraft pass.
+    @inbounds for k in LMAX_CONV:-1:icltop
+        e = _tm5_read_forcing(entu, i, j, Hp, k_shift + k, topology)
+        d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, topology)
+        # Cloud-top closure (clipping guard). ONLY when the cloud
+        # reaches the very top of the active region (`icltop == 1`,
+        # i.e. `lmax_conv` clips the cloud top) force the updraft to
+        # fully detrain so no residual `amu` escapes into the
+        # passthrough region above. The subsidence pass runs
+        # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
+        # uncompensated one; fed by emission tracers it drives a
+        # multi-substep mass blow-up. For non-clipping columns
+        # (`icltop >= 2`) the subsidence already compensates, so this
+        # is an exact no-op there — validated lmax_conv=0 runs unchanged.
+        if icltop == 1 && k == icltop
+            d = amu_loc[k + 1] + e
+        end
+        amu_loc[k] = amu_loc[k + 1] + e - d
+        zxi = zero(FT)
+        if amu_loc[k] > zero(FT)
+            denom = amu_loc[k + 1] + e
+            zxi = max(zero(FT), one(FT) - d / denom)
+        else
+            amu_loc[k] = zero(FT)
+        end
+        for kk in (k + 1):LMAX_CONV
+            f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
+            A_loc[k, kk] = f_below * zxi
+        end
+        bmass_k = bmass_loc[k]
+        A_loc[k, k] = e / bmass_k * zxi
+    end
+    # Downdraft pass.
+    if icllfs <= LMAX_CONV
+        @inbounds for k in icllfs:(LMAX_CONV - 1)
+            e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, topology)
+            d = _tm5_read_forcing(detd, i, j, Hp, k_shift + k, topology)
+            amd_loc[k + 1] = amd_loc[k] - e + d
+            zxi = zero(FT)
+            if amd_loc[k + 1] < zero(FT)
+                denom = amd_loc[k] - e
+                zxi = max(zero(FT), one(FT) + d / denom)
+            else
+                amd_loc[k + 1] = zero(FT)
+            end
+            for kk in icllfs:(k - 1)
+                A_loc[k + 1, kk] = A_loc[k, kk] * zxi
+            end
+            bmass_k = bmass_loc[k]
+            A_loc[k + 1, k] = -e / bmass_k * zxi
+        end
+    end
+    # Subsidence subtraction.
+    @inbounds for k in LMAX_CONV:-1:2
+        bmass_above = bmass_loc[k - 1]
+        bmass_k = bmass_loc[k]
+        A_loc[k, k - 1] -= amu_loc[k] / bmass_above
+        A_loc[k, k]     -= amd_loc[k] / bmass_k
+    end
+    return nothing
+end
+
+# LatLon: one workgroup per column, ndrange = WG_SIZE × (Nx * Ny).
 @kernel function _tm5_column_collab_kernel!(
     q_raw_arr,            # (Nx, Ny, Nz, Nt)
     ledger_carry,         # (Nx, Ny, Nt) column ledger carry, or nothing
@@ -300,24 +349,13 @@ choice that must cover the forcing's active depth; batching requires neither.
 
     # ---- 2. Cloud-dim diagnosis (serial in thread 1) ---------
     if t == 1
-        icl_top[1] = Int32(LMAX_CONV + 1)
-        icl_lfs[1] = Int32(LMAX_CONV + 1)
-        @inbounds for k in 1:LMAX_CONV
-            d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
-            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
-                icl_top[1] = Int32(k)
-            end
-            e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
-            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
-                icl_lfs[1] = Int32(k)
-            end
-        end
+        _tm5_collab_cloud_dims!(icl_top, icl_lfs, detu, entd, i, j, Hp, k_shift, LMAX_CONV, FT, Val(:ll))
     end
     @synchronize
 
     icltop = Int(icl_top[1])
     icllfs = Int(icl_lfs[1])
-    icltop_eff = min(icllfs, max(icltop, 2) - 1)
+    icltop_eff = _tm5_effective_cloud_top(icltop, icllfs)
     k_lo = max(icltop_eff, 1)
     no_conv = icltop > LMAX_CONV
 
@@ -343,65 +381,7 @@ choice that must cover the forcing's active depth; batching requires neither.
         @synchronize
 
         if t == 1
-            # Updraft pass.
-            @inbounds for k in LMAX_CONV:-1:icltop
-                e = _tm5_read_forcing(entu, i, j, Hp, k_shift + k, Val(:ll))
-                d = _tm5_read_forcing(detu, i, j, Hp, k_shift + k, Val(:ll))
-                # Cloud-top closure (clipping guard). ONLY when the cloud
-                # reaches the very top of the active region (`icltop == 1`,
-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
-                # fully detrain so no residual `amu` escapes into the
-                # passthrough region above. The subsidence pass runs
-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
-                # uncompensated one; fed by emission tracers it drives a
-                # multi-substep mass blow-up. For non-clipping columns
-                # (`icltop >= 2`) the subsidence already compensates, so this
-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
-                if icltop == 1 && k == icltop
-                    d = amu_loc[k + 1] + e
-                end
-                amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = zero(FT)
-                if amu_loc[k] > zero(FT)
-                    denom = amu_loc[k + 1] + e
-                    zxi = max(zero(FT), one(FT) - d / denom)
-                else
-                    amu_loc[k] = zero(FT)
-                end
-                for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
-                    A_loc[k, kk] = f_below * zxi
-                end
-                bmass_k = bmass_loc[k]
-                A_loc[k, k] = e / bmass_k * zxi
-            end
-            # Downdraft pass.
-            if icllfs <= LMAX_CONV
-                @inbounds for k in icllfs:(LMAX_CONV - 1)
-                    e = _tm5_read_forcing(entd, i, j, Hp, k_shift + k, Val(:ll))
-                    d = _tm5_read_forcing(detd, i, j, Hp, k_shift + k, Val(:ll))
-                    amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = zero(FT)
-                    if amd_loc[k + 1] < zero(FT)
-                        denom = amd_loc[k] - e
-                        zxi = max(zero(FT), one(FT) + d / denom)
-                    else
-                        amd_loc[k + 1] = zero(FT)
-                    end
-                    for kk in icllfs:(k - 1)
-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
-                    end
-                    bmass_k = bmass_loc[k]
-                    A_loc[k + 1, k] = -e / bmass_k * zxi
-                end
-            end
-            # Subsidence subtraction.
-            @inbounds for k in LMAX_CONV:-1:2
-                bmass_above = bmass_loc[k - 1]
-                bmass_k = bmass_loc[k]
-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
-                A_loc[k, k]     -= amd_loc[k] / bmass_k
-            end
+            _tm5_collab_plumes!(A_loc, amu_loc, amd_loc, bmass_loc, entu, detu, entd, detd, i, j, Hp, k_shift, LMAX_CONV, icltop, icllfs, FT, Val(:ll))
         end
         @synchronize
         # Columns are independent. Ascending levels preserve the original
@@ -512,7 +492,7 @@ end
 
 # Face-indexed (ReducedGaussian) collaborative kernel.
 # `q_raw :: (ncells, Nz, Nt)`.  See LL kernel above for why the
-# body is inlined verbatim instead of factored into a helper.
+# barrier-separated phases remain in the wrapper.
 @kernel function _tm5_faceindexed_column_collab_kernel!(
     q_raw_arr,            # (ncells, Nz, Nt)
     ledger_carry,         # (ncells, Nt) column ledger carry, or nothing
@@ -548,24 +528,13 @@ end
     end
 
     if t == 1
-        icl_top[1] = Int32(LMAX_CONV + 1)
-        icl_lfs[1] = Int32(LMAX_CONV + 1)
-        @inbounds for k in 1:LMAX_CONV
-            d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
-            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
-                icl_top[1] = Int32(k)
-            end
-            e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
-            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
-                icl_lfs[1] = Int32(k)
-            end
-        end
+        _tm5_collab_cloud_dims!(icl_top, icl_lfs, detu, entd, c, b, Hp, k_shift, LMAX_CONV, FT, Val(:rg))
     end
     @synchronize
 
     icltop = Int(icl_top[1])
     icllfs = Int(icl_lfs[1])
-    icltop_eff = min(icllfs, max(icltop, 2) - 1)
+    icltop_eff = _tm5_effective_cloud_top(icltop, icllfs)
     k_lo = max(icltop_eff, 1)
     no_conv = icltop > LMAX_CONV
 
@@ -589,62 +558,7 @@ end
         @synchronize
 
         if t == 1
-            @inbounds for k in LMAX_CONV:-1:icltop
-                e = _tm5_read_forcing(entu, c, b, Hp, k_shift + k, Val(:rg))
-                d = _tm5_read_forcing(detu, c, b, Hp, k_shift + k, Val(:rg))
-                # Cloud-top closure (clipping guard). ONLY when the cloud
-                # reaches the very top of the active region (`icltop == 1`,
-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
-                # fully detrain so no residual `amu` escapes into the
-                # passthrough region above. The subsidence pass runs
-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
-                # uncompensated one; fed by emission tracers it drives a
-                # multi-substep mass blow-up. For non-clipping columns
-                # (`icltop >= 2`) the subsidence already compensates, so this
-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
-                if icltop == 1 && k == icltop
-                    d = amu_loc[k + 1] + e
-                end
-                amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = zero(FT)
-                if amu_loc[k] > zero(FT)
-                    denom = amu_loc[k + 1] + e
-                    zxi = max(zero(FT), one(FT) - d / denom)
-                else
-                    amu_loc[k] = zero(FT)
-                end
-                for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
-                    A_loc[k, kk] = f_below * zxi
-                end
-                bmass_k = bmass_loc[k]
-                A_loc[k, k] = e / bmass_k * zxi
-            end
-            if icllfs <= LMAX_CONV
-                @inbounds for k in icllfs:(LMAX_CONV - 1)
-                    e = _tm5_read_forcing(entd, c, b, Hp, k_shift + k, Val(:rg))
-                    d = _tm5_read_forcing(detd, c, b, Hp, k_shift + k, Val(:rg))
-                    amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = zero(FT)
-                    if amd_loc[k + 1] < zero(FT)
-                        denom = amd_loc[k] - e
-                        zxi = max(zero(FT), one(FT) + d / denom)
-                    else
-                        amd_loc[k + 1] = zero(FT)
-                    end
-                    for kk in icllfs:(k - 1)
-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
-                    end
-                    bmass_k = bmass_loc[k]
-                    A_loc[k + 1, k] = -e / bmass_k * zxi
-                end
-            end
-            @inbounds for k in LMAX_CONV:-1:2
-                bmass_above = bmass_loc[k - 1]
-                bmass_k = bmass_loc[k]
-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
-                A_loc[k, k]     -= amd_loc[k] / bmass_k
-            end
+            _tm5_collab_plumes!(A_loc, amu_loc, amd_loc, bmass_loc, entu, detu, entd, detd, c, b, Hp, k_shift, LMAX_CONV, icltop, icllfs, FT, Val(:rg))
         end
         @synchronize
         # Columns are independent. Ascending levels preserve the original
@@ -793,24 +707,13 @@ end
     end
 
     if t == 1
-        icl_top[1] = Int32(LMAX_CONV + 1)
-        icl_lfs[1] = Int32(LMAX_CONV + 1)
-        @inbounds for k in 1:LMAX_CONV
-            d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
-            if d > zero(FT) && icl_top[1] == LMAX_CONV + 1
-                icl_top[1] = Int32(k)
-            end
-            e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
-            if e > zero(FT) && icl_lfs[1] == LMAX_CONV + 1
-                icl_lfs[1] = Int32(k)
-            end
-        end
+        _tm5_collab_cloud_dims!(icl_top, icl_lfs, detu, entd, c1, c2, Hp, k_shift, LMAX_CONV, FT, Val(:cs))
     end
     @synchronize
 
     icltop = Int(icl_top[1])
     icllfs = Int(icl_lfs[1])
-    icltop_eff = min(icllfs, max(icltop, 2) - 1)
+    icltop_eff = _tm5_effective_cloud_top(icltop, icllfs)
     k_lo = max(icltop_eff, 1)
     no_conv = icltop > LMAX_CONV
 
@@ -834,62 +737,7 @@ end
         @synchronize
 
         if t == 1
-            @inbounds for k in LMAX_CONV:-1:icltop
-                e = _tm5_read_forcing(entu, c1, c2, Hp, k_shift + k, Val(:cs))
-                d = _tm5_read_forcing(detu, c1, c2, Hp, k_shift + k, Val(:cs))
-                # Cloud-top closure (clipping guard). ONLY when the cloud
-                # reaches the very top of the active region (`icltop == 1`,
-                # i.e. `lmax_conv` clips the cloud top) force the updraft to
-                # fully detrain so no residual `amu` escapes into the
-                # passthrough region above. The subsidence pass runs
-                # `LMAX_CONV:-1:2`, so a layer-1 residual is the ONLY
-                # uncompensated one; fed by emission tracers it drives a
-                # multi-substep mass blow-up. For non-clipping columns
-                # (`icltop >= 2`) the subsidence already compensates, so this
-                # is an exact no-op there — validated lmax_conv=0 runs unchanged.
-                if icltop == 1 && k == icltop
-                    d = amu_loc[k + 1] + e
-                end
-                amu_loc[k] = amu_loc[k + 1] + e - d
-                zxi = zero(FT)
-                if amu_loc[k] > zero(FT)
-                    denom = amu_loc[k + 1] + e
-                    zxi = max(zero(FT), one(FT) - d / denom)
-                else
-                    amu_loc[k] = zero(FT)
-                end
-                for kk in (k + 1):LMAX_CONV
-                    f_below = k == LMAX_CONV ? zero(FT) : A_loc[k + 1, kk]
-                    A_loc[k, kk] = f_below * zxi
-                end
-                bmass_k = bmass_loc[k]
-                A_loc[k, k] = e / bmass_k * zxi
-            end
-            if icllfs <= LMAX_CONV
-                @inbounds for k in icllfs:(LMAX_CONV - 1)
-                    e = _tm5_read_forcing(entd, c1, c2, Hp, k_shift + k, Val(:cs))
-                    d = _tm5_read_forcing(detd, c1, c2, Hp, k_shift + k, Val(:cs))
-                    amd_loc[k + 1] = amd_loc[k] - e + d
-                    zxi = zero(FT)
-                    if amd_loc[k + 1] < zero(FT)
-                        denom = amd_loc[k] - e
-                        zxi = max(zero(FT), one(FT) + d / denom)
-                    else
-                        amd_loc[k + 1] = zero(FT)
-                    end
-                    for kk in icllfs:(k - 1)
-                        A_loc[k + 1, kk] = A_loc[k, kk] * zxi
-                    end
-                    bmass_k = bmass_loc[k]
-                    A_loc[k + 1, k] = -e / bmass_k * zxi
-                end
-            end
-            @inbounds for k in LMAX_CONV:-1:2
-                bmass_above = bmass_loc[k - 1]
-                bmass_k = bmass_loc[k]
-                A_loc[k, k - 1] -= amu_loc[k] / bmass_above
-                A_loc[k, k]     -= amd_loc[k] / bmass_k
-            end
+            _tm5_collab_plumes!(A_loc, amu_loc, amd_loc, bmass_loc, entu, detu, entd, detd, c1, c2, Hp, k_shift, LMAX_CONV, icltop, icllfs, FT, Val(:cs))
         end
         @synchronize
         # Columns are independent. Ascending levels preserve the original

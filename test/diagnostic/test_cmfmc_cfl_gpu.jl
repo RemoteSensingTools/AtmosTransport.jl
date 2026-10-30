@@ -10,6 +10,7 @@ if get(ENV, "ATMOSTR_RUN_CMFMC_CFL_GPU_TESTS", "0") != "1"
     @info "Skipping opt-in CMFMC CFL GPU tests"
 else
     using CUDA
+    using AtmosTransport
     expected_device = get(ENV, "ATMOSTR_CMFMC_CFL_GPU_NAME", "A100")
     isempty(expected_device) && error("ATMOSTR_CMFMC_CFL_GPU_NAME must name the authorized GPU")
     @assert occursin(expected_device, CUDA.name(CUDA.device())) "Wrong device for CMFMC CFL GPU tests"
@@ -17,5 +18,13 @@ else
     include(joinpath(@__DIR__, "..", "helpers", "cmfmc_cfl.jl"))
     @testset "GPU CMFMC CFL scan matches the host scan exactly" begin
         check_cmfmc_cfl_on_device(CuArray; float_types = (Float32, Float64))
+        mass = CUDA.fill(1f10,4,3,5)
+        cmfmc = CUDA.zeros(Float32,4,3,6)
+        cmfmc[:,:,3] .= 0.02f0
+        dtrain = AtmosTransport.Operators.Convection.CMFMC._cmfmc_dtrain_array(cmfmc,nothing,mass)
+        @test dtrain isa CUDA.CuArray{Float32,3}
+        @test size(dtrain) == size(mass)
+        @test Array(dtrain) == AtmosTransport.Operators.Convection.CMFMC._cmfmc_dtrain_array(Array(cmfmc),nothing,Array(mass))
+
     end
 end

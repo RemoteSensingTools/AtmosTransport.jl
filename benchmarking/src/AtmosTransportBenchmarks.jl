@@ -793,7 +793,7 @@ function _tm5_collaborative(case::BenchmarkCase)
     depth = depth == 0 ? case.levels : depth
     probe = Adapt.adapt(_adapter(case.backend), Vector{case.float_type}(undef, 0))
     backend = get_backend(probe)
-    return 0 < depth <= AtmosTransport.Operators.Convection._tm5_collab_max_depth(case.float_type, backend)
+    return 0 < depth <= AtmosTransport.Operators.Convection.TM5._tm5_collab_max_depth(case.float_type, backend)
 end
 
 "Device memory the case needs: the memory-model estimate with its safety margin."

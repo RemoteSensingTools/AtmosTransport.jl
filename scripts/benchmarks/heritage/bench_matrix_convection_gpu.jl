@@ -31,15 +31,15 @@ end
 
 function dense_reference(f, c)
     rates = map(r -> view(r,c,:), f.rates)
-    top, _, lfs = C._tm5_diagnose_cloud_dims(rates[2], rates[3], f.nz)
+    top, _, lfs = C.TM5._tm5_diagnose_cloud_dims(rates[2], rates[3], f.nz)
     lo = min(lfs, max(top,2)-1)
     A = zeros(Float32, f.nz, f.nz)
     piv = zeros(Int, f.nz)
-    C._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, 1800f0, f.nz;
+    C.TM5._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, 1800f0, f.nz;
         f=A, amu=zeros(Float32,f.nz+1), amd=zeros(Float32,f.nz+1))
-    C._tm5_lu!(A, piv, f.nz; icltop_eff=lo)
+    C.TM5._tm5_lu!(A, piv, f.nz; icltop_eff=lo)
     q = copy(f.q[c,:,:])
-    C._tm5_solve!(q, A, piv, f.nz, f.nt; icltop_eff=lo)
+    foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(q, A, piv, f.nz, max(Int(lo), 1), tracer), 1:f.nt)
     q
 end
 
@@ -60,7 +60,7 @@ end
 
 function measure(nc, nz, nt, downdrafts, mode)
     launch_tracers = mode == "split" ? min(6,nt) : nt
-    C._tm5_collab_supports(nz, launch_tracers) ||
+    C.TM5._tm5_collab_supports(nz, launch_tracers, Float32, KernelAbstractions.CPU()) ||
         error("This checkout cannot launch L=$nz Nt=$launch_tracers; use split mode for pre-batching code")
     f = fixture(nc, nz, nt, downdrafts)
     m, rates, areas = CuArray(f.m), map(CuArray, f.rates), CUDA.ones(Float32,nc)
@@ -69,8 +69,8 @@ function measure(nc, nz, nt, downdrafts, mode)
     qs = copy.(initial)
     carries = [CUDA.zeros(Float32, nc, length(r)) for r in ranges]   # column ledger carry
     backend = KA.get_backend(m)
-    wg = C._TM5_COLLAB_WG_SIZE
-    kernel = C._tm5_faceindexed_column_collab_kernel!(backend, wg)
+    wg = C.TM5._TM5_COLLAB_WG_SIZE
+    kernel = C.TM5._tm5_faceindexed_column_collab_kernel!(backend, wg)
     function launch!()
         for (q, carry) in zip(qs, carries)
             kernel(q, carry, m, rates..., areas, nz, size(q,3), 1800f0, Val(nz);
@@ -113,7 +113,7 @@ function measure(nc, nz, nt, downdrafts, mode)
         push!(device_ms, elapsed*1e3)
     end
     # RHS storage is doubled solely to restore identical input between samples.
-    shared_bytes = 4*(nz*nz + C._TM5_COLLAB_TRACER_BATCH*nz + 2nz + 2(nz+1) + 2)
+    shared_bytes = 4*(nz*nz + C.TM5._TM5_COLLAB_TRACER_BATCH*nz + 2nz + 2(nz+1) + 2)
     r = Dict("columns"=>nc, "levels"=>nz, "tracers"=>nt,
         "downdrafts"=>downdrafts, "mode"=>mode, "launches"=>length(qs),
         "median_device_ms"=>median(device_ms), "minimum_device_ms"=>minimum(device_ms),

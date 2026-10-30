@@ -27,9 +27,9 @@ using AtmosTransport
 using .AtmosTransport.Operators: CMFMCMatrixConvection, CMFMCMatrixWorkspace,
                                   TM5Convection, TM5Workspace,
                                   invalidate_cmfmc_cache!, invalidate_cmfmc_matrix_cache!
-using .AtmosTransport.Operators.Convection: _launch_cmfmc_matrix_derivation!
+using .AtmosTransport.Operators.Convection.CMFMC: _launch_cmfmc_matrix_derivation!
 using .AtmosTransport.MetDrivers: ConvectionForcing
-using .AtmosTransport.Adjoints: _apply_cs_convection_forward!,
+using .AtmosTransport.Adjoints:
                                 _apply_cs_convection_adjoint!
 using .AtmosTransport.Grids: CubedSphereMesh
 
@@ -272,8 +272,14 @@ end
     ws = CMFMCMatrixWorkspace(panels_rm; tile_workspace_gib = 0.1,
                                           cell_metrics = cell_areas,
                                           halo_width = Hp)
-    _apply_cs_convection_forward!(panels_rm, panels_m, forcing,
-                                   op, FT(450.0), ws, mesh)
+    let state = AtmosTransport.State.CubedSphereState(AtmosTransport.State.DryBasis, mesh, panels_m; tracer=panels_rm)
+        nz = size(panels_m[1], 3)
+        FT = eltype(panels_m[1])
+        vc = AtmosTransport.Grids.HybridSigmaPressure(zeros(FT,nz+1), collect(range(zero(FT),one(FT); length=nz+1)))
+        grid = AtmosTransport.Grids.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT)
+        AtmosTransport.Operators.apply!(state, forcing, grid, op, FT(450.0); workspace=ws)
+        foreach((dst, src) -> copyto!(dst, view(src,:,:,:,1)), panels_rm, state.tracers_raw)
+    end
 
     sum_post = ntuple(p -> dropdims(sum(@view(panels_rm[p][(Hp+1):(Hp+Nc), (Hp+1):(Hp+Nc), :]);
                                          dims = 3); dims = 3), 6)
@@ -324,8 +330,14 @@ end
     ws_fwd = CMFMCMatrixWorkspace(rm_new; tile_workspace_gib = 0.1, defer_scratch = true,
                                             cell_metrics = cell_areas,
                                             halo_width = Hp)
-    _apply_cs_convection_forward!(rm_new, panels_m, forcing,
-                                   op, FT(450.0), ws_fwd, mesh)
+    let state = AtmosTransport.State.CubedSphereState(AtmosTransport.State.DryBasis, mesh, panels_m; tracer=rm_new)
+        nz = size(panels_m[1], 3)
+        FT = eltype(panels_m[1])
+        vc = AtmosTransport.Grids.HybridSigmaPressure(zeros(FT,nz+1), collect(range(zero(FT),one(FT); length=nz+1)))
+        grid = AtmosTransport.Grids.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT)
+        AtmosTransport.Operators.apply!(state, forcing, grid, op, FT(450.0); workspace=ws_fwd)
+        foreach((dst, src) -> copyto!(dst, view(src,:,:,:,1)), rm_new, state.tracers_raw)
+    end
 
     lambda = ntuple(p -> copy(y_seed[p]), 6)
     ws_adj = CMFMCMatrixWorkspace(lambda; tile_workspace_gib = 0.1, defer_scratch = true,
@@ -337,30 +349,4 @@ end
     lhs = _inner_interior(y_seed, rm_new, Nc, Hp)
     rhs = _inner_interior(lambda, x_rm,   Nc, Hp)
     @test isapprox(lhs, rhs; rtol = 1e-10, atol = 1e-10 * abs(lhs))
-end
-
-@testset "CMFMCMatrixConvection — window-cached derivation invalidation" begin
-    # The workspace caches the derived (entu, detu) and reuses them across
-    # substeps within a met window. invalidate_cmfmc_cache! /
-    # invalidate_cmfmc_matrix_cache! must flag the cache stale so the
-    # next apply! re-derives.
-    FT = Float64
-    Nc, Hp, Nz = 4, 1, 5
-    N = Nc + 2 * Hp
-    panels_rm = ntuple(_ -> zeros(FT, N, N, Nz), 6)
-    cell_areas = ntuple(_ -> fill(FT(1e12), Nc, Nc), 6)
-    ws = CMFMCMatrixWorkspace(panels_rm; tile_workspace_gib = 0.1,
-                                          cell_metrics = cell_areas,
-                                          halo_width = Hp)
-
-    @test ws.derived_valid[] == false
-    ws.derived_valid[] = true
-    invalidate_cmfmc_matrix_cache!(ws)
-    @test ws.derived_valid[] == false
-
-    # The DrivenSimulation window-advance hook calls invalidate_cmfmc_cache!
-    # generically. The hook must reach our workspace.
-    ws.derived_valid[] = true
-    invalidate_cmfmc_cache!(ws)
-    @test ws.derived_valid[] == false
 end

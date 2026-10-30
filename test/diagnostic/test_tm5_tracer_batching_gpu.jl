@@ -36,20 +36,20 @@ function batch_reference(f)
     result = copy(f.q)
     for c in axes(result, 1)
         rates = map(r -> view(r,c,:), f.rates)
-        top, _, lfs = C._tm5_diagnose_cloud_dims(rates[2],rates[3],f.nz)
+        top, _, lfs = C.TM5._tm5_diagnose_cloud_dims(rates[2],rates[3],f.nz)
         top > f.nz && continue
         lo = min(lfs,max(top,2)-1)
         A = zeros(FT,f.nz,f.nz)
         pivots = zeros(Int,f.nz)
-        C._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, FT(1800), f.nz;
+        C.TM5._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, FT(1800), f.nz;
             f=A, amu=zeros(FT,f.nz+1), amd=zeros(FT,f.nz+1))
         # Explicitly dense reference, independent of automatic structure selection.
         if FT === Float64
             # LAPACK dense solve independently checks the shared LU/structure path.
             result[c, :, :] .= A \ f.q[c, :, :]
         else
-            C._tm5_lu!(A, pivots, f.nz; icltop_eff=lo)
-            C._tm5_solve!(view(result,c,:,:), A, pivots, f.nz, f.nt; icltop_eff=lo)
+            C.TM5._tm5_lu!(A, pivots, f.nz; icltop_eff=lo)
+            foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(view(result,c,:,:), A, pivots, f.nz, max(Int(lo), 1), tracer), 1:f.nt)
         end
     end
     result
@@ -77,18 +77,18 @@ function launch_batch!(q, m, rates, areas, f, topology)
     FT = eltype(f.q)
     backend = KA.get_backend(q)
     nt = size(q, ndims(q))
-    wg = C._TM5_COLLAB_WG_SIZE
+    wg = C.TM5._TM5_COLLAB_WG_SIZE
     # A fresh (zero) column ledger carry per launch, as in a first model step.
     if topology == :rg
-        C._tm5_faceindexed_column_collab_kernel!(backend, wg)(
+        C.TM5._tm5_faceindexed_column_collab_kernel!(backend, wg)(
             q, CUDA.zeros(FT, 4, nt), m, rates..., areas, f.nz, nt, FT(1800), Val(f.depth);
             ndrange=wg*4)
     elseif topology == :ll
-        C._tm5_column_collab_kernel!(backend, wg)(
+        C.TM5._tm5_column_collab_kernel!(backend, wg)(
             q, CUDA.zeros(FT, 2, 2, nt), m, rates..., areas, 2, f.nz, nt, FT(1800), Val(f.depth);
             ndrange=wg*4)
     else
-        C._tm5_cs_panel_column_collab_kernel!(backend, wg)(
+        C.TM5._tm5_cs_panel_column_collab_kernel!(backend, wg)(
             q, CUDA.zeros(FT, 2, 2, nt), m, rates..., areas, 1, 2, f.nz, nt, FT(1800),
             Val(f.depth); ndrange=wg*4)
     end
@@ -140,24 +140,24 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
     CUDA.allowscalar(false)
     @testset "Float64 CUDA collaborative contract on $expected_device" begin
         backend = CUDA.CUDABackend()
-        op = C.TM5Convection(use_collab_lu=true)
+        op = C.TM5.TM5Convection(use_collab_lu=true)
         for depth in (1, 66, 73), nt in (1, 7, 32, 65)
-            @test C._should_use_collab(op, depth, nt, Float64, backend)
+            @test C.TM5._should_use_collab(op, depth, nt, Float64, backend)
         end
         for depth in (74, 85, 137)
-            @test !C._use_collab_path(op, depth, 6, Float64, backend)
+            @test !C.TM5._use_collab_path(op, depth, 6, Float64, backend)
         end
-        @test !C._use_collab_path(op, 66, 0, Float64, backend)
-        @test !C._use_collab_path(C.TM5Convection(use_collab_lu=true, n_merge=2),
+        @test !C.TM5._use_collab_path(op, 66, 0, Float64, backend)
+        @test !C.TM5._use_collab_path(C.TM5.TM5Convection(use_collab_lu=true, n_merge=2),
                                   66, 6, Float64, backend)
-        @test !C._use_collab_path(C.TM5Convection(use_collab_lu=true, lmax_conv=73),
+        @test !C.TM5._use_collab_path(C.TM5.TM5Convection(use_collab_lu=true, lmax_conv=73),
                                   66, 6, Float64, backend)
-        @test C._should_use_collab(C.CMFMCMatrixConvection(use_collab_lu=true).inner,
+        @test C.TM5._should_use_collab(C.CMFMC.CMFMCMatrixConvection(use_collab_lu=true).inner,
                                   66, 32, Float64, backend)
-        @test C._should_use_collab(op, 85, 65, Float32, backend)
-        @test_throws ArgumentError C._should_use_collab(op, 86, 65, Float32, backend)
-        depth = C._tm5_collab_max_depth(Float64, backend)
-        bytes(L) = 8*(L^2 + (C._TM5_COLLAB_TRACER_BATCH+3)*L + 2) + 4*(L+2)
+        @test C.TM5._should_use_collab(op, 85, 65, Float32, backend)
+        @test_throws ArgumentError C.TM5._should_use_collab(op, 86, 65, Float32, backend)
+        depth = C.TM5._tm5_collab_max_depth(Float64, backend)
+        bytes(L) = 8*(L^2 + (C.TM5._TM5_COLLAB_TRACER_BATCH+3)*L + 2) + 4*(L+2)
         @test bytes(depth) <= 48*1024 < bytes(depth+1)
     end
     @testset "Float64 positive and signed tracer batching on $expected_device" begin
@@ -169,16 +169,16 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
         end
     end
     @testset "Deferred scratch adaptation on $expected_device" begin
-        cpu_ws = C.TM5Workspace(zeros(Float32,2,2,8); tile_columns=4,
+        cpu_ws = C.TM5.TM5Workspace(zeros(Float32,2,2,8); tile_columns=4,
                                 cell_metrics=ones(Float32,2), defer_scratch=true)
         # Simulate a CPU fallback before adapting the model to the GPU.
-        C._ensure_tm5_scratch!(cpu_ws)
+        C.TM5._ensure_tm5_scratch!(cpu_ws)
         gpu_ws = Adapt.adapt(CUDA.CuArray, cpu_ws)
         @test isempty(gpu_ws.conv1)
         @test gpu_ws.scratch_columns == 4
         @test gpu_ws.cell_metrics isa CUDA.CuArray
         @test gpu_ws.f_scratch === gpu_ws.conv1
-        C._ensure_tm5_scratch!(gpu_ws)
+        C.TM5._ensure_tm5_scratch!(gpu_ws)
         @test size(gpu_ws.conv1) == (8,8,4)
         @test gpu_ws.f_scratch === gpu_ws.conv1
         @test isempty(Adapt.adapt(Array, gpu_ws).conv1)

@@ -147,7 +147,7 @@ Files directly in this folder; the subfolders have their own READMEs
 - [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
 - [`flux_construction.jl`](flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
 - [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
-- [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm!`, `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), hydrostatic `dz`
+- [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), virtual-temperature hydrostatic `dz`
 - [`tm5_bldiff.jl`](tm5_bldiff.jl) — TM5 `bldiff` column kernels; `tm5_bldiff_dkg_column!` feeds the N320 `dkg` payload
 
 ## Common Tasks

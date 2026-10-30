@@ -82,7 +82,7 @@ end
 @testset "runtime kernels avoid hard Float64 accumulation" begin
     repo = normpath(joinpath(@__DIR__, "..", ".."))
     files = [
-        "src/Operators/Convection/cmfmc_kernels.jl",
+        "src/Operators/Convection/CMFMC/cmfmc_kernels.jl",
     ]
     forbidden = r"Float64\(|zero\(Float64\)|::Float64"
     for file in files

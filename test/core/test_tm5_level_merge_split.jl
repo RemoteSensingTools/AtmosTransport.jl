@@ -47,7 +47,7 @@ function _serial_super_solve!(dt, qS, mS, eU, dU, eD, dD)
     L = size(qS, 3)
     conv1 = zeros(FT, L, L); piv = zeros(Int, L); dims = zeros(Int, 3)
     for j in axes(qS, 2), i in axes(qS, 1)
-        Cv._tm5_solve_column!(view(qS, i, j, :, :), mS[i, j, :], eU[i, j, :], dU[i, j, :],
+        Cv.TM5._tm5_solve_column!(view(qS, i, j, :, :), mS[i, j, :], eU[i, j, :], dU[i, j, :],
                               eD[i, j, :], dD[i, j, :], conv1, piv, dims, FT(dt))
     end
     return nothing
@@ -57,7 +57,7 @@ end
 function _merged_step!(q, m, forcing, n_merge; L = size(m, 3), dt = 3600)
     Nz = size(m, 3)
     L_super = fld(L, n_merge); L_padded = L_super * n_merge
-    Cv._tm5_merge_aggregate_solve_disaggregate!(
+    Cv.TM5._tm5_merge_aggregate_solve_disaggregate!(
         q, m, forcing..., Nz - L_padded, L_padded, L_super, n_merge, 3,
         (args...) -> _serial_super_solve!(dt, args...))
     return q
@@ -69,13 +69,23 @@ function _coarse_column(r, m, forcing, n_merge; dt = 3600)
     FT = eltype(r); Ls = length(m) ÷ n_merge
     agg(x) = [sum(x[((s - 1) * n_merge + 1):(s * n_merge)]) for s in 1:Ls]
     R = reshape(agg(r), Ls, 1); R0 = copy(R)
-    Cv._tm5_solve_column!(R, agg(m), map(agg, forcing)..., zeros(FT, Ls, Ls), zeros(Int, Ls),
+    Cv.TM5._tm5_solve_column!(R, agg(m), map(agg, forcing)..., zeros(FT, Ls, Ls), zeros(Int, Ls),
                           zeros(Int, 3), FT(dt))
     return vec(R0), vec(R)
 end
 
 _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
     map(f -> repeat(reshape(f, 1, 1, Nz), Nx, Ny, 1), _merge_test_forcing(FT, Nz; kw...))
+
+# Shared CPU/CUDA fixture: layer 10 receives detrainment with cloud top 9.
+# For n_merge = 2 or 4, its super-layer contains only this subnormal seed.
+function _nearly_empty_merge_tracer(m)
+    FT = eltype(m); Nz = size(m, 3)
+    q = zeros(FT, size(m))
+    q[:, :, (Nz - 3):Nz] .= FT(1e-5) .* m[:, :, (Nz - 3):Nz]
+    q[:, :, 10] .= floatmin(FT) / 2^20
+    return q
+end
 
 @testset "TM5 level merging: increment split" begin
     Nz = 12
@@ -164,24 +174,25 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         end
     end
 
-    @testset "nearly empty pair receiving tracer stays finite ($FT)" for FT in (Float32, Float64)
-        m = FT.(collect(range(800, 1200; length = Nz)))
-        forcing = map(f -> reshape(f, 1, 1, Nz), _merge_test_forcing(FT, Nz))
-        q = zeros(FT, 1, 1, Nz, 1)
-        q[1, 1, (Nz - 3):Nz, 1] .= FT(1e-5) .* m[(Nz - 3):Nz]
-        q[1, 1, 4, 1] = floatmin(FT) / 2^10           # subnormal; pair (3, 4) detrains
+    @testset "nearly empty super-layer receiving tracer stays finite ($FT, n_merge = $nm, lmax = $lmax)" for FT in (Float32, Float64), nm in (2, 4), lmax in (0, 8)
+        Nx, Ny, Nz_receiving = 4, 3, 16
+        m = FT(500) .+ FT(1000) .* rand(MersenneTwister(6), FT, Nx, Ny, Nz_receiving)
+        forcing = _column_forcing(FT, Nx, Ny, Nz_receiving; top = 9)
+        q = reshape(_nearly_empty_merge_tracer(m), Nx, Ny, Nz_receiving, 1)
         q0 = copy(q)
-        _merged_step!(q, reshape(m, 1, 1, Nz), forcing, 2)
+        _merged_step!(q, m, forcing, nm; L = lmax == 0 ? Nz_receiving : lmax)
         @test all(isfinite, q)
         @test minimum(q) >= 0
-        @test q[1, 1, 4, 1] > q0[1, 1, 4, 1]
+        @test all(q[:, :, 10, 1] .> q0[:, :, 10, 1])
+        # Confirm the unsafe R_new/R_old scale would overflow in every column.
+        @test all(isinf, q[:, :, 10, 1] ./ q0[:, :, 10, 1])
         @test isapprox(sum(Float64, q), sum(Float64, q0); rtol = 64 * eps(FT))
     end
 
     @testset "split value: depletion, empty and massless super-layers" begin
         # Arguments: r, R_old, R_new, positive sum, negative sum, m, M, 1/n.
         sv(r, Ro, Rn, pos, neg; m = 1f0, M = 2f0) =
-            Cv._merged_split_value(r, Ro, Rn, pos, neg, m, M, 0.5f0)
+            Cv.TM5._merged_split_value(r, Ro, Rn, pos, neg, m, M, 0.5f0)
         # A nearly emptied fine layer next to a full one: the increment form
         # rounds r + ΔR w to a tiny negative in Float32; the single-sign
         # super-layer uses R' (r/R) and stays non-negative.
@@ -201,7 +212,7 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         @test sv(0f0, 0f0, 6f0, 0f0, 0f0; m = 0f0, M = 0f0) == 3f0
         @test sv(0f0, 0f0, 0f0, 0f0, 0f0; m = 0f0, M = 0f0) == 0f0
         # Mixed signs: the change is bounded by |ΔR|, whatever R.
-        @test abs(Cv._merged_split_value(-1.0, 1e-9, 0.5, 1.0 + 1e-9, -1.0, 1.0, 2.0, 0.5) + 1.0) <= 0.5
+        @test abs(Cv.TM5._merged_split_value(-1.0, 1e-9, 0.5, 1.0 + 1e-9, -1.0, 1.0, 2.0, 0.5) + 1.0) <= 0.5
         # A negative value below rounding of the positive one: Σ|r| == |R|
         # in Float32, but the pair holds both signs, so the bounded increment
         # applies and the negative is not scaled by R'/R.
@@ -244,7 +255,7 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         nc = Nx * Ny
         q_rg = reshape(copy(q), nc, Nz, 2)
         rg(f) = reshape(f, nc, Nz)
-        Cv._tm5_merge_aggregate_solve_disaggregate!(
+        Cv.TM5._tm5_merge_aggregate_solve_disaggregate!(
             q_rg, rg(m), map(rg, forcing)..., 0, Nz, Nz ÷ 2, 2, 2,
             (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
                 reshape(qS, Nx, Ny, Nz ÷ 2, 2), reshape(mS, Nx, Ny, :),
@@ -259,7 +270,7 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
         m_cs[(Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny), :] .= m
         halo0 = copy(q_cs)
         interior = (Hp + 1):(Hp + Nx), (Hp + 1):(Hp + Ny)
-        Cv._tm5_merge_aggregate_solve_disaggregate!(
+        Cv.TM5._tm5_merge_aggregate_solve_disaggregate!(
             q_cs, m_cs, forcing..., 0, Nz, Nz ÷ 2, 2, 3,
             (qS, mS, eU, dU, eD, dD) -> _serial_super_solve!(3600,
                 view(qS, interior..., :, :), view(mS, interior..., :), eU, dU, eD, dD);
@@ -274,6 +285,7 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             @test_skip "CUDA backend required"
         else
             FT = Float32
+            Nz = 16
             G = AtmosTransport.Grids
             Nx, Ny = 4, 3
             A_ifc = collect(FT, range(0, 5f4; length = Nz + 1))
@@ -282,30 +294,40 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             grid = G.AtmosGrid(G.LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT),
                                G.HybridSigmaPressure(A_ifc, B_ifc), AtmosTransport.CPU(); FT = FT)
             m = FT(500) .+ FT(1000) .* rand(MersenneTwister(6), FT, Nx, Ny, Nz)
-            forcing = _column_forcing(FT, Nx, Ny, Nz)
+            forcing = _column_forcing(FT, Nx, Ny, Nz; top=9)
             q = FT(1e-6) .* m
             q[:, :, 9] .= FT(1e-3) .* m[:, :, 9]                # pair (9, 10) nearly cancels
             q[:, :, 10] .= .-q[:, :, 9] .* (1 - FT(1e-6))
-            q_empty = zeros(FT, Nx, Ny, Nz)                    # nearly empty pair (3, 4) detrains
-            q_empty[:, :, (Nz - 3):Nz] .= FT(1e-5) .* m[:, :, (Nz - 3):Nz]
-            q_empty[:, :, 4] .= floatmin(FT) / 2^10
-            state = AtmosTransport.State.CellState(m; CO2 = copy(q), Rn = copy(q_empty))
-            ws = AtmosTransport.Operators.TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
-            state_d = Adapt.adapt(CUDA.CuArray, state)
-            ws_d = Adapt.adapt(CUDA.CuArray, ws)
-            tm5_d = map(CUDA.CuArray, NamedTuple{(:entu, :detu, :entd, :detd)}(forcing))
-            forcing_d = AtmosTransport.MetDrivers.ConvectionForcing(nothing, nothing, tm5_d)
-            AtmosTransport.Operators.apply!(state_d, forcing_d, grid,
-                AtmosTransport.Operators.TM5Convection(use_collab_lu = true, n_merge = 2),
-                FT(3600); workspace = ws_d)
-            out = Array(state_d.tracers_raw)
-            q_gpu = out[:, :, :, 1]
-            q_cpu = _merged_step!(reshape(copy(q), Nx, Ny, Nz, 1), m, forcing, 2)[:, :, :, 1]
-            @test isapprox(sum(Float64, q_gpu), sum(Float64, q); rtol = 64 * eps(FT))
-            @test sum(abs, q_gpu) <= FT(1.05) * sum(abs, q)
-            @test isapprox(q_gpu, q_cpu; rtol = 64 * eps(FT), atol = 64 * eps(FT) * maximum(abs, q_cpu))
-            @test all(isfinite, out[:, :, :, 2]) && minimum(out[:, :, :, 2]) >= 0
-            @test isapprox(sum(Float64, out[:, :, :, 2]), sum(Float64, q_empty); rtol = 64 * eps(FT))
+            q_empty = _nearly_empty_merge_tracer(m)
+            for nm in (2,4,8), lmax in (0,8)
+                q_input = nm == 2 ? q : abs.(q)
+                state = AtmosTransport.State.CellState(m; CO2 = copy(q_input), Rn = copy(q_empty))
+                ws = AtmosTransport.Operators.TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
+                state_d = Adapt.adapt(CUDA.CuArray, state)
+                ws_d = Adapt.adapt(CUDA.CuArray, ws)
+                tm5_d = map(CUDA.CuArray, NamedTuple{(:entu, :detu, :entd, :detd)}(forcing))
+                forcing_d = AtmosTransport.MetDrivers.ConvectionForcing(nothing, nothing, tm5_d)
+                AtmosTransport.Operators.apply!(state_d, forcing_d, grid,
+                    AtmosTransport.Operators.TM5Convection(use_collab_lu = true, n_merge = nm, lmax_conv = lmax),
+                    FT(3600); workspace = ws_d)
+                out = Array(state_d.tracers_raw)
+                q_gpu = out[:, :, :, 1]
+                q_cpu = _merged_step!(reshape(copy(q_input), Nx, Ny, Nz, 1), m, forcing, nm; L=lmax == 0 ? Nz : lmax)[:, :, :, 1]
+                @test isapprox(sum(Float64, q_gpu), sum(Float64, q_input); rtol = 64 * eps(FT))
+                @test sum(abs, q_gpu) <= FT(1.05) * sum(abs, q_input)
+                @test isapprox(q_gpu, q_cpu; rtol = 64 * eps(FT), atol = 64 * eps(FT) * maximum(abs, q_cpu))
+                @test all(isfinite, out[:, :, :, 2]) && minimum(out[:, :, :, 2]) >= 0
+                @test isapprox(sum(Float64, out[:, :, :, 2]), sum(Float64, q_empty); rtol = 64 * eps(FT))
+                if nm in (2, 4)
+                    @test all(out[:, :, 10, 2] .> q_empty[:, :, 10])
+                end
+                if lmax == 8
+                    @test q_gpu[:,:,1:8] == q_input[:,:,1:8]
+                    if nm == 8
+                        @test q_gpu == q_input
+                    end
+                end
+            end
         end
     end
 
@@ -323,7 +345,7 @@ _column_forcing(::Type{FT}, Nx, Ny, Nz; kw...) where {FT} =
             # Device arrays throughout; only the coarse column solve runs on the
             # host, so the split's reductions and broadcasts run on the GPU.
             q_gpu = CUDA.CuArray(q)
-            Cv._tm5_merge_aggregate_solve_disaggregate!(
+            Cv.TM5._tm5_merge_aggregate_solve_disaggregate!(
                 q_gpu, CUDA.CuArray(m), map(CUDA.CuArray, forcing)..., 0, Nz, Nz ÷ 2, 2, 3,
                 function (qS, args...)
                     h = Array(qS)

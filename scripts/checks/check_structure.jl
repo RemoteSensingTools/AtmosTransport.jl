@@ -649,12 +649,38 @@ function relocate_m1_layers(before, file)
     return migrated
 end
 
+# C1 splits one existing dependency budget into a facade and two children.
+# Only LAYERS identities migrate: helper/clone/docstring allowances still shrink.
+function relocate_c1_layers(before, file)
+    file == "src/LAYERS.toml" || return before
+    parent = "AtmosTransport.Operators.Convection"
+    modules = get(before, "modules", Dict())
+    haskey(modules, parent * ".TM5") && return before
+    haskey(modules, parent) || return before
+    migrated = deepcopy(before)
+    for (table, home) in (("modules", parent), ("folders", "src/Operators/Convection"))
+        budgets = get(migrated, table, Dict())
+        haskey(budgets, home) || continue
+        children = [home * (table == "modules" ? ".TM5" : "/TM5"),
+                    home * (table == "modules" ? ".CMFMC" : "/CMFMC")]
+        prior = copy(budgets[home])
+        for deps in values(budgets)
+            home in deps && append!(deps, children)
+        end
+        budgets[home] = [prior; children]
+        budgets[children[1]] = [prior; home]
+        budgets[children[2]] = [prior; home; children[1]]
+    end
+    return migrated
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
     before = relocate_x1_baseline(before, file)
     before = relocate_o1_layers(before, file)
     before = relocate_m1_layers(before, file)
+    before = relocate_c1_layers(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")

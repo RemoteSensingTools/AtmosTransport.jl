@@ -47,6 +47,7 @@ operator × topology matrix.
 
 - [`AbstractOperators.jl`](AbstractOperators.jl) — root `apply!` contract
   and abstract operator families
+- [`OperatorState.jl`](OperatorState.jl) — persistent-state interface and storage copying
 - [`Operators.jl`](Operators.jl) — include order, submodule assembly,
   re-exports, and the public surface seen by `AtmosTransport`
 - [`Advection/`](Advection/README.md) — finite-volume transport core,
@@ -142,6 +143,11 @@ Models and Adjoints compose the public operator APIs; extensions provide backend
 
 Operator roots, `apply!`, recorder hooks and re-exports from physics submodules.
 Diffusion owns PBL physics, diffusion workspace validation and staged geometry APIs.
+`operator_state`, `restore_operator_state!` and `reset_operator_state!` define the
+checkpoint interface shared by Convection and StepPlans. Storage copying and
+zeroing stay with that interface.
+
+# shared: operator_state, restore_operator_state!, reset_operator_state!, _copy_state, _copy_state!, _zero_state!
 
 ## Forward<->adjoint mirrors
 

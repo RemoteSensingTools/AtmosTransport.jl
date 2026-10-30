@@ -14,8 +14,7 @@ using Test
 using Random
 
 using AtmosTransport
-using .AtmosTransport.Operators.Convection: _tm5_solve_column!,
-                                             _tm5_diagnose_cloud_dims
+using .AtmosTransport.Operators.Convection.TM5: _tm5_solve_column!, _tm5_diagnose_cloud_dims
 
 # Returns (rm_out, conv1_out) for the two execution paths so the
 # caller can compare both. `rm_in` and the four forcing vectors are
@@ -169,4 +168,92 @@ end
         @test rmA == rmB
         @test c1A == c1B
     end
+end
+
+using AtmosTransport.Operators.Convection.TM5: _tm5_build_conv1!, _tm5_effective_cloud_top
+
+function _make_column(Nz::Int; icltop_target::Int, icllfs_target::Int)
+    entu = zeros(Float32, Nz); detu = zeros(Float32, Nz)
+    entd = zeros(Float32, Nz); detd = zeros(Float32, Nz)
+    if icltop_target ≤ Nz
+        for k in icltop_target:Nz
+            entu[k] = Float32(0.02 + 0.001 * (k - icltop_target))
+            detu[k] = Float32(0.015 + 0.002 * (k - icltop_target))
+        end
+    end
+    if icllfs_target ≤ Nz
+        for k in icllfs_target:Nz
+            entd[k] = Float32(0.01 + 0.0005 * (k - icllfs_target))
+            detd[k] = Float32(0.012 + 0.0004 * (k - icllfs_target))
+        end
+    end
+    m_col = ones(Float32, Nz) .* Float32(1000.0)
+    return entu, detu, entd, detd, m_col
+end
+
+function _build_and_check(name::String; Nz::Int,
+                          icltop_target::Int, icllfs_target::Int,
+                          dt::Float32 = Float32(900.0))
+    entu, detu, entd, detd, m_col = _make_column(Nz;
+        icltop_target = icltop_target, icllfs_target = icllfs_target)
+    icltop, _, icllfs = _tm5_diagnose_cloud_dims(detu, entd, Nz)
+
+    if icltop > Nz
+        # No convection — short-circuited in `_tm5_solve_column!` before
+        # `_tm5_build_conv1!` is called. Nothing to assert at the matrix
+        # level.
+        @info "[$name] no convection — short-circuited; skipping matrix asserts"
+        return
+    end
+
+    conv1 = zeros(Float32, Nz, Nz)
+    f_buf = zeros(Float32, Nz + 1, Nz)
+    amu = zeros(Float32, Nz + 1)
+    amd = zeros(Float32, Nz + 1)
+    _tm5_build_conv1!(conv1, entu, detu, entd, detd, m_col,
+                      icltop, icllfs, dt, Nz;
+                      f = f_buf, amu = amu, amd = amd)
+
+    icltop_eff = _tm5_effective_cloud_top(icltop, icllfs)
+    upper_ok = true
+    for k in 1:max(0, icltop_eff - 1)
+        for j in 1:Nz
+            expected = (k == j) ? one(Float32) : zero(Float32)
+            if conv1[k, j] != expected
+                upper_ok = false
+                @info "[$name] upper-row violation conv1[$k,$j]=$(conv1[k,j]) expected=$expected"
+                @goto upper_done
+            end
+        end
+    end
+    @label upper_done
+    @test upper_ok
+
+    lower_left_ok = true
+    for k in icltop_eff:Nz
+        for j in 1:max(0, icltop_eff - 1)
+            if conv1[k, j] != zero(Float32)
+                lower_left_ok = false
+                @info "[$name] lower-left violation conv1[$k,$j]=$(conv1[k,j])"
+                @goto lower_left_done
+            end
+        end
+    end
+    @label lower_left_done
+    @test lower_left_ok
+end
+
+@testset "TM5 conv1 sparsity above icltop_eff" begin
+    Nz = 72
+    @testset "icllfs > icltop  (typical)"        _build_and_check("icllfs>icltop";  Nz=Nz, icltop_target=40, icllfs_target=55)
+    @testset "icllfs == icltop"                  _build_and_check("icllfs==icltop"; Nz=Nz, icltop_target=40, icllfs_target=40)
+    @testset "icllfs < icltop  (historical fail)" _build_and_check("icllfs<icltop"; Nz=Nz, icltop_target=50, icllfs_target=30)
+    @testset "icltop = 1 (full-depth)"           _build_and_check("icltop=1";       Nz=Nz, icltop_target=1,  icllfs_target=20)
+    @testset "icltop = 2 (boundary)"             _build_and_check("icltop=2";       Nz=Nz, icltop_target=2,  icllfs_target=10)
+    @testset "icltop > Nz (no convection)"       _build_and_check("no convection";  Nz=Nz, icltop_target=Nz + 5, icllfs_target=Nz + 5)
+
+    # L137 cases mirroring the C180/L137 binary scan.
+    Nz137 = 137
+    @testset "L137 typical median (icltop=106)"  _build_and_check("L137 median";  Nz=Nz137, icltop_target=106, icllfs_target=120)
+    @testset "L137 deepest seen (icltop=54)"     _build_and_check("L137 deepest"; Nz=Nz137, icltop_target=54,  icllfs_target=70)
 end

@@ -380,20 +380,7 @@ function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
     return mapreduce(identity, _nan_max, worst; init = zero(FT))
 end
 
-"""
-    _get_or_compute_n_sub!(ws, cmfmc, air_mass, cell_metrics, dt) -> Int
 
-Return the cached CFL sub-step count, recomputing from the CMFMC
-field if the cache is stale (first call after a window advance).
-
-CFL rule:
-
-    n_sub = max(1, ceil(max_over_grid(cmfmc · dt / bmass) / cfl_safety))
-
-with `cfl_safety = 0.5`. Cached on `ws.cached_n_sub[]` alongside
-`ws.cache_valid[]`; `invalidate_cmfmc_cache!(ws)` sets the sentinel
-false so the next call re-scans.
-"""
 # Safety ceiling for the CFL-derived sub-step count. If met data is
 # pathologically inconsistent (e.g. `cmfmc` in kg/m²/s but `air_mass`
 # accidentally in units that make `bmass` tiny — a common unit-scale
@@ -410,6 +397,20 @@ const _CMFMC_N_SUB_MAX = 1024
 # high-CFL cells are kept stable by the clamp + conserved by the column rescale.
 const _CMFMC_CLAMP_N_SUB_CAP = 48
 
+"""
+    _get_or_compute_n_sub!(ws, cmfmc, air_mass, cell_metrics, dt) -> Int
+
+Return the cached CFL sub-step count, recomputing from the CMFMC
+field if the cache is stale (first call after a window advance).
+
+CFL rule:
+
+    n_sub = max(1, ceil(max_over_grid(cmfmc · dt / bmass) / cfl_safety))
+
+with `cfl_safety = 0.5`. Cached on `ws.cached_n_sub[]` alongside
+`ws.cache_valid[]`; `invalidate_cmfmc_cache!(ws)` sets the sentinel
+false so the next call re-scans.
+"""
 function _get_or_compute_n_sub!(ws::CMFMCWorkspace,
                                  cmfmc,
                                  air_mass,

@@ -310,7 +310,7 @@ Consumes the four TM5 fields from the binary (`:entu`, `:detu`,
 `:entd`, `:detd`) and runs the TM5 column solve via a four-band
 implicit operator. This is the path for ERA5-driven runs. The
 algorithm follows `tm5/levitation.F90` closely; the column solve is
-in `src/Operators/Convection/tm5_column_solve.jl` and the kernels
+in `src/Operators/Convection/TM5/tm5_column_solve.jl` and the kernels
 in `tm5_kernels.jl`.
 
 #### [ERA5 → TM5 fields (`ec2tm`)](@id tm5-ec2tm)

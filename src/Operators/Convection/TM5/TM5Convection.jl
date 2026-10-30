@@ -66,7 +66,7 @@ the tracer; merged solves have no adjoint (CS footprints require
 
 `tile_workspace_gib` (binary GiB) is the per-topology target for
 the TM5 column-tile workspace.
-`_convection_workspace_for(::TM5Convection, ...)` reads this field
+`convection_workspace_for(::TM5Convection, ...)` reads this field
 and derives a tile size `B` via [`derive_tile_columns`](@ref); the
 [`TM5Workspace`](@ref) uses a single `(Nz, Nz, B)` matrix slab plus
 matching pivot, cloud-dimension, and flux-vector slabs. A larger budget

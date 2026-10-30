@@ -1,5 +1,5 @@
 using AtmosTransport, Random, Test
-const CMFMCConv = AtmosTransport.Operators.Convection
+const CMFMCConv = AtmosTransport.Operators.Convection.CMFMC
 
 # Fields for the CMFMC CFL scan in all three layouts, with zero-mass columns
 # (skipped by the scan) and the largest ratio wherever the random draw puts it;

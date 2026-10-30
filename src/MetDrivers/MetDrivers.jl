@@ -53,7 +53,7 @@ export load_qv_pair_window!, load_grid, load_transport_window, load_transport_wi
 export driver_grid, air_mass_basis, has_humidity_endpoints
 export interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
 export load_surface_window!
-export ConvectionForcing, has_convection_forcing
+export ConvectionForcing
 export copy_convection_forcing!, allocate_convection_forcing_like
 export PBLSurfaceForcing
 export window_count, has_qv_endpoints, has_flux_delta, has_cmfmc

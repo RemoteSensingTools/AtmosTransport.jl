@@ -1,8 +1,6 @@
 # P1 snapshot of existing debt. Allowlists only shrink; new entries need owner approval.
 [allow]
 "src/Models/RuntimePhysicsRecipe.jl|cafeed2a50be7b723245f44e44c91389175b0e50ab85383444510e2fe576499a" = "P1 baseline: src/Models/RuntimePhysicsRecipe.jl:1: unattached docstring; remove this allowance when the owning cleanup lands."
-"src/Operators/Convection/CMFMCConvection.jl|2ccceb2119731fac7cb93e97e189cfa15870c676acffa4c8d3aa6f3418ef232f" = "P1 baseline: src/Operators/Convection/CMFMCConvection.jl:26: unattached docstring; remove this allowance when the owning cleanup lands."
-"src/Operators/Convection/cmfmc_kernels.jl|afd511b2fce65f8cbf1d1a31821b28ec48ff397e52a85f55260e9a9afe60c9e7" = "P1 baseline: src/Operators/Convection/cmfmc_kernels.jl:383: unattached docstring; remove this allowance when the owning cleanup lands."
 "src/Preprocessing/binary_pipeline.jl|46abb82f5fd8be4937280cd040a7213fe1f9c9eece17717e2a755122d7cfd69f" = "P1 baseline: src/Preprocessing/binary_pipeline.jl:1: unattached docstring; remove this allowance when the owning cleanup lands."
 "src/Preprocessing/transport_binary/geos_cs_omega.jl|8a6cfbc26a7036d42effb6dc60d9ae1e66c82d3d970fc41e8e5c6e528d9706a3" = "P1 baseline: src/Preprocessing/transport_binary/geos_cs_omega.jl:416: unattached docstring; remove this allowance when the owning cleanup lands."
 "src/Preprocessing/transport_binary/writer_adapters.jl|b31e86e4c35abb92a264fed7586f67da82222b468e3be0747a1757774edb286a" = "P1 baseline: src/Preprocessing/transport_binary/writer_adapters.jl:1: unattached docstring; remove this allowance when the owning cleanup lands."

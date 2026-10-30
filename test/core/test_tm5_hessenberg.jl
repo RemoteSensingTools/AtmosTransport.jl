@@ -14,28 +14,28 @@ const AD = AtmosTransport.Adjoints
         end
         dense, structured = copy(A), copy(A)
         pd, ps = zeros(Int,n), zeros(Int,n)
-        C._tm5_lu!(dense, pd, n)
-        C._tm5_hessenberg_lu!(structured, ps, n)
+        C.TM5._tm5_lu!(dense, pd, n)
+        C.TM5._tm5_hessenberg_lu!(structured, ps, n)
         swaps += count(ps .!= 1:n)
         @test dense == structured
         @test pd == ps
         rhs = randn(rng, FT, n, 7)
         q, reference = copy(rhs), copy(rhs)
-        C._tm5_solve!(reference, dense, pd, n, 7)
-        C._tm5_solve!(q, structured, ps, n, 7)
+        foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(reference, dense, pd, n, max(Int(1), 1), tracer), 1:7)
+        foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(q, structured, ps, n, max(Int(1), 1), tracer), 1:7)
         bits = FT === Float32 ? UInt32 : UInt64
         @test reinterpret(bits, vec(q)) == reinterpret(bits, vec(reference))
         @test norm(Float64.(A)*Float64.(q)-Float64.(rhs)) /
               (norm(A)*norm(q)+norm(rhs)) < 100eps(FT)
         y = randn(rng, FT, n)
         adjoint_q = copy(y)
-        AD._tm5_solve_vector_transpose!(adjoint_q, structured, ps, n)
+        C.TM5._tm5_solve_vector_transpose!(adjoint_q, structured, ps, n)
         @test norm(transpose(Float64.(A))*Float64.(adjoint_q)-Float64.(y)) /
               (norm(A)*norm(adjoint_q)+norm(y)) < 100eps(FT)
     end
     @test swaps > 0
     # Zero levels retain the existing no-op contract.
-    @test C._tm5_hessenberg_lu!(zeros(0,0), Int[], 0) === nothing
+    @test C.TM5._tm5_hessenberg_lu!(zeros(0,0), Int[], 0) === nothing
 end
 
 function physical_rates(rng, FT, n, top, downdraft)
@@ -43,7 +43,7 @@ function physical_rates(rng, FT, n, top, downdraft)
     cmfmc[1,1,(top+1):n] .= FT(0.1) .* rand(rng,FT,n-top)
     dtrain[1,1,top:n] .= FT(0.01) .* rand(rng,FT,n-top+1)
     e, d = similar(dtrain), similar(dtrain)
-    C._derive_cmfmc_matrix_rates_ll_kernel!(KA.CPU(), (1,1))(
+    C.CMFMC._derive_cmfmc_matrix_rates_ll_kernel!(KA.CPU(), (1,1))(
         e, d, cmfmc, dtrain, n; ndrange=(1,1))
     KA.synchronize(KA.CPU())
     ed, dd = zeros(FT,n), zeros(FT,n)
@@ -59,26 +59,26 @@ end
         rates = physical_rates(rng, FT, n, top, down)
         m = FT(50) .+ FT(150) .* rand(rng,FT,n)
         dt = FT(1800)
-        ct, _, lfs = C._tm5_diagnose_cloud_dims(rates[2],rates[3],n)
+        ct, _, lfs = C.TM5._tm5_diagnose_cloud_dims(rates[2],rates[3],n)
         lo = min(lfs,max(ct,2)-1)
         @test (lfs > n) == iszero(down) # Even tiny positive downdrafts stay dense.
         A = Matrix{FT}(I,n,n)
-        C._tm5_build_conv1!(A, rates..., m, ct, lfs, dt, n;
+        C.TM5._tm5_build_conv1!(A, rates..., m, ct, lfs, dt, n;
                            f=A, amu=zeros(FT,n+1), amd=zeros(FT,n+1))
         if iszero(down)
             @test all(iszero(A[i,j]) for j in 1:n for i in (j+2):n)
         end
         dense, pd = copy(A), fill(-1,n)
-        C._tm5_lu!(dense, pd, n; icltop_eff=lo)
+        C.TM5._tm5_lu!(dense, pd, n; icltop_eff=lo)
         rhs = rand(rng,FT,n,65) .* m
         reference = copy(rhs)
         for tracer in 1:65                       # plain dense solve + column mass ledger
-            C._tm5_conserving_solve_tracer!(reference, dense, pd, n, lo, tracer, false)
+            C.TM5._tm5_conserving_solve_tracer!(reference, dense, pd, n, lo, tracer, false)
         end
 
         # The automatic production path must agree with explicitly dense LU.
         q, work, piv = copy(rhs), Matrix{FT}(I,n,n), fill(-1,n)
-        C._tm5_solve_column!(q, m, rates..., work, piv, zeros(Int,3), dt;
+        C.TM5._tm5_solve_column!(q, m, rates..., work, piv, zeros(Int,3), dt;
             f_buf=work, amu_buf=zeros(FT,n+1), amd_buf=zeros(FT,n+1))
         bits = FT === Float32 ? UInt32 : UInt64
         @test reinterpret(bits, vec(q)) == reinterpret(bits, vec(reference))
@@ -88,7 +88,7 @@ end
         # The plain solve conserves to rounding (the matrix is closed), and the
         # column mass ledger makes it exact up to one rounding in one cell.
         plain = copy(rhs)
-        C._tm5_solve!(plain, dense, pd, n, 65; icltop_eff=lo)
+        foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(plain, dense, pd, n, max(Int(lo), 1), tracer), 1:65)
         @test maximum(abs.(sum(Float64, plain; dims=1) - sum(Float64, rhs; dims=1)) ./
                       sum(Float64, rhs; dims=1)) < 100eps(FT)
         @test all(t -> abs(sum(big, q[:,t]) - sum(big, rhs[:,t])) <= eps(FT) * maximum(q[:,t]), 1:65)
@@ -96,14 +96,14 @@ end
         # Exercise the column entry points used by CS adjoint replay too.
         x, y = copy(rhs[:,1]), randn(rng,FT,n)
         fwd, adj = copy(x), copy(y)
-        for (solve!, profile) in ((AD._tm5_solve_column_vector!,fwd),
-                                  (AD._tm5_solve_column_vector_adjoint!,adj))
+        for (solve!, profile) in ((C.TM5._tm5_solve_column!,reshape(fwd,:,1)),
+                                  (C.TM5._tm5_solve_column_vector_adjoint!,adj))
             work = Matrix{FT}(I,n,n)
             solve!(profile, m, rates..., work, fill(-1,n), zeros(Int,3), dt;
                    f_buf=work, amu_buf=zeros(FT,n+1), amd_buf=zeros(FT,n+1))
         end
         adj_reference = copy(y)
-        AD._tm5_solve_vector_transpose!(adj_reference, dense, pd, n; icltop_eff=lo)
+        C.TM5._tm5_solve_vector_transpose!(adj_reference, dense, pd, n; icltop_eff=lo)
         @test reinterpret(bits, fwd) == reinterpret(bits, reference[:,1])
         @test reinterpret(bits, adj) == reinterpret(bits, adj_reference)
         @test abs(dot(fwd,y)-dot(x,adj)) < 100eps(FT)*max(norm(fwd)*norm(y),norm(x)*norm(adj))

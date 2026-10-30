@@ -116,7 +116,7 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
               diffusion_workspace = has_diffusion ? [diffusion_workspace...] : nothing,
               convection_op = model.convection,
               convection_forcing = has_convection ? [forcing...] : nothing,
-              convection_workspace = _convection_workspace_for(model.convection, model.state,
+              convection_workspace = convection_workspace_for(model.convection, model.state,
                                                                model.grid))
     return (; panels_rm0, panels_m0, panels_am_steps = [am...], panels_bm_steps = [bm...],
             panels_cm_steps = [cm...], mesh = model.grid.horizontal, kwargs)

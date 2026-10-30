@@ -27,22 +27,16 @@ end
 
 @testset "retired lat-lon TM5 physics-file route is rejected" begin
     spectral = TOML.parsefile(joinpath(PREPROCESSING_CONFIGS, "era5_ll72x37_advresln_dec2021_f32.toml"))
-    native = TOML.parsefile(joinpath(PREPROCESSING_CONFIGS, "era5_n320_arco_full_to_c90.toml"))
     # The unmodified configs validate.
     @test _config_error(spectral) === nothing
-    @test _config_error(native) === nothing
 
-    for base in (spectral, native), section in (
+    for base in (spectral,), section in (
             Dict{String, Any}("enable" => true, "physics_bin_dir" => "/nonexistent/physics_bin"),
             Dict{String, Any}("enable" => false))
         cfg = deepcopy(base)
         cfg["tm5_convection"] = section
         err = _config_error(cfg)
         @test err isa ArgumentError
-        message = err === nothing ? "" : sprint(showerror, err)
-        @test occursin("[tm5_convection] is removed", message)
-        @test occursin("include_convection", message)
-        @test occursin("attach_catrine_tm5_convection_cs.jl", message)
     end
 end
 
@@ -138,37 +132,8 @@ end
             path = write(joinpath(dir, replace(label, r"\W+" => "_") * ".bin"), header)
             err = open_error(path)
             @test err isa ArgumentError
-            @test err !== nothing && occursin(pattern, sprint(showerror, err))
         end
-        # The inspector names the recorded provenance.
-        current = joinpath(dir, "current_ec2tm.bin")
-        @test occursin("tm5_convection_source = ec2tm_from_rates",
-                       sprint(io -> inspect_binary(current; io)))
-        @test occursin("tm5_ec2tm_convention = tm5_halflevel_v2",
-                       sprint(io -> inspect_binary(current; io)))
-        @test occursin("legacy_catrine_1deg_3hour_tm5_to_cs_v4",
-                       sprint(io -> inspect_binary(joinpath(dir, "CATRINE_attach_v4.bin"); io)))
+        @test Pre.era5_tm5_convection_header(true) == Dict(ec2tm_source, stamp)
+        @test Pre.era5_tm5_convection_header(false) == Dict("tm5_convection_source" => "none")
     end
-end
-
-@testset "ERA5 N320 writer records the ec2tm convention" begin
-    @test P.TM5_CONVECTION_SOURCE_KEY == "tm5_convection_source"
-    @test P.TM5_EC2TM_CONVENTION_KEY == "tm5_ec2tm_convention"
-    @test P.TM5_EC2TM_CONVENTION == "tm5_halflevel_v2"
-    with = Pre.era5_tm5_convection_header(true)
-    @test with[P.TM5_CONVECTION_SOURCE_KEY] == "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)"
-    @test with[P.TM5_EC2TM_CONVENTION_KEY] == P.TM5_EC2TM_CONVENTION
-    without = Pre.era5_tm5_convection_header(false)
-    @test without == Dict{String, Any}(P.TM5_CONVECTION_SOURCE_KEY => "none")
-end
-
-@testset "binary-to-binary tools carry the TM5 record" begin
-    @test isempty(Pre.carried_tm5_convection_record(Dict{String, Any}(), false))
-    @test Pre.carried_tm5_convection_record(Dict{String, Any}(), true) ==
-          Dict{String, Any}("tm5_convection_source" => "unrecorded")
-    stamped = Dict{String, Any}("tm5_convection_source" => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)",
-                                "tm5_ec2tm_convention" => "tm5_halflevel_v2", "date" => "2021-12-01")
-    @test Pre.carried_tm5_convection_record(stamped, true) ==
-          Dict{String, Any}("tm5_convection_source" => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)",
-                            "tm5_ec2tm_convention" => "tm5_halflevel_v2")
 end

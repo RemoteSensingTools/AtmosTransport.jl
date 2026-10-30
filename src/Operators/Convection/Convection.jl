@@ -57,15 +57,9 @@ dead branch.
 """
 module Convection
 
-using Adapt
-import KernelAbstractions
-using KernelAbstractions: @kernel, @index, @Const, @localmem, @synchronize,
-                          @uniform, get_backend, synchronize
 using ...State: CellState, CubedSphereState
 using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cell_areas_by_latitude
 using ...MetDrivers: ConvectionForcing
-using ...Architectures: _kahan_add, _neumaier_sum, _ledger_residual, _ledger_deposit,
-                       _load_ledger_carry, _store_ledger_carry!, launch!, select_panel
 import ..apply!
 import ..AbstractConvection             # global root from src/Operators/AbstractOperators.jl
 
@@ -78,14 +72,19 @@ export CMFMCMatrixConvection                    # GEOS-derived rates → TM5 LU 
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
 export apply_convection!
 
+function apply_convection! end
 include("operators.jl")
-include("convection_workspace.jl")   # CMFMCWorkspace + TM5Workspace
-include("cmfmc_kernels.jl")          # kernels + inline helpers
-include("CMFMCConvection.jl")        # struct + apply! methods
-include("tm5_column_solve.jl")       # backend-agnostic column solver
-include("tm5_kernels.jl")            # @kernel wrappers per topology
-include("TM5Convection.jl")          # struct + apply! methods
-include("cmfmc_matrix_kernels.jl")   # GEOS (cmfmc,dtrain) → TM5 (entu,detu) derivation kernels
-include("CMFMCMatrixConvection.jl")  # struct + apply! routing through TM5 LU
-
+include("workspace_shared.jl")
+include("TM5/TM5.jl")
+using .TM5: TM5Convection, TM5Workspace, derive_tile_columns
+include("CMFMC/CMFMC.jl")
+using .CMFMC: CMFMCConvection, AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase,
+              CMFMCWorkspace, invalidate_cmfmc_cache!, CMFMCMatrixConvection,
+              CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
+using ...Grids: cell_area, ncells
+import ..operator_state, ..restore_operator_state!, ..reset_operator_state!
+using ..Operators: _copy_state, _zero_state!
+include("workspace_factory.jl")
+include("workspace_state.jl")
+export convection_workspace_for, derive_tile_columns
 end # module Convection

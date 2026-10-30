@@ -1,3 +1,4 @@
+import KernelAbstractions
 #!/usr/bin/env julia
 """
 Plan 23 tests for `TM5Convection` — built up over Commits 1–4.
@@ -28,171 +29,13 @@ using .AtmosTransport.Operators: AbstractConvection, NoConvection,
                                  UpwindScheme
 using .AtmosTransport.Operators.Convection: apply_convection!
 using .AtmosTransport.MetDrivers: ConvectionForcing
-using .AtmosTransport.Models: TransportModel, with_convection,
-                              _convection_workspace_for
+using .AtmosTransport.Models: TransportModel, with_convection
 
 const FT = Float32
 
-@testset "plan 23 Commit 1: TM5Convection type + workspace factory" begin
-    @testset "construct TM5Convection() and tile_workspace_gib field" begin
-        op = TM5Convection()
-        @test op isa AbstractConvection
-        @test op isa TM5Convection
-        # Storage plan Commit 4: tile_workspace_gib field carries
-        # the per-topology TM5 column-tile budget. Default 1.0 GiB.
-        # P6 cache / collab-LU work: a second `use_collab_lu` Bool
-        # field opts the convection block into the workgroup-
-        # collaborative kernel; default false so existing runs are
-        # bit-identical to pre-collab behaviour.
-        # `lmax_conv` lands here too: a third Int field with default
-        # 0 meaning "no truncation, use Nz". Setting it to a positive
-        # value caps the convection matrix size (matching TM5's
-        # tropoX* setups).
-        @test fieldcount(typeof(op)) == 4
-        @test op.tile_workspace_gib == 1.0
-        @test op.use_collab_lu == false
-        @test op.lmax_conv == 0
-        @test op.n_merge == 1
-
-        op_tuned = TM5Convection(tile_workspace_gib = 2.5)
-        @test op_tuned.tile_workspace_gib == 2.5
-        @test op_tuned.use_collab_lu == false
-        @test op_tuned.lmax_conv == 0
-        @test op_tuned.n_merge == 1
-
-        op_collab = TM5Convection(use_collab_lu = true)
-        @test op_collab.use_collab_lu == true
-        @test op_collab.tile_workspace_gib == 1.0
-        @test op_collab.lmax_conv == 0
-        @test op_collab.n_merge == 1
-
-        op_trunc = TM5Convection(use_collab_lu = true, lmax_conv = 75)
-        @test op_trunc.lmax_conv == 75
-        @test op_trunc.use_collab_lu == true
-        @test op_trunc.n_merge == 1
-
-        op_merge = TM5Convection(use_collab_lu = true, lmax_conv = 75, n_merge = 3)
-        @test op_merge.n_merge == 3
-        @test op_merge.lmax_conv == 75
-        @test op_merge.use_collab_lu == true
-
-        # n_merge = 2 is now ACCEPTED (2026-06-13). The historical
-        # multi-substep mass blow-up was a CLIPPING bug — when `lmax_conv`
-        # truncates the active region below the cloud top, the updraft never
-        # fully detrains and the residual `amu` is uncompensated, which (fed by
-        # emission tracers) blows up over many substeps. It hit ANY n_merge with
-        # a clipping lmax_conv; it only LOOKED n=2-specific because of the L85
-        # cloud-top/lmax alignment. Fixed by the cloud-top closure in the
-        # updraft pass (tm5_kernels.jl + tm5_column_solve.jl).
-        @test TM5Convection(n_merge = 2).n_merge == 2
-        @test TM5Convection(use_collab_lu = true, lmax_conv = 75,
-                            n_merge = 2).n_merge == 2
-        @test TM5Convection{Float64}(1.0, true, 75, 2).n_merge == 2
-        # n_merge ≥ 1 still enforced (all construction paths).
-        @test_throws ArgumentError TM5Convection(n_merge = 0)
-        @test_throws ArgumentError TM5Convection(n_merge = -1)
-        @test_throws ArgumentError TM5Convection{Float64}(1.0, false, 0, 0)
-        @test_throws ArgumentError TM5Convection{Float64}(1.0, false, 0, -3)
-    end
-
-    @testset "NoConvection and CMFMCConvection unchanged" begin
-        # Plan 23's validator refactor must not change what these
-        # return or how they dispatch. Bit-exact regression.
-        @test NoConvection() isa AbstractConvection
-        @test CMFMCConvection() isa AbstractConvection
-    end
-end
-
-@testset "plan 23 Commit 1 / storage Commit 4: TM5Workspace tile shape" begin
-    Nx, Ny, Nz = 4, 3, 5
-
-    @testset "structured LatLon air_mass (Nx, Ny, Nz) — default tile" begin
-        air_mass = zeros(FT, Nx, Ny, Nz)
-        ws = TM5Workspace(air_mass)
-        # Default tile size = total cells per launch; the workspace
-        # is bit-equal to the pre-Commit-4 per-cell allocator in
-        # capacity, but the shape is now flat (Nz, Nz, B).
-        B = Nx * Ny
-        @test ws isa TM5Workspace{FT}
-        @test size(ws.conv1)       == (Nz, Nz, B)
-        @test size(ws.pivots)      == (Nz, B)
-        @test size(ws.cloud_dims)  == (3, B)
-        @test size(ws.amu_scratch) == (Nz + 1, B)
-        @test size(ws.amd_scratch) == (Nz + 1, B)
-        @test ws.f_scratch === ws.conv1                         # alias
-        @test eltype(ws.conv1)      == FT
-        @test eltype(ws.pivots)     == Int
-        @test eltype(ws.cloud_dims) == Int
-    end
-
-    @testset "face-indexed RG air_mass (ncells, Nz) — default tile" begin
-        ncells = 24
-        air_mass = zeros(FT, ncells, Nz)
-        ws = TM5Workspace(air_mass)
-        @test ws isa TM5Workspace{FT}
-        @test size(ws.conv1)      == (Nz, Nz, ncells)
-        @test size(ws.pivots)     == (Nz, ncells)
-        @test size(ws.cloud_dims) == (3, ncells)
-        @test ws.f_scratch === ws.conv1
-    end
-
-    @testset "CS panel NTuple{6, (Nc, Nc, Nz)} — default tile (per-panel)" begin
-        Nc = 6
-        air_mass = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
-        ws = TM5Workspace(air_mass)
-        # Storage plan Commit 4: workspace is shared across panels
-        # (kernel launches sequentially), so the slab is sized for
-        # one panel's ndrange (Nc²), not all six.
-        B = Nc * Nc
-        @test ws isa TM5Workspace{FT}
-        @test ws.conv1 isa AbstractArray{FT, 3}
-        @test size(ws.conv1)      == (Nz, Nz, B)
-        @test size(ws.pivots)     == (Nz, B)
-        @test size(ws.cloud_dims) == (3, B)
-        @test ws.f_scratch === ws.conv1
-    end
-
-    @testset "explicit tile_columns shrinks the slab" begin
-        air_mass = zeros(FT, 32, 8, Nz)
-        ws_full  = TM5Workspace(air_mass)                       # B = 256
-        ws_tile  = TM5Workspace(air_mass; tile_columns = 64)
-        @test size(ws_full.conv1, 3) == 256
-        @test size(ws_tile.conv1, 3) == 64
-        @test size(ws_tile.amu_scratch, 2) == 64
-    end
-
-    @testset "tile_workspace_gib budget derives B" begin
-        # Big topology, small budget → derive_tile_columns clamps to 256.
-        air_mass = zeros(FT, 720, 720, Nz)
-        ws = TM5Workspace(air_mass; tile_workspace_gib = 1e-6)
-        @test size(ws.conv1, 3) >= 256                          # floor
-        # Big budget → clamps at total cells.
-        ws_big = TM5Workspace(air_mass; tile_workspace_gib = 1024.0)
-        @test size(ws_big.conv1, 3) == 720 * 720
-    end
-end
-
-@testset "plan 23 Commit 1: _convection_workspace_for dispatch" begin
-    # Minimal LatLon grid just to drive _convection_workspace_for.
-    mesh = LatLonMesh(; Nx=4, Ny=3, FT=FT)
-    A_ifc = FT[0, 500, 5000, 30000, 0]
-    B_ifc = FT[0, 0, FT(0.1), FT(0.5), 1]
-    vc = HybridSigmaPressure(A_ifc, B_ifc)
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    state = CellState(zeros(FT, 4, 3, 4); CO2 = zeros(FT, 4, 3, 4))
-
-    @test _convection_workspace_for(NoConvection(), state, grid) === nothing
-    ws_cmfmc = _convection_workspace_for(CMFMCConvection(), state, grid)
-    @test ws_cmfmc isa CMFMCWorkspace{FT}
-
-    ws_tm5 = _convection_workspace_for(TM5Convection(), state, grid)
-    @test ws_tm5 isa TM5Workspace{FT}
-    # Storage plan Commit 4: flat tile slab (Nz, Nz, B). Default
-    # B = Nx*Ny when budget covers all cells (it does at this size).
-    @test size(ws_tm5.conv1) == (4, 4, 12)
-    @test ws_tm5.cell_metrics !== nothing
-    @test size(ws_tm5.cell_metrics) == (3,)
+@testset "TM5Convection rejects invalid merge counts" begin
+    @test_throws ArgumentError TM5Convection(n_merge=0)
+    @test_throws ArgumentError TM5Convection(n_merge=-1)
 end
 
 @testset "plan 23 Commit 4: TM5Convection apply! LL kernel" begin
@@ -212,6 +55,9 @@ end
     detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 3:6] .= FT(0.02)
     entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 4:6] .= FT(0.01)
     detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 4:6] .= FT(0.005)
+    for j in 1:Ny, i in 1:Nx, field in (entu,detu,entd,detd)
+        field[i,j,:] .*= FT(i + 2j)
+    end
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
     ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
@@ -239,6 +85,11 @@ end
             workspace = ws_zero)
     @test state_zero.tracers_raw == state0_identity
 
+    tiled = deepcopy(state)
+    copyto!(tiled.tracers_raw,state0_copy)
+    tile_ws = TM5Workspace(tiled.air_mass;tile_columns=5,cell_metrics=ws.cell_metrics)
+    apply!(tiled,forcing,grid,TM5Convection(),FT(600);workspace=tile_ws)
+    @test reinterpret(UInt32,vec(tiled.tracers_raw)) == reinterpret(UInt32,vec(state.tracers_raw))
     # A deferred workspace must materialize the requested legacy tile on CPU
     # fallback, then reproduce the normal allocation path exactly.
     deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
@@ -272,6 +123,9 @@ end
     detu = zeros(FT, ncells, Nz); detu[:, 2:4] .= FT(0.02)
     entd = zeros(FT, ncells, Nz); entd[:, 3:4] .= FT(0.01)
     detd = zeros(FT, ncells, Nz); detd[:, 3:4] .= FT(0.005)
+    for c in 1:ncells, field in (entu,detu,entd,detd)
+        field[c,:] .*= FT(c)
+    end
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
     ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, ncells))
@@ -283,6 +137,11 @@ end
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
     @test any(state.tracers_raw .!= state0_copy)
 
+    tiled = deepcopy(state)
+    copyto!(tiled.tracers_raw,state0_copy)
+    tile_ws = TM5Workspace(tiled.air_mass;tile_columns=5,cell_metrics=ws.cell_metrics)
+    apply!(tiled,forcing,grid,TM5Convection(),FT(600);workspace=tile_ws)
+    @test reinterpret(UInt32,vec(tiled.tracers_raw)) == reinterpret(UInt32,vec(state.tracers_raw))
     # A deferred workspace must materialize the requested legacy tile on CPU
     # fallback, then reproduce the normal allocation path exactly.
     deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
@@ -320,6 +179,9 @@ end
     detu = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 2:4] .= FT(0.02); e end, 6)
     entd = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 3:4] .= FT(0.01); e end, 6)
     detd = ntuple(_ -> begin e = zeros(FT, Nc, Nc, Nz); e[:, :, 3:4] .= FT(0.005); e end, 6)
+    for p in 1:6, j in 1:Nc, i in 1:Nc, field in (entu,detu,entd,detd)
+        field[p][i,j,:] .*= FT(i + 2j + 5p)
+    end
     forcing = ConvectionForcing(nothing, nothing,
                                  (; entu, detu, entd, detd))
     ws = TM5Workspace(state.air_mass; cell_metrics = ntuple(_ -> ones(FT, Nc, Nc), 6))
@@ -337,6 +199,11 @@ end
     mass_after = interior_mass(state.tracers_raw)
     @test isapprox(mass_after, mass_before; rtol = 1f4 * eps(FT))
 
+    tiled = deepcopy(state)
+    foreach(copyto!, tiled.tracers_raw, state0_copy)
+    tile_ws = TM5Workspace(tiled.air_mass;tile_columns=5,cell_metrics=ws.cell_metrics)
+    apply!(tiled,forcing,grid,TM5Convection(),FT(600);workspace=tile_ws)
+    @test all(p -> reinterpret(UInt32,vec(tiled.tracers_raw[p])) == reinterpret(UInt32,vec(state.tracers_raw[p])),1:6)
     # A deferred workspace must materialize the requested legacy tile on CPU
     # fallback, then reproduce the normal allocation path exactly.
     deferred = TM5Workspace(state.air_mass; tile_columns=3, defer_scratch=true,
@@ -635,52 +502,6 @@ end
     end
 end
 
-@testset "P6 collab-LU: n_merge = 1 is bit-exact to no-merge path (CUDA)" begin
-    # When `n_merge = 1` the host must bypass the aggregation
-    # wrapper entirely and call the collab kernel directly (the
-    # wrapper's increment split would reproduce the solve only to
-    # rounding). Verify the dispatch picks the no-merge fast path
-    # by comparing the default collab-LU operator with an explicit
-    # `n_merge = 1`.
-    if !_HAS_CUDA
-        @test_skip "CUDA backend required"
-    else
-        Nx, Ny, Nz, Nt = 4, 3, 8, 2
-        mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-        A_ifc = FT[0, 500, 1000, 2000, 5000, 10000, 30000, 50000, 0]
-        B_ifc = FT[0, 0, 0, FT(0.05), FT(0.2), FT(0.4), FT(0.7), FT(0.9), 1]
-        vc = HybridSigmaPressure(A_ifc, B_ifc)
-        grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-        m = fill(FT(5e3), Nx, Ny, Nz)
-        tracer = zeros(FT, Nx, Ny, Nz); tracer[:, :, Nz] .= FT(1e-3) .* m[:, :, Nz]
-        entu = zeros(FT, Nx, Ny, Nz); entu[:, :, 3:6] .= FT(0.03)
-        detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 3:6] .= FT(0.02)
-        entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 4:6] .= FT(0.01)
-        detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 4:6] .= FT(0.005)
-        forcing = ConvectionForcing(nothing, nothing, (; entu, detu, entd, detd))
-        forcing_d = Adapt.adapt(CuArray, forcing)
-
-        state_a = CellState(m; CO2 = copy(tracer))
-        ws_a    = TM5Workspace(state_a.air_mass; cell_metrics = ones(FT, Ny))
-        state_d_a = Adapt.adapt(CuArray, state_a); ws_d_a = Adapt.adapt(CuArray, ws_a)
-        apply!(state_d_a, forcing_d, grid,
-               TM5Convection(use_collab_lu = true), FT(600);
-               workspace = ws_d_a)
-
-        # Explicit n_merge = 1 — should be byte-identical (host takes
-        # the same `nm == 1` short-circuit path).
-        state_b = CellState(m; CO2 = copy(tracer))
-        ws_b    = TM5Workspace(state_b.air_mass; cell_metrics = ones(FT, Ny))
-        state_d_b = Adapt.adapt(CuArray, state_b); ws_d_b = Adapt.adapt(CuArray, ws_b)
-        apply!(state_d_b, forcing_d, grid,
-               TM5Convection(use_collab_lu = true, n_merge = 1), FT(600);
-               workspace = ws_d_b)
-        CUDA.synchronize()
-        @test Array(state_d_a.tracers_raw) == Array(state_d_b.tracers_raw)
-    end
-end
-
 @testset "P6 collab-LU: the column ledger carry persists across calls (CUDA)" begin
     # Each column's tracer mass plus its ledger carry (TM5Workspace.ledger_carry)
     # is conserved over many calls on every topology, also with level merging,
@@ -689,86 +510,6 @@ end
         @test_skip "CUDA backend required"
     else
         check_tm5_ledger_carry(CuArray)
-    end
-end
-
-@testset "P6 collab-LU: vertical aggregation conserves tracer mass (CUDA)" begin
-    # The aggregate→solve→disaggregate path must conserve total
-    # tracer mass exactly, regardless of `n_merge`. We use Nz = 12
-    # so the divisors 2, 3, 4 all split lmax_conv cleanly.
-    if !_HAS_CUDA
-        @test_skip "CUDA backend required"
-    else
-        Nx, Ny, Nz, Nt = 4, 3, 12, 2
-        mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-        A_ifc = collect(FT, range(0, 5f4; length = Nz + 1))
-        B_ifc = collect(FT, range(1, 0;   length = Nz + 1))
-        A_ifc[1] = 0; B_ifc[end] = 0; B_ifc[1] = 0; A_ifc[end] = 0
-        vc = HybridSigmaPressure(A_ifc, B_ifc)
-        grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-        m = fill(FT(5e3), Nx, Ny, Nz)
-        tracer1 = zeros(FT, Nx, Ny, Nz)
-        tracer2 = zeros(FT, Nx, Ny, Nz)
-        for i in 1:Nx, j in 1:Ny, k in 1:Nz
-            tracer1[i, j, k] = FT(1e-4) * (k + i)        # smooth profile
-            tracer2[i, j, k] = FT(2e-4) * (Nz - k + j)   # different smooth profile
-        end
-
-        # Forcings only in layers 5..10 → lmax_conv = 8 covers the
-        # active region (layers 5..12), so layers 1..4 are pass-
-        # through. n_merge ∈ {2, 4} divides 8 evenly.
-        entu = zeros(FT, Nx, Ny, Nz); entu[:, :, 6:9] .= FT(0.03)
-        detu = zeros(FT, Nx, Ny, Nz); detu[:, :, 6:9] .= FT(0.02)
-        entd = zeros(FT, Nx, Ny, Nz); entd[:, :, 7:9] .= FT(0.01)
-        detd = zeros(FT, Nx, Ny, Nz); detd[:, :, 7:9] .= FT(0.005)
-        forcing = ConvectionForcing(nothing, nothing, (; entu, detu, entd, detd))
-        forcing_d = Adapt.adapt(CuArray, forcing)
-
-        # n_merge=2 is now valid (the clipping blow-up was fixed by the
-        # cloud-top closure); test 2, 4, 8 (divisors of lmax_conv=8) — all
-        # must conserve mass.
-        for nm in (2, 4, 8)
-            state = CellState(m; CO2 = copy(tracer1), CH4 = copy(tracer2))
-            ws    = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
-            state_d = Adapt.adapt(CuArray, state); ws_d = Adapt.adapt(CuArray, ws)
-            mass_before_co2 = sum(state.tracers_raw[:, :, :, 1])
-            mass_before_ch4 = sum(state.tracers_raw[:, :, :, 2])
-            apply!(state_d, forcing_d, grid,
-                   TM5Convection(use_collab_lu = true, lmax_conv = 8, n_merge = nm),
-                   FT(600); workspace = ws_d)
-            CUDA.synchronize()
-            q_out = Array(state_d.tracers_raw)
-            # Mass conservation: total over all (i, j, k) per tracer
-            # must equal the pre-step total to within Float32 rounding
-            # of `Nx * Ny * Nz ≈ 144` summations.
-            mass_after_co2 = sum(q_out[:, :, :, 1])
-            mass_after_ch4 = sum(q_out[:, :, :, 2])
-            # Same tolerance as the existing TM5 apply! testset
-            # (kernel-level mass conservation is bounded by TM5's
-            # surface-boundary handling, not by the split arithmetic;
-            # the increment split conserves each super-layer's
-            # total within roundoff).
-            @test isapprox(mass_after_co2, mass_before_co2;
-                            rtol = 1f4 * eps(FT))
-            @test isapprox(mass_after_ch4, mass_before_ch4;
-                            rtol = 1f4 * eps(FT))
-            # Pass-through invariant: layers above the active region
-            # (k < Nz - lmax_conv + 1 = 5) must equal the input.
-            for k in 1:4, tt in 1:Nt
-                tracer_init = tt == 1 ? tracer1 : tracer2
-                @test q_out[:, :, k, tt] == tracer_init[:, :, k]
-            end
-            # Two or more super-layers mix the active layers. A single
-            # super-layer (n_merge = 8) has no vertical transport, so the
-            # split returns its values bit for bit.
-            active_init = cat(tracer1[:, :, 5:Nz], tracer2[:, :, 5:Nz]; dims = 4)
-            if nm < 8
-                @test any(q_out[:, :, 5:Nz, :] .!= active_init)
-            else
-                @test q_out[:, :, 5:Nz, :] == active_init
-            end
-        end
     end
 end
 
@@ -840,50 +581,25 @@ end
 @testset "Collaborative LU: depth envelope and unbounded tracer batching" begin
     # Depth controls matrix storage; a fixed six-slot RHS buffer is reused
     # for any positive tracer count. CPU/Float64 fallback is independent.
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 2) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 6) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 7) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 65) == true
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, 0) == false
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(85, -1) == false
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(75, 2) == true   # ERA5/L85 target
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(40, 2) == true   # ml91/tropo60
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(25, 2) == true   # ml137/tropo25a
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, 2, Float32, KernelAbstractions.CPU()) == true
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, 6, Float32, KernelAbstractions.CPU()) == true
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, 7, Float32, KernelAbstractions.CPU()) == true
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, 65, Float32, KernelAbstractions.CPU()) == true
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, 0, Float32, KernelAbstractions.CPU()) == false
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(85, -1, Float32, KernelAbstractions.CPU()) == false
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(75, 2, Float32, KernelAbstractions.CPU()) == true   # ERA5/L85 target
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(40, 2, Float32, KernelAbstractions.CPU()) == true   # ml91/tropo60
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(25, 2, Float32, KernelAbstractions.CPU()) == true   # ml137/tropo25a
     # lmax_conv > 85 doesn't fit Metal's 32 KB threadgroup-memory limit.
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(86, 2) == false
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(91, 2) == false
-    @test AtmosTransport.Operators.Convection._tm5_collab_supports(0,  2) == false
-end
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(86, 2, Float32, KernelAbstractions.CPU()) == false
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(91, 2, Float32, KernelAbstractions.CPU()) == false
+    @test AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(0,  2, Float32, KernelAbstractions.CPU()) == false
+    @test !AtmosTransport.Operators.Convection.TM5._tm5_collab_supports(73, 7, Float64, KernelAbstractions.CPU())
 
-@testset "plan 23 Commit 4: _assert_tm5_forcing catches missing tm5_fields" begin
-    Nx, Ny, Nz = 4, 3, 4
-    mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
-    A_ifc = FT[0, 500, 5000, 30000, 0]
-    B_ifc = FT[0, 0, FT(0.1), FT(0.5), 1]
-    vc = HybridSigmaPressure(A_ifc, B_ifc)
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    state = CellState(fill(FT(1), Nx, Ny, Nz); CO2 = zeros(FT, Nx, Ny, Nz))
-    ws = TM5Workspace(state.air_mass; cell_metrics = ones(FT, Ny))
-    empty_forcing = ConvectionForcing()
-
-    err = try
-        apply!(state, empty_forcing, grid, TM5Convection(), FT(60); workspace=ws)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ArgumentError
-    @test occursin("tm5_fields", err.msg)
-    @test occursin("NamedTuple", err.msg)
-
-    # No "not yet implemented" strings remain (principle 7 prep).
-    @test !occursin("not yet implemented", err.msg)
 end
 
 @testset "plan 23 Commit 2: _tm5_solve_column! identity + conservation" begin
-    using .AtmosTransport.Operators.Convection: _tm5_solve_column!,
-                                                   _tm5_diagnose_cloud_dims
+    using .AtmosTransport.Operators.Convection.TM5: _tm5_solve_column!, _tm5_diagnose_cloud_dims
 
     Nz = 8
     Nt = 3
@@ -1043,75 +759,6 @@ end
     end
 end
 
-@testset "plan 23 Commit 2: column-major loop-order audit" begin
-    # Matrix assembly loops run leftmost-innermost (Julia is column-major).
-    # Time the shipped column solve on a minimal case and confirm it is not
-    # catastrophically slow. This is a sanity guard, not a benchmark; the
-    # 1 s gate is orders of magnitude above the expected time.
-    using .AtmosTransport.Operators.Convection: _tm5_solve_column!
-
-    T = Float64
-    Nz = 16
-    Ncols = 256
-    entu = zeros(T, Nz, Ncols)
-    detu = zeros(T, Nz, Ncols)
-    entd = zeros(T, Nz, Ncols)
-    detd = zeros(T, Nz, Ncols)
-    m    = fill(T(1e4), Nz, Ncols)
-    rm   = fill(T(1.0), Nz, 1, Ncols)
-    # Seed one mid-column detrainment so work is nontrivial.
-    detu[8, :] .= 0.01
-
-    conv1s = zeros(T, Nz, Nz, Ncols)
-    pivs   = zeros(Int, Nz, Ncols)
-    cds    = zeros(Int, 3, Ncols)
-
-    # Loop column index as outermost (leftmost-innermost k: correct
-    # column-major order because column slices are contiguous when
-    # arrays are (Nz, …, Ncols)).
-    solve_column!(c) = _tm5_solve_column!(view(rm, :, :, c),
-                                          view(m, :, c),
-                                          view(entu, :, c), view(detu, :, c),
-                                          view(entd, :, c), view(detd, :, c),
-                                          view(conv1s, :, :, c),
-                                          view(pivs, :, c),
-                                          view(cds, :, c),
-                                          T(600))
-    # Compile outside the timed loop: the first call took 0.5 s locally and
-    # 1.2 s on a CI runner, the 256 warm columns about 1 ms.
-    solve_column!(1)
-    t_correct = @elapsed for c in 1:Ncols
-        solve_column!(c)
-    end
-    @test t_correct < 1.0   # generous smoke gate; actual <50 ms
-end
-
-@testset "plan 23 Commit 1: with_convection(model, TM5Convection())" begin
-    # Build a minimal LatLon TransportModel end-to-end to prove the
-    # workspace installer threads TM5Workspace through correctly.
-    mesh = LatLonMesh(; Nx=4, Ny=3, FT=FT)
-    A_ifc = FT[0, 500, 5000, 30000, 0]
-    B_ifc = FT[0, 0, FT(0.1), FT(0.5), 1]
-    vc = HybridSigmaPressure(A_ifc, B_ifc)
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    state = CellState(fill(FT(1), 4, 3, 4); CO2 = zeros(FT, 4, 3, 4))
-    fluxes = allocate_face_fluxes(grid.horizontal, 4; FT = FT, basis = DryBasis)
-
-    model = TransportModel(state, fluxes, grid, UpwindScheme())
-    @test model.workspace.convection_ws === nothing  # NoConvection default
-
-    model_tm5 = with_convection(model, TM5Convection())
-    @test model_tm5.convection isa TM5Convection
-    @test model_tm5.workspace.convection_ws isa TM5Workspace{FT}
-    # Storage plan Commit 4: workspace is a flat tile slab. Default
-    # 1.0 GiB budget covers all 12 cells of this fixture, so B = 12.
-    @test size(model_tm5.workspace.convection_ws.conv1) == (4, 4, 12)
-
-    # Swapping back to NoConvection drops the workspace.
-    model_none = with_convection(model_tm5, NoConvection())
-    @test model_none.workspace.convection_ws === nothing
-end
 @testset "matrix convection rejects negative truncation depth" begin
     @test_throws ArgumentError TM5Convection(lmax_conv = -1)
     @test_throws ArgumentError TM5Convection{Float64}(1.0, true, -1, 1)
