@@ -213,9 +213,6 @@ using .MetDrivers: AbstractMetDriver,
                    grid_type, horizontal_topology,
                    source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics,
                    surface_pressure_basis,
-                   diagnose_cm_from_continuity!,
-                   ERA5ReducedGaussianGeometry,
-                   read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                    total_windows, window_dt, steps_per_window, steps_per_window_schedule,
                    supports_diffusion, supports_convection,
                    mesh_convention, mesh_definition,
@@ -258,6 +255,9 @@ using .GriddedIO
 
 # ---- Preprocessing pipeline (spectral/gridded → transport binary) ----
 include("Preprocessing/Preprocessing.jl")
+using .Preprocessing: ERA5ReducedGaussianGeometry,
+                      read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
+
 using .Preprocessing
 
 # ---- Minimal runtime/model layer ----

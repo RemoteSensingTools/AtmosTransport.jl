@@ -52,7 +52,7 @@ end
 # `scripts/diagnostics/heritage/compare_c180_binary_mass_fluxes.jl` so the layout walk
 # is self-contained.
 # Elements of one CS payload section (the library's table, which knows every section).
-_cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
+_cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers.section_elements(h, section)
 
 """Sum the `:m` payload (dry mass per cell per layer, kg) across all 6 panels
 of one window without materialising the per-panel arrays beyond a single

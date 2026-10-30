@@ -14,7 +14,9 @@
 # - Native GEOS fluxes have no independent source: their certificate is
 #   `not_applicable` and records only the balance correction.
 
-const FLUX_FIDELITY_SAMPLE_SEED = UInt64(0x6a09e667f3bcc909)
+using ..MetDrivers.BinaryFormat: fidelity_tag, FLUX_FIDELITY_SAMPLE_SEED,
+    FidelityPassed, FidelityFailed, FidelityNotApplicable, FidelityUnavailable,
+    WindRederivedFidelity, NativePassthroughFidelity, NoFluxFidelityKind
 const OMEGA_FIDELITY_PRESSURE_BANDS =
     ("surface-700", "700-300", "300-100", "100-10", "<10")
 # Header-key prefixes of the write-time certificate (`FLUX_CERTIFICATE_KEY_PREFIXES`,
@@ -49,8 +51,8 @@ fidelity_reason(::NativeFluxesNotRederivable) = "native_fluxes_not_rederivable"
 # `not_applicable`: the check cannot exist for this source; `unavailable`: it
 # could, but its input was not opened or attached.
 fidelity_status_label(::Union{SourceHasNoWinds, SourcePayloadOnly, SourceHasNoOmega,
-                              NativeFluxesNotRederivable}) = "not_applicable"
-fidelity_status_label(::Union{EvidenceNotAttached, SourceNotOpened}) = "unavailable"
+                              NativeFluxesNotRederivable}) = fidelity_tag(FidelityNotApplicable())
+fidelity_status_label(::Union{EvidenceNotAttached, SourceNotOpened}) = fidelity_tag(FidelityUnavailable())
 
 # ---------------------------------------------------------------------------
 # Evidence types
@@ -698,8 +700,8 @@ function _write_flux_certificate!(header::AbstractDict, acc::FluxFidelityAccumul
     if acc.wind_windows > 0
         n = acc.sample_count
         _check_certificate_coverage(header, acc.wind_windows, acc.samples_per_window, n)
-        header["flux_fidelity_status"] = "passed"
-        header["flux_fidelity_kind"] = "wind_rederived"
+        header["flux_fidelity_status"] = fidelity_tag(FidelityPassed())
+        header["flux_fidelity_kind"] = fidelity_tag(WindRederivedFidelity())
         header["flux_fidelity_samples_per_window"] = acc.samples_per_window
         header["flux_fidelity_sample_count"] = n
         header["flux_fidelity_windows"] = acc.wind_windows
@@ -724,7 +726,7 @@ function _write_flux_certificate!(header::AbstractDict, acc::FluxFidelityAccumul
         _check_certificate_coverage(header, acc.native_windows, acc.samples_per_window, n)
         reason = NativeFluxesNotRederivable()
         header["flux_fidelity_status"] = fidelity_status_label(reason)
-        header["flux_fidelity_kind"] = "native_passthrough"
+        header["flux_fidelity_kind"] = fidelity_tag(NativePassthroughFidelity())
         header["flux_fidelity_reason"] = fidelity_reason(reason)
         header["flux_fidelity_samples_per_window"] = acc.samples_per_window
         header["flux_fidelity_sample_count"] = n
@@ -738,7 +740,7 @@ function _write_flux_certificate!(header::AbstractDict, acc::FluxFidelityAccumul
         reason = something(acc.none_reason, EvidenceNotAttached())
         header["flux_fidelity_sample_rule"] = "none"
         header["flux_fidelity_status"] = fidelity_status_label(reason)
-        header["flux_fidelity_kind"] = "none"
+        header["flux_fidelity_kind"] = fidelity_tag(NoFluxFidelityKind())
         header["flux_fidelity_reason"] = fidelity_reason(reason)
         header["flux_fidelity_samples_per_window"] = 0
         header["flux_fidelity_sample_count"] = 0
@@ -782,7 +784,7 @@ function _write_omega_certificate!(header::AbstractDict, acc::FluxFidelityAccumu
              correlation = correlation > baseline.correlation_min,
              slope = baseline.slope_min < slope < baseline.slope_max)
     passed = all(isfinite, metrics) && all(isfinite, band_nrmse) && all(values(gates))
-    header["omega_fidelity_status"] = passed ? "passed" : "failed"
+    header["omega_fidelity_status"] = fidelity_tag(passed ? FidelityPassed() : FidelityFailed())
     passed || (header["omega_fidelity_reason"] = "baseline_gate_failed")
     header["omega_fidelity_source"] = acc.omega_source
     header["omega_fidelity_sampling"] = acc.omega_sampling
@@ -826,7 +828,7 @@ binary is quarantined.
 """
 function flux_fidelity_header!(header::AbstractDict, acc::FluxFidelityAccumulator)
     for key in collect(keys(header))
-        _is_certificate_key(String(key)) && delete!(header, key)
+        is_certificate_key(String(key)) && delete!(header, key)
     end
     _column_closure_header!(header, acc)
     header["flux_fidelity_schema"] = FLUX_FIDELITY_SCHEMA

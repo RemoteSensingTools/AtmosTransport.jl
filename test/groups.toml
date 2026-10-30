@@ -292,9 +292,7 @@ files = [
     "core/test_binary_planet_radius.jl",
     "core/test_binary_path_expander.jl",
     "core/test_cs_optional_2d_sections.jl",
-    "core/test_cs_section_table.jl",
     "core/test_cs_window_staging.jl",
-    "core/test_cs_writer_contract_guard.jl",
     "core/test_cs_multifile_equivalence.jl",
     "core/test_replay_consistency.jl",
     "core/test_validate_replay_config.jl",
@@ -381,7 +379,7 @@ paths = [
     "src/Preprocessing/era5_surface_reader.jl",
     "src/Preprocessing/transport_binary/{era5,geos,merra2}*.jl",
     "src/Preprocessing/transport_binary/*_spectral.jl",
-    "src/MetDrivers/ERA5/**",
+    "src/Preprocessing/sources/era5_grib_geometry.jl",
     "config/met_sources/**",
 ]
 

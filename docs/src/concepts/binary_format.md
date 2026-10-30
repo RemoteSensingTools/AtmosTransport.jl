@@ -77,7 +77,7 @@ schedule) and `poisson_balance_target_scale_by_window :: Vector{Float64}` in
 the header. `header_bytes` and a few sampling-metadata fields
 (`source_flux_sampling`, `air_mass_sampling`, `humidity_sampling`,
 `delta_semantics`, optional `runtime_substep_contract`) round out the header.
-The full list lives in `src/MetDrivers/TransportBinary.jl`.
+The full list lives in `src/MetDrivers/BinaryFormat/header.jl`.
 
 Every current writer also emits a schema-2 flux-fidelity certificate. The
 reader decodes its status and construction kind into nominal types
@@ -248,7 +248,8 @@ Two writer entry points cover the topology axis. Users rarely call
 either directly — the preprocessor's unified driver
 (`run_unified_preprocessor_day!`) wraps them — but the kwargs are
 useful to know when reading the source. Example calls (defaults are
-from the actual signatures in `src/MetDrivers/TransportBinary.jl`):
+from `src/MetDrivers/BinaryFormat/streaming_writer.jl` and
+`src/MetDrivers/BinaryFormat/cubed_sphere.jl`):
 
 ```julia
 # Reduced Gaussian (face-indexed). LatLon goes through a separate
@@ -626,3 +627,11 @@ bytes are unchanged.
   binary and the snapshot NetCDF.
 - [Mass conservation](@ref) and [Advection schemes](@ref) — derivations,
   scheme analysis, and replay-gate rationale.
+
+The implementation is split into `MetDrivers.BinaryFormat` (metadata, section
+shapes, decoded windows, writers, reports) and `MetDrivers.BinaryReaders`
+(mmap readers and runtime drivers). Existing reader/writer/window names remain
+available through `MetDrivers`. Shared queries are `section_shape`,
+`section_elements`, and `section_view`; header Poisson metadata comes from
+`poisson_balance_target`. Keyless legacy pressure inference uses one named
+`SURFACE_PRESSURE_BASIS_TOLERANCE`, preserving Float64 column sums.

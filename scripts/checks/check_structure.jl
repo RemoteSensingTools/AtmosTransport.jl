@@ -613,11 +613,48 @@ function relocate_o1_layers(before, file)
     return migrated
 end
 
+function relocate_m1_layers(before, file)
+    # M1 splits the former single-namespace binary implementation. Only its
+    # historical dependency budget moves: no private/clone/size debt is added.
+    file == "src/LAYERS.toml" || return before
+    parent = "AtmosTransport.MetDrivers"
+    fmt, readers = parent * ".BinaryFormat", parent * ".BinaryReaders"
+    mods = get(before, "modules", Dict())
+    haskey(mods, fmt) && return before
+    haskey(mods, parent) || return before
+    migrated = deepcopy(before)
+    prior = filter(!=(parent * ".ERA5"), mods[parent])
+    for deps in values(migrated["modules"])
+        parent in deps && append!(deps, [fmt, readers])
+    end
+    migrated["modules"][parent] = [prior; fmt; readers]
+    migrated["modules"][fmt] = [prior; parent]
+    migrated["modules"][readers] = [prior; parent; fmt]
+    folders = get(migrated, "folders", Dict())
+    old, root = "src/MetDrivers/transport_binary", "src/MetDrivers"
+    new = [root * "/BinaryFormat", root * "/BinaryReaders"]
+    if haskey(folders, old)
+        prior_folders = filter(x -> !(x in (old, "src/MetDrivers/ERA5")), folders[root])
+        for deps in values(folders)
+            old in deps && append!(deps, new)
+        end
+        folders[root] = [prior_folders; new]
+        folders[new[1]] = [prior_folders; root]
+        folders[new[2]] = [prior_folders; root; new[1]]
+        # ERA5 GRIB geometry now belongs to preprocessing. The facade keeps
+        # the same geometry bindings, whose defining file moved with them.
+        "src/MetDrivers/ERA5" in get(folders, "src", String[]) &&
+            push!(folders["src"], "src/Preprocessing/sources")
+    end
+    return migrated
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
     before = relocate_x1_baseline(before, file)
     before = relocate_o1_layers(before, file)
+    before = relocate_m1_layers(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")
@@ -704,7 +741,12 @@ function check_folders!(errors, inv, found, layers; io = stdout)
     end
     for (a, b) in sort!(collect(found.folder_edges))
         b in get(allowed, a, String[]) || push!(errors, "T1 new folder dependency: $a -> $b")
-        if get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
+        # Match module wiring only for a real child submodule. A same-module
+        # helper folder still follows the ordinary folder-order ratchet.
+        child_wiring = startswith(b, "$a/") && any(
+            startswith(inv.files[child], inv.files[parent] * ".")
+            for parent in get(folders, a, String[]), child in get(folders, b, String[]))
+        if !child_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
             push!(errors, "T1 reference to later folder: $a -> $b")
         end
     end

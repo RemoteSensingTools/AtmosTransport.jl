@@ -7,6 +7,8 @@
 
 using Test
 using AtmosTransport
+using AtmosTransport.MetDrivers: PBLSurfaceForcing, load_window!
+include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
 const MD = AtmosTransport.MetDrivers
 
 @testset "CS optional 2-D sections" begin
@@ -121,4 +123,61 @@ end
             close(reader.io)
         end
     end
+end
+
+@testset "CubedSphere optional payload sections round-trip panel/index sentinels" begin
+    FT = Float64
+    Nc, Nz = 3, 4
+    pblh = ntuple(p -> [FT(1000p + 10i + j) for i in 1:Nc, j in 1:Nc], 6)
+    ustar = ntuple(p -> [FT(0.1p + 0.01i + 0.001j) for i in 1:Nc, j in 1:Nc], 6)
+    hflux = ntuple(p -> [FT(-50p + 2i - j) for i in 1:Nc, j in 1:Nc], 6)
+    t2m = ntuple(p -> [FT(250 + p + 0.1i + 0.01j) for i in 1:Nc, j in 1:Nc], 6)
+    surface = PBLSurfaceForcing(pblh, ustar, hflux, t2m)
+    cmfmc = ntuple(p -> [FT(0.001p + 0.0001i + 0.00001j + 0.000001k)
+                         for i in 1:Nc, j in 1:Nc, k in 1:(Nz + 1)], 6)
+    dtrain = ntuple(p -> [FT(0.002p + 0.0002i + 0.00002j + 0.000002k)
+                          for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6)
+
+    mktemp() do path, io
+        close(io)
+        write_driven_cs_binary(path;
+                               FT = FT,
+                               Nc = Nc,
+                               Nz = Nz,
+                               window_mass_scales = (FT(1e16),),
+                               surface_windows = (surface,),
+                               convection_windows = (cmfmc,),
+                               dtrain_windows = (dtrain,))
+
+        reader = TransportBinaryReader(path; FT = FT)
+        raw = load_window!(reader, 1)
+        @test has_surface(reader)
+        @test has_cmfmc(reader)
+        for p in 1:6
+            @test raw.surface.pblh[p] == pblh[p]
+            @test raw.surface.ustar[p] == ustar[p]
+            @test raw.surface.hflux[p] == hflux[p]
+            @test raw.surface.t2m[p] == t2m[p]
+            @test raw.cmfmc[p] == cmfmc[p]
+            @test raw.dtrain[p] == dtrain[p]
+        end
+        close(reader)
+    end
+end
+
+
+@testset "cubed-sphere section element counts" begin
+    Nc, np, Nz = 5, 6, 4
+    cells = np * Nc * Nc
+    expected = Dict(
+        (s => cells * Nz for s in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd,
+                                   :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv))...,
+        (s => np * (Nc + 1) * Nc * Nz for s in (:am, :dam))...,
+        (s => np * Nc * (Nc + 1) * Nz for s in (:bm, :dbm))...,
+        (s => cells * (Nz + 1) for s in (:cm, :dcm, :cmfmc))...,
+        (s => cells for s in (:ps, :pblh, :ustar, :pbl_hflux, :t2m, :pbl_eflux, :cmfmc_cloud_base))...)
+    for (section, n) in expected
+        @test MD.section_elements(MD.CubedSphereBinaryGeometry, Nc, np, Nz, section) == n
+    end
+    @test_throws ErrorException MD.section_elements(MD.CubedSphereBinaryGeometry, Nc, np, Nz, :not_a_section)
 end

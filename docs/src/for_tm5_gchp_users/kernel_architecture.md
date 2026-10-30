@@ -256,7 +256,7 @@ effects can dominate the result.
 | Section timing | `src/SectionTimer.jl` |
 | Structured packed sweeps | `src/Operators/Advection/multitracer_kernels.jl` |
 | Cubed-sphere packed sweeps | `src/Operators/Advection/cs_sweep_{common,x,y,z}.jl` |
-| Memory-mapped binary reader | `src/MetDrivers/transport_binary/reader.jl` |
+| Memory-mapped binary reader | `src/MetDrivers/BinaryReaders/reader.jl` |
 
 Continue with [Operators on top of the binary](operators_on_binaries.md) for
 the physics interfaces or [The binary pipeline](binary_pipeline.md) for the

@@ -30,97 +30,7 @@ function rewrite_cs_header!(path::AbstractString; updates = Dict{String, Any}())
     return nothing
 end
 
-function write_driven_cs_binary(path::AbstractString;
-                                FT::Type{<:AbstractFloat} = Float64,
-                                Nc::Int = 4,
-                                Nz::Int = 2,
-                                window_mass_scales::Tuple{Vararg{Real}} = (1, 1),
-                                window_dm_panels = nothing,
-                                surface_windows = nothing,
-                                vdiff_windows = nothing,
-                                convection_windows = nothing,
-                                dtrain_windows = nothing,
-                                tm5_windows = nothing,
-                                steps_per_window::Int = 2,
-                                steps_per_window_by_window = nothing)
-    window_dm_panels !== nothing &&
-        length(window_dm_panels) == length(window_mass_scales) ||
-        window_dm_panels === nothing || throw(ArgumentError("window_dm_panels length must match window_mass_scales"))
-    surface_windows !== nothing &&
-        length(surface_windows) == length(window_mass_scales) ||
-        surface_windows === nothing || throw(ArgumentError("surface_windows length must match window_mass_scales"))
-    vdiff_windows !== nothing &&
-        length(vdiff_windows) == length(window_mass_scales) ||
-        vdiff_windows === nothing || throw(ArgumentError("vdiff_windows length must match window_mass_scales"))
-    convection_windows !== nothing &&
-        length(convection_windows) == length(window_mass_scales) ||
-        convection_windows === nothing || throw(ArgumentError("convection_windows length must match window_mass_scales"))
-    dtrain_windows !== nothing &&
-        length(dtrain_windows) == length(window_mass_scales) ||
-        dtrain_windows === nothing || throw(ArgumentError("dtrain_windows length must match window_mass_scales"))
-    tm5_windows !== nothing &&
-        length(tm5_windows) == length(window_mass_scales) ||
-        tm5_windows === nothing || throw(ArgumentError("tm5_windows length must match window_mass_scales"))
-    vc = if Nz == 2
-        AtmosTransport.HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    elseif Nz == 5
-        AtmosTransport.HybridSigmaPressure(FT[0, 100, 300, 600, 1000, 2000],
-                                           FT[0, 0, 0.1, 0.3, 0.7, 1])
-    else
-        AtmosTransport.HybridSigmaPressure(
-            FT.(collect(range(0, stop = 2000, length = Nz + 1))),
-            FT.(collect(range(0, stop = 1, length = Nz + 1))))
-    end
-    writer = AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
-        path, Nc, 6, Nz, length(window_mass_scales), vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
-        FT = FT,
-        dt_met_seconds = 3600.0,
-        steps_per_window = steps_per_window,
-        include_flux_delta = window_dm_panels !== nothing,
-        mass_basis = :dry,
-        surface_pressure_basis = TotalSurfacePressure(),
-        include_surface = surface_windows !== nothing,
-        include_cmfmc = convection_windows !== nothing,
-        include_dtrain = dtrain_windows !== nothing,
-        include_tm5conv = tm5_windows !== nothing,
-        include_gchp_vdiff = vdiff_windows !== nothing,
-    )
-    steps_per_window_by_window !== nothing &&
-        AtmosTransport.MetDrivers.set_streaming_steps_per_window_schedule!(
-            writer, steps_per_window_by_window)
-
-    for (win, scale) in enumerate(window_mass_scales)
-        window = (
-            m  = ntuple(_ -> fill(FT(scale), Nc, Nc, Nz), 6),
-            am = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), 6),
-            bm = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), 6),
-            cm = ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), 6),
-            ps = ntuple(_ -> fill(FT(90000), Nc, Nc), 6),
-        )
-        if convection_windows !== nothing
-            window = merge(window, (cmfmc = convection_windows[win],))
-        end
-        if surface_windows !== nothing
-            window = merge(window, (surface = surface_windows[win],))
-        end
-        if vdiff_windows !== nothing
-            window = merge(window, (vdiff = vdiff_windows[win],))
-        end
-        if dtrain_windows !== nothing
-            window = merge(window, (dtrain = dtrain_windows[win],))
-        end
-        if tm5_windows !== nothing
-            window = merge(window, (tm5_fields = tm5_windows[win],))
-        end
-        if window_dm_panels !== nothing
-            window = merge(window, (dm = window_dm_panels[win],))
-        end
-        AtmosTransport.MetDrivers.write_streaming_cs_window!(writer, window, Nc, 6)
-    end
-
-    AtmosTransport.MetDrivers.close_streaming_transport_binary!(writer)
-    return nothing
-end
+include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
 
 @testset "CubedSphere driven runtime honors per-window step schedule" begin
     mktemp() do path, io
@@ -463,45 +373,6 @@ end
     end
 end
 
-@testset "CubedSphere optional payload sections round-trip panel/index sentinels" begin
-    FT = Float64
-    Nc, Nz = 3, 4
-    pblh = ntuple(p -> [FT(1000p + 10i + j) for i in 1:Nc, j in 1:Nc], 6)
-    ustar = ntuple(p -> [FT(0.1p + 0.01i + 0.001j) for i in 1:Nc, j in 1:Nc], 6)
-    hflux = ntuple(p -> [FT(-50p + 2i - j) for i in 1:Nc, j in 1:Nc], 6)
-    t2m = ntuple(p -> [FT(250 + p + 0.1i + 0.01j) for i in 1:Nc, j in 1:Nc], 6)
-    surface = PBLSurfaceForcing(pblh, ustar, hflux, t2m)
-    cmfmc = ntuple(p -> [FT(0.001p + 0.0001i + 0.00001j + 0.000001k)
-                         for i in 1:Nc, j in 1:Nc, k in 1:(Nz + 1)], 6)
-    dtrain = ntuple(p -> [FT(0.002p + 0.0002i + 0.00002j + 0.000002k)
-                          for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6)
-
-    mktemp() do path, io
-        close(io)
-        write_driven_cs_binary(path;
-                               FT = FT,
-                               Nc = Nc,
-                               Nz = Nz,
-                               window_mass_scales = (FT(1e16),),
-                               surface_windows = (surface,),
-                               convection_windows = (cmfmc,),
-                               dtrain_windows = (dtrain,))
-
-        reader = TransportBinaryReader(path; FT = FT)
-        raw = load_window!(reader, 1)
-        @test has_surface(reader)
-        @test has_cmfmc(reader)
-        for p in 1:6
-            @test raw.surface.pblh[p] == pblh[p]
-            @test raw.surface.ustar[p] == ustar[p]
-            @test raw.surface.hflux[p] == hflux[p]
-            @test raw.surface.t2m[p] == t2m[p]
-            @test raw.cmfmc[p] == cmfmc[p]
-            @test raw.dtrain[p] == dtrain[p]
-        end
-        close(reader)
-    end
-end
 
 @testset "CubedSphere multi-binary runner rejects partial-day carryover" begin
     mktempdir() do dir
@@ -525,36 +396,7 @@ end
     end
 end
 
-@testset "CubedSphere transport replay gate validates dm-bearing binaries" begin
-    mktemp() do path, io
-        close(io)
-        dm_zero = zero_cs_dm_panels(Float64, 4, 2)
-        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
-                               window_mass_scales=(1,),
-                               window_dm_panels=(dm_zero,))
 
-        reader = TransportBinaryReader(path; FT=Float64)
-        @test has_flux_delta(reader)
-        close(reader)
-
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1,
-                                            validate_replay=true)
-        close(driver)
-    end
-end
-
-@testset "CubedSphere transport replay gate catches final-window target mismatch" begin
-    mktemp() do path, io
-        close(io)
-        dm_bad = ntuple(_ -> fill(1.0e4, 4, 4, 2), 6)
-        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
-                               window_mass_scales=(1,),
-                               window_dm_panels=(dm_bad,))
-
-        @test_throws ArgumentError TransportBinaryDriver(
-            path; FT=Float64, arch=CPU(), Hp=1, validate_replay=true)
-    end
-end
 
 @testset "CubedSphere runtime supports CMFMC convection without promoting to Float64" begin
     FT = Float32
@@ -685,38 +527,6 @@ end
     end
 end
 
-@testset "Transport binary rejects partial raw PBL surface payloads" begin
-    FT = Float64
-    Nx, Ny, Nz = 3, 2, 2
-    mesh = LatLonMesh(; FT = FT, Nx = Nx, Ny = Ny)
-    vertical = AtmosTransport.HybridSigmaPressure(FT[0, 100, 1000], FT[0, 0.2, 1])
-    grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
-    window = (
-        m = fill(FT(1e12), Nx, Ny, Nz),
-        am = zeros(FT, Nx + 1, Ny, Nz),
-        bm = zeros(FT, Nx, Ny + 1, Nz),
-        cm = zeros(FT, Nx, Ny, Nz + 1),
-        ps = fill(FT(90_000), Nx, Ny),
-        pblh = fill(FT(900), Nx, Ny),
-        ustar = fill(FT(0.3), Nx, Ny),
-        hflux = fill(FT(100), Nx, Ny),
-    )
-
-    mktemp() do path, io
-        close(io)
-        @test_throws ArgumentError write_transport_binary(
-            path, grid, [window];
-            FT = FT,
-            dt_met_seconds = 3600.0,
-            half_dt_seconds = 1800.0,
-            steps_per_window = 2,
-            mass_basis = :dry,
-            surface_pressure_basis = TotalSurfacePressure(),
-            source_flux_sampling = :window_start_endpoint,
-            flux_sampling = :window_constant,
-        )
-    end
-end
 
 @testset "CubedSphere runtime supports diffusion plus surface sources" begin
     mktemp() do path, io

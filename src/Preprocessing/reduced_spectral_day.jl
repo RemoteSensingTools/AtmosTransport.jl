@@ -200,7 +200,7 @@ function balance_window!(hflux_work::Matrix{Float64},
     size(dm_target_work) == size(m_cur_work) ||
         error("balance_window!: dm_target_work shape $(size(dm_target_work)) " *
               "!= m_cur_work shape $(size(m_cur_work)).")
-    inv_scale = 1.0 / (2 * max(Int(steps_per_window), 1))
+    inv_scale = poisson_balance_target(:substep_mass_amount, [max(Int(steps_per_window), 1)]).scale
     @. dm_target_work = (m_next_work - m_cur_work) * inv_scale
     recompute_cm_from_dm_target!(replay_layout, div_scratch, cm_work,
                                  m_cur_work, dm_target_work, hflux_work;

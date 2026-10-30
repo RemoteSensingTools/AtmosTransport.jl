@@ -89,21 +89,8 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
             error("verify_write_replay_cs!: replay_scratch shape " *
                   "$(size(replay_scratch)) != panel shape $(panel_shape).")
     end
-    layout = structured_replay_layout()
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_idx = (0, 0, 0, 0)
-    for p in 1:NP
-        diag_p = verify_window_continuity(layout, replay_scratch,
-                                           m_cur[p], cm[p], m_next[p],
-                                           steps_per_window, am[p], bm[p])
-        if diag_p.max_rel_err > worst_rel
-            worst_rel = diag_p.max_rel_err
-            worst_abs = diag_p.max_abs_err
-            worst_idx = (p, diag_p.worst_idx...)
-        end
-    end
-    diag = (max_abs_err = worst_abs, max_rel_err = worst_rel, worst_idx = worst_idx)
+    diag = verify_window_continuity_cs(m_cur, am, bm, cm, m_next,
+                                       steps_per_window; scratch=replay_scratch)
     diag.max_rel_err <= tol_rel ||
         error("Write-time replay gate FAILED for CS window $(win_idx): " *
               "rel=$(diag.max_rel_err) > tol=$(tol_rel) at cell $(diag.worst_idx) " *

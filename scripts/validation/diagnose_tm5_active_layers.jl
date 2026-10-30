@@ -41,7 +41,7 @@ function _output_paths(prefix::AbstractString)
 end
 
 # Elements of one CS payload section (the library's table, which knows every section).
-_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
+_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers.section_elements(h, section)
 
 function _section_offset(h, win::Int, section::Symbol)
     o = (win - 1) * h.elems_per_window

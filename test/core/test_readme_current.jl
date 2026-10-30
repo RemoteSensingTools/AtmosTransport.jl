@@ -46,12 +46,11 @@ const README_DIRS = [
     # Models and drivers
     "src/Models",
     "src/MetDrivers",
-    "src/MetDrivers/ERA5",
     # Grids
     "src/Grids",
     # Remaining modules and subfolders with READMEs
     "src/Extras", "src/Adjoints", "src/Extras/Analysis", "src/Diagnostics", "src/Extras/Downloads", "src/Footprint",
-    "src/Inversion", "src/MetDrivers/transport_binary",
+    "src/Inversion", "src/MetDrivers/BinaryFormat", "src/MetDrivers/BinaryReaders",
     "src/Models/initial_conditions", "src/Models/runner", "src/Output",
     "src/Observations", "src/Observations/Retrievals", "src/Observations/Sources", "src/Observations/Sampling", "src/Parameters", "src/Preprocessing",
     "src/Preprocessing/sources", "src/Preprocessing/transport_binary",

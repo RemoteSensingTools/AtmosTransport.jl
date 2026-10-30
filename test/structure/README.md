@@ -121,3 +121,10 @@ imported binding can produce a conservative finding, while computed property
 access and dynamic code generation can hide a dependency. Macro argument
 syntax is scanned without expansion. It checks source and extension structure,
 including non-core modules, without adding numerical tests of non-core APIs.
+
+M1 recognizes parent-folder child wiring by the same ancestry rule used for
+module wiring. The dependency-budget migration replaces the old single
+MetDrivers binary unit with BinaryFormat and BinaryReaders, inheriting only
+its earlier dependencies and parent interfaces. The ERA5 geometry facade
+binding follows its moved Preprocessing source. This migration applies only
+to LAYERS edges; private uses, duplicates, clones and byte ceilings only shrink.

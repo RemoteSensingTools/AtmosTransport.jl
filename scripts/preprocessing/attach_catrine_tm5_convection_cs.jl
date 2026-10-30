@@ -129,9 +129,9 @@ function copy_source_metadata!(metadata::AbstractDict, raw::AbstractDict,
     # correction, column closure) describes the m/am/bm/cm payload, which the
     # attachment copies unchanged: carry it over verbatim.
     for (key, value) in raw
-        MD._is_certificate_key(String(key)) && (metadata[String(key)] = value)
+        MD.is_certificate_key(String(key)) && (metadata[String(key)] = value)
     end
-    pin_enabled = AtmosTransport.MetDrivers._dry_mass_pin_enabled(raw, "source metadata")
+    pin_enabled = AtmosTransport.MetDrivers.dry_mass_pin_enabled(raw, "source metadata")
     if pin_enabled !== nothing
         metadata["mass_fix_enabled"] = pin_enabled
         if pin_enabled

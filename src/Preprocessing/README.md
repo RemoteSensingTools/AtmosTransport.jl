@@ -187,7 +187,7 @@ Files directly in this folder; the subfolders have their own READMEs
   `Nz + 1` interfaces; missing or mismatched coefficients raise an error.
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see
-  `poisson_balance_target_scale`), then `cm` is diagnosed from that explicit
+  `MetDrivers.poisson_balance_target`), then `cm` is diagnosed from that explicit
   `dm`. The GEOS diagnostic closures `pressure_fixer` and `pfix_corrected`
   skip the balance; every non-default closure logs a warning.
 - A kept binary passed the write-time replay gate (unless
@@ -235,3 +235,8 @@ Files directly in this folder; the subfolders have their own READMEs
 
 Panel indexing, the global face table, panel packing, geometry-tag parsing and
 flat area helpers are owned by Grids; basis-tag conversion is owned by State.
+
+ERA5 native GRIB geometry is owned here: `sources/era5_grib_geometry.jl`
+defines `ERA5ReducedGaussianGeometry`, `read_era5_reduced_gaussian_geometry`,
+and `read_era5_reduced_gaussian_mesh`; no runtime dependency on GRIB geometry
+is required. Binary metadata and payload sizes delegate to MetDrivers.BinaryFormat.

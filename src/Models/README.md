@@ -213,3 +213,7 @@ for the support gates and fallback diagnostics.
 
 Initial-condition panel unpacking uses Grids directly; Models has no
 Preprocessing import. State owns basis conversion and panel-interior views.
+
+Stored full-window fluxes are converted by MetDrivers.flux_storage_substep_scale
+at forcing refresh. Legacy surface-pressure inference belongs to BinaryReaders;
+the former test-only Models copy has been removed.

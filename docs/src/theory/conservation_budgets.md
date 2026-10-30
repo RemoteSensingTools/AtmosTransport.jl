@@ -77,7 +77,7 @@ in `test/core/test_replay_consistency.jl`:
 
 | Subtest (line) | Asserts |
 |---|---|
-| `verify_window_continuity_ll` with continuity-consistent data | `tol_rel ≤ 1e-12` (F64) / `1e-6` (F32). Both pass on the synthetic fixture. |
+| `verify_window_continuity` with continuity-consistent data | `tol_rel ≤ 1e-12` (F64) / `1e-6` (F32). Both pass on the synthetic fixture. |
 | Per-cell residual and scale | A mismatch of `1e-4` kg in a `1e4` kg cell beneath a `1e10` kg cell fails at the Float64 tolerance; the scale is `|m_cur| + |m_next| + 2n Σ|F|`, checked on hand-computed LL and RG cells. NaN in a stored flux reports `Inf`. |
 | Deliberately broken `cm` storage | The storage-level gate fires `@test_throws ErrorException` when the binary's stored `cm` violates the explicit-`dm` closure by more than `replay_tolerance(FT)`. A separate subtest checks the diagnostic residual against the same broken field. |
 | Final-window inconsistent `cm` | The LL storage replay-gate test deliberately injects an inconsistent final-window `cm` and asserts `@test_throws ErrorException` — i.e. the gate **does** detect inconsistency at the day boundary, not silently pass it as zero-tendency. |

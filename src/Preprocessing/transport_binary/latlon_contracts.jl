@@ -74,7 +74,7 @@ function fill_window_mass_tendency!(dm_dt_buf::Array{FT, 3},
                                     win_idx::Int,
                                     steps_per_window::Int) where FT
     Nt = length(storage.all_m)
-    scale = poisson_balance_target_scale(steps_per_window, FT)
+    scale = FT(poisson_balance_target(:substep_mass_amount, [max(Int(steps_per_window), 1)]).scale)
 
     if win_idx < Nt
         dm_dt_buf .= (storage.all_m[win_idx + 1] .- storage.all_m[win_idx]) .* scale
