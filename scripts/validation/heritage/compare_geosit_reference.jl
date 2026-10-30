@@ -20,7 +20,7 @@ uses `CTM_A1` `MFXC`, `MFYC`, and `DELP`. GEOS archives `MFXC/MFYC` accumulated
 over the FV3 dynamics step (`mass_flux_dt`, 450 s for GEOS-IT C180), so the
 conversion to binary substep mass is `MFXC / mass_flux_dt * dt_factor / g`.
 The script uses the same `geos_native_to_face_flux!` and
-`recover_cs_cell_center_winds!` helpers used by the preprocessing path.
+`recover_cs_cell_center_winds!` helpers kept beside these heritage scripts.
 """
 
 using Dates
@@ -35,8 +35,8 @@ using .AtmosTransport
 using .AtmosTransport.MetDrivers:
     TransportBinaryReader, load_window!, load_grid
 using .AtmosTransport.Preprocessing:
-    geos_native_to_face_flux!, recover_cs_cell_center_winds!,
-    rotate_panel_to_geographic!
+    geos_native_to_face_flux!
+include("cs_wind_recovery.jl")
 
 const GRAVITY = Float32(9.80665)
 const DEFAULT_GEOS_ROOT =

@@ -357,7 +357,7 @@ function process_day(date::Date,
             settings.thermo_dir, "era5_thermo_ml_$(next_date_str).nc"))
     end
     settings.include_surface && push!(
-        source_paths, _resolve_era5_surface_path(settings.surface_dir, date))
+        source_paths, resolve_era5_surface_path(settings.surface_dir, date))
     header["generation_fingerprint"] = generation_fingerprint(
         settings=settings,
         spectral_resolution=spec.T,

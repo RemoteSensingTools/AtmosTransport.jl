@@ -284,8 +284,8 @@ well before any windows actually step.
 | X-sweep kernel (flux-form telescoping) | `src/Operators/Advection/Structured/multitracer_kernels.jl` |
 | Strang palindrome (X→Y→Z / V/S/V / Z→Y→X) | `src/Operators/Advection/Structured/StrangSplitting.jl` (`strang_split!`) and `CubedSphereStrang.jl` (`strang_split_cs_mt!`) |
 | Diagnose `cm` from `dm` target (LL / RG) | `src/MetDrivers/ReplayContinuity.jl::recompute_cm_from_dm_target!` |
-| Diagnose `cm` from `dm` target (CS) | `src/Preprocessing/cs_poisson_balance.jl::diagnose_cs_cm!` |
-| Column balance against next-hour endpoint (GEOS-CS) | `src/Preprocessing/cs_poisson_balance.jl::balance_cs_column_mass_fluxes!` |
+| Diagnose `cm` from `dm` target (CS) | `src/Preprocessing/MassClosure/cs_poisson_balance.jl::diagnose_cs_cm!` |
+| Column balance against next-hour endpoint (GEOS-CS) | `src/Preprocessing/MassClosure/cs_poisson_balance.jl::balance_cs_column_mass_fluxes!` |
 | Write-time replay gate | `src/MetDrivers/ReplayContinuity.jl::verify_window_continuity_*!` |
 | `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl` |
 | Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |

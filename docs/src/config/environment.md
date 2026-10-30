@@ -12,7 +12,7 @@ package reads no others.
 | `ATMOSTRANSPORT_DATA_ROOT` | Root of `$ATMOSTRANSPORT_DATA_ROOT` in configured paths (default `~/data/AtmosTransport`). Any other `$NAME` or `${NAME}` in a path expands to that variable. | `expand_data_path` (`src/AtmosTransport.jl`) |
 | `ATMOSTR_REGRID_CACHE_DIR` | Shared cache of conservative regridding weights, used for runtime surface fluxes and for preprocessing targets without `[grid] regridder_cache_dir` (default `~/.cache/AtmosTransport/cr_regridding`). | `default_regrid_cache_dir` (`src/Regridding/weights_io.jl`) |
 | `ATMOSTR_SPECTRAL_CACHE_DIR` | Default spectral-coefficient cache of the ERA5 preprocessor; `[cache] spectral_coefficients_dir` overrides it. | `src/Preprocessing/Core/configuration.jl` |
-| `ATMOSTR_SCRATCH_DIR`, `ATMOSTR_TMPDIR`, `SCRATCH`, `TMPDIR`, `TEMP`, `TMP` | Candidate directories, in this order, for extracting ERA5 surface archives. | `src/Preprocessing/era5_surface_reader.jl` |
+| `ATMOSTR_SCRATCH_DIR`, `ATMOSTR_TMPDIR`, `SCRATCH`, `TMPDIR`, `TEMP`, `TMP` | Candidate directories, in this order, for extracting ERA5 surface archives. | `src/Preprocessing/PhysicsInputs/era5_surface_reader.jl` |
 | `ATMOSTR_INSTITUTION` | `institution` attribute of NetCDF snapshot and observation files. | `src/Output/netcdf_schema.jl`, `src/Observations/Sampling/observation_netcdf.jl` |
 | `USER`, `USERNAME` | `user` attribute of NetCDF snapshot files. | `src/Output/netcdf_schema.jl` |
 | `NO_COLOR`, `TERM` | ANSI colors in the run summary only when `NO_COLOR` is unset or empty and `TERM` is set and not `dumb`. | `src/Models/runner/configuration.jl` |

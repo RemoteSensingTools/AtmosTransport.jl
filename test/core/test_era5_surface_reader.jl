@@ -9,23 +9,23 @@ using NCDatasets
 
 import AtmosTransport
 
-const _fill_masked_surface = AtmosTransport.Preprocessing._fill_masked_surface
+const fill_masked_surface = AtmosTransport.Preprocessing.fill_masked_surface
 
 @testset "masked-surface neighbour fill" begin
     # All-finite slice round-trips unchanged.
     A = Float32[1 2 3; 4 5 6; 7 8 9]
-    @test _fill_masked_surface(A, Float32) == A
+    @test fill_masked_surface(A, Float32) == A
 
     # A single stray masked cell takes the mean of its finite 4-neighbours,
     # NOT the global mean — local structure is preserved.
     B = Union{Missing,Float32}[10 10 10; 10 missing 10; 10 10 10]
-    out = _fill_masked_surface(B, Float32)
+    out = fill_masked_surface(B, Float32)
     @test all(isfinite, out)
     @test out[2, 2] == 10.0f0            # neighbours are all 10 (global mean is also 10 here)
 
     # Local-gradient case: the filled cell follows its neighbours, not the global mean.
     C = Union{Missing,Float32}[1 2 3; 2 missing 4; 3 4 100]
-    oc = _fill_masked_surface(C, Float32)
+    oc = fill_masked_surface(C, Float32)
     # 4-neighbours of (2,2): (1,2)=2 [lon+1 wrap], (3,2)=4 [lon-1 wrap], (2,1)=2, (2,3)=4 → mean 3
     @test oc[2, 2] == 3.0f0
     gmean = (1 + 2 + 3 + 2 + 4 + 3 + 4 + 100) / 8
@@ -33,7 +33,7 @@ const _fill_masked_surface = AtmosTransport.Preprocessing._fill_masked_surface
 
     # Longitude wraps: a masked cell in the first column can be filled from the last.
     D = Union{Missing,Float32}[missing; 5; 5;;]   # 3×1 (lon × lat) column
-    od = _fill_masked_surface(D, Float32)
+    od = fill_masked_surface(D, Float32)
     @test all(isfinite, od)
     @test od[1, 1] == 5.0f0              # neighbours (2,1)=5 and wrap (3,1)=5
 
@@ -41,7 +41,7 @@ const _fill_masked_surface = AtmosTransport.Preprocessing._fill_masked_surface
     # global finite mean.
     E = Matrix{Union{Missing,Float32}}(missing, 2, 2)
     E[1, 1] = 7.0f0
-    oe = _fill_masked_surface(E, Float32)
+    oe = fill_masked_surface(E, Float32)
     @test all(isfinite, oe)
     @test oe[1, 1] == 7.0f0
     @test all(oe .== 7.0f0)              # the lone finite cell propagates everywhere
@@ -66,6 +66,8 @@ end
             defVar(ds, "zust", fill(0.25, 4, 3, 24), ("longitude", "latitude", "time"))
             defVar(ds, "sshf", fill(-360.0, 4, 3, 24), ("longitude", "latitude", "time");
                    attrib = ["units" => "J m**-2"])
+            defVar(ds, "slhf", fill(-720.0, 4, 3, 24), ("longitude", "latitude", "time");
+                   attrib = ["units" => "J m**-2"])
             defVar(ds, "t2m", fill(290.0, 4, 3, 24), ("longitude", "latitude", "time"))
         end
 
@@ -85,6 +87,12 @@ end
             @test all(surface.ustar .== 0.25)
             @test all(surface.hflux .== 0.1)
             @test all(surface.t2m .== 290.0)
+            @test !haskey(surface, :lhflux)
+            withlh = AtmosTransport.Preprocessing.load_era5_surface_window(
+                reader, 2, Float64; with_latent = true)
+            @test size(withlh.lhflux) == (4, 3)
+            @test all(withlh.lhflux .== 0.2)
+            @test all(withlh.hflux .== 0.1)
         finally
             AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
         end
@@ -119,45 +127,6 @@ end
     end
 end
 
-@testset "ERA5 surface reader returns latent heat flux on request" begin
-    mktempdir() do dir
-        path = joinpath(dir, "era5_surface_20211201.nc")
-        NCDataset(path, "c") do ds
-            ds.dim["longitude"] = 4
-            ds.dim["latitude"] = 3
-            ds.dim["time"] = 24
-            defVar(ds, "longitude", [0.0, 90.0, 180.0, 270.0], ("longitude",))
-            defVar(ds, "latitude", [90.0, 0.0, -90.0], ("latitude",))
-            defVar(ds, "time", collect(0:23), ("time",))
-            defVar(ds, "blh", fill(1000.0, 4, 3, 24), ("longitude", "latitude", "time"))
-            defVar(ds, "zust", fill(0.25, 4, 3, 24), ("longitude", "latitude", "time"))
-            # Both turbulent fluxes are accumulated J m⁻², downward-positive.
-            defVar(ds, "sshf", fill(-360.0, 4, 3, 24), ("longitude", "latitude", "time");
-                   attrib = ["units" => "J m**-2"])
-            defVar(ds, "slhf", fill(-720.0, 4, 3, 24), ("longitude", "latitude", "time");
-                   attrib = ["units" => "J m**-2"])
-            defVar(ds, "t2m", fill(290.0, 4, 3, 24), ("longitude", "latitude", "time"))
-        end
-
-        reader = AtmosTransport.Preprocessing.open_era5_surface_reader(dir, Date(2021, 12, 1), 4, 3)
-        try
-            # Default path is unchanged and never requires slhf in the file.
-            base = AtmosTransport.Preprocessing.load_era5_surface_window(reader, 2, Float64)
-            @test !haskey(base, :lhflux)
-
-            # Opt-in path adds upward-positive latent flux in W m⁻²:
-            #   -(-720 J m⁻²) / 3600 s = +0.2 W m⁻², same convention as hflux.
-            withlh = AtmosTransport.Preprocessing.load_era5_surface_window(
-                reader, 2, Float64; with_latent = true)
-            @test haskey(withlh, :lhflux)
-            @test size(withlh.lhflux) == (4, 3)
-            @test all(withlh.lhflux .== 0.2)
-            @test all(withlh.hflux .== 0.1)
-        finally
-            AtmosTransport.Preprocessing.close_era5_surface_reader(reader)
-        end
-    end
-end
 
 @testset "ERA5 surface reader opens ARCO per-variable layout" begin
     mktempdir() do dir

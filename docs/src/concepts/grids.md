@@ -274,8 +274,10 @@ panel boundaries).
 | `panel_cell_local_tangent_basis(mesh, panel)` | `(x_east, x_north, y_east, y_north)` tangent-basis matrices in geographic frame. |
 
 The tangent basis is what
-`rotate_winds_to_panel_local!` and `rotate_panel_to_geographic!` (in
-`Preprocessing/cs_wind_rotation.jl`) consume.
+`rotate_winds_to_panel_local!` (in
+`Preprocessing/MassClosure/cs_wind_rotation.jl`) consumes; the inverse,
+`rotate_panel_to_geographic!`, is a validation helper in
+`scripts/validation/heritage/cs_wind_recovery.jl`.
 
 ## [`AtmosGrid{H, V, Arch, P, FT}`](@id AtmosGrid)
 

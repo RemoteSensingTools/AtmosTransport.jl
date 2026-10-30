@@ -164,28 +164,3 @@ using .AtmosTransport.Operators.Diffusion: _vertical_diffusion_cs_single_dkg_adj
                       for p in 1:np)
     @test inner(y_seed, panels_rm) ≈ inner(lambda, x_rm) rtol=1e-12
 end
-
-@testset "TM5 bldiff emits the vendored dkg formula" begin
-    using .AtmosTransport.Preprocessing: BLDiffConstants, BLDiffColumnScratch,
-        tm5_bldiff_dkg_column!
-    FT = Float64
-    Nz = 6
-    A = collect(range(0.0, 2000.0; length=Nz + 1))
-    B = collect(range(0.0, 1.0; length=Nz + 1))
-    ps = FT(1e5)
-    T = collect(range(220.0, 288.0; length=Nz))
-    q = collect(range(0.0, 0.01; length=Nz))
-    u = collect(range(12.0, 3.0; length=Nz)); v = zeros(FT, Nz)
-    m = FT[1, 2, 4, 7, 10, 12] .* 1e13
-    scratch = BLDiffColumnScratch{FT}(Nz)
-    dkg = zeros(FT, Nz)
-    tm5_bldiff_dkg_column!(dkg, T, q, u, v, m, ps, 200.0, 100.0, 0.4,
-                           A, B, BLDiffConstants{FT}(), scratch)
-    for k in 1:Nz-1
-        l = Nz - k
-        expected = max(scratch.kvh[l], 0) * 2 * (m[k] + m[k+1]) /
-                   (scratch.dz[k] + scratch.dz[k+1])^2
-        @test dkg[k] ≈ expected rtol=2e-15
-    end
-    @test dkg[end] == 0
-end

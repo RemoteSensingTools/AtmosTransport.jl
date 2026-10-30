@@ -184,8 +184,8 @@ paths = [
     "src/Operators/Convection/**",
     "src/MetDrivers/ConvectionForcing.jl",
     "src/Adjoints/ConvectionAdjoint.jl",
-    "src/Preprocessing/convection_mass_basis.jl",
-    "src/Preprocessing/tm5_convection_*.jl",
+    "src/Preprocessing/PhysicsInputs/convection_mass_basis.jl",
+    "src/Preprocessing/PhysicsInputs/tm5_convection_*.jl",
     "src/Preprocessing/sources/era5_n320_mass_convection.jl",
     "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl",
     "scripts/validation/diagnose_tm5_active_layers.jl",
@@ -211,7 +211,7 @@ paths = [
     "src/State/Fields/PrecomputedCSDkgField.jl",
     "src/Operators/SurfaceFlux/surface_flux_kernels.jl",
     "src/Adjoints/DiffusionAdjoint.jl",
-    "src/Preprocessing/tm5_bldiff.jl",
+    "src/Preprocessing/PhysicsInputs/tm5_bldiff.jl",
     "src/Models/driven_physics_refresh.jl",
 ]
 
@@ -259,7 +259,7 @@ files = [
 ]
 paths = [
     "src/GriddedIO/**",
-    "src/Preprocessing/cs_native_fluxes.jl",
+    "src/Preprocessing/MassClosure/cs_native_fluxes.jl",
     "scripts/validation/compare_cs_flux_files.jl",
     "scripts/validation/flux_port_parity/**",
     "scripts/preprocessing/catrine_protocol_cs_fluxes.jl",
@@ -315,7 +315,6 @@ files = [
     "core/test_ll_preprocessor_contract.jl",
     "core/test_rg_preprocessor_contract.jl",
     "core/test_poisson_balance.jl",
-    "core/test_cs_poisson_projection_cadence.jl",
     "core/test_rg_poisson_balance.jl",
     "core/test_preprocessor_unified_driver.jl",
     "core/test_preprocessor_writer_adapters.jl",
@@ -331,7 +330,6 @@ files = [
     "core/test_global_ps_pin.jl",
     "core/test_native_mass_fix_target.jl",
     "core/test_cs_face_fluxes.jl",
-    "core/test_cs_panel_geographic_roundtrip.jl",
     "core/test_ll_to_cs_regrid_script.jl",
     "core/test_cs_binary_coarsener.jl",
 ]
@@ -366,9 +364,9 @@ paths = [
     "src/Preprocessing/sources/**",
     "src/Preprocessing/Spectral/**",
     "src/Preprocessing/reduced_*.jl",
-    "src/Preprocessing/ring_poisson_balance.jl",
+    "src/Preprocessing/MassClosure/ring_poisson_balance.jl",
     "src/Preprocessing/Core/**",
-    "src/Preprocessing/era5_surface_reader.jl",
+    "src/Preprocessing/PhysicsInputs/era5_surface_reader.jl",
     "src/Preprocessing/transport_binary/{era5,geos,merra2}*.jl",
     "src/Preprocessing/transport_binary/*_spectral.jl",
     "src/Preprocessing/sources/era5_grib_geometry.jl",

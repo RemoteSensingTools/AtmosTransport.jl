@@ -636,7 +636,7 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
         _OMEGA_TIMING_STATE.solves += length(levels)
         _OMEGA_TIMING_STATE.cg_iters += sum(iter_by_level)
     end
-    _sync_cs_mirrors!(am, bm, ft, Nz)
+    sync_cs_mirrors!(am, bm, ft, Nz)
     return (max_increment = max_inc, max_post_residual = max_post,
             max_relative_correction = maximum(relative_by_level),
             max_local_relative_correction = maximum(local_relative_by_level),

@@ -161,8 +161,8 @@ function _build_met_settings(ctor::Type{<:ERA5GRIBSettings}, cfg::AbstractDict,
         flux_thickness = Symbol(lowercase(String(get(pre_cfg, "flux_thickness", "dry_mass")))),
         flux_time_sampling = Symbol(lowercase(String(get(pre_cfg, "flux_time_sampling", "window_mean")))),
         kwargs...))
-    _validate_flux_thickness(settings.flux_thickness, "ERA5")
-    return _validate_flux_construction(settings, "ERA5")
+    validate_flux_thickness(settings.flux_thickness, "ERA5")
+    return validate_flux_construction(settings, "ERA5")
 end
 
 # ---------------------------------------------------------------------------

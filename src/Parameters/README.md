@@ -121,7 +121,7 @@ other AtmosTransport modules; every later module may import from it.
 - Constant sets for reproducing another model's scheme, in
   [`PhysicalConstants.jl`](PhysicalConstants.jl):
   - `TM5_CONSTANTS`: TM5 `binas.F90` values, used as the defaults of
-    `BLDiffConstants` in `../Preprocessing/tm5_bldiff.jl`
+    `BLDiffConstants` in `../Preprocessing/PhysicsInputs/tm5_bldiff.jl`
   - `GEOSCHEM_CONSTANTS`: GEOS-Chem `physconstants.F90` / `vdiff_mod.F90`
     values, used as the defaults of `GCHPVdiffParameters` in
     `../State/Fields/GCHPNonlocalPBLField.jl`

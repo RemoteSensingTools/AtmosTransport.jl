@@ -30,7 +30,7 @@ mutable struct ERA5SurfaceReader
     lats     :: Vector{Float64}
 end
 
-function _resolve_era5_surface_path(surface_dir::AbstractString, date::Date)
+function resolve_era5_surface_path(surface_dir::AbstractString, date::Date)
     root = expand_data_path(surface_dir)
     ym = Dates.format(date, "yyyymm")
     ymd = Dates.format(date, "yyyymmdd")
@@ -137,7 +137,7 @@ function open_era5_surface_reader(surface_dir::AbstractString, date::Date,
                                                   date, Nx, Ny)
     end
 
-    path = _resolve_era5_surface_path(surface_dir, date)
+    path = resolve_era5_surface_path(surface_dir, date)
     nc_paths, tmp_dir = _surface_nc_paths(path)
     return _open_era5_surface_reader_from(nc_paths, tmp_dir, path, date, Nx, Ny)
 end
@@ -353,7 +353,7 @@ end
 # ERA5 surface slices occasionally carry a handful of `_FillValue`-masked cells
 # (observed on some Dec-2021 hours for `sshf`); NCDatasets surfaces those as
 # `missing`, so a bare `FT.(...)` cast throws `Float32(::Missing)`. Fill the masked
-# cells from their finite neighbours (see `_fill_masked_surface`) so a stray cell
+# cells from their finite neighbours (see `fill_masked_surface`) so a stray cell
 # takes a physically-local value rather than a flat global mean — preserving the
 # downstream finiteness/range validators (`_validate_era5_surface!`) — log the
 # count, and REFUSE to fill a slice where more than
@@ -369,7 +369,7 @@ const ERA5_SURFACE_MAX_MASKED_FRACTION = 0.01
 # local gradient instead of collapsing stray cells to the global mean. A region with
 # no finite neighbour after the sweeps (fully isolated) falls back to the global
 # finite mean. Returns a dense `Matrix{FT}` with no remaining `missing`.
-function _fill_masked_surface(raw::AbstractMatrix, ::Type{FT}) where FT
+function fill_masked_surface(raw::AbstractMatrix, ::Type{FT}) where FT
     nlon, nlat = size(raw)
     masked = ismissing.(raw)
     out = Matrix{FT}(undef, nlon, nlat)
@@ -424,23 +424,13 @@ function _surface_slice_to_FT(ds::NCDataset, var_name::String, time_idx::Int,
         "fill a broken slice; regenerate the surface download for this day.")
     @warn "ERA5 surface $(var_name) time $(time_idx): filling $(nmiss) masked " *
           "cell(s) from finite neighbours" maxlog = 8
-    return _fill_masked_surface(raw, FT)
+    return fill_masked_surface(raw, FT)
 end
 
 function _load_surface_field(reader::ERA5SurfaceReader,
                              key::Symbol,
                              win_idx::Int,
                              ::Type{FT}) where FT
-    ds, var_name = _surface_var_binding(reader, key)
-    time_idx = _surface_time_index(reader, ds, win_idx)
-    field = _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
-    return field, ds, var_name
-end
-
-function _load_surface_raw_field(reader::ERA5SurfaceReader,
-                                 key::Symbol,
-                                 win_idx::Int,
-                                 ::Type{FT}) where FT
     ds, var_name = _surface_var_binding(reader, key)
     time_idx = _surface_time_index(reader, ds, win_idx)
     field = _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
@@ -523,13 +513,13 @@ function load_era5_surface_window(reader::ERA5SurfaceReader,
                                   with_latent::Bool = false) where FT
     pblh, _, _ = _load_surface_field(reader, :pblh, win_idx, FT)
     ustar = _load_surface_ustar(reader, win_idx, FT)
-    hflux_raw, hflux_ds, hflux_name = _load_surface_raw_field(reader, :hflux, win_idx, FT)
+    hflux_raw, hflux_ds, hflux_name = _load_surface_field(reader, :hflux, win_idx, FT)
     hflux = _surface_flux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
     t2m, _, _ = _load_surface_field(reader, :t2m, win_idx, FT)
 
     surface = (pblh = pblh, t2m = t2m, ustar = ustar, hflux = hflux)
     if with_latent
-        lh_raw, lh_ds, lh_name = _load_surface_raw_field(reader, :lhflux, win_idx, FT)
+        lh_raw, lh_ds, lh_name = _load_surface_field(reader, :lhflux, win_idx, FT)
         surface = merge(surface,
                         (lhflux = _surface_flux_to_upward_wm2(lh_raw, lh_ds, lh_name, FT),))
     end
