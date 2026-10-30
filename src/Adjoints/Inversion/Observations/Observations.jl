@@ -120,7 +120,9 @@ const CELL_AVERAGE_PLACEMENT_CODE = Int8(-4)
                          surface_pressure_mismatch_pa, retrieval_profile, assimilated)
 
 Where an observation was sampled in a 4D-Var evaluation, returned per
-observation in [`CS4DVarResult`](@ref)`.stencils`: the cell `(panel, i, j)`,
+observation in
+[`CS4DVarResult`](@ref AtmosTransport.Adjoints.Inversion.Solver.CS4DVarResult)`.stencils`:
+the cell `(panel, i, j)`,
 the sampled `steps` and their `weights` (its [`CSTimeSampling`](@ref)), the
 model level sampled at each step (`levels`, k = 1 at the top, resolved from
 the replayed column at the end of that step; `0` for an operator that reads

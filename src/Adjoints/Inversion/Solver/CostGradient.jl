@@ -374,7 +374,8 @@ the number of observations, as in TM5-4DVAR:
    every step; each control's window collects its steps.
 
 Both runs replay the production step plan of `schedule` (a
-[`CSStepSchedule`](@ref); default: one step of `dt` per met window, the full
+[`CSStepSchedule`](@ref AtmosTransport.Adjoints.Footprint.CSStepSchedule);
+default: one step of `dt` per met window, the full
 operator suite every step), with the controls' rates in its surface-flux
 operator. Steps after the last sampled step do not affect the cost and get a
 zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
