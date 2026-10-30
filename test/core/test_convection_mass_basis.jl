@@ -297,7 +297,7 @@ end
     end
 
     function raw_header(path)
-        raw = open(io -> MD._read_transport_header_json(io; source = path), path)
+        raw = open(io -> MD.BinaryFormat.read_transport_header_json(io; source = path), path)
         return JSON3.read(String(raw), Dict{String, Any})
     end
 

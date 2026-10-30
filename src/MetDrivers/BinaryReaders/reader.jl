@@ -31,16 +31,16 @@ function Base.show(io::IO, r::TransportBinaryReader)
     h = r.header
     print(io, summary(r), "\n",
           "├── path:          ", r.path, "\n",
-          "├── geometry:      ", _transport_geometry_summary(h), "\n",
+          "├── geometry:      ", transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, load as ",
               _transport_load_float_type(r), "\n",
           "├── basis:         ", h.mass_basis, ", ps=",
-              _transport_surface_pressure_basis_label(h.surface_pressure_basis), "\n",
+              transport_surface_pressure_basis_label(h.surface_pressure_basis), "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
-              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
+              steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
-          "├── humidity:      ", _transport_qv_summary(h), "\n",
-          "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "├── humidity:      ", transport_qv_summary(h), "\n",
+          "├── semantics:     ", transport_semantics_summary(h), "\n",
           "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── windows:       ", h.nwindow)
 end
@@ -66,7 +66,7 @@ delta_semantics(r::TransportBinaryReader) = r.header.delta_semantics
 """Return `true` when both specific-humidity endpoint sections are present."""
 has_qv_endpoints(r::TransportBinaryReader) =
     :qv_start in r.header.payload_sections && :qv_end in r.header.payload_sections
-has_flux_delta(r::TransportBinaryReader) = any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in r.header.payload_sections)
+has_flux_delta(r::TransportBinaryReader) = any(section in FLUX_DELTA_PAYLOAD_SECTIONS for section in r.header.payload_sections)
 
 """
     has_tm5_convection(r::TransportBinaryReader) -> Bool
@@ -78,7 +78,7 @@ preprocessor when `tm5_convection = true`. Used by the
 `ConvectionForcing.tm5_fields` on loaded windows.
 """
 has_tm5_convection(r::TransportBinaryReader) =
-    all(s in r.header.payload_sections for s in (:entu, :detu, :entd, :detd))
+    all(s in r.header.payload_sections for s in TM5_CONVECTION_PAYLOAD_SECTIONS)
 """
     tm5_convection_mass_basis(r::TransportBinaryReader) -> Union{AbstractMassBasis, Nothing}
 
@@ -186,9 +186,9 @@ end
 
 has_cmfmc(r::TransportBinaryReader) = :cmfmc in r.header.payload_sections
 has_surface(r::TransportBinaryReader) =
-    all(s in r.header.payload_sections for s in _PBL_SURFACE_PAYLOAD_SECTIONS)
+    all(s in r.header.payload_sections for s in PBL_SURFACE_PAYLOAD_SECTIONS)
 has_vdiff_fields(r::TransportBinaryReader) =
-    all(s in r.header.payload_sections for s in _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    all(s in r.header.payload_sections for s in GCHP_VDIFF_PAYLOAD_SECTIONS)
 has_pbl_eflux(r::TransportBinaryReader) = :pbl_eflux in r.header.payload_sections
 has_cmfmc_cloud_base(r::TransportBinaryReader) = :cmfmc_cloud_base in r.header.payload_sections
 
@@ -200,7 +200,7 @@ has_cmfmc_cloud_base(r::TransportBinaryReader) = :cmfmc_cloud_base in r.header.p
 function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Float32)
     io = open(bin_path, "r")
     try
-        raw = _read_transport_header_json(io; source = "transport binary $(bin_path)")
+        raw = read_transport_header_json(io; source = "transport binary $(bin_path)")
 
         # Validate the self-describing transport-binary contract before mmap.
         # `String(::Vector{UInt8})` may take ownership of and empty the vector;
@@ -211,8 +211,8 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
         length(raw) < Int(hdr_dict["header_bytes"]) || throw(ArgumentError(
             "transport binary JSON header is not null-terminated before header_bytes"))
 
-        header = _parse_transport_header(raw)
-        DiskFT = _transport_disk_float_type(header.on_disk_float_type)
+        header = parse_transport_header(raw)
+        DiskFT = transport_disk_float_type(header.on_disk_float_type)
         total_elems = header.n_geometry_elems + header.elems_per_window * header.nwindow
         expected_bytes = header.header_bytes + total_elems * sizeof(DiskFT)
         actual_bytes = filesize(bin_path)
@@ -223,12 +223,12 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
         G = typeof(header.geometry)
         reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
         if !haskey(header.raw_header, "surface_pressure_basis")
-            inferred = _infer_legacy_surface_pressure_basis(reader)
+            inferred = infer_surface_pressure_basis(reader)
             @warn "$(basename(bin_path)) has no `surface_pressure_basis` header key; " *
-                  "inferred `$(_transport_surface_pressure_basis_label(inferred))` once from " *
+                  "inferred `$(transport_surface_pressure_basis_label(inferred))` once from " *
                   "window-1 surface pressure and air mass. Regenerate the binary before the " *
                   "legacy fallback becomes an error." maxlog=1
-            header = _parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
+            header = parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
             reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
         end
         _check_tm5_convection_provenance(reader)
@@ -240,12 +240,16 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
     end
 end
 
-function _infer_legacy_surface_pressure_basis(reader::TransportBinaryReader)
+"""Infer legacy `ps` basis from stored column masses using Float64 column sums.
+
+The reader calls this once when a binary lacks `surface_pressure_basis`.
+"""
+function infer_surface_pressure_basis(reader::TransportBinaryReader)
     binary_mass_basis(reader) === :moist && return TotalSurfacePressure()
     grid = _legacy_surface_pressure_grid(reader, binary_geometry(reader))
-    air_mass = _transport_section_view(reader, 1, :m)
-    surface_pressure = _transport_section_view(reader, 1, :ps)
-    return _infer_legacy_surface_pressure_basis(
+    air_mass = section_view(reader, 1, :m)
+    surface_pressure = section_view(reader, 1, :ps)
+    return infer_surface_pressure_basis(
         grid, air_mass, surface_pressure, binary_geometry(reader))
 end
 
@@ -257,7 +261,7 @@ _legacy_surface_pressure_grid(reader::TransportBinaryReader,
                               ::CubedSphereBinaryGeometry) =
     load_grid(reader; FT=Float64, Hp=0)
 
-function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+function infer_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                ::LatLonBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
@@ -272,10 +276,10 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
         ps = Float64(surface_pressure[c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
-    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+    return worst <= SURFACE_PRESSURE_BASIS_TOLERANCE ? DrySurfacePressure() : TotalSurfacePressure()
 end
 
-function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+function infer_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                ::ReducedGaussianBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
@@ -288,10 +292,10 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
         ps = Float64(surface_pressure[c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
-    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+    return worst <= SURFACE_PRESSURE_BASIS_TOLERANCE ? DrySurfacePressure() : TotalSurfacePressure()
 end
 
-function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
+function infer_surface_pressure_basis(grid, air_mass, surface_pressure,
                                                geometry::CubedSphereBinaryGeometry)
     mesh = grid.horizontal
     g = Float64(gravity(grid))
@@ -307,7 +311,7 @@ function _infer_legacy_surface_pressure_basis(grid, air_mass, surface_pressure,
         ps = Float64(surface_pressure[(p - 1) * panel_cells + c])
         worst = max(worst, abs(p_dry - ps) / max(abs(ps), 1.0))
     end
-    return worst <= 2e-5 ? DrySurfacePressure() : TotalSurfacePressure()
+    return worst <= SURFACE_PRESSURE_BASIS_TOLERANCE ? DrySurfacePressure() : TotalSurfacePressure()
 end
 
 Base.close(r::TransportBinaryReader) = close(r.io)
@@ -316,18 +320,18 @@ Base.close(r::TransportBinaryReader) = close(r.io)
     r.header.n_geometry_elems + (win - 1) * r.header.elems_per_window
 
 """
-    _transport_section_view(reader, win, section)
+    section_view(reader, win, section)
 
 Return a zero-copy view of one payload `section` in window `win`. This is the
 section-level reader primitive for metadata probes that do not need a complete
 transport window (and must not allocate all of its flux and physics arrays).
 """
-function _transport_section_view(reader::TransportBinaryReader,
+function section_view(reader::TransportBinaryReader,
                                  win::Int, wanted::Symbol)
     1 <= win <= reader.header.nwindow || throw(BoundsError(reader, win))
     o = _transport_window_offset(reader, win)
     for section in reader.header.payload_sections
-        n = _transport_section_elements(reader.header, section)
+        n = section_elements(reader.header, section)
         section === wanted && return @view reader.data[(o + 1):(o + n)]
         o += n
     end
@@ -369,64 +373,8 @@ function load_grid(reader::TransportBinaryReader{<:Any, <:Any, ReducedGaussianBi
     return AtmosGrid(mesh, vc, arch; FT=FT, radius=h.planet_radius_m)
 end
 
-_transport_allocate_mass(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
-
-_transport_allocate_ps(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny) :
-        Array{FT}(undef, reader.header.ncell)
-
-_transport_allocate_cm(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel + 1) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
-
-_transport_allocate_am(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.geometry.Nx + 1, reader.header.geometry.Ny, reader.header.nlevel)
-
-_transport_allocate_bm(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny + 1, reader.header.nlevel)
-
-_transport_allocate_hflux(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.nface_h, reader.header.nlevel)
-
-_transport_allocate_qv(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
-
-_transport_allocate_dam(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.geometry.Nx + 1, reader.header.geometry.Ny, reader.header.nlevel)
-
-_transport_allocate_dbm(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny + 1, reader.header.nlevel)
-
-_transport_allocate_dhflux(reader::TransportBinaryReader{FT}) where FT =
-    Array{FT}(undef, reader.header.nface_h, reader.header.nlevel)
-
-_transport_allocate_dm(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
-
-_transport_allocate_dcm(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel + 1) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel + 1)
-
-_transport_allocate_surface_field(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny) :
-        Array{FT}(undef, reader.header.ncell)
-
-# TM5 convection fields — all layer-center, shape matches `m`.
-_transport_allocate_tm5_field(reader::TransportBinaryReader{FT}) where FT =
-    _transport_is_structured(reader.header) ?
-        Array{FT}(undef, reader.header.geometry.Nx, reader.header.geometry.Ny, reader.header.nlevel) :
-        Array{FT}(undef, reader.header.ncell, reader.header.nlevel)
+_transport_allocate(reader::TransportBinaryReader{FT}, section::Symbol) where FT =
+    Array{FT}(undef, section_shape(reader.header, section))
 
 function _transport_make_fluxes(::Val{:dry}, am, bm, cm)
     return StructuredFaceFluxState{DryBasis}(am, bm, cm)
@@ -444,6 +392,19 @@ function _transport_make_fluxes(::Val{:moist}, hflux, cm)
     return FaceIndexedFluxState{MoistBasis}(hflux, cm)
 end
 
+# Walk sections once; copies retain the disk-to-load conversion of copyto!.
+function _load_sections!(buffers::NamedTuple, reader::TransportBinaryReader, win::Int)
+    o = _transport_window_offset(reader, win)
+    for section in reader.header.payload_sections
+        n = section_elements(reader.header, section)
+        if haskey(buffers, section)
+            copyto!(getproperty(buffers, section), 1, reader.data, o + 1, n)
+        end
+        o += n
+    end
+    return nothing
+end
+
 """
     load_window!(reader, win; buffers...) -> (air_mass, surface_pressure, fluxes)
 
@@ -459,50 +420,20 @@ function load_window!(reader::TransportBinaryReader{FT}, win::Int;
                       bm = nothing,
                       cm = nothing) where FT
     h = reader.header
-    m = isnothing(m) ? _transport_allocate_mass(reader) : m
-    ps = isnothing(ps) ? _transport_allocate_ps(reader) : ps
-    cm = isnothing(cm) ? _transport_allocate_cm(reader) : cm
+    m = isnothing(m) ? _transport_allocate(reader, :m) : m
+    ps = isnothing(ps) ? _transport_allocate(reader, :ps) : ps
+    cm = isnothing(cm) ? _transport_allocate(reader, :cm) : cm
 
-    if _transport_is_structured(h)
-        am = isnothing(am) ? _transport_allocate_am(reader) : am
-        bm = isnothing(bm) ? _transport_allocate_bm(reader) : bm
-        o = _transport_window_offset(reader, win)
-
-        for section in h.payload_sections
-            n = _transport_section_elements(h, section)
-            if section === :m
-                copyto!(m, 1, reader.data, o + 1, n)
-            elseif section === :am
-                copyto!(am, 1, reader.data, o + 1, n)
-            elseif section === :bm
-                copyto!(bm, 1, reader.data, o + 1, n)
-            elseif section === :cm
-                copyto!(cm, 1, reader.data, o + 1, n)
-            elseif section === :ps
-                copyto!(ps, 1, reader.data, o + 1, n)
-            end
-            o += n
-        end
+    if transport_is_structured(h)
+        am = isnothing(am) ? _transport_allocate(reader, :am) : am
+        bm = isnothing(bm) ? _transport_allocate(reader, :bm) : bm
+        _load_sections!((; m, am, bm, cm, ps), reader, win)
 
         fluxes = _transport_make_fluxes(Val(h.mass_basis), am, bm, cm)
         return m, ps, fluxes
-    elseif _transport_is_faceindexed(h)
-        hflux = isnothing(hflux) ? _transport_allocate_hflux(reader) : hflux
-        o = _transport_window_offset(reader, win)
-
-        for section in h.payload_sections
-            n = _transport_section_elements(h, section)
-            if section === :m
-                copyto!(m, 1, reader.data, o + 1, n)
-            elseif section === :hflux
-                copyto!(hflux, 1, reader.data, o + 1, n)
-            elseif section === :cm
-                copyto!(cm, 1, reader.data, o + 1, n)
-            elseif section === :ps
-                copyto!(ps, 1, reader.data, o + 1, n)
-            end
-            o += n
-        end
+    elseif transport_is_faceindexed(h)
+        hflux = isnothing(hflux) ? _transport_allocate(reader, :hflux) : hflux
+        _load_sections!((; m, hflux, cm, ps), reader, win)
 
         fluxes = _transport_make_fluxes(Val(h.mass_basis), hflux, cm)
         return m, ps, fluxes
@@ -527,34 +458,18 @@ function load_flux_delta_window!(reader::TransportBinaryReader{FT}, win::Int;
     has_flux_delta(reader) || return nothing
     h = reader.header
 
-    dam = isnothing(dam) && _transport_is_structured(h) ? _transport_allocate_dam(reader) : dam
-    dbm = isnothing(dbm) && _transport_is_structured(h) ? _transport_allocate_dbm(reader) : dbm
-    dhflux = isnothing(dhflux) && _transport_is_faceindexed(h) ? _transport_allocate_dhflux(reader) : dhflux
-    dcm = isnothing(dcm) ? _transport_allocate_dcm(reader) : dcm
-    dm = isnothing(dm) ? _transport_allocate_dm(reader) : dm
+    dam = isnothing(dam) && transport_is_structured(h) ? _transport_allocate(reader, :dam) : dam
+    dbm = isnothing(dbm) && transport_is_structured(h) ? _transport_allocate(reader, :dbm) : dbm
+    dhflux = isnothing(dhflux) && transport_is_faceindexed(h) ? _transport_allocate(reader, :dhflux) : dhflux
+    dcm = isnothing(dcm) ? _transport_allocate(reader, :dcm) : dcm
+    dm = isnothing(dm) ? _transport_allocate(reader, :dm) : dm
 
-    o = _transport_window_offset(reader, win)
-    found_dam = found_dbm = found_dhflux = found_dcm = found_dm = false
-    for section in h.payload_sections
-        n = _transport_section_elements(h, section)
-        if section === :dam
-            copyto!(dam, 1, reader.data, o + 1, n)
-            found_dam = true
-        elseif section === :dbm
-            copyto!(dbm, 1, reader.data, o + 1, n)
-            found_dbm = true
-        elseif section === :dhflux
-            copyto!(dhflux, 1, reader.data, o + 1, n)
-            found_dhflux = true
-        elseif section === :dcm
-            copyto!(dcm, 1, reader.data, o + 1, n)
-            found_dcm = true
-        elseif section === :dm
-            copyto!(dm, 1, reader.data, o + 1, n)
-            found_dm = true
-        end
-        o += n
-    end
+    _load_sections!((; dam, dbm, dhflux, dcm, dm), reader, win)
+    found_dam = :dam in h.payload_sections
+    found_dbm = :dbm in h.payload_sections
+    found_dhflux = :dhflux in h.payload_sections
+    found_dcm = :dcm in h.payload_sections
+    found_dm = :dm in h.payload_sections
 
     result = NamedTuple()
     if found_dam
@@ -602,25 +517,12 @@ function load_tm5_convection_window!(reader::TransportBinaryReader{FT}, win::Int
     has_tm5_convection(reader) || return nothing
     h = reader.header
 
-    entu = isnothing(entu) ? _transport_allocate_tm5_field(reader) : entu
-    detu = isnothing(detu) ? _transport_allocate_tm5_field(reader) : detu
-    entd = isnothing(entd) ? _transport_allocate_tm5_field(reader) : entd
-    detd = isnothing(detd) ? _transport_allocate_tm5_field(reader) : detd
+    entu = isnothing(entu) ? _transport_allocate(reader, :entu) : entu
+    detu = isnothing(detu) ? _transport_allocate(reader, :detu) : detu
+    entd = isnothing(entd) ? _transport_allocate(reader, :entd) : entd
+    detd = isnothing(detd) ? _transport_allocate(reader, :detd) : detd
 
-    o = _transport_window_offset(reader, win)
-    for section in h.payload_sections
-        n = _transport_section_elements(h, section)
-        if section === :entu
-            copyto!(entu, 1, reader.data, o + 1, n)
-        elseif section === :detu
-            copyto!(detu, 1, reader.data, o + 1, n)
-        elseif section === :entd
-            copyto!(entd, 1, reader.data, o + 1, n)
-        elseif section === :detd
-            copyto!(detd, 1, reader.data, o + 1, n)
-        end
-        o += n
-    end
+    _load_sections!((; entu, detu, entd, detd), reader, win)
     return (; entu, detu, entd, detd)
 end
 
@@ -640,26 +542,12 @@ function load_surface_window!(reader::TransportBinaryReader{FT}, win::Int;
                               t2m = nothing) where FT
     has_surface(reader) || return nothing
 
-    pblh = isnothing(pblh) ? _transport_allocate_surface_field(reader) : pblh
-    ustar = isnothing(ustar) ? _transport_allocate_surface_field(reader) : ustar
-    hflux = isnothing(hflux) ? _transport_allocate_surface_field(reader) : hflux
-    t2m = isnothing(t2m) ? _transport_allocate_surface_field(reader) : t2m
+    pblh = isnothing(pblh) ? _transport_allocate(reader, :pblh) : pblh
+    ustar = isnothing(ustar) ? _transport_allocate(reader, :ustar) : ustar
+    hflux = isnothing(hflux) ? _transport_allocate(reader, :pbl_hflux) : hflux
+    t2m = isnothing(t2m) ? _transport_allocate(reader, :t2m) : t2m
 
-    o = _transport_window_offset(reader, win)
-    for section in reader.header.payload_sections
-        n = _transport_section_elements(reader.header, section)
-        if section === :pblh
-            copyto!(pblh, 1, reader.data, o + 1, n)
-        elseif section === :ustar
-            copyto!(ustar, 1, reader.data, o + 1, n)
-        elseif section === :pbl_hflux
-            copyto!(hflux, 1, reader.data, o + 1, n)
-        elseif section === :t2m
-            copyto!(t2m, 1, reader.data, o + 1, n)
-        end
-        o += n
-    end
-
+    _load_sections!((; pblh, ustar, pbl_hflux=hflux, t2m), reader, win)
     return PBLSurfaceForcing(pblh, ustar, hflux, t2m)
 end
 
@@ -675,19 +563,9 @@ function load_qv_pair_window!(reader::TransportBinaryReader{FT}, win::Int;
                               qv_end = nothing) where FT
     h = reader.header
     has_qv_endpoints(reader) || return nothing
-    qv_start = isnothing(qv_start) ? _transport_allocate_qv(reader) : qv_start
-    qv_end = isnothing(qv_end) ? _transport_allocate_qv(reader) : qv_end
+    qv_start = isnothing(qv_start) ? _transport_allocate(reader, :qv_start) : qv_start
+    qv_end = isnothing(qv_end) ? _transport_allocate(reader, :qv_end) : qv_end
 
-    o = _transport_window_offset(reader, win)
-    for section in h.payload_sections
-        n = _transport_section_elements(h, section)
-        if section === :qv_start
-            copyto!(qv_start, 1, reader.data, o + 1, n)
-        elseif section === :qv_end
-            copyto!(qv_end, 1, reader.data, o + 1, n)
-        end
-        o += n
-    end
-
+    _load_sections!((; qv_start, qv_end), reader, win)
     return (; qv_start, qv_end)
 end

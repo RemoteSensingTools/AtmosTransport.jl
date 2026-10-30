@@ -38,8 +38,8 @@ function certificate(evidence_for_window, nwindow, nlevel)
 end
 
 parse_flux(h; nwindow = h["nwindow"], nlevel = h["nlevel"]) =
-    MD._parse_flux_fidelity_header(JSON3.read(JSON3.write(h)), nwindow, nlevel)
-parse_omega(h) = MD._parse_omega_fidelity_header(JSON3.read(JSON3.write(h)))
+    MD.BinaryFormat.parse_flux_fidelity_header(JSON3.read(JSON3.write(h)), nwindow, nlevel)
+parse_omega(h) = MD.BinaryFormat.parse_omega_fidelity_header(JSON3.read(JSON3.write(h)))
 
 # OMEGA evidence with `n` cells × `nz` interfaces; `candidate(src, k)` sets ω_cm.
 function omega_evidence(candidate; n = 64, nz = 20, seed = 3)
@@ -368,7 +368,7 @@ end
             Dict{String,Any}("nwindow" => 3), acc)
         # The reader decodes and checks the record; absent keys mean "not recorded".
         parse_closure(h, nwindow = 2) =
-            MD._parse_column_closure_header(JSON3.read(JSON3.write(h)), nwindow)
+            MD.BinaryFormat.parse_column_closure_header(JSON3.read(JSON3.write(h)), nwindow)
         closure = parse_closure(header)
         @test closure isa MD.ColumnClosureHeader
         @test closure.rule == MD.COLUMN_CLOSURE_RULE
@@ -440,8 +440,8 @@ end
             Dict{String,Any}("flux_fidelity_max_abs_kg" => 0.0)); nwindow = 24, nlevel = 72)
         @test_throws ArgumentError parse_flux(merge(not_applicable,
             Dict{String,Any}("flux_fidelity_kind" => "wind_rederived")); nwindow = 24, nlevel = 72)
-        @test_throws ArgumentError MD._parse_fidelity_status("maybe")
-        @test_throws ArgumentError MD._parse_flux_fidelity_kind("symbol_switch")
+        @test_throws ArgumentError MD.BinaryFormat.parse_fidelity_status("maybe")
+        @test_throws ArgumentError MD.BinaryFormat.parse_flux_fidelity_kind("symbol_switch")
 
         passed, _ = omega_header((src, k, rng) -> 0.9src + 0.02randn(rng))
         @test parse_omega(passed).status isa MD.FidelityPassed
@@ -467,7 +467,7 @@ end
         @test_throws ArgumentError parse_omega(merge(unavailable,
             Dict{String,Any}("omega_fidelity_nrmse" => 0.3)))
         # Binaries written before certificates read as unavailable.
-        legacy = MD._parse_flux_fidelity_header(JSON3.read("{}"), 24, 72)
+        legacy = MD.BinaryFormat.parse_flux_fidelity_header(JSON3.read("{}"), 24, 72)
         @test legacy.status isa MD.FidelityUnavailable
         @test legacy.reason.code == "legacy_header_missing"
     end

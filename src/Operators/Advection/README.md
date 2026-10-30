@@ -28,8 +28,8 @@ the model-facing `apply!` entrypoints that the transport block calls.
 - Cubed-sphere halo support:
   [`HaloExchange.jl`](HaloExchange.jl)
   provides `fill_panel_halos!` and `copy_corners!`
-- Vertical mass-flux diagnosis is provided by the meteorology contract as
-  `diagnose_cm_from_continuity!`.
+- Vertical mass fluxes are supplied by meteorological forcing. Advection
+  tests construct their fixture fluxes locally in `test_advection_kernels.jl`.
 
 ## Runtime Shape
 
@@ -191,7 +191,7 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
 - [`../../Grids/`](../../Grids/) provides mesh geometry and panel
   connectivity
 - [`../../MetDrivers/`](../../MetDrivers/) provides
-  `diagnose_cm_from_continuity!`
+  `uses_binary_substep_contract`, which controls runtime subcycling ownership.
 - [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
   chooses when this folder's `apply!` methods are executed
 

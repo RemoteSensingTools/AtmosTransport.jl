@@ -1,24 +1,26 @@
 # Typed geometry metadata, common header schema, and version-4 parsing.
 
-const _PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
+const PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
-const _GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
+const GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
 const _GCHP_VDIFF_FIELD_NAMES = (:u, :v, :t, :qv)
 # Optional 2-D cubed-sphere sections: surface latent heat flux for the GCHP
 # non-local PBL scheme, and the convective cloud-base layer (top-down index).
-const _CS_OPTIONAL_2D_SECTIONS = (:pbl_eflux, :cmfmc_cloud_base)
+const CS_OPTIONAL_2D_SECTIONS = (:pbl_eflux, :cmfmc_cloud_base)
 
 # Sections stored as one (Nc, Nc) field per panel.
 @inline _is_cs_2d_section(section::Symbol) =
-    section === :ps || _is_pbl_surface_payload_section(section) || section in _CS_OPTIONAL_2D_SECTIONS
+    section === :ps || _is_pbl_surface_payload_section(section) || section in CS_OPTIONAL_2D_SECTIONS
+const TM5_CONVECTION_PAYLOAD_SECTIONS = (:entu, :detu, :entd, :detd)
+const FLUX_DELTA_PAYLOAD_SECTIONS = (:dam, :dbm, :dcm, :dm, :dhflux)
 const TRANSPORT_BINARY_FORMAT_VERSION = 4
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
-    section in _PBL_SURFACE_PAYLOAD_SECTIONS
+    section in PBL_SURFACE_PAYLOAD_SECTIONS
 @inline _pbl_surface_field_name(section::Symbol) =
     section === :pbl_hflux ? :hflux : section
 @inline _is_gchp_vdiff_payload_section(section::Symbol) =
-    section in _GCHP_VDIFF_PAYLOAD_SECTIONS
+    section in GCHP_VDIFF_PAYLOAD_SECTIONS
 @inline function _gchp_vdiff_field_name(section::Symbol)
     section === :vdiff_u  && return :u
     section === :vdiff_v  && return :v
@@ -46,7 +48,7 @@ replaces the writer's default block as a whole.
 const FLUX_CERTIFICATE_KEY_PREFIXES =
     ("flux_fidelity_", "omega_fidelity_", "balance_correction_", "column_closure_")
 
-_is_certificate_key(key::AbstractString) =
+is_certificate_key(key::AbstractString) =
     any(prefix -> startswith(key, prefix), FLUX_CERTIFICATE_KEY_PREFIXES)
 
 # Write-time flux-fidelity certification is metadata, but it is deliberately
@@ -63,6 +65,18 @@ abstract type AbstractFluxFidelityKind end
 struct WindRederivedFidelity  <: AbstractFluxFidelityKind end
 struct NativePassthroughFidelity <: AbstractFluxFidelityKind end
 struct NoFluxFidelityKind     <: AbstractFluxFidelityKind end
+
+"""On-disk spelling of a typed fidelity status or flux kind."""
+fidelity_tag(::FidelityPassed) = "passed"
+fidelity_tag(::FidelityFailed) = "failed"
+fidelity_tag(::FidelityNotApplicable) = "not_applicable"
+fidelity_tag(::FidelityUnavailable) = "unavailable"
+fidelity_tag(::WindRederivedFidelity) = "wind_rederived"
+fidelity_tag(::NativePassthroughFidelity) = "native_passthrough"
+fidelity_tag(::NoFluxFidelityKind) = "none"
+
+"Deterministic flux-certificate sample seed; part of the binary contract."
+const FLUX_FIDELITY_SAMPLE_SEED = UInt64(0x6a09e667f3bcc909)
 
 struct FidelityReason
     code::String
@@ -294,25 +308,25 @@ surface_pressure_basis(h::TransportBinaryHeader) = h.surface_pressure_basis
 grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
 horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
 
-function _parse_fidelity_status(value)
+function parse_fidelity_status(value)
     text = lowercase(String(value))
-    text == "passed" && return FidelityPassed()
-    text == "failed" && return FidelityFailed()
-    text == "not_applicable" && return FidelityNotApplicable()
-    text == "unavailable" && return FidelityUnavailable()
+    text == fidelity_tag(FidelityPassed()) && return FidelityPassed()
+    text == fidelity_tag(FidelityFailed()) && return FidelityFailed()
+    text == fidelity_tag(FidelityNotApplicable()) && return FidelityNotApplicable()
+    text == fidelity_tag(FidelityUnavailable()) && return FidelityUnavailable()
     throw(ArgumentError("unsupported fidelity status $(repr(text)); expected passed, failed, not_applicable, or unavailable"))
 end
 
-function _parse_flux_fidelity_kind(value)
+function parse_flux_fidelity_kind(value)
     text = lowercase(String(value))
-    text == "wind_rederived" && return WindRederivedFidelity()
-    text == "native_passthrough" && return NativePassthroughFidelity()
-    text == "none" && return NoFluxFidelityKind()
+    text == fidelity_tag(WindRederivedFidelity()) && return WindRederivedFidelity()
+    text == fidelity_tag(NativePassthroughFidelity()) && return NativePassthroughFidelity()
+    text == fidelity_tag(NoFluxFidelityKind()) && return NoFluxFidelityKind()
     throw(ArgumentError("unsupported flux_fidelity_kind $(repr(text)); expected wind_rederived, native_passthrough, or none"))
 end
 
 @inline _optional_float(hdr, key) = haskey(hdr, key) ? Float64(getproperty(hdr, key)) : nothing
-@inline _optional_int(hdr, key) = haskey(hdr, key) ? Int(getproperty(hdr, key)) : nothing
+@inline optional_header_int(hdr, key) = haskey(hdr, key) ? Int(getproperty(hdr, key)) : nothing
 
 # Certificate keys that only a wind-derived (passed) certificate carries.
 const _FLUX_FIDELITY_METRIC_KEYS = (
@@ -420,7 +434,7 @@ _check_flux_kind(status, kind, _hdr, _nwindow, _nlevel) = throw(ArgumentError(
     "$(nameof(typeof(kind)))"))
 
 """
-    _parse_flux_fidelity_header(hdr, nwindow, nlevel) -> FluxFidelityHeader
+    parse_flux_fidelity_header(hdr, nwindow, nlevel) -> FluxFidelityHeader
 
 Decode and check the horizontal-flux certificate: the status/kind pair must be
 one a writer emits, a sampled certificate must cover `nwindow` windows and
@@ -429,7 +443,7 @@ finite metrics, and a non-passed certificate needs a reason. Binaries written
 before the certificate existed read as `FidelityUnavailable`
 (`legacy_header_missing`).
 """
-function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
+function parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
     # Pre-C6 v4 files stay readable, but their lack of certification is made
     # explicit in the typed result. Every current writer emits FLUX_FIDELITY_SCHEMA.
     if !haskey(hdr, :flux_fidelity_schema)
@@ -443,8 +457,8 @@ function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
     schema == FLUX_FIDELITY_SCHEMA || throw(ArgumentError(
         "unsupported flux_fidelity_schema=$(schema); expected $(FLUX_FIDELITY_SCHEMA) — " *
         "regenerate this binary with the current preprocessor"))
-    status = _parse_fidelity_status(hdr.flux_fidelity_status)
-    kind = _parse_flux_fidelity_kind(hdr.flux_fidelity_kind)
+    status = parse_fidelity_status(hdr.flux_fidelity_status)
+    kind = parse_flux_fidelity_kind(hdr.flux_fidelity_kind)
     reason = haskey(hdr, :flux_fidelity_reason) ? FidelityReason(String(hdr.flux_fidelity_reason)) : nothing
     status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
         "passed flux-fidelity certificate must not carry flux_fidelity_reason"))
@@ -472,13 +486,13 @@ function _parse_flux_fidelity_header(hdr, nwindow::Integer, nlevel::Integer)
         _optional_float(hdr, :flux_fidelity_abs_tol_kg),
         _optional_float(hdr, :flux_fidelity_rel_tol),
         _optional_float(hdr, :flux_fidelity_scale_floor_kg),
-        _optional_int(hdr, :flux_fidelity_worst_window),
-        _optional_int(hdr, :flux_fidelity_worst_face),
-        _optional_int(hdr, :flux_fidelity_worst_level),
+        optional_header_int(hdr, :flux_fidelity_worst_window),
+        optional_header_int(hdr, :flux_fidelity_worst_face),
+        optional_header_int(hdr, :flux_fidelity_worst_level),
         _optional_float(hdr, :balance_correction_max_abs_kg),
         _optional_float(hdr, :balance_correction_rms_relative),
         _optional_float(hdr, :balance_correction_max_level_rms_relative),
-        _optional_int(hdr, :balance_correction_max_level))
+        optional_header_int(hdr, :balance_correction_max_level))
 end
 
 # OMEGA certificate checks by status.
@@ -518,20 +532,20 @@ function _check_omega_status(::Union{FidelityNotApplicable, FidelityUnavailable}
 end
 
 """
-    _parse_omega_fidelity_header(hdr) -> OmegaFidelityHeader
+    parse_omega_fidelity_header(hdr) -> OmegaFidelityHeader
 
 Decode and check the source-OMEGA certificate: a passed certificate has
 samples, finite metrics, `omega_fidelity_passed = true` and satisfies its
 recorded gates; a failed one has `omega_fidelity_passed = false`; a
 not-applicable or unavailable one has no samples or metrics.
 """
-function _parse_omega_fidelity_header(hdr)
+function parse_omega_fidelity_header(hdr)
     if !haskey(hdr, :omega_fidelity_status)
         return OmegaFidelityHeader(FidelityUnavailable(), FidelityReason("legacy_header_missing"),
             "", "", "", 0, nothing, nothing, nothing, nothing, nothing, nothing,
             nothing, String[], Float64[], "", nothing, nothing, nothing, nothing, nothing)
     end
-    status = _parse_fidelity_status(hdr.omega_fidelity_status)
+    status = parse_fidelity_status(hdr.omega_fidelity_status)
     reason = haskey(hdr, :omega_fidelity_reason) ? FidelityReason(String(hdr.omega_fidelity_reason)) : nothing
     status isa FidelityPassed && reason !== nothing && throw(ArgumentError(
         "passed OMEGA-fidelity certificate must not carry omega_fidelity_reason"))
@@ -566,7 +580,7 @@ function _parse_omega_fidelity_header(hdr)
 end
 
 """
-    _parse_column_closure_header(hdr, nwindow) -> AbstractColumnClosureHeader
+    parse_column_closure_header(hdr, nwindow) -> AbstractColumnClosureHeader
 
 Decode and check the column-closure record. Absent keys mean the closure was
 not recorded (`NoColumnClosureHeader`). A record must be complete, name the
@@ -574,7 +588,7 @@ known rule, cover `nwindow` windows and hold finite, non-negative values with
 both residual/tolerance ratios at most 1; otherwise the stored fluxes cannot be
 trusted to close the column mass budget and the binary must be regenerated.
 """
-function _parse_column_closure_header(hdr, nwindow::Integer)
+function parse_column_closure_header(hdr, nwindow::Integer)
     present = [key for key in _COLUMN_CLOSURE_KEYS if haskey(hdr, key)]
     isempty(present) && return NoColumnClosureHeader()
     missing_keys = setdiff(_COLUMN_CLOSURE_KEYS, present)
@@ -642,33 +656,33 @@ function _parse_poisson_scale_schedule(hdr, nwindow::Integer,
     return scales
 end
 
-@inline _has_variable_step_schedule(schedule::AbstractVector{<:Integer}) =
+@inline has_variable_step_schedule(schedule::AbstractVector{<:Integer}) =
     !isempty(schedule) && any(!=(first(schedule)), schedule)
 
-function _steps_per_window_summary(steps::Integer,
+function steps_per_window_summary(steps::Integer,
                                    schedule::AbstractVector{<:Integer})
-    if _has_variable_step_schedule(schedule)
+    if has_variable_step_schedule(schedule)
         return string(Int(steps), " max (per-window ",
                       minimum(schedule), ":", maximum(schedule), ")")
     end
     return string(Int(steps))
 end
 
-@inline _transport_geometry_summary(g::LatLonBinaryGeometry, h::TransportBinaryHeader) =
+@inline transport_geometry_summary(g::LatLonBinaryGeometry, h::TransportBinaryHeader) =
     string(g.Nx, "×", g.Ny, " structured cells, ", h.nlevel, " levels")
-@inline _transport_geometry_summary(::ReducedGaussianBinaryGeometry, h::TransportBinaryHeader) =
+@inline transport_geometry_summary(::ReducedGaussianBinaryGeometry, h::TransportBinaryHeader) =
     string(h.ncell, " cells, ", h.nface_h, " faces, ", h.nlevel, " levels")
-@inline _transport_geometry_summary(g::CubedSphereBinaryGeometry, h::TransportBinaryHeader) =
+@inline transport_geometry_summary(g::CubedSphereBinaryGeometry, h::TransportBinaryHeader) =
     string("C", g.Nc, ", panels=", g.npanel, ", ", h.nlevel, " levels")
-@inline _transport_geometry_summary(h::TransportBinaryHeader) =
-    string(_transport_geometry_summary(h.geometry, h), ", radius ", h.planet_radius_m, " m")
+@inline transport_geometry_summary(h::TransportBinaryHeader) =
+    string(transport_geometry_summary(h.geometry, h), ", radius ", h.planet_radius_m, " m")
 
-@inline function _transport_qv_summary(h::TransportBinaryHeader)
+@inline function transport_qv_summary(h::TransportBinaryHeader)
     return (:qv_start in h.payload_sections && :qv_end in h.payload_sections) ?
            "qv_start/qv_end" : "none"
 end
 
-@inline function _transport_semantics_summary(h::TransportBinaryHeader)
+@inline function transport_semantics_summary(h::TransportBinaryHeader)
     return string(
         "air_mass=", h.air_mass_sampling,
         ", flux=", h.flux_sampling, "/", h.flux_kind,
@@ -688,21 +702,21 @@ end
 
 function Base.show(io::IO, h::TransportBinaryHeader)
     print(io, summary(h), "\n",
-          "├── geometry:      ", _transport_geometry_summary(h), "\n",
+          "├── geometry:      ", transport_geometry_summary(h), "\n",
           "├── storage:       ", h.on_disk_float_type, " on disk, basis=", h.mass_basis, "\n",
           "├── timing:        dt=", h.dt_met_seconds, " s, steps/window=",
-              _steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
+              steps_per_window_summary(h.steps_per_window, h.steps_per_window_by_window), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
-          "├── humidity:      ", _transport_qv_summary(h), "\n",
-          "├── semantics:     ", _transport_semantics_summary(h), "\n",
+          "├── humidity:      ", transport_qv_summary(h), "\n",
+          "├── semantics:     ", transport_semantics_summary(h), "\n",
           "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
           "└── header bytes:  ", h.header_bytes)
 end
 
-_transport_is_structured(h::TransportBinaryHeader) = h.geometry isa LatLonBinaryGeometry
-_transport_is_faceindexed(h::TransportBinaryHeader) = h.geometry isa ReducedGaussianBinaryGeometry
+transport_is_structured(h::TransportBinaryHeader) = h.geometry isa LatLonBinaryGeometry
+transport_is_faceindexed(h::TransportBinaryHeader) = h.geometry isa ReducedGaussianBinaryGeometry
 
-function _transport_disk_float_type(sym::Symbol)
+function transport_disk_float_type(sym::Symbol)
     sym === :Float64 ? Float64 : Float32
 end
 
@@ -724,8 +738,8 @@ function _transport_parse_mass_basis(hdr)
     return basis_symbol(hdr.mass_basis)
 end
 
-@inline _transport_surface_pressure_basis_label(::TotalSurfacePressure) = "total"
-@inline _transport_surface_pressure_basis_label(::DrySurfacePressure) = "dry"
+@inline transport_surface_pressure_basis_label(::TotalSurfacePressure) = "total"
+@inline transport_surface_pressure_basis_label(::DrySurfacePressure) = "dry"
 
 function _transport_parse_surface_pressure_basis(value)
     basis = lowercase(String(value))
@@ -738,7 +752,7 @@ end
 
 
 function _transport_parse_tm5_convection_mass_basis(hdr, payload_sections)
-    all(section in payload_sections for section in (:entu, :detu, :entd, :detd)) ||
+    all(section in payload_sections for section in TM5_CONVECTION_PAYLOAD_SECTIONS) ||
         return nothing
     key = Symbol(TM5_CONVECTION_MASS_BASIS_KEY)
     haskey(hdr, key) || return nothing
@@ -778,7 +792,7 @@ end
 end
 
 @inline function _transport_default_delta_semantics(payload_sections::AbstractVector{Symbol})
-    return any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections) ?
+    return any(section in FLUX_DELTA_PAYLOAD_SECTIONS for section in payload_sections) ?
            :forward_window_endpoint_difference : :none
 end
 
@@ -839,7 +853,7 @@ function _parse_transport_geometry(hdr, grid::Symbol, topology::Symbol)
     throw(ArgumentError("unsupported transport-binary geometry $(grid)/$(topology)"))
 end
 
-function _parse_transport_header(raw_bytes::Vector{UInt8};
+function parse_transport_header(raw_bytes::Vector{UInt8};
                                  legacy_surface_pressure_basis::Union{TotalSurfacePressure,
                                                                       DrySurfacePressure} =
                                      TotalSurfacePressure())
@@ -889,9 +903,9 @@ function _parse_transport_header(raw_bytes::Vector{UInt8};
         hdr, nwindow, poisson_balance_target_scale)
     n_geometry_elems = Int(hdr.n_geometry_elems)
     elems_per_window = Int(hdr.elems_per_window)
-    flux_fidelity = _parse_flux_fidelity_header(hdr, nwindow, nlevel)
-    omega_fidelity = _parse_omega_fidelity_header(hdr)
-    column_closure = _parse_column_closure_header(hdr, nwindow)
+    flux_fidelity = parse_flux_fidelity_header(hdr, nwindow, nlevel)
+    omega_fidelity = parse_omega_fidelity_header(hdr)
+    column_closure = parse_column_closure_header(hdr, nwindow)
     raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
 
     return TransportBinaryHeader(
@@ -968,7 +982,8 @@ function _transport_common_header(grid_type::String,
     steps = Int(steps_per_window)
     steps > 0 || throw(ArgumentError("steps_per_window must be positive"))
     step_schedule = fill(steps, nwindow)
-    poisson_scale_schedule = [1.0 / (2 * s) for s in step_schedule]
+    target = poisson_balance_target(:substep_mass_amount, step_schedule; steps_per_window=steps)
+    poisson_scale_schedule = target.by_window
     contract = TransportBinaryContract(
         source_flux_sampling = source_flux_sampling,
         air_mass_sampling = air_mass_sampling,
@@ -976,8 +991,8 @@ function _transport_common_header(grid_type::String,
         flux_kind = flux_kind,
         delta_semantics = delta_semantics,
         humidity_sampling = humidity_sampling,
-        poisson_balance_target_scale = 1.0 / (2 * steps),
-        poisson_balance_target_semantics = "forward_window_mass_difference / (2 * steps_per_window)",
+        poisson_balance_target_scale = target.scale,
+        poisson_balance_target_semantics = target.semantics,
     )
 
     return Dict{String, Any}(
@@ -1012,10 +1027,10 @@ function _transport_common_header(grid_type::String,
         "poisson_balance_target_scale_by_window" => poisson_scale_schedule,
         "mass_basis" => String(mass_basis),
         "surface_pressure_basis" =>
-            _transport_surface_pressure_basis_label(surface_pressure_basis),
+            transport_surface_pressure_basis_label(surface_pressure_basis),
         "payload_sections" => String.(payload_sections),
         "include_qv_endpoints" => (:qv_start in payload_sections) || (:qv_end in payload_sections),
-        "include_flux_delta" => any(section in (:dam, :dbm, :dcm, :dm, :dhflux) for section in payload_sections),
+        "include_flux_delta" => any(section in FLUX_DELTA_PAYLOAD_SECTIONS for section in payload_sections),
         "include_surface" => n_surface > 0,
         "surface_payload" => n_surface > 0 ? "pbl_raw_v2" : "none",
         "include_tm5conv" => n_tm5 > 0,
@@ -1038,15 +1053,15 @@ function _transport_common_header(grid_type::String,
         "n_geometry_elems" => 0,
         "elems_per_window" => elems_per_window,
         "flux_fidelity_schema" => FLUX_FIDELITY_SCHEMA,
-        "flux_fidelity_status" => "unavailable",
-        "flux_fidelity_kind" => "none",
+        "flux_fidelity_status" => fidelity_tag(FidelityUnavailable()),
+        "flux_fidelity_kind" => fidelity_tag(NoFluxFidelityKind()),
         "flux_fidelity_reason" => "evidence_not_attached",
         "flux_fidelity_sample_rule" => "none",
-        "flux_fidelity_sample_seed" => string(UInt64(0x6a09e667f3bcc909)),
+        "flux_fidelity_sample_seed" => string(FLUX_FIDELITY_SAMPLE_SEED),
         "flux_fidelity_samples_per_window" => 0,
         "flux_fidelity_sample_count" => 0,
         "flux_fidelity_windows" => 0,
-        "omega_fidelity_status" => "unavailable",
+        "omega_fidelity_status" => fidelity_tag(FidelityUnavailable()),
         "omega_fidelity_reason" => "source_not_opened",
         "omega_fidelity_source" => "none",
         "omega_fidelity_sampling" => "none",

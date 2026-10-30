@@ -229,3 +229,6 @@ The exported constants and planet parameters documented above.
 ## Forward<->adjoint mirrors
 
 Forward and adjoint callers import the same constants.
+
+`SURFACE_PRESSURE_BASIS_TOLERANCE` in `NumericalDefaults.jl` names the legacy
+binary column-pressure classification threshold (2e-5).

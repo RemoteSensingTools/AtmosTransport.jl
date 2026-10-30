@@ -142,16 +142,12 @@ function open_streaming_transport_binary(
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
-    header_json = JSON3.write(header)
-    pad = header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
     pack_buffer = Vector{FT}(undef, elems_per_window)
     section_shapes = _streaming_section_shapes(sample_window, payload_sections)
     staging_path, io = open_atomic_staging(path)
     try
-        write(io, header_json)
-        write(io, zeros(UInt8, pad))
+        write_padded_header!(io, header, header_bytes)
     catch
         close(io)
         abandon_atomic_staging(staging_path)
@@ -174,22 +170,13 @@ function set_transport_header_steps_per_window_schedule!(
     header["steps_per_window_by_window"] = steps
     header["steps_per_window"] = maximum(steps)
     header["time_step_schedule"] =
-        _has_variable_step_schedule(steps) ? "per_window" : "constant"
+        has_variable_step_schedule(steps) ? "per_window" : "constant"
     flux_kind = Symbol(replace(lowercase(String(get(header, "flux_kind",
         "substep_mass_amount"))), '-' => '_', ' ' => '_'))
-    if flux_kind === :full_window_mass_amount
-        header["poisson_balance_target_scale_by_window"] = fill(1.0, length(steps))
-        header["poisson_balance_target_semantics"] = "forward_window_mass_difference"
-        header["poisson_balance_target_scale"] = 1.0
-    else
-        header["poisson_balance_target_scale_by_window"] =
-            [1.0 / (2 * s) for s in steps]
-        header["poisson_balance_target_semantics"] =
-            _has_variable_step_schedule(steps) ?
-            "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
-            "forward_window_mass_difference / (2 * steps_per_window)"
-        header["poisson_balance_target_scale"] = 1.0 / (2 * maximum(steps))
-    end
+    target = poisson_balance_target(flux_kind, steps)
+    header["poisson_balance_target_scale_by_window"] = target.by_window
+    header["poisson_balance_target_semantics"] = target.semantics
+    header["poisson_balance_target_scale"] = target.scale
     validate_transport_contract!(header)
     return header
 end
@@ -206,12 +193,8 @@ end
 
 function _rewrite_streaming_header!(writer::StreamingTransportBinaryWriter)
     validate_transport_contract!(writer.header)
-    header_json = JSON3.write(writer.header)
-    pad = writer.header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(writer.header_bytes)")
     seek(writer.io, 0)
-    write(writer.io, header_json)
-    write(writer.io, zeros(UInt8, pad))
+    write_padded_header!(writer.io, writer.header, writer.header_bytes)
     flush(writer.io)
     return nothing
 end

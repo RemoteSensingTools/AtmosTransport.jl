@@ -414,3 +414,19 @@ end
     debt = Dict("allow" => Dict("old" => "existing debt"))
     @test StructureCheck.relocate_o1_layers(debt, "test/structure/private_use_allowlist.toml") == debt
 end
+
+@testset "M1 relocates only the binary dependency budget" begin
+    parent = "AtmosTransport.MetDrivers"
+    format, readers = parent * ".BinaryFormat", parent * ".BinaryReaders"
+    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids", "AtmosTransport.State"],
+                                    "AtmosTransport.Preprocessing" => [parent]))
+    after = StructureCheck.relocate_m1_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test format in after["modules"][readers]
+    expanded = deepcopy(after)
+    push!(expanded["modules"][format], "AtmosTransport.Operators")
+    @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+    @test !isempty(StructureCheck.allowance_growth(after, expanded, "src/LAYERS.toml"))
+    debt = Dict("allow" => Dict("old" => "unchanged debt"))
+    @test StructureCheck.relocate_m1_layers(debt, "private") == debt
+end

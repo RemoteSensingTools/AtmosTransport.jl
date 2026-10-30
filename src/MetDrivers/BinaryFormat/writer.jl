@@ -54,88 +54,37 @@ function _write_transport_payload!(io::IO,
     return nothing
 end
 
-"""
-    write_transport_binary(path, grid, windows; kwargs...) -> path
+_eager_header_bytes(::LatLonMesh) = 16384
+_eager_header_bytes(::ReducedGaussianMesh) = 131072
+_eager_grid_tags(::LatLonMesh) = ("latlon", "StructuredDirectional")
+_eager_grid_tags(::ReducedGaussianMesh) = ("reduced_gaussian", "FaceIndexed")
 
-Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
-AtmosGrid and an ordered vector of forcing windows. Window payloads must match
-the grid topology and declared mass basis. The typed `surface_pressure_basis`
-keyword is required and records whether `window.ps` is total or dry pressure;
-it is deliberately independent of `mass_basis`. The file is written through
-[`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
-it replaces `path` only after the header and all payloads succeed, with mode
-`0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
-records only the latitude interval, so a mesh built from non-uniform faces
-(`Δφ = NaN`) is refused with an `ArgumentError`.
-"""
-function write_transport_binary(path::AbstractString,
-                                grid::AtmosGrid{<:LatLonMesh},
-                                windows::AbstractVector;
-                                FT::Type{<:AbstractFloat} = floattype(grid),
-                                header_bytes::Int = 16384,
-                                dt_met_seconds::Real = DEFAULT_MET_INTERVAL_SECONDS,
-                                half_dt_seconds::Real = dt_met_seconds / 2,
-                                steps_per_window::Integer = 2,
-                                source_flux_sampling::Symbol,
-                                air_mass_sampling::Symbol = :window_start_endpoint,
-                                flux_sampling::Symbol = :window_start_endpoint,
-                                flux_kind::Symbol = :substep_mass_amount,
-                                humidity_sampling::Symbol = :auto,
-                                delta_semantics::Symbol = :auto,
-                                mass_basis::Symbol = :dry,
-                                surface_pressure_basis::Union{TotalSurfacePressure,
-                                                              DrySurfacePressure},
-                                tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
-                                                                 Nothing, AbstractMassBasis} =
-                                    _DEFAULT_TM5_CONVECTION_MASS_BASIS,
-                                extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
-                                threaded::Bool = Threads.nthreads() > 1)
+function _validate_eager_mesh(mesh::LatLonMesh, flux_kind)
     flux_kind === :substep_mass_amount || throw(ArgumentError(
         "lat-lon transport binaries require flux_kind=:substep_mass_amount"))
-    # The header records only the latitude interval, and the reader rebuilds a
-    # uniform mesh from it; non-uniform faces (Δφ = NaN) would come back wrong.
-    isnan(grid.horizontal.Δφ) && throw(ArgumentError(
+    # Only the latitude interval is stored; reconstruction must remain uniform.
+    isnan(mesh.Δφ) && throw(ArgumentError(
         "lat-lon transport binaries need uniform latitude faces; this mesh has " *
         "non-uniform latitude faces (Δφ = NaN)"))
-    isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
+    return nothing
+end
+function _validate_eager_mesh(::ReducedGaussianMesh, flux_kind)
+    flux_kind === :substep_mass_amount || throw(ArgumentError(
+        "reduced-Gaussian transport binaries require flux_kind=:substep_mass_amount"))
+    return nothing
+end
+_validate_eager_window(window, mesh::LatLonMesh, nlevel, basis) =
+    _transport_validate_structured_window(window, nx(mesh), ny(mesh), nlevel, basis)
+_validate_eager_window(window, mesh::ReducedGaussianMesh, nlevel, basis) =
+    _transport_validate_reduced_window(window, ncells(mesh), nfaces(mesh), nlevel, basis)
+_eager_section_elements(mesh::LatLonMesh, nlevel, section) =
+    _transport_structured_section_elements(nx(mesh), ny(mesh), ncells(mesh), nlevel, section)
+_eager_section_elements(mesh::ReducedGaussianMesh, nlevel, section) =
+    _transport_faceindexed_section_elements(ncells(mesh), nfaces(mesh), nlevel, section)
 
-    mesh = grid.horizontal
-    vc = grid.vertical
-    Nx = nx(mesh)
-    Ny = ny(mesh)
-    ncell = ncells(mesh)
-    nface_h = nfaces(mesh)
-    nlevel = nlevels(grid)
-    basis_sym = basis_symbol(mass_basis)
-    payload_sections = _transport_payload_sections(grid, first(windows))
-
-    for window in windows
-        _transport_payload_sections(grid, window) == payload_sections ||
-            throw(ArgumentError("all transport-binary windows must carry the same payload sections"))
-        _transport_validate_structured_window(window, Nx, Ny, nlevel, basis_sym)
-    end
-
-    elems_per_window = sum(_transport_structured_section_elements(Nx, Ny, ncell, nlevel, section)
-                           for section in payload_sections)
-
-    header = _transport_common_header("latlon", "StructuredDirectional",
-                                      ncell, nface_h, nlevel, length(windows), vc,
-                                      payload_sections, elems_per_window;
-                                      FT=FT,
-                                      planet_radius=mesh.radius,
-                                      header_bytes=header_bytes,
-                                      dt_met_seconds=dt_met_seconds,
-                                      half_dt_seconds=half_dt_seconds,
-                                      steps_per_window=steps_per_window,
-                                      mass_basis=basis_sym,
-                                      surface_pressure_basis,
-                                      source_flux_sampling=source_flux_sampling,
-                                      air_mass_sampling=air_mass_sampling,
-                                      flux_sampling=flux_sampling,
-                                      flux_kind=flux_kind,
-                                      humidity_sampling=humidity_sampling,
-                                      delta_semantics=delta_semantics)
-    merge!(header, Dict{String, Any}(
+function _eager_geometry_header(mesh::LatLonMesh, nlevel, payload_sections)
+    Nx, Ny, ncell = nx(mesh), ny(mesh), ncells(mesh)
+    return Dict{String, Any}(
         "Nx" => Nx,
         "Ny" => Ny,
         "lons" => Float64.(mesh.λᶜ),
@@ -152,32 +101,39 @@ function write_transport_binary(path::AbstractString,
         "n_dbm" => (:dbm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dbm) : 0,
         "n_dcm" => (:dcm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dcm) : 0,
         "n_dm" => (:dm in payload_sections) ? _transport_structured_section_elements(Nx, Ny, ncell, nlevel, :dm) : 0,
-    ))
-    _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
-                                    tm5_convection_mass_basis)
-    isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
-
-    validate_transport_contract!(header)
-    header_json = JSON3.write(header)
-    pad = header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
-
-    atomic_publish(path) do staging
-        open(staging, "w") do io
-            write(io, header_json)
-            write(io, zeros(UInt8, pad))
-            _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
-        end
-    end
-
-    return path
+    )
+end
+function _eager_geometry_header(mesh::ReducedGaussianMesh, nlevel, payload_sections)
+    ncell, nface_h = ncells(mesh), nfaces(mesh)
+    return Dict{String, Any}(
+        "nlat" => nrings(mesh),
+        "latitudes" => Float64.(mesh.latitudes),
+        "nlon_per_ring" => mesh.nlon_per_ring,
+        "n_dhflux" => (:dhflux in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dhflux) : 0,
+        "n_dcm" => (:dcm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dcm) : 0,
+        "n_dm" => (:dm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
+    )
 end
 
+"""
+    write_transport_binary(path, grid, windows; kwargs...) -> path
+
+Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
+AtmosGrid and an ordered vector of forcing windows. Window payloads must match
+the grid topology and declared mass basis. The typed `surface_pressure_basis`
+keyword is required and records whether `window.ps` is total or dry pressure;
+it is deliberately independent of `mass_basis`. The file is written through
+[`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
+it replaces `path` only after the header and all payloads succeed, with mode
+`0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
+records only the latitude interval, so a mesh built from non-uniform faces
+(`Δφ = NaN`) is refused with an `ArgumentError`.
+"""
 function write_transport_binary(path::AbstractString,
-                                grid::AtmosGrid{<:ReducedGaussianMesh},
+                                grid::AtmosGrid{<:Union{LatLonMesh, ReducedGaussianMesh}},
                                 windows::AbstractVector;
                                 FT::Type{<:AbstractFloat} = floattype(grid),
-                                header_bytes::Int = 131072,
+                                header_bytes::Int = _eager_header_bytes(grid.horizontal),
                                 dt_met_seconds::Real = DEFAULT_MET_INTERVAL_SECONDS,
                                 half_dt_seconds::Real = dt_met_seconds / 2,
                                 steps_per_window::Integer = 2,
@@ -195,8 +151,7 @@ function write_transport_binary(path::AbstractString,
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
-    flux_kind === :substep_mass_amount || throw(ArgumentError(
-        "reduced-Gaussian transport binaries require flux_kind=:substep_mass_amount"))
+    _validate_eager_mesh(grid.horizontal, flux_kind)
     isempty(windows) && throw(ArgumentError("write_transport_binary requires at least one window"))
 
     mesh = grid.horizontal
@@ -210,13 +165,14 @@ function write_transport_binary(path::AbstractString,
     for window in windows
         _transport_payload_sections(grid, window) == payload_sections ||
             throw(ArgumentError("all transport-binary windows must carry the same payload sections"))
-        _transport_validate_reduced_window(window, ncell, nface_h, nlevel, basis_sym)
+        _validate_eager_window(window, mesh, nlevel, basis_sym)
     end
 
-    elems_per_window = sum(_transport_faceindexed_section_elements(ncell, nface_h, nlevel, section)
+    elems_per_window = sum(_eager_section_elements(mesh, nlevel, section)
                            for section in payload_sections)
 
-    header = _transport_common_header("reduced_gaussian", "FaceIndexed",
+    grid_tag, topology_tag = _eager_grid_tags(mesh)
+    header = _transport_common_header(grid_tag, topology_tag,
                                       ncell, nface_h, nlevel, length(windows), vc,
                                       payload_sections, elems_per_window;
                                       FT=FT,
@@ -233,27 +189,16 @@ function write_transport_binary(path::AbstractString,
                                       flux_kind=flux_kind,
                                       humidity_sampling=humidity_sampling,
                                       delta_semantics=delta_semantics)
-    merge!(header, Dict{String, Any}(
-        "nlat" => nrings(mesh),
-        "latitudes" => Float64.(mesh.latitudes),
-        "nlon_per_ring" => mesh.nlon_per_ring,
-        "n_dhflux" => (:dhflux in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dhflux) : 0,
-        "n_dcm" => (:dcm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dcm) : 0,
-        "n_dm" => (:dm in payload_sections) ? _transport_faceindexed_section_elements(ncell, nface_h, nlevel, :dm) : 0,
-    ))
+    merge!(header, _eager_geometry_header(mesh, nlevel, payload_sections))
     _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
                                     tm5_convection_mass_basis)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
-    header_json = JSON3.write(header)
-    pad = header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
     atomic_publish(path) do staging
         open(staging, "w") do io
-            write(io, header_json)
-            write(io, zeros(UInt8, pad))
+            write_padded_header!(io, header, header_bytes)
             _write_transport_payload!(io, windows, payload_sections, elems_per_window, FT; threaded=threaded)
         end
     end

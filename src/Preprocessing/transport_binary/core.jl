@@ -32,15 +32,6 @@ _settings_include_surface(settings) =
     return steps
 end
 
-# The Poisson balance target is the forward-window mass difference divided
-# by `2 × steps_per_window`. The factor of 2 comes from the Strang splitting:
-# each full time step applies horizontal fluxes TWICE (once in the forward
-# sweep X-Y-Z and once in the reverse Z-Y-X), so the per-application
-# mass tendency is half the total tendency. This matches TM5 r1112's
-# `poisson_balance_target_scale` in grid_type_ll.F90.
-@inline poisson_balance_target_scale(steps_per_window::Integer, ::Type{FT}=Float64) where FT =
-    FT(inv(2 * max(Int(steps_per_window), 1)))
-
 """
     script_provenance(; caller_file=nothing) -> NamedTuple
 
@@ -158,7 +149,7 @@ function build_v4_header(date::Date,
     )
 
     step_schedule = fill(Int(sizes.steps_per_met), Int(sizes.Nt))
-    poisson_scale_schedule = [1.0 / (2 * s) for s in step_schedule]
+    poisson_scale_schedule = poisson_balance_target(:substep_mass_amount, step_schedule).by_window
 
     header = Dict{String, Any}(
         "magic" => "MFLX",
@@ -300,11 +291,11 @@ function window_element_counts(grid::LatLonTargetGeometry, Nz::Int;
     Nx = nlon(grid)
     Ny = nlat(grid)
 
-    n_m = Int64(Nx) * Ny * Nz
-    n_am = Int64(Nx + 1) * Ny * Nz
-    n_bm = Int64(Nx) * (Ny + 1) * Nz
-    n_cm = Int64(Nx) * Ny * (Nz + 1)
-    n_ps = Int64(Nx) * Ny
+    n_m = Int64(section_elements(LatLonBinaryGeometry, Nx, Ny, Nz, :m))
+    n_am = Int64(section_elements(LatLonBinaryGeometry, Nx, Ny, Nz, :am))
+    n_bm = Int64(section_elements(LatLonBinaryGeometry, Nx, Ny, Nz, :bm))
+    n_cm = Int64(section_elements(LatLonBinaryGeometry, Nx, Ny, Nz, :cm))
+    n_ps = Int64(section_elements(LatLonBinaryGeometry, Nx, Ny, Nz, :ps))
     n_qv_start = include_qv ? n_m : Int64(0)
     n_qv_end = include_qv ? n_m : Int64(0)
     n_sfc = include_surface ? n_ps : Int64(0)

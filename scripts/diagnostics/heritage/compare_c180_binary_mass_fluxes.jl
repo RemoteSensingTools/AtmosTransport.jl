@@ -56,7 +56,7 @@ function parse_windows(spec::AbstractString, nwindow::Int)
 end
 
 # Elements of one CS payload section (the library's table, which knows every section).
-cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
+cs_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers.section_elements(h, section)
 
 function copy_panel_section!(panels, reader, offset::Int)
     next = offset

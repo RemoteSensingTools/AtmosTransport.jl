@@ -25,7 +25,6 @@ using .AtmosTransport.Grids: cell_areas_by_latitude
 using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter,
                                   strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: _limited_moment, _xface_tracer_flux
-using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.State: StructuredFaceFluxState
 
 # Try to load CUDA; tests gracefully skip if unavailable
@@ -104,7 +103,16 @@ function build_test_problem(FT; Nx=36, Ny=18, Nz=4, cfl=FT(0.15))
 
     cm = zeros(FT, Nx, Ny, Nz + 1)
     bt = FT[Grids.b_diff(vc, k) for k in 1:Nz]
-    diagnose_cm_from_continuity!(cm, am, bm, bt, Nx, Ny, Nz)
+    # Fixture pressure-fixer closure; the production explicit-dm closure is
+    # tested separately by the replay tests.
+    for j in 1:Ny, i in 1:Nx
+        convergence = [am[i, j, k] - am[i+1, j, k] +
+                       bm[i, j, k] - bm[i, j+1, k] for k in 1:Nz]
+        pit = sum(convergence)
+        for k in 1:Nz
+            cm[i, j, k+1] = cm[i, j, k] + convergence[k] - bt[k] * pit
+        end
+    end
 
     return grid, m, rm_uniform, rm_gradient, am, bm, cm
 end

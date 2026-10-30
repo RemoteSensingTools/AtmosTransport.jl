@@ -11,14 +11,14 @@
 using Test
 
 using AtmosTransport
-using .AtmosTransport.Preprocessing: verify_window_continuity_ll,
+using .AtmosTransport.Preprocessing:
                                        verify_window_continuity_rg,
                                        verify_window_continuity_cs,
                                        apply_poisson_balance!,
                                        LatLonContract,
                                        SubstepSchedulePolicy,
                                        allocate_window_storage
-using .AtmosTransport.MetDrivers: replay_tolerance, ReplayScratch
+using .AtmosTransport.MetDrivers: replay_tolerance, ReplayScratch, verify_window_continuity, structured_replay_layout
 using .AtmosTransport.Parameters: REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32
 
 # ----------------------------------------------------------------------------
@@ -80,10 +80,11 @@ end
 
 @testset "Plan 39 Commit H — replay-consistency gate regressions" begin
 
-    @testset "verify_window_continuity_ll: continuity-consistent data passes" begin
+    @testset "structured continuity: continuity-consistent data passes" begin
         for FT in (Float32, Float64)
             w = build_continuity_consistent_window_ll(FT)
-            diag = verify_window_continuity_ll(w.m_cur, w.am, w.bm, w.cm, w.m_next, w.steps)
+            diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(w.m_cur)),
+                w.m_cur, w.cm, w.m_next, w.steps, w.am, w.bm)
             tol_rel = FT === Float32 ? 1e-6 : 1e-12
             @test diag.max_rel_err <= tol_rel
             @test diag.max_abs_err >= 0
@@ -91,13 +92,14 @@ end
         end
     end
 
-    @testset "verify_window_continuity_ll: deliberately broken cm fires" begin
+    @testset "structured continuity: deliberately broken cm fires" begin
         w = build_continuity_consistent_window_ll(Float64)
         # Perturb cm at one interior cell by ~1% of a dm magnitude — this is
         # far above replay_tolerance(Float64) but below cm sanity limits.
         cm_broken = copy(w.cm)
         cm_broken[2, 2, 2] += Float64(1e4)
-        diag = verify_window_continuity_ll(w.m_cur, w.am, w.bm, cm_broken, w.m_next, w.steps)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(w.m_cur)),
+            w.m_cur, cm_broken, w.m_next, w.steps, w.am, w.bm)
         @test diag.max_rel_err > replay_tolerance(Float64)
         # The cm perturbation at interface k=2 shifts dm at level k=1 (cm[2]−cm[1] up by 1e4
         # gives extra +1e4·2·steps = +4e4 mass change) and at k=2 (cm[3]−cm[2] down by 1e4
@@ -106,13 +108,14 @@ end
         @test diag.worst_idx[3] in (1, 2)
     end
 
-    @testset "verify_window_continuity_ll: deliberately broken horizontal flux fires" begin
+    @testset "structured continuity: deliberately broken horizontal flux fires" begin
         w = build_continuity_consistent_window_ll(Float64)
         am_broken = copy(w.am)
         # Perturb an interior x-face flux — this creates a divergence imbalance
         # at the two adjacent cells.
         am_broken[3, 2, 1] += Float64(1e4)
-        diag = verify_window_continuity_ll(w.m_cur, am_broken, w.bm, w.cm, w.m_next, w.steps)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(w.m_cur)),
+            w.m_cur, w.cm, w.m_next, w.steps, am_broken, w.bm)
         @test diag.max_rel_err > replay_tolerance(Float64)
         # Cell (2, 2, 1) sees +am outflow → m decreases more than expected.
         # Cell (3, 2, 1) sees +am inflow → m increases more than expected.
@@ -121,18 +124,18 @@ end
         @test diag.worst_idx[3] == 1
     end
 
-    @testset "verify_window_continuity_ll: zero-flux + zero-tendency passes to ULP" begin
+    @testset "structured continuity: zero-flux + zero-tendency passes to ULP" begin
         # Trivial case — both m's identical, all fluxes zero.
         m = fill(Float64(1e9), 4, 3, 3)
         am = zeros(Float64, 5, 3, 3)
         bm = zeros(Float64, 4, 4, 3)
         cm = zeros(Float64, 4, 3, 4)
-        diag = verify_window_continuity_ll(m, am, bm, cm, m, 2)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m)), m, cm, m, 2, am, bm)
         @test diag.max_rel_err == 0
         @test diag.max_abs_err == 0
     end
 
-    @testset "verify_window_continuity_ll: zero-flux + nonzero-dm fires" begin
+    @testset "structured continuity: zero-flux + nonzero-dm fires" begin
         # Replicates the existing test-binary helper pattern (zero fluxes, m
         # scales with window index): gate correctly detects the continuity
         # violation.
@@ -141,7 +144,7 @@ end
         am = zeros(Float64, 5, 3, 3)
         bm = zeros(Float64, 4, 4, 3)
         cm = zeros(Float64, 4, 3, 4)
-        diag = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, 2)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)), m_cur, cm, m_next, 2, am, bm)
         # |m_cur - m_next| / (|m_cur| + |m_next|) = 1e9 / 3e9 in every cell
         @test diag.max_rel_err ≈ 1 / 3 atol=1e-12
         @test diag.max_abs_err ≈ 1e9
@@ -156,7 +159,7 @@ end
         @test replay_tolerance(Float64, Float64) == REPLAY_TOLERANCE_FLOAT64
     end
 
-    @testset "verify_window_continuity_ll: residual is measured per cell" begin
+    @testset "structured continuity: residual is measured per cell" begin
         # One column: a thin top cell (1e4 kg) over a thick one (1e10 kg), no flux.
         # A 1e-4 kg mismatch in the thin cell is 5e-9 of its own budget scale
         # (|m_cur| + |m_next| = 2e4 kg) but only 1e-14 of the largest cell mass,
@@ -165,14 +168,14 @@ end
         m_next = copy(m_cur)
         m_next[1, 1, 1] += 1e-4
         am = zeros(2, 1, 2); bm = zeros(1, 2, 2); cm = zeros(1, 1, 3)
-        diag = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, 2)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)), m_cur, cm, m_next, 2, am, bm)
         @test diag.worst_idx == (1, 1, 1)
         @test diag.max_rel_err ≈ 1e-4 / (2e4 + 1e-4) rtol=1e-6
         @test diag.max_rel_err > replay_tolerance(Float64)
         @test 1e-4 / maximum(m_next) < replay_tolerance(Float64)
     end
 
-    @testset "verify_window_continuity_ll: scale is the summed magnitude of the budget terms" begin
+    @testset "structured continuity: scale is the summed magnitude of the budget terms" begin
         # One cell, two substeps: 10 kg in through the west face, 4 kg out through
         # the east face, 3 kg out through the bottom per application. Net outflow
         # per application -3 kg; m_next is 1 kg off the exact 1000 + 12 = 1012 kg.
@@ -181,18 +184,18 @@ end
         am = reshape([10.0, 4.0], 2, 1, 1)
         bm = zeros(1, 2, 1)
         cm = reshape([0.0, 3.0], 1, 1, 2)
-        diag = verify_window_continuity_ll(m_cur, am, bm, cm, m_next, 2)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)), m_cur, cm, m_next, 2, am, bm)
         @test diag.max_abs_err ≈ 1.0
         @test diag.max_rel_err ≈ 1.0 / (1000 + 1013 + 4 * (10 + 4 + 0 + 3))
     end
 
-    @testset "verify_window_continuity_ll: NaN in the stored data fails" begin
+    @testset "structured continuity: NaN in the stored data fails" begin
         m = fill(Float64(1e9), 4, 3, 3)
         am = zeros(Float64, 5, 3, 3)
         bm = zeros(Float64, 4, 4, 3)
         cm = zeros(Float64, 4, 3, 4)
         am[3, 2, 2] = NaN
-        diag = verify_window_continuity_ll(m, am, bm, cm, m, 2)
+        diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m)), m, cm, m, 2, am, bm)
         @test diag.max_rel_err == Inf
         @test diag.worst_idx in ((2, 2, 2), (3, 2, 2))
         @test !(diag.max_rel_err <= replay_tolerance(Float64))
@@ -238,9 +241,8 @@ end
                     (has_next_day ? -5e4 / (2 * steps[2]) : 0.0)
                 for win in 1:2
                     target = win == 1 ? clean.all_m[2] : endpoint
-                    diag = verify_window_continuity_ll(
-                        clean.all_m[win], clean.all_am[win], clean.all_bm[win],
-                        clean.all_cm[win], target, steps[win])
+                    diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(clean.all_m[win])),
+                        clean.all_m[win], clean.all_cm[win], target, steps[win], clean.all_am[win], clean.all_bm[win])
                     @test diag.max_rel_err <= replay_tolerance(FT)
                 end
 
@@ -260,9 +262,8 @@ end
                                              contract, policy;
                                              write_replay_on = false) === nothing
                 @test contract.worst.ratio <= policy.substep_cfl_target
-                diag = verify_window_continuity_ll(
-                    storage.all_m[2], storage.all_am[2], storage.all_bm[2],
-                    storage.all_cm[2], endpoint, steps[2])
+                diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(storage.all_m[2])),
+                    storage.all_m[2], storage.all_cm[2], endpoint, steps[2], storage.all_am[2], storage.all_bm[2])
                 @test isfinite(diag.max_rel_err)
                 @test diag.max_rel_err > replay_tolerance(FT)
             end
@@ -383,8 +384,8 @@ end
     m[:, :, 1] .= 1e5
     m_next = copy(m)
     m_next[1, 1, 1] *= 1.01
-    diag = verify_window_continuity_ll(m, zeros(Nx + 1, Ny, Nz), zeros(Nx, Ny + 1, Nz),
-                                       zeros(Nx, Ny, Nz + 1), m_next, steps)
+    diag = verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m)),
+        m, zeros(Nx, Ny, Nz + 1), m_next, steps, zeros(Nx + 1, Ny, Nz), zeros(Nx, Ny + 1, Nz))
     @test diag.max_rel_err ≈ 1000 / 201000 rtol = 1e-9
     @test diag.max_rel_err > MD.replay_tolerance(Float32)
 
@@ -398,7 +399,7 @@ end
         return cm
     end
     gate_as_wired(m_cur, m_next, am, bm; cm = diagnosed_cm(m_cur, m_next, am, bm)) =
-        verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps).max_rel_err
+        verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)), m_cur, cm, m_next, steps, am, bm).max_rel_err
     m_cur = [1e9 * (1 + 0.1 * sinpi(i / 4 + j / 3) * k / Nz) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
     am = [3e5 * (1 + cospi(2(i - 1) / Nx)) * sinpi((j - 0.5) / Ny) * (1 + k / Nz)
           for i in 1:Nx + 1, j in 1:Ny, k in 1:Nz]

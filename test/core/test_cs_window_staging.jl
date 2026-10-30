@@ -81,7 +81,7 @@ end
         if raw !== nothing
             h = driver.reader.header
             @test eltype(raw.host) === disk_FT && length(raw.host) == h.elems_per_window
-            @test length(raw.device) == maximum(s -> StagingMD._cs_section_elements(h, s), h.payload_sections)
+            @test length(raw.device) == maximum(s -> StagingMD.section_elements(h, s), h.payload_sections)
             unpacked = deepcopy(staging)
             foreach(a -> fill!(a, NaN), (unpacked.air_mass..., unpacked.fluxes.am..., unpacked.deltas.dm...,
                                          unpacked.surface.pblh..., unpacked.convection.cmfmc...))

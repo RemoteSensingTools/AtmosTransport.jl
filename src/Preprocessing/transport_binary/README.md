@@ -145,7 +145,7 @@ balanced correction. See the binary-format guide for the full schema.
 
 ## File Map
 
-- [`core.jl`](core.jl) — `HEADER_SIZE`, `exact_steps_per_window`, `poisson_balance_target_scale`, provenance and fingerprints, LL `build_v4_header`, payload sizing, `existing_output_schema_matches`
+- [`core.jl`](core.jl) — `HEADER_SIZE`, `exact_steps_per_window`, provenance and fingerprints, LL `build_v4_header`, payload sizing, `existing_output_schema_matches`
 - [`flux_fidelity.jl`](flux_fidelity.jl) — typed evidence/statuses, deterministic face maps, independent sampled evaluators, algebraic and OMEGA accumulators, final header certification
 - [`window_contracts.jl`](window_contracts.jl) — abstract contract/workspace/writer types, mass-basis symbols, `SubstepSchedulePolicy`, `ReadyWindow`, `PreverifiedWindow`, `PreprocessorRunCache`, trait generics
 - [`latlon_workspaces.jl`](latlon_workspaces.jl) — LL spectral workspaces and `WindowStorage`, qv loading (bilinear from the thermo points to the cell centres, `LatLonBilinearWeights`), mass fix, dry basis, merge, `close_pole_faces!`, `process_window!`

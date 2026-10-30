@@ -227,21 +227,6 @@ function recompute_cm_from_dm_target!(layout::AbstractReplayLayout,
 end
 
 """
-    recompute_cm_from_dm_target!(cm, am, bm, m, dm_target)
-
-Structured-directional convenience wrapper for the shared explicit-dm
-continuity closure.
-"""
-function recompute_cm_from_dm_target!(cm::AbstractArray{FT, 3},
-                                      am::AbstractArray,
-                                      bm::AbstractArray,
-                                      m::AbstractArray,
-                                      dm_target::AbstractArray{<:Real, 3}) where {FT}
-    div_h = Array{Float64}(undef, size(m))
-    return recompute_cm_from_dm_target!(structured_replay_layout(), div_h, cm, m, dm_target, am, bm)
-end
-
-"""
     verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
     verify_window_continuity(layout, scratch, m_cur, cm, m_next, steps_per_window, flux_args...)
 
@@ -315,21 +300,6 @@ function verify_window_continuity(layout::AbstractReplayLayout,
     horizontal_divergence!(scratch.div, layout, flux_args...)
     horizontal_flux_magnitude!(scratch.mag, layout, flux_args...)
     return verify_window_continuity(scratch, m_cur, cm, m_next, steps_per_window)
-end
-
-"""
-    verify_window_continuity_ll(m_cur, am, bm, cm, m_next, steps_per_window)
-
-Structured-directional convenience wrapper for the shared replay kernel.
-"""
-function verify_window_continuity_ll(m_cur::AbstractArray{FT, 3},
-                                     am::AbstractArray,
-                                     bm::AbstractArray,
-                                     cm::AbstractArray,
-                                     m_next::AbstractArray,
-                                     steps_per_window::Integer) where {FT}
-    return verify_window_continuity(structured_replay_layout(), ReplayScratch(size(m_cur)),
-                                    m_cur, cm, m_next, steps_per_window, am, bm)
 end
 
 """
@@ -420,16 +390,27 @@ diagnostic and applying common summary/failure formatting.
 function run_replay_gate(diag_for_window, Nt::Integer;
                          tol_rel::Real,
                          summary_label::Union{Nothing, AbstractString}=nothing,
-                         failure_prefix::AbstractString)
+                         failure_prefix::AbstractString,
+                         initial_diagnostic=nothing,
+                         failure_handler=nothing)
     Nt >= 1 || return (worst_window = 0, worst_rel = 0.0, worst_abs = 0.0, worst_idx = nothing)
 
-    first_diag = diag_for_window(1)
-    worst_rel = first_diag.max_rel_err
-    worst_abs = first_diag.max_abs_err
-    worst_win = 1
-    worst_idx = first_diag.worst_idx
+    if initial_diagnostic === nothing
+        first_diag = diag_for_window(1)
+        worst_rel = first_diag.max_rel_err
+        worst_abs = first_diag.max_abs_err
+        worst_win = 1
+        worst_idx = first_diag.worst_idx
+        first_window = 2
+    else
+        worst_rel = initial_diagnostic.worst_rel
+        worst_abs = initial_diagnostic.worst_abs
+        worst_win = initial_diagnostic.worst_window
+        worst_idx = initial_diagnostic.worst_idx
+        first_window = 1
+    end
 
-    for win in 2:Nt
+    for win in first_window:Nt
         diag = diag_for_window(win)
         if diag.max_rel_err > worst_rel
             worst_rel = diag.max_rel_err
@@ -442,8 +423,14 @@ function run_replay_gate(diag_for_window, Nt::Integer;
     summary_label !== nothing &&
         @info "$summary_label: $(replay_summary_message(worst_rel, worst_abs, worst_win, worst_idx))"
 
-    worst_rel <= tol_rel ||
-        error(replay_failure_message(failure_prefix, worst_rel, tol_rel, worst_win, worst_idx, worst_abs))
+    if !(worst_rel <= tol_rel)
+        if failure_handler === nothing
+            error(replay_failure_message(failure_prefix, worst_rel, tol_rel, worst_win, worst_idx, worst_abs))
+        else
+            failure_handler((worst_window=worst_win, worst_rel=worst_rel,
+                             worst_abs=worst_abs, worst_idx=worst_idx))
+        end
+    end
 
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs, worst_idx = worst_idx)
 end

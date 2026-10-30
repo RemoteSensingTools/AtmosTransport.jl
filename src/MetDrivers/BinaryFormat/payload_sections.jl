@@ -1,58 +1,82 @@
-# Per-section element counts, window-field accessors, and payload validation.
+# One section -> shape-kind table shared by writers, readers, and allocation.
+# Topology allow-lists remain separate: equal shapes do not imply equal contracts.
+const _TRANSPORT_SECTION_SHAPES = (
+    m=:cell, dm=:cell, qv_start=:cell, qv_end=:cell,
+    am=:xface, dam=:xface, bm=:yface, dbm=:yface,
+    hflux=:hface, dhflux=:hface, cm=:interface, dcm=:interface,
+    ps=:surface, pblh=:surface, ustar=:surface, pbl_hflux=:surface,
+    t2m=:surface, pbl_eflux=:surface, cmfmc_cloud_base=:surface,
+    entu=:cell, detu=:cell, entd=:cell, detd=:cell,
+    vdiff_u=:cell, vdiff_v=:cell, vdiff_t=:cell, vdiff_qv=:cell,
+    dkg=:cell, dtrain=:cell, cmfmc=:interface,
+)
+const _STRUCTURED_SECTIONS = (:m, :dm, :qv_start, :qv_end, :am, :dam,
+    :bm, :dbm, :cm, :dcm, :ps, :pblh, :ustar, :pbl_hflux, :t2m,
+    :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
+const _FACEINDEXED_SECTIONS = (:m, :dm, :qv_start, :qv_end, :hflux,
+    :dhflux, :cm, :dcm, :ps, :pblh, :ustar, :pbl_hflux, :t2m,
+    :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
+const _CS_SECTIONS = (:m, :dm, :am, :dam, :bm, :dbm, :cm, :dcm, :ps,
+    :pblh, :ustar, :pbl_hflux, :t2m, :pbl_eflux, :cmfmc_cloud_base,
+    :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv,
+    :dkg, :dtrain, :cmfmc)
 
-@inline function _transport_structured_section_elements(Nx::Int, Ny::Int, ncell::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv_start || section === :qv_end ||
-       _is_gchp_vdiff_payload_section(section)
-        return ncell * nlevel
-    elseif section === :am || section === :dam
-        return (Nx + 1) * Ny * nlevel
-    elseif section === :bm || section === :dbm
-        return Nx * (Ny + 1) * nlevel
-    elseif section === :cm || section === :dcm
-        return ncell * (nlevel + 1)
-    elseif section === :ps
-        return ncell
-    elseif _is_pbl_surface_payload_section(section)
-        return ncell
-    # TM5 convection: four layer-center fields.
-    elseif section === :entu || section === :detu ||
-           section === :entd || section === :detd
-        return ncell * nlevel
-    else
-        error("Unsupported structured payload section: $section")
-    end
+@inline function _structured_section_shape(Nx::Int, Ny::Int, nlevel::Int, section::Symbol)
+    section in _STRUCTURED_SECTIONS || error("Unsupported structured payload section: $section")
+    kind = getproperty(_TRANSPORT_SECTION_SHAPES, section)
+    kind === :xface && return (Nx + 1, Ny, nlevel)
+    kind === :yface && return (Nx, Ny + 1, nlevel)
+    kind === :interface && return (Nx, Ny, nlevel + 1)
+    kind === :surface && return (Nx, Ny)
+    return (Nx, Ny, nlevel)
 end
 
-@inline function _transport_faceindexed_section_elements(ncell::Int, nface_h::Int, nlevel::Int, section::Symbol)
-    if section === :m || section === :dm || section === :qv_start || section === :qv_end ||
-       _is_gchp_vdiff_payload_section(section)
-        return ncell * nlevel
-    elseif section === :hflux || section === :dhflux
-        return nface_h * nlevel
-    elseif section === :cm || section === :dcm
-        return ncell * (nlevel + 1)
-    elseif section === :ps
-        return ncell
-    elseif _is_pbl_surface_payload_section(section)
-        return ncell
-    # TM5 convection: four layer-center fields.
-    elseif section === :entu || section === :detu ||
-           section === :entd || section === :detd
-        return ncell * nlevel
-    else
-        error("Unsupported face-indexed payload section: $section")
-    end
+@inline function _faceindexed_section_shape(ncell::Int, nface_h::Int, nlevel::Int, section::Symbol)
+    section in _FACEINDEXED_SECTIONS || error("Unsupported face-indexed payload section: $section")
+    kind = getproperty(_TRANSPORT_SECTION_SHAPES, section)
+    kind === :hface && return (nface_h, nlevel)
+    kind === :interface && return (ncell, nlevel + 1)
+    kind === :surface && return (ncell,)
+    return (ncell, nlevel)
 end
 
-_transport_section_elements(h::TransportBinaryHeader{LatLonBinaryGeometry},
-                            section::Symbol) =
-    _transport_structured_section_elements(
-        h.geometry.Nx, h.geometry.Ny, h.ncell, h.nlevel, section)
+@inline function _cs_section_shape(Nc::Int, nlevel::Int, section::Symbol)
+    section in _CS_SECTIONS || error("Unsupported CS section: $section")
+    kind = getproperty(_TRANSPORT_SECTION_SHAPES, section)
+    kind === :xface && return (Nc + 1, Nc, nlevel)
+    kind === :yface && return (Nc, Nc + 1, nlevel)
+    kind === :interface && return (Nc, Nc, nlevel + 1)
+    kind === :surface && return (Nc, Nc)
+    return (Nc, Nc, nlevel)
+end
 
-_transport_section_elements(h::TransportBinaryHeader{ReducedGaussianBinaryGeometry},
-                            section::Symbol) =
-    _transport_faceindexed_section_elements(
-        h.ncell, h.nface_h, h.nlevel, section)
+"""Lat-lon section element count before constructing a complete binary header."""
+section_elements(::Type{LatLonBinaryGeometry}, Nx::Int, Ny::Int, nlevel::Int, section::Symbol) =
+    prod(_structured_section_shape(Nx, Ny, nlevel, section))
+
+"""Cubed-sphere section element count before constructing a complete header."""
+section_elements(::Type{CubedSphereBinaryGeometry}, Nc::Int, npanel::Int, nlevel::Int, section::Symbol) =
+    npanel * prod(_cs_section_shape(Nc, nlevel, section))
+
+"""Array dimensions of a payload section; cubed-sphere dimensions describe one panel."""
+section_shape(h::TransportBinaryHeader{LatLonBinaryGeometry}, section::Symbol) =
+    _structured_section_shape(h.geometry.Nx, h.geometry.Ny, h.nlevel, section)
+section_shape(h::TransportBinaryHeader{ReducedGaussianBinaryGeometry}, section::Symbol) =
+    _faceindexed_section_shape(h.ncell, h.nface_h, h.nlevel, section)
+section_shape(h::TransportBinaryHeader{CubedSphereBinaryGeometry}, section::Symbol) =
+    _cs_section_shape(h.geometry.Nc, h.nlevel, section)
+
+"""Number of stored elements in a section, including every cubed-sphere panel."""
+section_elements(h::TransportBinaryHeader, section::Symbol) = prod(section_shape(h, section))
+section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry}, section::Symbol) =
+    h.geometry.npanel * prod(section_shape(h, section))
+
+_transport_structured_section_elements(Nx::Int, Ny::Int, ncell::Int, nlevel::Int, section::Symbol) =
+    prod(_structured_section_shape(Nx, Ny, nlevel, section))
+_transport_faceindexed_section_elements(ncell::Int, nface_h::Int, nlevel::Int, section::Symbol) =
+    prod(_faceindexed_section_shape(ncell, nface_h, nlevel, section))
+_cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol) =
+    section_elements(CubedSphereBinaryGeometry, Nc, npanel, nlevel, section)
 
 const _FIELD_PRODUCER_HINT = Dict{Symbol, String}(
     :m => "Regenerate the transport binary with the unified preprocessor; `m` is a required air-mass section.",
@@ -270,7 +294,7 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
         push!(sections, :detd)
     end
     if _transport_window_has_vdiff_fields(window)
-        append!(sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+        append!(sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
     end
     return sections
 end

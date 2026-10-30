@@ -47,8 +47,15 @@ function total_windows end
 function window_dt end
 function steps_per_window end
 function steps_per_window_schedule end
+"""
+    load_transport_window(driver, win)
+
+Load one typed forcing window from the transport binary.
+"""
 function load_transport_window end
+"""Return the grid reconstructed and owned by the runtime driver."""
 function driver_grid end
+"""Return the binary's declared air-mass basis (`:dry` or `:moist`)."""
 function air_mass_basis end
 """Surface-pressure meaning supplied by a meteorological driver.
 

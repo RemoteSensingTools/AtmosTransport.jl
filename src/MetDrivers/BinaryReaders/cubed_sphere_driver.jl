@@ -23,7 +23,7 @@ function _validate_replay_consistency_cs(
         cur = load_window!(reader, k)
         steps = reader.header.steps_per_window_by_window[k]
         if flux_kind(reader) === :full_window_mass_amount
-            scale = FT(1) / FT(2 * steps)
+            scale = flux_storage_substep_scale(FT, steps, flux_kind(reader))
             _scale_cs_replay_panels!(cur.am, scale)
             _scale_cs_replay_panels!(cur.bm, scale)
             _scale_cs_replay_panels!(cur.cm, scale)
@@ -101,7 +101,6 @@ end
 end
 
 # The six panels in one queued launch (`copy_arrays!`).
-@inline _copy_cs_storage!(dest::NTuple{6}, src::NTuple{6}) = copy_arrays!(dest, src)
 
 # All 18 flux panels in one launch on every device backend (CUDA, ROCm,
 # Metal): the stepping loop refreshes the model's fluxes every step; one launch
@@ -140,7 +139,7 @@ end
 
 # One launch for the six panels (queued; the stepping task's later work sees it).
 function expected_air_mass!(dest::NTuple{6}, window::TransportWindow, λ::Real)
-    window.deltas === nothing && return _copy_cs_storage!(dest, window.air_mass)
+    window.deltas === nothing && return copy_arrays!(dest, window.air_mass)
     # The kernel indexes without bounds checks (the host code it replaced threw).
     for p in 1:6
         size(dest[p]) == size(window.air_mass[p]) == size(window.deltas.dm[p]) ||
@@ -197,7 +196,7 @@ function _cs_unpadded_section_fields(w::TransportWindow)
         c.dtrain === nothing || (targets[:dtrain] = c.dtrain)
         c.cloud_base === nothing || (targets[:cmfmc_cloud_base] = c.cloud_base)
         if c.tm5_fields !== nothing
-            for name in (:entu, :detu, :entd, :detd)
+            for name in TM5_CONVECTION_PAYLOAD_SECTIONS
                 targets[name] = getfield(c.tm5_fields, name)
             end
         end
@@ -301,7 +300,7 @@ end
 
 function _raw_window_staging(::DiscreteHostMemory, h, ::Type{T}, ref) where {T}
     host = pin_host_memory!(Vector{T}(undef, h.elems_per_window), ref)
-    largest = maximum(section -> _cs_section_elements(h, section), h.payload_sections)
+    largest = maximum(section -> section_elements(h, section), h.payload_sections)
     return RawWindowStaging(host, similar(ref, T, largest))
 end
 
@@ -431,7 +430,7 @@ function unpack_window_payload!(w::TransportWindow,
     fields = _cs_section_fields(w)
     o = 0
     for section in h.payload_sections
-        n = _cs_section_elements(h, section)
+        n = section_elements(h, section)
         entry = get(fields, section, nothing)
         if entry !== nothing
             panels, padded = entry
@@ -520,7 +519,7 @@ function load_transport_window!(
     targets = _cs_section_targets(w, driver.grid.horizontal.Hp)
     o = _transport_window_offset(reader, win)
     for section in h.payload_sections
-        n = _cs_section_elements(h, section)
+        n = section_elements(h, section)
         dest = get(targets, section, nothing)
         if dest !== nothing
             per_panel = n ÷ np

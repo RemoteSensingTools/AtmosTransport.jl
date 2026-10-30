@@ -1,3 +1,35 @@
+"""
+    poisson_balance_target(flux_kind, schedule; steps_per_window=maximum(schedule))
+
+Float64 Poisson target metadata for a validated positive step schedule. The
+scalar describes the declared maximum step count; `by_window` follows the
+schedule. This metadata conversion does not change physics accumulation types.
+"""
+function poisson_balance_target(flux_kind::Symbol, schedule;
+                                steps_per_window::Integer=maximum(schedule))
+    full_window = flux_kind === :full_window_mass_amount
+    scale = full_window ? 1.0 : 1.0 / (2 * steps_per_window)
+    by_window = full_window ? fill(1.0, length(schedule)) :
+                [1.0 / (2 * s) for s in schedule]
+    semantics = full_window ? "forward_window_mass_difference" :
+        has_variable_step_schedule(schedule) ?
+        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
+        "forward_window_mass_difference / (2 * steps_per_window)"
+    return (; scale, semantics, by_window)
+end
+
+"""Write unchanged JSON and NUL padding at the current position in `io`. """
+write_padded_header!(io::IO, header::AbstractDict, header_bytes::Integer) =
+    write_padded_header!(io, JSON3.write(header), header_bytes)
+
+function write_padded_header!(io::IO, header_json::AbstractString, header_bytes::Integer)
+    pad = header_bytes - ncodeunits(header_json)
+    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
+    write(io, header_json)
+    write(io, zeros(UInt8, pad))
+    return nothing
+end
+
 # Transport-binary contract construction and validation.
 
 # Header JSON is null-terminated inside the fixed-width header region. Read it
@@ -6,7 +38,7 @@
 const _TRANSPORT_HEADER_READ_CHUNK_BYTES = 262_144
 const _TRANSPORT_MAX_HEADER_JSON_BYTES = 16 * 1024 * 1024
 
-function _read_transport_header_json(io::IO; source::AbstractString = "transport binary")
+function read_transport_header_json(io::IO; source::AbstractString = "transport binary")
     seekstart(io)
     json_bytes = UInt8[]
     sizehint!(json_bytes, _TRANSPORT_HEADER_READ_CHUNK_BYTES)
@@ -133,6 +165,7 @@ function canonical_window_constant_contract(;
         humidity_sampling::Symbol = :none,
         source_flux_sampling::Symbol = :window_start_endpoint,
         include_flux_delta::Bool = true)
+    target = poisson_balance_target(:substep_mass_amount, [Int(steps_per_window)])
     return TransportBinaryContract(
         source_flux_sampling = source_flux_sampling,
         air_mass_sampling    = :window_start_endpoint,
@@ -140,8 +173,8 @@ function canonical_window_constant_contract(;
         flux_kind            = :substep_mass_amount,
         delta_semantics      = include_flux_delta ? :forward_window_endpoint_difference : :none,
         humidity_sampling    = humidity_sampling,
-        poisson_balance_target_scale = 1.0 / (2 * Int(steps_per_window)),
-        poisson_balance_target_semantics = "forward_window_mass_difference / (2 * steps_per_window)",
+        poisson_balance_target_scale = target.scale,
+        poisson_balance_target_semantics = target.semantics,
     )
 end
 
@@ -164,7 +197,7 @@ function _set_tm5_convection_mass_basis!(header::Dict{String, Any},
                                          mass_basis::Symbol,
                                          requested::Union{_DefaultTM5ConvectionMassBasis,
                                                           Nothing, AbstractMassBasis})
-    tm5_sections = (:entu, :detu, :entd, :detd)
+    tm5_sections = TM5_CONVECTION_PAYLOAD_SECTIONS
     present = map(section -> section in payload_sections, tm5_sections)
     any(present) == all(present) || throw(ArgumentError(
         "TM5 convection payload must contain all of $(tm5_sections), or none"))
@@ -206,9 +239,9 @@ caller certificate (any `FLUX_CERTIFICATE_KEY_PREFIXES` key) replaces the
 writer's default certificate block as a whole.
 """
 function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
-    if any(raw_key -> _is_certificate_key(String(raw_key)), keys(extra_header))
+    if any(raw_key -> is_certificate_key(String(raw_key)), keys(extra_header))
         for key in collect(keys(header))
-            _is_certificate_key(key) && delete!(header, key)
+            is_certificate_key(key) && delete!(header, key)
         end
     end
     for (raw_key, value) in pairs(extra_header)
@@ -310,17 +343,17 @@ function _validate_transport_layout!(header::AbstractDict)
     endpoint_humidity = (:qv_start in sections, :qv_end in sections)
     endpoint_humidity[1] == endpoint_humidity[2] || throw(ArgumentError(
         "Transport-binary contract violation — qv_start and qv_end must appear together"))
-    tm5 = map(s -> s in sections, (:entu, :detu, :entd, :detd))
+    tm5 = map(s -> s in sections, TM5_CONVECTION_PAYLOAD_SECTIONS)
     all(tm5) || !any(tm5) || throw(ArgumentError(
         "Transport-binary contract violation — TM5 convection requires entu, detu, entd, and detd together"))
-    surface = map(s -> s in sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+    surface = map(s -> s in sections, PBL_SURFACE_PAYLOAD_SECTIONS)
     all(surface) || !any(surface) || throw(ArgumentError(
         "Transport-binary contract violation — surface payload sections must be complete"))
     (:pbl_eflux in sections && !all(surface)) && throw(ArgumentError(
         "Transport-binary contract violation — pbl_eflux requires the PBL surface sections"))
     (:cmfmc_cloud_base in sections && !(:cmfmc in sections)) && throw(ArgumentError(
         "Transport-binary contract violation — cmfmc_cloud_base requires cmfmc"))
-    vdiff = map(s -> s in sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    vdiff = map(s -> s in sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
     :kz in sections && throw(ArgumentError(
@@ -624,7 +657,7 @@ function validate_transport_contract!(header::AbstractDict)
         throw(ArgumentError("Transport-binary contract violation — steps_per_window=$(steps_per_window) must equal " *
                             "maximum(steps_per_window_by_window)=$(maximum(schedule))"))
 
-    variable_steps = _has_variable_step_schedule(schedule)
+    variable_steps = has_variable_step_schedule(schedule)
     expected_time_step_schedule = variable_steps ? "per_window" : "constant"
     time_step_schedule = String(header["time_step_schedule"])
     time_step_schedule == expected_time_step_schedule ||
@@ -632,20 +665,14 @@ function validate_transport_contract!(header::AbstractDict)
                             "but schedule requires $(repr(expected_time_step_schedule))"))
 
     flux_kind = _transport_normalize_symbol(header["flux_kind"])
-    full_window_flux = flux_kind === :full_window_mass_amount
 
     scalar_scale = Float64(header["poisson_balance_target_scale"])
-    expected_scalar_scale = full_window_flux ? 1.0 : 1.0 / (2 * steps_per_window)
+    target = poisson_balance_target(flux_kind, schedule; steps_per_window)
+    expected_scalar_scale = target.scale
     isapprox(scalar_scale, expected_scalar_scale; atol=eps(Float64) * 8, rtol=0.0) ||
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale=$(scalar_scale), " *
                             "expected $(expected_scalar_scale) for flux_kind=$(flux_kind)"))
-    expected_semantics = if full_window_flux
-        "forward_window_mass_difference"
-    elseif variable_steps
-        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])"
-    else
-        "forward_window_mass_difference / (2 * steps_per_window)"
-    end
+    expected_semantics = target.semantics
     semantics = String(header["poisson_balance_target_semantics"])
     semantics == expected_semantics ||
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_semantics=$(repr(semantics)), " *
@@ -660,7 +687,7 @@ function validate_transport_contract!(header::AbstractDict)
         throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window length $(length(scale_schedule)) " *
                             "does not match nwindow=$(nwindow)"))
     for win in 1:nwindow
-        expected = full_window_flux ? 1.0 : 1.0 / (2 * schedule[win])
+        expected = target.by_window[win]
         isapprox(scale_schedule[win], expected; atol=eps(Float64) * 8, rtol=0.0) ||
             throw(ArgumentError("Transport-binary contract violation — poisson_balance_target_scale_by_window[$win]=" *
                                 "$(scale_schedule[win]), expected $(expected) for flux_kind=$(flux_kind)"))

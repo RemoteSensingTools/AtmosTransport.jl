@@ -24,7 +24,7 @@ using .AtmosTransport.MetDrivers: TransportBinaryReader
 const DEFAULT_BIN = "/temp1/c180_era5_geosgrid_cfl85_tm5_surface_f32_steps48_v3_20260520/era5_transport_20211202_merged1000Pa_float32.bin"
 
 # Elements of one CS payload section (the library's table, which knows every section).
-_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers._cs_section_elements(h, section)
+_section_elements(h, section::Symbol) = AtmosTransport.MetDrivers.section_elements(h, section)
 
 function _section_offset(h, win::Int, section::Symbol)
     o = (win - 1) * h.elems_per_window

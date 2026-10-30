@@ -2,6 +2,7 @@
 # run opens it (the removed environment variables no longer act).
 using Test
 using AtmosTransport
+include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
 using Logging
 include(joinpath(@__DIR__, "..", "fixtures", "cs_multifile.jl"))
 using .CSDriverHandoffFixtures
@@ -60,7 +61,7 @@ function write_consistent_ll_binary(path; FT = Float32, Nx = 4, Ny = 3, Nz = 2, 
     bm[:, 1, :] .= 0; bm[:, Ny + 1, :] .= 0               # no flux through the poles
     dm = [1e11 * cospi(0.9i + 0.4j) * (k == 1 ? 1 : -1) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
     cm = zeros(Nx, Ny, Nz + 1)
-    ReplayMD.recompute_cm_from_dm_target!(cm, am, bm, m1, dm)
+    ReplayMD.recompute_cm_from_dm_target!(ReplayMD.structured_replay_layout(), zeros(size(m1)), cm, m1, dm, am, bm)
     m2 = similar(m1)                                         # the endpoint the fluxes reach
     for k in 1:Nz, j in 1:Ny, i in 1:Nx
         m2[i, j, k] = m1[i, j, k] - 2steps * ((am[i + 1, j, k] - am[i, j, k]) +
@@ -86,8 +87,6 @@ run_quietly(cfg) = with_logger(NullLogger()) do
 end
 
 @testset "[input] validate_replay" begin
-    # The defaults are tested without the caller's replay variables.
-    withenv("ATMOSTR_REPLAY_CHECK" => nothing, "ATMOSTR_NO_REPLAY_CHECK" => nothing) do
     mktempdir() do dir
         path = write_inconsistent_cs_binary(joinpath(dir, "inconsistent.bin"))
         config(input) = Dict{String, Any}(
@@ -112,20 +111,6 @@ end
             validate_config(config(Dict{String, Any}("validate_replay" => "yes")))
         end
         @test !ok && any(contains("[input].validate_replay"), errors)
-        # The removed environment variable no longer enables the check.
-        withenv("ATMOSTR_REPLAY_CHECK" => "1") do
-            driver = TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1)
-            try
-                @test driver isa TransportBinaryDriver
-            finally
-                close(driver)
-            end
-        end
-        # The removed ATMOSTR_NO_REPLAY_CHECK no longer bypasses a requested check.
-        withenv("ATMOSTR_NO_REPLAY_CHECK" => "1") do
-            @test_throws ArgumentError TransportBinaryDriver(path; FT = Float64, arch = CPU(), Hp = 1,
-                                                             validate_replay = true)
-        end
         # Every binary of a multi-file run is checked, not only the first.
         good = joinpath(dir, "consistent.bin")
         cs_handoff_fixture(good, [1.0, 1.0]; FT = Float64)
@@ -149,7 +134,8 @@ end
         reader = ReplayMD.TransportBinaryReader(f32; FT = Float64)
         m1, _, fl = ReplayMD.load_window!(reader, 1)
         m2, _, _ = ReplayMD.load_window!(reader, 2)
-        rounding = ReplayMD.verify_window_continuity_ll(m1, fl.am, fl.bm, fl.cm, m2, 2).max_rel_err
+        rounding = ReplayMD.verify_window_continuity(ReplayMD.structured_replay_layout(), ReplayMD.ReplayScratch(size(m1)),
+            m1, fl.cm, m2, 2, fl.am, fl.bm).max_rel_err
         close(reader)
         @test ReplayMD.replay_tolerance(Float64) < rounding < ReplayMD.replay_tolerance(Float32)
         for FT in (Float64, Float32)
@@ -161,4 +147,72 @@ end
         end
     end
 end
+
+@testset "CubedSphere transport replay gate validates dm-bearing binaries" begin
+    mktemp() do path, io
+        close(io)
+        dm_zero = ntuple(_ -> zeros(4, 4, 2), 6)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1,),
+                               window_dm_panels=(dm_zero,))
+
+        reader = TransportBinaryReader(path; FT=Float64)
+        @test has_flux_delta(reader)
+        close(reader)
+
+        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1,
+                                            validate_replay=true)
+        close(driver)
+    end
+end
+
+
+@testset "CubedSphere transport replay gate catches final-window target mismatch" begin
+    mktemp() do path, io
+        close(io)
+        dm_bad = ntuple(_ -> fill(1.0e4, 4, 4, 2), 6)
+        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
+                               window_mass_scales=(1,),
+                               window_dm_panels=(dm_bad,))
+
+        @test_throws ArgumentError TransportBinaryDriver(
+            path; FT=Float64, arch=CPU(), Hp=1, validate_replay=true)
+    end
+end
+
+
+@testset "Reduced-Gaussian load-time replay uses stored face connectivity" begin
+    mktempdir() do dir
+        mesh = ReducedGaussianMesh([-60.0, 0.0, 60.0], [4, 8, 4])
+        grid = AtmosGrid(mesh, HybridSigmaPressure([0.0, 1000.0], [0.0, 1.0]), CPU())
+        left, right = AtmosTransport.Grids.face_connectivity(mesh)
+        m = fill(1e8, ncells(mesh), 1)
+        hflux = zeros(nfaces(mesh), 1)
+        m_next = copy(m)
+        steps = 3
+        for f in eachindex(left)
+            left[f] > 0 && right[f] > 0 || continue
+            hflux[f, 1] = 100.0 * f
+            m_next[left[f], 1] -= 2steps * hflux[f, 1]
+            m_next[right[f], 1] += 2steps * hflux[f, 1]
+        end
+        windows = [(; m, hflux, cm=zeros(ncells(mesh), 2), ps=fill(1e5, ncells(mesh))),
+                   (m=m_next, hflux=zero(hflux), cm=zeros(ncells(mesh), 2), ps=fill(1e5, ncells(mesh)))]
+        function write_rg(path)
+            write_transport_binary(path, grid, windows; steps_per_window=steps,
+                mass_basis=:dry, surface_pressure_basis=TotalSurfacePressure(),
+                source_flux_sampling=:window_start_endpoint, flux_sampling=:window_constant)
+        end
+        good = joinpath(dir, "rg_consistent.bin")
+        write_rg(good)
+        driver = with_logger(NullLogger()) do
+            TransportBinaryDriver(good; FT=Float64, validate_replay=true)
+        end
+        @test driver.reader.header.geometry isa ReplayMD.ReducedGaussianBinaryGeometry
+        close(driver)
+        m_next[3, 1] += 1e6
+        bad = joinpath(dir, "rg_bad.bin")
+        write_rg(bad)
+        @test_throws ArgumentError TransportBinaryDriver(bad; FT=Float64, validate_replay=true)
+    end
 end

@@ -93,10 +93,8 @@ using ..LogLevels: log_level, with_log_level
 using ..AtomicFiles: atomic_publish, open_atomic_staging,
                      commit_atomic_staging, abandon_atomic_staging
 using GRIB
-using SHA
 using FastGaussQuadrature: gausslegendre
 
-# Re-export parent module types we need
 import ..expand_data_path
 import ..source_revision
 
@@ -170,21 +168,21 @@ using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_are
                     default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
 using ..GriddedIO: source_latlon_mesh, SnappedFaces, find_coordinate, LongitudeAxis, LatitudeAxis
-using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
+using ..MetDrivers: poisson_balance_target, write_padded_header!, section_elements,
+                    LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
                     TransportBinaryHeader, binary_geometry, grid_type,
-                    binary_dry_mass_target, _dry_mass_pin_enabled,
+                    binary_dry_mass_target, dry_mass_pin_enabled,
                     write_transport_binary,
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
                     close_streaming_transport_binary!, abandon_streaming_transport_binary!,
-                    FLUX_CERTIFICATE_KEY_PREFIXES, _is_certificate_key,
+                    FLUX_CERTIFICATE_KEY_PREFIXES, is_certificate_key,
                     COLUMN_CLOSURE_RULE, FLUX_FIDELITY_SCHEMA,
                     set_streaming_steps_per_window_schedule!,
                     set_transport_header_steps_per_window_schedule!,
                     open_streaming_cs_transport_binary, write_streaming_cs_window!,
-                    read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh,
                     load_window!, load_flux_delta_window!,
                     has_tm5_convection, load_tm5_convection_window!,
                     TM5_CONVECTION_MASS_BASIS_KEY, tm5_convection_mass_basis,
@@ -192,7 +190,7 @@ using ..MetDrivers: LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBi
                     TransportBinaryContract, canonical_window_constant_contract,
                     validate_transport_contract!,
                     recompute_cm_from_dm_target!,
-                    verify_window_continuity, verify_window_continuity_ll,
+                    verify_window_continuity,
                     verify_window_continuity_rg, verify_window_continuity_cs,
                     delta_semantics, flux_kind, flux_application_seconds,
                     surface_pressure_basis,
@@ -280,6 +278,7 @@ include("cs_poisson_solver.jl")
 include("cs_poisson_balance.jl")
 
 # Target grid geometry (LL, RG, and CS)
+include("sources/era5_grib_geometry.jl")
 include("target_geometry.jl")
 
 # GRIB spectral IO

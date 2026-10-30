@@ -788,8 +788,9 @@ end
             ll_air[i, j, k] = dp_dry[k] * cell_area(ll_mesh, i, j) /
                               AtmosTransport.Grids.gravity(ll_grid)
         end
-        @test ICIO._stored_surface_pressure_basis(
-            ll_grid, ll_air, fill(ps_total, 4, 2), DryBasis()) isa ICIO.TotalSurfacePressure
+        @test AtmosTransport.MetDrivers.infer_surface_pressure_basis(
+            ll_grid, vec(ll_air), vec(fill(ps_total, 4, 2)),
+            AtmosTransport.MetDrivers.LatLonBinaryGeometry(4, 2, [], [], [], [])) isa ICIO.TotalSurfacePressure
 
         rg_mesh = ReducedGaussianMesh([-45.0, 45.0], [4, 4]; FT = T)
         rg_grid = AtmosGrid(rg_mesh, vertical, CPU(); FT = T)
@@ -798,8 +799,9 @@ end
             rg_air[c, k] = dp_dry[k] * cell_area(rg_mesh, c) /
                            AtmosTransport.Grids.gravity(rg_grid)
         end
-        @test ICIO._stored_surface_pressure_basis(
-            rg_grid, rg_air, fill(ps_total, ncells(rg_mesh)), DryBasis()) isa
+        @test AtmosTransport.MetDrivers.infer_surface_pressure_basis(
+            rg_grid, vec(rg_air), fill(ps_total, ncells(rg_mesh)),
+            AtmosTransport.MetDrivers.ReducedGaussianBinaryGeometry([], [])) isa
             ICIO.TotalSurfacePressure
 
         Nc, Hp = 2, 1
@@ -813,10 +815,13 @@ end
         end
         cs_ps_total = ntuple(_ -> fill(ps_total, Nc, Nc), 6)
         cs_ps_dry = ntuple(_ -> fill(sum(dp_dry), Nc, Nc), 6)
-        @test ICIO._stored_surface_pressure_basis(
-            cs_grid, cs_air, cs_ps_total, DryBasis()) isa ICIO.TotalSurfacePressure
-        @test ICIO._stored_surface_pressure_basis(
-            cs_grid, cs_air, cs_ps_dry, DryBasis()) isa ICIO.DrySurfacePressure
+        cs_geometry = AtmosTransport.MetDrivers.CubedSphereBinaryGeometry(
+            Nc, 6, :gnomonic, :equiangular, :equiangular, :normalized_vertex_mean, 0.0)
+        cs_flat = reduce(vcat, vec(Array(@view panel[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :])) for panel in cs_air)
+        @test AtmosTransport.MetDrivers.infer_surface_pressure_basis(
+            cs_grid, cs_flat, reduce(vcat, vec.(cs_ps_total)), cs_geometry) isa ICIO.TotalSurfacePressure
+        @test AtmosTransport.MetDrivers.infer_surface_pressure_basis(
+            cs_grid, cs_flat, reduce(vcat, vec.(cs_ps_dry)), cs_geometry) isa ICIO.DrySurfacePressure
         recovered = ICIO._total_surface_pressure(
             ICIO.DrySurfacePressure(), sum(dp_dry), vertical.A, vertical.B, T[0.4, 0.1])
         @test recovered ≈ ps_total rtol = 16eps(T)

@@ -204,3 +204,7 @@ export DEFAULT_CFL_LIMIT, DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARG
 "Near-surface fallback temperature (K) for observation hypsometric layer heights."
 const DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN = 280.0
 export DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN
+
+"Relative column-pressure tolerance used to infer the basis of keyless legacy binaries."
+const SURFACE_PRESSURE_BASIS_TOLERANCE = 2e-5
+export SURFACE_PRESSURE_BASIS_TOLERANCE

@@ -106,46 +106,44 @@ Runs only when the driver is built with `validate_replay = true`
 (`[input] validate_replay`).
 """
 function _validate_replay_consistency_ll(reader::TransportBinaryReader{FT, DiskFT}) where {FT, DiskFT}
+    return _validate_replay_consistency(reader, structured_replay_layout(), "latlon")
+end
+
+function _validate_replay_consistency(reader::TransportBinaryReader{FT, DiskFT},
+                                     layout, topology::AbstractString) where {FT, DiskFT}
     tol_rel = replay_tolerance(FT, DiskFT)
     Nt = window_count(reader)
     Nt >= 2 || return nothing
-
-    m_cur, _ps_cur, fluxes = load_window!(reader, 1)
+    m_cur, _, fluxes = load_window!(reader, 1)
     scratch = ReplayScratch(size(m_cur))
-    layout = structured_replay_layout()
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_win = 0
-    worst_idx = (0, 0, 0)
-    for k in 1:(Nt - 1)
-        m_next, _ps_next, fluxes_next = load_window!(reader, k + 1)
+    initial_diagnostic = (worst_window=0, worst_rel=0.0, worst_abs=0.0,
+                          worst_idx=ntuple(_ -> 0, ndims(m_cur)))
+    function diag_for_window(k)
+        m_next, _, fluxes_next = load_window!(reader, k + 1)
         steps = reader.header.steps_per_window_by_window[k]
         diag = _replay_window_pair(layout, scratch, m_cur, fluxes, m_next, steps)
-        if diag.max_rel_err > worst_rel
-            worst_rel = diag.max_rel_err
-            worst_abs = diag.max_abs_err
-            worst_win = k
-            worst_idx = diag.worst_idx
-        end
-        # Advance: next window becomes current.
         m_cur = m_next
         fluxes = fluxes_next
+        return diag
     end
-
-    worst_rel <= tol_rel ||
+    function failure_handler(result)
+        (; worst_rel, worst_window, worst_idx, worst_abs) = result
         throw(ArgumentError(
             "TransportBinaryDriver replay-consistency gate FAILED for " *
             "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
-            "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
+            "$worst_window cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
             "integrate to stored m_next under palindrome continuity. Regenerate the " *
             "binary with explicit mass-delta continuity closure, or skip this " *
             "load-time check (remove [input] validate_replay = true, or the " *
-            "`validate_replay` keyword)."
-        ))
-
+            "`validate_replay` keyword)."))
+    end
+    result = run_replay_gate(diag_for_window, Nt - 1; tol_rel,
+                             failure_prefix="TransportBinaryDriver replay-consistency gate",
+                             initial_diagnostic, failure_handler)
+    (; worst_rel, worst_window, worst_abs) = result
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
-          "topology=latlon worst_rel=$(worst_rel) worst_window=$(worst_win)"
-    return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
+          "topology=$(topology) worst_rel=$(worst_rel) worst_window=$(worst_window)"
+    return (; worst_window, worst_rel, worst_abs)
 end
 
 # No-op fallback for arguments that are not a `TransportBinaryReader`.
@@ -179,47 +177,10 @@ driver is built with `validate_replay = true` (`[input] validate_replay`).
 """
 function _validate_replay_consistency_rg(reader::TransportBinaryReader{FT, DiskFT},
                                          grid) where {FT, DiskFT}
-    tol_rel = replay_tolerance(FT, DiskFT)
-    Nt = window_count(reader)
-    Nt >= 2 || return nothing
-
+    window_count(reader) >= 2 || return nothing
     face_left, face_right = face_connectivity(grid.horizontal)
     layout = faceindexed_replay_layout(face_left, face_right)
-
-    m_cur, _, fluxes = load_window!(reader, 1)
-    scratch = ReplayScratch(size(m_cur))
-    worst_rel = 0.0
-    worst_abs = 0.0
-    worst_win = 0
-    worst_idx = (0, 0)
-    for k in 1:(Nt - 1)
-        m_next, _, fluxes_next = load_window!(reader, k + 1)
-        steps = reader.header.steps_per_window_by_window[k]
-        diag = _replay_window_pair(layout, scratch, m_cur, fluxes, m_next, steps)
-        if diag.max_rel_err > worst_rel
-            worst_rel = diag.max_rel_err
-            worst_abs = diag.max_abs_err
-            worst_win = k
-            worst_idx = diag.worst_idx
-        end
-        m_cur = m_next
-        fluxes = fluxes_next
-    end
-
-    worst_rel <= tol_rel ||
-        throw(ArgumentError(
-            "TransportBinaryDriver replay-consistency gate FAILED for " *
-            "$(basename(reader.path)): rel=$(worst_rel) > tol=$(tol_rel) at window " *
-            "$worst_win cell $worst_idx (abs=$worst_abs kg). Stored fluxes do not " *
-            "integrate to stored m_next under palindrome continuity. Regenerate the " *
-            "binary with explicit mass-delta continuity closure, or skip this " *
-            "load-time check (remove [input] validate_replay = true, or the " *
-            "`validate_replay` keyword)."
-        ))
-
-    @info "Replay continuity gate passed: $(basename(reader.path)) " *
-          "topology=reduced_gaussian worst_rel=$(worst_rel) worst_window=$(worst_win)"
-    return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
+    return _validate_replay_consistency(reader, layout, "reduced_gaussian")
 end
 
 
@@ -228,11 +189,11 @@ function _validate_runtime_semantics(
     ::Union{LatLonBinaryGeometry, ReducedGaussianBinaryGeometry},
 )
     h = reader.header
-    variable_steps = _has_variable_step_schedule(h.steps_per_window_by_window)
-    expected_poisson_scale = 1.0 / (2 * h.steps_per_window)
-    expected_poisson_semantics = variable_steps ?
-        "forward_window_mass_difference / (2 * steps_per_window_by_window[win])" :
-        "forward_window_mass_difference / (2 * steps_per_window)"
+    variable_steps = has_variable_step_schedule(h.steps_per_window_by_window)
+    target = poisson_balance_target(:substep_mass_amount, h.steps_per_window_by_window;
+                                    steps_per_window=h.steps_per_window)
+    expected_poisson_scale = target.scale
+    expected_poisson_semantics = target.semantics
 
     h.flux_kind === :substep_mass_amount ||
         throw(ArgumentError("TransportBinaryDriver requires flux_kind = :substep_mass_amount, got $(h.flux_kind)"))
@@ -271,7 +232,7 @@ function _validate_runtime_semantics(
             length(h.poisson_balance_target_scale_by_window) == h.nwindow ||
                 throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale_by_window length $(h.nwindow) for variable-step binaries"))
             for win in 1:h.nwindow
-                expected_win_scale = 1.0 / (2 * h.steps_per_window_by_window[win])
+                expected_win_scale = target.by_window[win]
                 isapprox(h.poisson_balance_target_scale_by_window[win], expected_win_scale;
                          atol=eps(Float64)*8, rtol=0.0) ||
                     throw(ArgumentError("TransportBinaryDriver requires poisson_balance_target_scale_by_window[$win]=$(expected_win_scale), got $(h.poisson_balance_target_scale_by_window[win])"))
@@ -346,7 +307,7 @@ function Base.show(io::IO, driver::TransportBinaryDriver)
           "├── grid:          ", summary(driver.grid.horizontal), "\n",
           "├── basis:         ", air_mass_basis(driver), "\n",
           "├── timing:        dt=", window_dt(driver), " s, steps/window=",
-              _steps_per_window_summary(steps_per_window(driver), steps_per_window_schedule(driver)), "\n",
+              steps_per_window_summary(steps_per_window(driver), steps_per_window_schedule(driver)), "\n",
           "├── payload:       ", join(String.(h.payload_sections), ", "), "\n",
           "├── humidity:      ", has_qv_endpoints(reader) ? "qv_start/qv_end" : "none", "\n",
           "├── semantics:     air_mass=", h.air_mass_sampling, ", flux=", h.flux_sampling, "/", h.flux_kind, "\n",
@@ -435,7 +396,6 @@ steps_per_window(driver::TransportBinaryDriver, win::Integer) =
     driver.reader.header.steps_per_window_by_window[Int(win)]
 steps_per_window_schedule(driver::TransportBinaryDriver) =
     copy(driver.reader.header.steps_per_window_by_window)
-"""Return the binary's declared air-mass basis (`:dry` or `:moist`)."""
 air_mass_basis(driver::TransportBinaryDriver) = binary_mass_basis(driver.reader)
 surface_pressure_basis(driver::TransportBinaryDriver) =
     surface_pressure_basis(driver.reader)
@@ -446,7 +406,6 @@ supports_convection(driver::TransportBinaryDriver) =
 supports_diffusion(driver::TransportBinaryDriver) =
     _supports_runtime_diffusion(driver.reader)
 _supports_runtime_diffusion(::TransportBinaryReader) = false
-"""Return the grid reconstructed and owned by the runtime driver."""
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant
@@ -552,11 +511,6 @@ function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
                            convection = convection)
 end
 
-"""
-    load_transport_window(driver, win)
-
-Load one typed forcing window from the transport binary.
-"""
 function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{H}}, win::Int) where {FT, ReaderT, H <: AbstractStructuredMesh}
     m, ps, fluxes_any = load_window!(driver.reader, win)
     fluxes = fluxes_any::StructuredFaceFluxState

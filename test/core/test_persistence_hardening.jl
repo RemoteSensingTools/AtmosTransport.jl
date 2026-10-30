@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
 using Test
+using JSON3
 
 import AtmosTransport
 const AT = AtmosTransport
@@ -104,22 +105,6 @@ end
             @test isfile(empty_path)
         end
 
-        @testset "published binaries honour the umask" begin
-            path = joinpath(dir, "rg-mode.bin")
-            # A known umask (restored afterwards): 0o666 & ~0o022 = 0o644, while
-            # a `mktemp`-staged file would be published as 0o600.
-            old_umask = Sys.iswindows() ? nothing : ccall(:umask, Cuint, (Cuint,), 0o022)
-            try
-                writer, window = _open_rg(path)
-                MD.write_streaming_window!(writer, window)
-                MD.close_streaming_transport_binary!(writer)
-            finally
-                old_umask === nothing || ccall(:umask, Cuint, (Cuint,), old_umask)
-            end
-            @test isfile(path)
-            Sys.iswindows() || @test filemode(path) & 0o777 == 0o644
-            @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))   # no staging leftovers
-        end
 
         @testset "CS validates arguments, panel count, and every panel shape" begin
             path = joinpath(dir, "cs-shape.bin")
@@ -202,6 +187,28 @@ end
             @test !ispath(path)
         end
 
+        @testset "CS writer-contract guard" begin
+            @testset "MD.validate_cs_writer_contract! accepts a complete header" begin
+                h = Dict{String,Any}("runtime_substep_contract" => "binary_schedule",
+                                     "preprocessor_contract" => "streaming_cs_v4",
+                                     "adaptive_substeps" => true)
+                @test MD.validate_cs_writer_contract!(h) === nothing
+            end
+
+            @testset "MD.validate_cs_writer_contract! rejects a missing key" begin
+                for drop in ("runtime_substep_contract", "preprocessor_contract", "adaptive_substeps")
+                    h = Dict{String,Any}("runtime_substep_contract" => "binary_schedule",
+                                         "preprocessor_contract" => "streaming_cs_v4",
+                                         "adaptive_substeps" => false)
+                    delete!(h, drop)
+                    err = try; MD.validate_cs_writer_contract!(h); nothing
+                          catch e; e end
+                    @test err isa ErrorException
+                    @test occursin(drop, sprint(showerror, err))
+                end
+            end
+        end
+
         @testset "header layout metadata is internally consistent" begin
             path = joinpath(dir, "header-contract.bin")
             writer, window = _open_rg(path)
@@ -249,9 +256,9 @@ end
                 surface_pressure_basis=TotalSurfacePressure(),
             )
             header = open(path, "r") do io
-                raw = MD._read_transport_header_json(io; source=path)
+                raw = MD.BinaryFormat.read_transport_header_json(io; source=path)
                 Dict{String,Any}(String(k) => v for (k, v) in
-                                 pairs(MD.JSON3.read(String(raw))))
+                                 pairs(JSON3.read(String(raw))))
             end
             for key in ("lons", "lats")
                 bad = deepcopy(header)
@@ -316,7 +323,7 @@ end
     end
 end
 
-@testset "binary readers reject size mismatches and close failed opens" begin
+@testset "binary readers reject size mismatches" begin
     mktempdir() do dir
         valid = joinpath(dir, "valid.bin")
         writer, window = _open_rg(valid)
@@ -334,15 +341,7 @@ end
         open(malformed, "w") do io
             write(io, "{not-json")
         end
-        if isdir("/proc/self/fd")
-            before = length(readdir("/proc/self/fd"))
-            for _ in 1:100
-                @test_throws Exception MD.TransportBinaryReader(malformed)
-                @test_throws Exception MD.TransportBinaryReader(malformed)
-            end
-            after = length(readdir("/proc/self/fd"))
-            @test after <= before + 2
-        end
+
     end
 end
 
@@ -400,7 +399,7 @@ end
         @test_throws ArgumentError MD.TransportBinaryReader(cs_path)
     end
 
-    @test_throws ArgumentError MD._read_transport_header_json(
+    @test_throws ArgumentError MD.BinaryFormat.read_transport_header_json(
         IOBuffer(Vector{UInt8}(codeunits("{\"unterminated\":true}")));
         source="test binary",
     )

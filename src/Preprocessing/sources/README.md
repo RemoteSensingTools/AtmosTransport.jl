@@ -137,3 +137,5 @@ In [`../../../test/core/`](../../../test/core/): `test_met_source_loader.jl`,
 full per-window N320 → C180 pipeline needs the ERA5 N320 GRIB archive
 (`ATMOS_ERA5_N320_ROOT`) and is tested in
 [`../../../test/real_data/test_era5_n320_to_c180_pipeline.jl`](../../../test/real_data/test_era5_n320_to_c180_pipeline.jl).
+
+- `era5_grib_geometry.jl`: native ERA5 reduced-Gaussian GRIB geometry and mesh readers (moved from MetDrivers.ERA5; preprocessing-only).

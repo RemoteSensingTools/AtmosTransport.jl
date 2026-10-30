@@ -38,12 +38,10 @@ function LatLonBinaryWriter(path::AbstractString,
     length(encoded_header) < HEADER_SIZE ||
         throw(ArgumentError("header JSON exceeds fixed header size ($HEADER_SIZE bytes)"))
 
-    hdr_buf = zeros(UInt8, HEADER_SIZE)
-    copyto!(hdr_buf, 1, encoded_header, 1, length(encoded_header))
     parsed = JSON3.read(String(header_json))
     header = Dict{String, Any}(String(k) => v for (k, v) in pairs(parsed))
     io = open(path, "w")
-    write(io, hdr_buf)
+    write_padded_header!(io, header_json, HEADER_SIZE)
     return LatLonBinaryWriter{FT, Basis, typeof(io), typeof(settings), typeof(merged), typeof(last_hour_next)}(
         io,
         String(path),
@@ -151,12 +149,8 @@ function close_streaming_binary!(writer::LatLonBinaryWriter)
     writer.closed = true
     try
         flux_fidelity_header!(writer.header, writer.fidelity)
-        header_json = JSON3.write(writer.header)
-        pad = writer.header_bytes - ncodeunits(header_json)
-        pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(writer.header_bytes)")
         seek(writer.io, 0)
-        write(writer.io, header_json)
-        write(writer.io, zeros(UInt8, pad))
+        write_padded_header!(writer.io, writer.header, writer.header_bytes)
         flush(writer.io)
     finally
         close(writer.io)

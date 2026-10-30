@@ -6,39 +6,27 @@ Meteorological data adapters for the basis-explicit transport architecture.
 Provides:
 - abstract driver types with capability traits;
 - topology-generic transport-binary readers; and
-- ERA5 native reduced-Gaussian GRIB geometry helpers.
+- replay continuity and decoded forcing windows.
 """
 module MetDrivers
 
-using ..Grids: face_connectivity
-
 using Adapt
 using Printf: @sprintf
-using ..Architectures: array_adapter_for, AbstractPointOp, Fused, select_panel,
-                       pin_host_memory!, copy_arrays!, host_memory_model,
-                       host_mapped_vector, DiscreteHostMemory, UnifiedHostMemory
-import ..Architectures: index_space, apply_point!, bound_context, launch!
-using KernelAbstractions: get_backend
+using ..Architectures: array_adapter_for
 using ..State
-using ..Grids
-using ..Parameters: EARTH_RADIUS, STANDARD_GRAVITY,
-                    GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
-                    DEFAULT_MET_INTERVAL_SECONDS, GMAO_CS_LONGITUDE_OFFSET_DEG,
-                    REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32,
-                    TM5_CONVECTION_MASS_BASIS_KEY, TM5_CONVECTION_SOURCE_KEY,
-                    TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION
-import ..source_revision
+using ..Parameters: REPLAY_TOLERANCE_FLOAT64, REPLAY_TOLERANCE_FLOAT32,
+                    TM5_CONVECTION_MASS_BASIS_KEY
 
 include("AbstractMetDriver.jl")
 include("ConvectionForcing.jl")
 include("SurfaceForcing.jl")
-include("TransportBinary.jl")
 include("ReplayContinuity.jl")
-include("transport_binary/window.jl")
-include("transport_binary/driver.jl")
-include("transport_binary/cubed_sphere_driver.jl")
-include("ERA5/ERA5.jl")
-using .ERA5
+include("BinaryFormat/BinaryFormat.jl")
+using .BinaryFormat
+include("BinaryReaders/BinaryReaders.jl")
+using .BinaryReaders
+export section_shape, section_elements, section_view, infer_surface_pressure_basis,
+       poisson_balance_target, write_padded_header!
 
 export TRANSPORT_BINARY_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
@@ -73,17 +61,14 @@ export total_windows, window_dt, steps_per_window, steps_per_window_schedule
 export binary_capabilities, inspect_binary
 export binary_dry_mass_target
 export has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
-export mass_basis, grid_type, horizontal_topology
+export mass_basis, binary_mass_basis, grid_type, horizontal_topology
 export surface_pressure_basis
 export uses_binary_substep_contract
 export source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind, humidity_sampling, delta_semantics
 export flux_application_seconds, flux_storage_substep_scale
-export diagnose_cm_from_continuity!
 export recompute_cm_from_dm_target!
-export verify_window_continuity, verify_window_continuity_ll, verify_window_continuity_rg,
+export verify_window_continuity, verify_window_continuity_rg,
        verify_window_continuity_cs, ReplayScratch
-export ERA5ReducedGaussianGeometry
-export read_era5_reduced_gaussian_geometry, read_era5_reduced_gaussian_mesh
 
 # Cubed-sphere geometry helpers
 export mesh_convention, mesh_definition

@@ -198,7 +198,7 @@ function _experimental_coarsen_metadata(reader, output_Nc::Int, ratio::Int)
                 "horizontal_balance")    # block sums keep the source's balance
         haskey(raw, key) && (metadata[key] = raw[key])
     end
-    pin_enabled = _dry_mass_pin_enabled(raw, basename(reader.path))
+    pin_enabled = dry_mass_pin_enabled(raw, basename(reader.path))
     if pin_enabled !== nothing
         metadata["mass_fix_enabled"] = pin_enabled
         if pin_enabled

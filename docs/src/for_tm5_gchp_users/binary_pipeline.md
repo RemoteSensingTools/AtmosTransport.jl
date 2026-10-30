@@ -264,11 +264,11 @@ Four details matter:
 
 The runtime side of the contract lives in:
 
-- `src/MetDrivers/TransportBinary.jl`
+- `src/MetDrivers/BinaryFormat/BinaryFormat.jl`
   (header schema and section-aware reader)
-- `src/MetDrivers/transport_binary/cubed_sphere_reader.jl`
+- `src/MetDrivers/BinaryReaders/cubed_sphere_reader.jl`
   (cubed-sphere geometry specializations)
-- `src/MetDrivers/transport_binary/driver.jl`
+- `src/MetDrivers/BinaryReaders/driver.jl`
   (window loop + replay-gate)
 
 ## Comparison with the TM5 and GCHP I/O models

@@ -201,7 +201,7 @@ end
 
 @inline function _apply_runtime_flux_storage_scale!(sim::DrivenSimulation)
     flux_kind(sim.driver) === :full_window_mass_amount || return nothing
-    scale = inv(typeof(sim.Δt)(2 * sim.steps_per_window))
+    scale = flux_storage_substep_scale(typeof(sim.Δt), sim.steps_per_window, flux_kind(sim.driver))
     _scale_runtime_fluxes!(sim.model.fluxes, scale)
     return nothing
 end

@@ -1,35 +1,5 @@
 # Cubed-sphere panel packing and streaming writer.
 
-"""
-    _cs_section_elements(Nc, npanel, nlevel, section) -> Int
-
-Number of float elements of a section in a cubed-sphere binary, the one table
-the writer and the reader share. Panels are stored sequentially within each
-section: cell fields are `Nc × Nc` per level, x faces `(Nc + 1) × Nc`, y faces
-`Nc × (Nc + 1)`, and vertical fluxes and CMFMC sit on the `nlevel + 1`
-interfaces.
-"""
-function _cs_section_elements(Nc::Int, npanel::Int, nlevel::Int, section::Symbol)
-    cells = npanel * Nc * Nc
-    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
-       _is_gchp_vdiff_payload_section(section)
-        return cells * nlevel
-    elseif section in (:am, :dam)
-        return npanel * (Nc + 1) * Nc * nlevel
-    elseif section in (:bm, :dbm)
-        return npanel * Nc * (Nc + 1) * nlevel
-    elseif section in (:cm, :dcm, :cmfmc)
-        return cells * (nlevel + 1)
-    elseif _is_cs_2d_section(section)
-        return cells
-    end
-    error("Unsupported CS section: $section")
-end
-
-_transport_section_elements(h::TransportBinaryHeader{CubedSphereBinaryGeometry},
-                            section::Symbol) =
-    _cs_section_elements(h.geometry.Nc, h.geometry.npanel, h.nlevel, section)
-
 # The latent heat flux travels with the other PBL surface fields.
 @inline _cs_window_has_pbl_eflux(window) =
     _transport_window_has_surface(window) && haskey(window, :surface) &&
@@ -86,22 +56,6 @@ function _pack_cs_window!(dest::Vector{FT}, offset::Int,
     return nothing
 end
 
-function _cs_section_panel_shape(Nc::Int, nlevel::Int, section::Symbol)
-    if section in (:m, :dm, :dkg, :dtrain, :entu, :detu, :entd, :detd) ||
-       _is_gchp_vdiff_payload_section(section)
-        return [Nc, Nc, nlevel]
-    elseif section === :am
-        return [Nc + 1, Nc, nlevel]
-    elseif section === :bm
-        return [Nc, Nc + 1, nlevel]
-    elseif section in (:cm, :cmfmc)
-        return [Nc, Nc, nlevel + 1]
-    elseif _is_cs_2d_section(section)
-        return [Nc, Nc]
-    end
-    throw(ArgumentError("unsupported CS section $(section)"))
-end
-
 function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
                                        window, Nc::Int, npanel::Int)
     expected_Nc = Int(writer.header["Nc"])
@@ -120,14 +74,14 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     actual_sections = Symbol[:m, :am, :bm, :cm, :ps]
     _transport_window_has_value(window, :dm) && push!(actual_sections, :dm)
     _transport_window_has_surface(window) &&
-        append!(actual_sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+        append!(actual_sections, PBL_SURFACE_PAYLOAD_SECTIONS)
     _transport_window_has_value(window, :cmfmc) && push!(actual_sections, :cmfmc)
     _transport_window_has_value(window, :dtrain) && push!(actual_sections, :dtrain)
     if haskey(window, :tm5_fields) && window.tm5_fields !== nothing
-        append!(actual_sections, (:entu, :detu, :entd, :detd))
+        append!(actual_sections, TM5_CONVECTION_PAYLOAD_SECTIONS)
     end
     _transport_window_has_vdiff_fields(window) &&
-        append!(actual_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+        append!(actual_sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
     _transport_window_has_value(window, :dkg) && push!(actual_sections, :dkg)
     _cs_window_has_pbl_eflux(window) && push!(actual_sections, :pbl_eflux)
     _transport_window_has_value(window, :cmfmc_cloud_base) && push!(actual_sections, :cmfmc_cloud_base)
@@ -216,14 +170,14 @@ function open_streaming_cs_transport_binary(
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
     include_flux_delta && push!(payload_sections, :dm)
     if include_surface
-        append!(payload_sections, _PBL_SURFACE_PAYLOAD_SECTIONS)
+        append!(payload_sections, PBL_SURFACE_PAYLOAD_SECTIONS)
     end
     include_cmfmc && push!(payload_sections, :cmfmc)
     include_dtrain && push!(payload_sections, :dtrain)
     if include_tm5conv
-        append!(payload_sections, (:entu, :detu, :entd, :detd))
+        append!(payload_sections, TM5_CONVECTION_PAYLOAD_SECTIONS)
     end
-    include_gchp_vdiff && append!(payload_sections, _GCHP_VDIFF_PAYLOAD_SECTIONS)
+    include_gchp_vdiff && append!(payload_sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
     include_precomputed_dkg && push!(payload_sections, :dkg)
     include_pbl_eflux && push!(payload_sections, :pbl_eflux)
     include_cmfmc_cloud_base && push!(payload_sections, :cmfmc_cloud_base)
@@ -254,6 +208,7 @@ function open_streaming_cs_transport_binary(
     default_geometry = cs_geometry_tags(default_cs_definition(parse_panel_convention(panel_convention_norm)))
 
     revision = source_revision()
+    target = poisson_balance_target(flux_kind, fill(steps_per_window, nwindow); steps_per_window)
     merge!(header, Dict{String, Any}(
         # --- Runtime CS contract keys (single source of truth) ---
         # Emitted HERE, at the one choke point every CS writer funnels through,
@@ -278,14 +233,9 @@ function open_streaming_cs_transport_binary(
         "longitude_offset_deg" => something(longitude_offset_deg, default_geometry.longitude_offset_deg),
         "Hp" => 0,
         "poisson_balance_method" => "global_cg_graph_laplacian",
-        "poisson_balance_target_scale" => flux_kind === :full_window_mass_amount ?
-                                          1.0 : 1.0 / (2 * steps_per_window),
-        "poisson_balance_target_semantics" => flux_kind === :full_window_mass_amount ?
-            "forward_window_mass_difference" :
-            "forward_window_mass_difference / (2 * steps_per_window)",
-        "poisson_balance_target_scale_by_window" =>
-            flux_kind === :full_window_mass_amount ?
-            fill(1.0, nwindow) : fill(1.0 / (2 * steps_per_window), nwindow),
+        "poisson_balance_target_scale" => target.scale,
+        "poisson_balance_target_semantics" => target.semantics,
+        "poisson_balance_target_scale_by_window" => target.by_window,
         "n_dm" => include_flux_delta ? _cs_section_elements(Nc, npanel, nlevel, :dm) : 0,
         "include_cmfmc" => include_cmfmc,
         "include_dtrain" => include_dtrain,
@@ -323,17 +273,13 @@ function open_streaming_cs_transport_binary(
 
     validate_cs_writer_contract!(header)
     validate_transport_contract!(header)
-    header_json = JSON3.write(header)
-    pad = header_bytes - ncodeunits(header_json)
-    pad > 0 || error("transport binary header must leave room for a null terminator within header_bytes=$(header_bytes)")
 
     pack_buffer = Vector{FT}(undef, elems_per_window)
-    section_shapes = [[copy(_cs_section_panel_shape(Nc, nlevel, section))
+    section_shapes = [[copy(collect(_cs_section_shape(Nc, nlevel, section)))
                        for _ in 1:npanel] for section in payload_sections]
     staging_path, io = open_atomic_staging(path)
     try
-        write(io, header_json)
-        write(io, zeros(UInt8, pad))
+        write_padded_header!(io, header, header_bytes)
     catch
         close(io)
         abandon_atomic_staging(staging_path)

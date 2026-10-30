@@ -152,7 +152,7 @@ Two construction paths:
 mesh = ReducedGaussianMesh(latitudes, nlon_per_ring; FT = Float32)
 
 # From an ECMWF GRIB descriptor (the preprocessor's usual entry point).
-mesh = read_era5_reduced_gaussian_mesh(path_to_grib; FT = Float32)
+mesh = AtmosTransport.Preprocessing.read_era5_reduced_gaussian_mesh(path_to_grib; FT = Float32)
 ```
 
 User-touched fields: `latitudes` (ring centers), `nlon_per_ring`,

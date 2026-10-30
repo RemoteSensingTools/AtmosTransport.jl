@@ -4,12 +4,8 @@
 bytes = 281159
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
-[allow."src/MetDrivers/transport_binary"]
-bytes = 268021
-reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
-
 [allow."src/Models"]
-bytes = 303326
+bytes = 300309
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Operators/Advection"]
@@ -17,9 +13,9 @@ bytes = 427482
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Preprocessing"]
-bytes = 521364
+bytes = 521360
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Preprocessing/transport_binary"]
-bytes = 630054
+bytes = 629293
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."

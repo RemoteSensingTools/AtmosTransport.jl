@@ -21,7 +21,6 @@ using .AtmosTransport: Grids, State, Operators, MetDrivers
 using .AtmosTransport.Grids: FaceIndexedFluxTopology, StructuredFluxTopology,
                              cell_areas_by_latitude, cell_faces, face_cells,
                              face_length, face_normal, flux_topology, n_levels
-using .AtmosTransport.MetDrivers: diagnose_cm_from_continuity!
 using .AtmosTransport.Operators: MonotoneLimiter, strang_split!
 using .AtmosTransport.State: AbstractFaceFluxState,
                              AbstractStructuredFaceFluxState,
@@ -447,47 +446,6 @@ end
 
     # Tracer mass should be conserved to machine precision
     @test abs(rm_after - rm_before) / rm_before < 1e-12
-end
-
-# =========================================================================
-# Test 7: Vertical flux diagnosis
-# =========================================================================
-@testset "Vertical flux diagnosis (cm from continuity)" begin
-    grid = make_test_grid()
-    FT = Float64
-    mesh = grid.horizontal
-    Nx, Ny = nx(mesh), ny(mesh)
-    Nz = n_levels(grid.vertical)
-
-    # Random am, bm
-    am = randn(FT, Nx+1, Ny, Nz) .* 1e6
-    bm = randn(FT, Nx, Ny+1, Nz) .* 1e6
-    cm = zeros(FT, Nx, Ny, Nz+1)
-
-    bt = FT[Grids.b_diff(grid.vertical, k) for k in 1:Nz]
-
-    # Diagnose cm
-    diagnose_cm_from_continuity!(cm, am, bm, bt, Nx, Ny, Nz)
-
-    # Verify: cm[1] = 0 (TOA), cm[Nz+1] ≈ 0 (surface, if bt sums properly)
-    for j in 1:Ny, i in 1:Nx
-        @test cm[i, j, 1] == 0.0
-    end
-
-    # Verify continuity: for each cell, horizontal convergence + vertical flux
-    # divergence should equal bt[k] * pit
-    for j in 1:Ny, i in 1:Nx
-        pit = zero(FT)
-        for k in 1:Nz
-            pit += am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-        end
-        for k in 1:Nz
-            conv_h = am[i, j, k] - am[i+1, j, k] + bm[i, j, k] - bm[i, j+1, k]
-            div_v = cm[i, j, k+1] - cm[i, j, k]
-            # conv_h - div_v should = bt[k] * pit
-            @test abs(conv_h - div_v - bt[k] * pit) < 1e-10 * max(abs(pit), 1.0)
-        end
-    end
 end
 
 # =========================================================================
