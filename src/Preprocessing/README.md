@@ -110,15 +110,16 @@ ERA5 N320 and MERRA-2 to CS:
 1. Read source fields, regrid PS, winds, and humidity conservatively to CS,
    re-derive dry layer mass there, and pin it when `[mass_fix].enable` and the
    target is finite (`mode = "target_ps_dry"`, the default).
-2. Build face fluxes from winds ([`flux_construction.jl`](flux_construction.jl)
+2. Build face fluxes from winds ([`MassClosure/flux_construction.jl`](MassClosure/flux_construction.jl)
    options), merge levels (N320), column-balance, `diagnose_cs_cm!`.
 3. Adaptive substeps, `verify_cs_window_contract!`, write, summarize, promote.
 
 ## File Map
 
 Stage submodules load in pipeline order: [Core](Core/README.md), [Vertical](Vertical/README.md),
-and [Spectral](Spectral/README.md). All retained public names remain reachable through
-`Preprocessing`. Other files remain in their existing folders for the later PRs.
+[Spectral](Spectral/README.md), [MassClosure](MassClosure/README.md),
+and [PhysicsInputs](PhysicsInputs/README.md). All retained public names remain reachable through
+`Preprocessing`. Targets, TransportBinary and Sources remain in their existing folders for PP3/PP4.
 The subfolders have their own READMEs
 ([`sources/`](sources/README.md), [`transport_binary/`](transport_binary/README.md)).
 
@@ -129,29 +130,29 @@ The subfolders have their own READMEs
 - [`Core/met_readers.jl`](Core/met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `preprocessor_pair_supported`, `supports_day_threading`
 - [`Core/target_geometry.jl`](Core/target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
 - [`Core/configuration.jl`](Core/configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
-- [`convection_mass_basis.jl`](convection_mass_basis.jl) — moist-to-dry conversion and binary basis metadata for TM5 convection fluxes
+- [`PhysicsInputs/convection_mass_basis.jl`](PhysicsInputs/convection_mass_basis.jl) — moist-to-dry conversion and TM5 convection flux basis
 - [`Vertical/vertical_coordinates.jl`](Vertical/vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
 - [`Vertical/vertical_transforms.jl`](Vertical/vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
 - [`Spectral/spectral_io.jl`](Spectral/spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
 - [`Spectral/spectral_synthesis.jl`](Spectral/spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
 - [`Spectral/reduced_spectral_synthesis.jl`](Spectral/reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
-- [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
+- [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, horizontal fluxes and level merge (cm diagnosis is in MassClosure/ring_closure.jl)
 - [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`Spectral/mass_support.jl`](Spectral/mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
-- [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
+- [`MassClosure/ring_poisson_balance.jl`](MassClosure/ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`../Grids/CSGlobalFaceTable.jl`](../Grids/CSGlobalFaceTable.jl) — CS global cell and face indexing (the face table)
-- [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
-- [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, column weights and `spread_column_correction!`, `diagnose_cs_cm!`
-- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`), wind recovery from LL fluxes
-- [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
-- [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — east/north ↔ panel-local wind rotation, CS face fluxes → cell-center winds
-- [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
-- [`face_line_integrals.jl`](face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
-- [`flux_construction.jl`](flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
-- [`era5_surface_reader.jl`](era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
-- [`tm5_convection_conversion.jl`](tm5_convection_conversion.jl) — `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), virtual-temperature hydrostatic `dz`
-- [`tm5_bldiff.jl`](tm5_bldiff.jl) — TM5 `bldiff` column kernels; `tm5_bldiff_dkg_column!` feeds the N320 `dkg` payload
+- [`MassClosure/cs_poisson_solver.jl`](MassClosure/cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
+- [`MassClosure/cs_poisson_balance.jl`](MassClosure/cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, `diagnose_cs_cm!`; shared weights are in `MassClosure/column_weights.jl`
+- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`) (wind recovery is in MassClosure)
+- [`MassClosure/cs_flux_reconstruction.jl`](MassClosure/cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
+- [`MassClosure/cs_wind_rotation.jl`](MassClosure/cs_wind_rotation.jl) — east/north → panel-local wind rotation and LL face fluxes → cell-center winds
+- [`MassClosure/cs_native_fluxes.jl`](MassClosure/cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
+- [`MassClosure/face_line_integrals.jl`](MassClosure/face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
+- [`MassClosure/flux_construction.jl`](MassClosure/flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
+- [`PhysicsInputs/era5_surface_reader.jl`](PhysicsInputs/era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
+- [`PhysicsInputs/tm5_convection_conversion.jl`](PhysicsInputs/tm5_convection_conversion.jl) — `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), virtual-temperature hydrostatic `dz`
+- [`PhysicsInputs/tm5_bldiff.jl`](PhysicsInputs/tm5_bldiff.jl) — TM5 `bldiff` column kernels; `tm5_bldiff_dkg_column!` feeds the N320 `dkg` payload
 
 ## Common Tasks
 
@@ -246,9 +247,9 @@ is required. Binary metadata and payload sizes delegate to MetDrivers.BinaryForm
 
 ## Depends on
 
-Core, Vertical and Spectral supply the first pipeline stages. The facade also
-assembles the deferred mass closure, physics inputs, targets, transport binary
-and source implementations, using the lower package modules in `src/LAYERS.toml`.
+Core → Vertical → Spectral → MassClosure → PhysicsInputs supply the ordered
+pipeline stages. PhysicsInputs needs Spectral and has no MassClosure dependency.
+The facade assembles the deferred targets, transport binary and source implementations, using the lower package modules in `src/LAYERS.toml`.
 
 ## Used by
 
@@ -258,7 +259,7 @@ Preprocessing scripts and the package facade call the public names here.
 
 The root registers source and closure implementations on Core's pipeline
 interfaces. Concrete source readers and topology writers remain here until
-the next three preprocessing PRs.
+PP3 and PP4.
 
 ## Forward<->adjoint mirrors
 

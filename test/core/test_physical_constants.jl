@@ -178,3 +178,11 @@ end
     # Surface-flux mass conversion: kg tracer per mol-ratio of dry air.
     @test AtmosTransport.Models.InitialConditionIO.DRY_AIR_MOLAR_MASS === DRY_AIR_MOLAR_MASS
 end
+
+@testset "constants have physical defaults" begin
+        c = AtmosTransport.Preprocessing.BLDiffConstants{Float64}()
+        @test c.vkarman ≈ 0.4
+        @test c.ri_crit ≈ 0.3
+        @test 0.28 < c.r_air / c.cp_air < 0.29   # κ ≈ 2/7
+        @test c.r_vap / c.r_air - 1 ≈ 0.607 atol = 0.01   # virtual-T coefficient
+    end

@@ -398,11 +398,11 @@ function _solve_implicit_smooth!(x::Vector{Float64}, b::Vector{Float64},
     r = similar(x); p = similar(x); Ap = similar(x); t = similar(x)
     applyA! = (out, v) -> begin
         if order == 1
-            P._cs_graph_laplacian_mul!(out, v, ft, degree)
+            P.cs_graph_laplacian_mul!(out, v, ft, degree)
         else
-            P._cs_graph_laplacian_mul!(t, v, ft, degree)
+            P.cs_graph_laplacian_mul!(t, v, ft, degree)
             mu = sum(t)/nc; @inbounds @simd for c in 1:nc; t[c] -= mu; end
-            P._cs_graph_laplacian_mul!(out, t, ft, degree)
+            P.cs_graph_laplacian_mul!(out, t, ft, degree)
         end
         @inbounds @simd for c in 1:nc; out[c] = v[c] + nu*out[c]; end
         return out
@@ -507,7 +507,7 @@ function reconstruct_blended!(am, bm, dm, vdiv_om, s, alpha::Float64,
             end
         end
     end
-    P._sync_cs_mirrors!(am, bm, ft, Nz)
+    P.sync_cs_mirrors!(am, bm, ft, Nz)
     grad_rms = nfaces_utls > 0 ? sqrt(glam2/nfaces_utls) : NaN
     base_rms = nfaces_utls > 0 ? sqrt(base2/nfaces_utls) : NaN
     return grad_rms, base_rms

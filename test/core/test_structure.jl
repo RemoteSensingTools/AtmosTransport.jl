@@ -452,6 +452,29 @@ end
     @test StructureCheck.relocate_pp1_layers(debt, "clone") == debt
 end
 
+@testset "PP2 stages inherit lower dependencies without reverse edges" begin
+    parent = "AtmosTransport.Preprocessing"
+    core, spectral, closure, physics = parent .* [".Core", ".Spectral", ".MassClosure", ".PhysicsInputs"]
+    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids", core, spectral],
+                                    core => ["AtmosTransport.Grids"],
+                                    spectral => [core]),
+                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/Core"]))
+    after = StructureCheck.relocate_pp2_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test spectral in after["modules"][closure]
+    @test spectral in after["modules"][physics]
+    @test !(closure in after["modules"][physics])
+    @test after["modules"][core] == before["modules"][core]
+    @test StructureCheck.relocate_pp2_layers(after, "src/LAYERS.toml") == after
+    for (from, to) in ((closure, physics), (physics, closure), (closure, parent), (core, closure))
+        expanded = deepcopy(after)
+        push!(expanded["modules"][from], to)
+        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+    end
+    debt = Dict("allow" => Dict("old" => "existing debt"))
+    @test StructureCheck.relocate_pp2_layers(debt, "clone") == debt
+end
+
 @testset "A1 shared-module folder wiring preserves sibling order" begin
     home = StructureCheck.A1_HOME
     children = StructureCheck.A1_CHILDREN

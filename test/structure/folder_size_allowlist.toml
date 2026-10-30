@@ -1,8 +1,4 @@
 
-[allow."src/Preprocessing"]
-bytes = 317362
-reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
-
 [allow."src/Preprocessing/transport_binary"]
-bytes = 626575
+bytes = 626572
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."

@@ -47,7 +47,7 @@ Two constructions of the face fluxes from cube-centre winds are available
 offers line integrals of the source flow (`"line_integral"`, see **ERA5** below):
 
 - **`panel_average`** (historical,
-  `src/Preprocessing/cs_flux_reconstruction.jl`, `cs_face_fluxes!`).
+  `src/Preprocessing/MassClosure/cs_flux_reconstruction.jl`, `cs_face_fluxes!`).
   - Each cell's wind is projected onto its panel's local face-normal
     directions.
   - The two adjacent cells' projections are averaged.
@@ -274,7 +274,7 @@ about 0.1–0.2 Pa/s RMS before correction. AtmosTransport closes each column:
 1. Solve a Poisson problem on the cube for a correction to the
    column-integrated face fluxes, so that column convergence equals the
    change of column air mass over the window (`balance_cs_column_mass_fluxes!`,
-   `src/Preprocessing/cs_poisson_balance.jl`).
+   `src/Preprocessing/MassClosure/cs_poisson_balance.jl`).
 2. Spread each face's column correction `δF` over the levels with weights
    `w_k`: `δF_k = w_k δF / Σ_j w_j` (`spread_column_correction!`).
 

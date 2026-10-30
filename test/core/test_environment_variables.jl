@@ -27,7 +27,7 @@ const ENV_ALLOWLIST = Dict(
 # and the ERA5 scratch-directory candidates. Their names are documented here.
 const ENV_DYNAMIC_READERS = Dict(
     r"src/AtmosTransport\.jl$" => ["ATMOSTRANSPORT_DATA_ROOT"],
-    r"src/Preprocessing/era5_surface_reader\.jl$" =>
+    r"src/Preprocessing/PhysicsInputs/era5_surface_reader\.jl$" =>
         ["ATMOSTR_SCRATCH_DIR", "ATMOSTR_TMPDIR", "SCRATCH", "TMPDIR", "TEMP", "TMP"],
 )
 

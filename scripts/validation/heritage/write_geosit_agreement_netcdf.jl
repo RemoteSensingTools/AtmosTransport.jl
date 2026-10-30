@@ -35,8 +35,8 @@ using .AtmosTransport.MetDrivers:
     TransportBinaryReader, load_window!, load_grid
 using .AtmosTransport.Preprocessing:
     load_hybrid_coefficients,
-    geos_native_to_face_flux!, recover_cs_cell_center_winds!,
-    rotate_panel_to_geographic!
+    geos_native_to_face_flux!
+include("cs_wind_recovery.jl")
 
 const GRAVITY = Float32(9.80665)
 const DEFAULT_GEOS_ROOT =

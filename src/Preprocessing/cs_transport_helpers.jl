@@ -8,10 +8,10 @@
 # Key functions:
 #   - regrid_3d_to_cs_panels!, regrid_2d_to_cs_panels! — conservative LL→CS
 #     (intensive fields as given; extensive fields such as `m` through density)
-#   - recover_ll_cell_center_winds! — extract u,v from LL am,bm fluxes
 #   - CubedSpherePreprocessWorkspace — all per-window scratch arrays
 # The CS face fluxes from the regridded winds (reconstruct_cs_fluxes!) are in
-# cs_flux_reconstruction.jl.
+# MassClosure/cs_flux_reconstruction.jl; LL wind recovery lives beside it in
+# MassClosure/cs_wind_rotation.jl.
 # ---------------------------------------------------------------------------
 
 
@@ -154,52 +154,3 @@ end
 # ---------------------------------------------------------------------------
 # Wind recovery from LL mass fluxes
 # ---------------------------------------------------------------------------
-
-"""
-    recover_ll_cell_center_winds!(u_cc, v_cc, am_ll, bm_ll, ps_ll,
-                                   A_ifc, B_ifc, lats_deg,
-                                   Δy_ll, Δlon_ll, radius, gravity, dt_factor)
-
-Recover cell-center u,v wind components from LL mass fluxes by dividing
-by the cross-sectional area factor: `am / (Δy × dp/g × dt_factor)`.
-
-`dt_factor = dt_met / (2 × steps_per_window)` is the flux scaling used
-in the binary.
-"""
-function recover_ll_cell_center_winds!(u_cc::Array{FT, 3},
-                                        v_cc::Array{FT, 3},
-                                        am_ll::AbstractArray{FT, 3},
-                                        bm_ll::AbstractArray{FT, 3},
-                                        ps_ll::AbstractArray{<:Real, 2},
-                                        A_ifc::AbstractVector, B_ifc::AbstractVector,
-                                        lats_deg::AbstractVector,
-                                        Δy_ll::FT, Δlon_ll::FT,
-                                        radius::FT, gravity::FT,
-                                        dt_factor::FT) where FT
-    Nx, Ny, Nz = size(u_cc)
-
-    # u from am: average face fluxes to cell centers, divide by area factor
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        dp = abs((A_ifc[k] - A_ifc[k + 1]) +
-                 (B_ifc[k] - B_ifc[k + 1]) * ps_ll[i, j])
-        area_factor = Δy_ll * dp / gravity * dt_factor
-        u_cc[i, j, k] = area_factor > FT(1e-10) ?
-            FT(0.5) * (am_ll[i, j, k] + am_ll[i + 1, j, k]) / area_factor :
-            zero(FT)
-    end
-
-    # v from bm: average face fluxes to cell centers, divide by area factor
-    @inbounds for k in 1:Nz, j in 1:Ny, i in 1:Nx
-        cos_lat = cosd(lats_deg[j])
-        Δx_loc = radius * Δlon_ll * max(cos_lat, FT(1e-6))
-        dp = abs((A_ifc[k] - A_ifc[k + 1]) +
-                 (B_ifc[k] - B_ifc[k + 1]) * ps_ll[i, j])
-        area_factor = Δx_loc * dp / gravity * dt_factor
-        jn = j + 1
-        v_cc[i, j, k] = area_factor > FT(1e-10) ?
-            FT(0.5) * (bm_ll[i, j, k] + bm_ll[i, jn, k]) / area_factor :
-            zero(FT)
-    end
-
-    return nothing
-end

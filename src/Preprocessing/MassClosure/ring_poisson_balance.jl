@@ -138,7 +138,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
     z  = scratch.z
 
     # Enforce solvability: project rhs to range(L) (mean-zero).
-    _project_mean_zero!(rhs)
+    project_mean_zero!(rhs)
 
     fill!(psi, 0.0)
     copyto!(r, rhs)
@@ -162,7 +162,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         @. psi += alpha * p
         @. r   -= alpha * Ap
 
-        _project_mean_zero!(r)
+        project_mean_zero!(r)
 
         r_linf = maximum(abs, r)
         r_linf / rhs_linf < tol && break
@@ -170,7 +170,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         @inbounds for c in eachindex(r)
             z[c] = L.degree[c] > 0 ? r[c] / L.degree[c] : r[c]
         end
-        _project_mean_zero!(z)
+        project_mean_zero!(z)
         rz_new = dot(r, z)
         rz_old == 0.0 && break
         beta = rz_new / rz_old
@@ -179,7 +179,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         iter += 1
     end
 
-    _project_mean_zero!(psi)
+    project_mean_zero!(psi)
     return r_linf, iter
 end
 

@@ -419,7 +419,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                 end
             end
         end
-        cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+        cm_diag = diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
                                             workspace.bm_v4, workspace.dm_v4,
                                             workspace.m_cur, Nc, Nz, bal_diag,
                                             "GEOS moisture-filtered window",
@@ -459,7 +459,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         target = if workspace.cm_closure === :omega_regularized
             # Preserve endpoint-balanced transport as the resolved-scale reference.
             # OMEGA only supplies a capped, UTLS-local grid-scale correction.
-            _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+            diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
                                       workspace.bm_v4, workspace.dm_v4,
                                       workspace.m_cur, Nc, Nz, bal_diag,
                                       "GEOS omega-regularized reference",
@@ -497,7 +497,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         bal_diag = recheck_cs_column_closure(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur, workspace.m_next_target,
             grid.face_table, steps, grid.poisson_scratch, bal_diag)
-        cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+        cm_diag = diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
                                             workspace.bm_v4, workspace.dm_v4,
                                             workspace.m_cur, Nc, Nz, bal_diag,
                                             "GEOS omega window", workspace.balance_weights)
@@ -518,7 +518,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         grid.poisson_scratch; weights = workspace.balance_weights)
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
-    cm_diag = _diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
+    cm_diag = diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,
                                         workspace.bm_v4, workspace.dm_v4,
                                         workspace.m_cur, Nc, Nz, bal_diag,
                                         "GEOS endpoint-balanced window",
