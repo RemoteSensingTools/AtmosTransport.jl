@@ -234,7 +234,7 @@ function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
     Nz = vertical.Nz
 
     spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.cm_arr, transform.sp,
+        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
         transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
         spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
         spec.T, vertical.level_range, vertical.ab, staging_grid, settings.half_dt,
@@ -600,12 +600,12 @@ function process_day(date::Date,
     cs_balance_project_every = Int(get(settings, :cs_balance_project_every,
                                        DEFAULT_POISSON_PROJECT_EVERY))
     # Column weights, checked before any input is read.
-    balance_weights = _spectral_column_weights(grid, settings, vertical)
+    balance_weights = spectral_column_weights(grid, settings, vertical)
     weights_kind = get(settings, :column_balance_weights, :hybrid_mass)
     date_str = Dates.format(date, "yyyymmdd")
 
-    vo_d_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
-    lnsp_path = joinpath(settings.spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+    vo_d_path = era5_spectral_paths(settings.spectral_dir, date).vo_d
+    lnsp_path = era5_spectral_paths(settings.spectral_dir, date).lnsp
 
     if !isfile(vo_d_path) || !isfile(lnsp_path)
         @warn "Missing GRIB files for $date_str, skipping"
@@ -629,7 +629,7 @@ function process_day(date::Date,
     # quarantined positivity violation) never leaves a partial binary at
     # `bin_path`. Promote `tmp_path -> bin_path` only after every contract
     # gate passes (or after a warning-only positivity summary returns).
-    tmp_path = _open_preprocessing_staging(bin_path)
+    tmp_path = open_preprocessing_staging(bin_path)
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
                                           cache = run_cache)
@@ -675,7 +675,7 @@ function process_day(date::Date,
                 surface_pressure_basis=TotalSurfacePressure(),
                 cs_geometry_tags(grid.mesh)...,
                 planet_radius=grid.mesh.radius,
-                extra_header=_with_replay_record(_with_column_weights_record(merge(Dict{String, Any}(
+                extra_header=with_replay_record(with_column_weights_record(merge(Dict{String, Any}(
                     "preprocessor"     => "preprocess_transport_binary.jl",
                     "preprocessor_contract" => "plan41_variable_substeps",
                     "runtime_substep_contract" => "binary_schedule",

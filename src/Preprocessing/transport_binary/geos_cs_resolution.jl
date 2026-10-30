@@ -41,18 +41,18 @@ function _pin_cs_global_air_mass!(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArr
         size(qv) == size(m) || throw(DimensionMismatch(
             "native dry-mass pin qv panel $p shape $(size(qv)) does not match mass $(size(m))"))
         for k in 1:Nz, j in axes(m, 2), i in axes(m, 1)
-            q = clamp(Float64(qv[i, j, k]), 0.0, 0.999999)
+            q = clamp(Float64(qv[i, j, k]), 0.0, MAX_SPECIFIC_HUMIDITY)
             sensitivity_kg_per_pa += Float64(dB[k]) * (1.0 - q) *
                                      Float64(cell_areas[i, j]) / Float64(g)
         end
     end
-    delta_ps = _mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
+    delta_ps = mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
 
     @inbounds for p in 1:CS_PANEL_COUNT
         m = panels_m[p]
         qv = panels_qv[p]
         for k in 1:Nz, j in axes(m, 2), i in axes(m, 1)
-            q = clamp(Float64(qv[i, j, k]), 0.0, 0.999999)
+            q = clamp(Float64(qv[i, j, k]), 0.0, MAX_SPECIFIC_HUMIDITY)
             delta_m = Float64(dB[k]) * delta_ps * (1.0 - q) *
                       Float64(cell_areas[i, j]) / Float64(g)
             m[i, j, k] = FT(Float64(m[i, j, k]) + delta_m)
@@ -86,7 +86,7 @@ function _pin_cs_global_air_mass_from_sensitivity!(
     end
     current = _cs_total_air_mass(panels_m)
     sensitivity_kg_per_pa = _cs_total_air_mass(sensitivity)
-    delta_ps = _mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
+    delta_ps = mass_target_offset(target_kg, current, sensitivity_kg_per_pa)
     for p in 1:CS_PANEL_COUNT
         @. panels_m[p] += FT(delta_ps) * sensitivity[p]
     end
@@ -248,7 +248,7 @@ function _geos_pin_sensitivity_native!(::GEOSCSIdentityStrategy, _ws,
         q = qv[p]
         @inbounds for k in axes(s, 3), j in axes(s, 2), i in axes(s, 1)
             s[i, j, k] = eltype(s)(Float64(dB[k]) *
-                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, MAX_SPECIFIC_HUMIDITY)) *
                 Float64(cell_areas[i, j]) * Float64(inv_g))
         end
     end
@@ -263,7 +263,7 @@ function _geos_pin_sensitivity_native!(::GEOSCSBlockCoarsenStrategy{R}, ws,
         q = qv[p]
         @inbounds for k in axes(fine, 3), j in axes(fine, 2), i in axes(fine, 1)
             fine[i, j, k] = eltype(fine)(Float64(dB[k]) *
-                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, MAX_SPECIFIC_HUMIDITY)) *
                 Float64(ws.source_cell_areas[i, j]) * Float64(inv_g))
         end
         coarsen_sum!(sensitivity_native[p], fine, R)

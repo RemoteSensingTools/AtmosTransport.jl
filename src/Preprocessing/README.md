@@ -28,7 +28,7 @@ remap retain it where reproducing IFS geometry requires it.
   settings, vertical; ...)`; the fallback in
   [`transport_binary/topology_dispatch.jl`](transport_binary/topology_dispatch.jl)
   rejects pairs unless `preprocessor_pair_supported` returns `true`.
-- Target grids: `build_target_geometry(cfg_grid, FT)` ([`target_geometry.jl`](target_geometry.jl));
+- Target grids: `build_target_geometry(cfg_grid, FT)` ([`Core/target_geometry.jl`](Core/target_geometry.jl));
   `[grid].type` is `latlon`, `era5_native_reduced_gaussian` (alias
   `reduced_gaussian`), `synthetic_reduced_gaussian`, or `cubed_sphere`.
 - `load_met_settings` ([`sources/README.md`](sources/README.md)) and
@@ -116,26 +116,29 @@ ERA5 N320 and MERRA-2 to CS:
 
 ## File Map
 
-Files directly in this folder; the subfolders have their own READMEs
+Stage submodules load in pipeline order: [Core](Core/README.md), [Vertical](Vertical/README.md),
+and [Spectral](Spectral/README.md). All retained public names remain reachable through
+`Preprocessing`. Other files remain in their existing folders for the later PRs.
+The subfolders have their own READMEs
 ([`sources/`](sources/README.md), [`transport_binary/`](transport_binary/README.md)).
 
 - [`Preprocessing.jl`](Preprocessing.jl) — module, imports, include order, exports
-- [`binary_pipeline.jl`](binary_pipeline.jl) — include list for most of `transport_binary/`
-- [`logging.jl`](logging.jl) — `_FlushingLogger`, used by the CLI so logs reach redirected files
-- [`met_sources.jl`](met_sources.jl) — `AbstractMetSettings`, `ERA5SpectralSettings`, `RawWindow`, source trait generics
-- [`met_readers.jl`](met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `ERA5SpectralReader`, `preprocessor_pair_supported`, `supports_day_threading`
-- [`target_geometry.jl`](target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
-- [`configuration.jl`](configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
+- [`Core/binary_pipeline.jl`](Core/binary_pipeline.jl) — pipeline protocols and staging paths; the root includes the deferred `transport_binary/` workflows
+- [`Core/logging.jl`](Core/logging.jl) — `FlushingLogger`, used by the CLI so logs reach redirected files
+- [`Core/met_sources.jl`](Core/met_sources.jl) — `AbstractMetSettings`, `ERA5SpectralSettings`, `RawWindow`, source trait generics
+- [`Core/met_readers.jl`](Core/met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `preprocessor_pair_supported`, `supports_day_threading`
+- [`Core/target_geometry.jl`](Core/target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
+- [`Core/configuration.jl`](Core/configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
 - [`convection_mass_basis.jl`](convection_mass_basis.jl) — moist-to-dry conversion and binary basis metadata for TM5 convection fluxes
-- [`vertical_coordinates.jl`](vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
-- [`vertical_transforms.jl`](vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
-- [`spectral_io.jl`](spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
-- [`spectral_synthesis.jl`](spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
-- [`reduced_spectral_synthesis.jl`](reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
+- [`Vertical/vertical_coordinates.jl`](Vertical/vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
+- [`Vertical/vertical_transforms.jl`](Vertical/vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
+- [`Spectral/spectral_io.jl`](Spectral/spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
+- [`Spectral/spectral_synthesis.jl`](Spectral/spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
+- [`Spectral/reduced_spectral_synthesis.jl`](Spectral/reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
 - [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, fluxes, level merge
 - [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
 - [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
-- [`mass_support.jl`](mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
+- [`Spectral/mass_support.jl`](Spectral/mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`../Grids/CSGlobalFaceTable.jl`](../Grids/CSGlobalFaceTable.jl) — CS global cell and face indexing (the face table)
 - [`cs_poisson_solver.jl`](cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
@@ -240,3 +243,23 @@ ERA5 native GRIB geometry is owned here: `sources/era5_grib_geometry.jl`
 defines `ERA5ReducedGaussianGeometry`, `read_era5_reduced_gaussian_geometry`,
 and `read_era5_reduced_gaussian_mesh`; no runtime dependency on GRIB geometry
 is required. Binary metadata and payload sizes delegate to MetDrivers.BinaryFormat.
+
+## Depends on
+
+Core, Vertical and Spectral supply the first pipeline stages. The facade also
+assembles the deferred mass closure, physics inputs, targets, transport binary
+and source implementations, using the lower package modules in `src/LAYERS.toml`.
+
+## Used by
+
+Preprocessing scripts and the package facade call the public names here.
+
+## Shared helpers owned here
+
+The root registers source and closure implementations on Core's pipeline
+interfaces. Concrete source readers and topology writers remain here until
+the next three preprocessing PRs.
+
+## Forward<->adjoint mirrors
+
+None; preprocessing runs offline on the CPU.

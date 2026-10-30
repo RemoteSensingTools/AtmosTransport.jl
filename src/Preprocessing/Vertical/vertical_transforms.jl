@@ -1,48 +1,5 @@
-# ===========================================================================
-# Typed vertical-transform surface (vertical axis).
-#
-# `AbstractVerticalTransform` makes the "native source levels → output
-# levels" mapping a first-class typed nominal, so every preprocessor
-# pathway (LL / RG / CS × ERA5 spectral / GEOS native / …) has the same
-# layer-merging option. This replaces the old `vertical::NamedTuple`
-# field-name protocol, which had divergent semantics between
-# `entrypoint.jl:161-163` (native, identity-faked) and
-# `entrypoint.jl:209` (spectral, real merge) is replaced by a
-# `VerticalPlan{FT, T}` whose transform policy is statically known.
-#
-# The 6 concrete transform types:
-#
-#   - `IdentityVertical`              — no merge; preserves native grid.
-#   - `MergeByIndex(groups)`          — explicit native center-level
-#                                       groups. Most auditable for
-#                                       production reruns.
-#   - `MergeLayersThinnerThan(thr)`   — typed wrapper for today's
-#                                       `merge_thin_levels`.
-#   - `MergeAbovePressure(p, thr)`    — upper-atmosphere coarsening.
-#                                       The GEOS-IT L72 mesosphere
-#                                       escape hatch.
-#   - `LevelSelection(echlevs)`       — typed wrapper for today's
-#                                       `select_levels_echlevs`.
-#   - `PressureOverlap(coeff_path)`   — pressure-thickness overlap
-#                                       onto an independent target
-#                                       hybrid grid. Detailed
-#                                       implementation deferred
-#                                       (the existing spectral path's
-#                                       `build_vertical_setup` is used
-#                                       until the unified driver cuts
-#                                       over).
-#
-# `plan_vertical(transform, native_vc) → VerticalPlan{FT, T}` materializes
-# the merged hybrid coordinate plus the mapping data needed by
-# `apply_vertical!`. Same `(merged_vc, merge_map, Nz_output)` triple as
-# today's `build_vertical_setup` for the merge-map flavors, so the
-# spectral path's existing math survives unchanged when it migrates to
-# this surface.
-#
-# `apply_vertical!(buf_out, buf_in, plan, ::FieldKind)` dispatches on the
-# `FieldKind` singleton tag (extensive vs intensive, center vs interface)
-# to select the right vertical-reduction rule.
-# ===========================================================================
+# Typed native-to-output vertical transforms. Spectral pressure overlap uses
+# build_vertical_setup plus the working remap in Spectral/mass_support.jl.
 
 # ---------------------------------------------------------------------------
 # Field-kind singletons. The forward driver picks the kind per field; the
@@ -62,16 +19,12 @@ abstract type AbstractFieldKind end
 """Center-level extensive mass (e.g. `delp`, `m`). Sum native layers within each merged group."""
 struct MassField               <: AbstractFieldKind end
 
-"""Center-level extensive tracer mass (e.g. `qv`-mass). Sum native layers within each merged group."""
-struct TracerMassField         <: AbstractFieldKind end
 
 """Horizontal face mass flux (e.g. `am`, `bm`). Already integrated over the layer thickness; sum within merged group."""
 struct MassFluxField           <: AbstractFieldKind end
 
-"""Vertical interface mass flux (e.g. `cm`). Interfaces are selected (not summed); top/bottom zeros preserved."""
-struct PressureFluxField       <: AbstractFieldKind end
 
-"""Convective interface flux (e.g. `cmfmc`). Same selection rule as `PressureFluxField`."""
+"""Convective interface flux (e.g. `cmfmc`). Select the kept interfaces."""
 struct ConvectionInterfaceFlux <: AbstractFieldKind end
 
 """Convective center tendency (e.g. `dtrain`). Extensive at the layer; sum within merged group."""
@@ -80,8 +33,6 @@ struct ConvectionTendencyField <: AbstractFieldKind end
 """Center-level intensive field (e.g. `T`, `Q`). Mass-weighted mean within merged group; weights provided positionally."""
 struct IntensiveCenterField    <: AbstractFieldKind end
 
-"""2D surface field (e.g. `ps`, `pblh`). No vertical reduction — identity passthrough."""
-struct SurfaceField            <: AbstractFieldKind end
 
 # ---------------------------------------------------------------------------
 # Vertical-transform abstract type + concrete policies.
@@ -94,12 +45,9 @@ Typed nominal selecting how native source levels are mapped to output
 levels. Concrete subtypes:
 
   - `IdentityVertical`        — no merge.
-  - `MergeByIndex`            — explicit native-level groups.
   - `MergeLayersThinnerThan`  — automatic local coarsening.
   - `MergeAbovePressure`      — upper-atmosphere coarsening.
   - `LevelSelection`          — echlevs-style level selection.
-  - `PressureOverlap`         — pressure-thickness overlap onto a
-                                  different hybrid coordinate.
 
 A concrete transform `T` is consumed by `plan_vertical(transform,
 native_vc)` to produce a `VerticalPlan{FT, T}`. `apply_vertical!`
@@ -109,24 +57,6 @@ abstract type AbstractVerticalTransform end
 
 """No-op identity vertical transform. `Nz_output = Nz_native`, `merge_map[k] = k`."""
 struct IdentityVertical <: AbstractVerticalTransform end
-
-"""
-    MergeByIndex(groups)
-
-Explicit native center-level groups. `groups[l]` is the `UnitRange{Int}`
-of native center levels merged into output level `l`. Validation at
-`plan_vertical`:
-
-  - `groups[1]` starts at 1; `groups[end]` ends at `Nz_native`;
-  - groups are contiguous (`groups[l+1].start == groups[l].stop + 1`);
-  - each range is non-empty.
-
-This is the most auditable transform for production reruns — the
-group list lives in the run TOML and is version-controlled.
-"""
-struct MergeByIndex <: AbstractVerticalTransform
-    groups :: Vector{UnitRange{Int}}
-end
 
 """
     MergeLayersThinnerThan(min_thickness_Pa; reference_surface_pressure_Pa = STANDARD_PRESSURE)
@@ -190,19 +120,6 @@ end
 LevelSelection(echlevs::Tuple{Vararg{Integer}}) =
     LevelSelection(collect(Int, echlevs))
 
-"""
-    PressureOverlap(target_coeff_path)
-
-Remap native layer integrals onto an independent target hybrid
-coordinate by pressure-thickness overlap. The target half-level
-coefficients are loaded from `target_coeff_path`. The full
-`apply_vertical!` implementation lands alongside the spectral
-driver cutover; `plan_vertical` constructs the plan today.
-"""
-struct PressureOverlap <: AbstractVerticalTransform
-    target_coeff_path :: String
-end
-
 # ---------------------------------------------------------------------------
 # VerticalPlan{FT, T}: the planned transform. Holds the merged hybrid
 # coordinate, the per-transform mapping data, and Nz_output. The `T`
@@ -222,8 +139,6 @@ Fields:
   - `merged_vc`     : the output hybrid coordinate.
   - `merge_map`     : `Vector{Int}` such that `merge_map[k_native]` is
                        the output-level index for merge-map flavors.
-                       `Int[]` for `PressureOverlap` (uses overlap
-                       coefficients instead).
   - `groups`        : `Vector{UnitRange{Int}}` of native center-level
                        ranges that map to each output level (derived
                        from `merge_map` for the merge-map flavors).
@@ -239,20 +154,6 @@ struct VerticalPlan{FT, T <: AbstractVerticalTransform}
     Nz_output :: Int
     Nz_native :: Int
 end
-
-"""
-    Nz_output(plan) → Int
-
-Output level count.
-"""
-@inline Nz_output(plan::VerticalPlan) = plan.Nz_output
-
-"""
-    Nz_native(plan) → Int
-
-Native level count (cached on `plan`; same as `n_levels(plan.native_vc)`).
-"""
-@inline Nz_native(plan::VerticalPlan) = plan.Nz_native
 
 # ---------------------------------------------------------------------------
 # plan_vertical — dispatches on the concrete transform.
@@ -275,35 +176,6 @@ function plan_vertical(transform::IdentityVertical, native_vc::HybridSigmaPressu
     groups = [k:k for k in 1:Nz]
     return VerticalPlan{FT, IdentityVertical}(
         transform, native_vc, native_vc, mm, groups, Nz, Nz)
-end
-
-# MergeByIndex: validate ranges, build merge_map directly from groups.
-function plan_vertical(transform::MergeByIndex, native_vc::HybridSigmaPressure{FT}) where FT
-    Nz = n_levels(native_vc)
-    groups = transform.groups
-    isempty(groups) && error("MergeByIndex.groups must be non-empty")
-    groups[1].start == 1 ||
-        error("MergeByIndex.groups[1] must start at 1, got $(groups[1])")
-    groups[end].stop == Nz ||
-        error("MergeByIndex.groups[end] must end at Nz_native=$Nz, got $(groups[end])")
-    for l in 1:(length(groups) - 1)
-        isempty(groups[l]) && error("MergeByIndex.groups[$l] is empty")
-        groups[l + 1].start == groups[l].stop + 1 ||
-            error("MergeByIndex groups must be contiguous: " *
-                  "groups[$l] = $(groups[l]) → groups[$(l + 1)] = $(groups[l + 1])")
-    end
-    isempty(groups[end]) && error("MergeByIndex.groups[end] is empty")
-
-    Nz_out = length(groups)
-    mm = Vector{Int}(undef, Nz)
-    for (l, range) in enumerate(groups)
-        for k in range
-            mm[k] = l
-        end
-    end
-    merged_vc = _merge_vc_from_merge_map(native_vc, mm, Nz_out, FT)
-    return VerticalPlan{FT, MergeByIndex}(
-        transform, native_vc, merged_vc, mm, copy(groups), Nz_out, Nz)
 end
 
 # MergeLayersThinnerThan: delegate to the existing `merge_thin_levels` so
@@ -404,21 +276,6 @@ function plan_vertical(transform::LevelSelection,
         transform, native_vc, selected_vc, mm, groups, Nz_out, n_levels(native_vc))
 end
 
-# PressureOverlap: plan today; apply_vertical! lands alongside the
-# spectral driver cutover. The plan still carries `merged_vc` so the
-# rest of the surface (header construction, output sizing) can be wired.
-function plan_vertical(transform::PressureOverlap,
-                       native_vc::HybridSigmaPressure{FT}) where FT
-    target_vc_raw = load_hybrid_coefficients(transform.target_coeff_path)
-    target_vc = HybridSigmaPressure(FT.(target_vc_raw.A), FT.(target_vc_raw.B))
-    Nz_target = n_levels(target_vc)
-    # No merge_map for pressure-overlap; mapping is sparse overlap
-    # coefficients (built lazily by `apply_vertical!`).
-    return VerticalPlan{FT, PressureOverlap}(
-        transform, native_vc, target_vc, Int[], UnitRange{Int}[],
-        Nz_target, n_levels(native_vc))
-end
-
 # ---------------------------------------------------------------------------
 # Helpers used by the merge-map flavors above.
 # ---------------------------------------------------------------------------
@@ -488,8 +345,7 @@ end
 #
 # `buf_out` is a `(N1, N2, Nz_output)` array; `buf_in` is
 # `(N1, N2, Nz_native)`. For CS panel tuples, the caller iterates over
-# panels and calls this per-panel. For interface fields (PressureFluxField,
-# ConvectionInterfaceFlux) the shape is `(N1, N2, Nz+1)` — see the
+# panels and calls this per-panel. For ConvectionInterfaceFlux the shape is `(N1, N2, Nz+1)` — see the
 # per-FieldKind methods below.
 # ---------------------------------------------------------------------------
 
@@ -500,29 +356,27 @@ Apply the vertical transform to one window of `buf_in`, writing the
 result into `buf_out`. Dispatches on the `(plan.transform, kind)`
 combination:
 
-  - Extensive center fields (`MassField`, `TracerMassField`,
+  - Extensive center fields (`MassField`,
     `MassFluxField`, `ConvectionTendencyField`) sum native layers
     within each output group.
-  - Interface fields (`PressureFluxField`, `ConvectionInterfaceFlux`)
+  - Interface fields (`ConvectionInterfaceFlux`)
     select the kept half-level interfaces.
   - `IntensiveCenterField` takes an additional positional `weights`
     argument (native mass-per-layer); produces the mass-weighted mean
     within each output group.
-  - `SurfaceField` is a passthrough copy (no vertical reduction).
 
 `buf_out` and `buf_in` must be 3D arrays with the vertical axis on
-dim 3 (or 2D for `SurfaceField`).
+dim 3.
 """
 function apply_vertical! end
 
 # Extensive center fields: sum native layers within each output group.
-# Same rule for MassField, TracerMassField, MassFluxField, ConvectionTendencyField.
-const _EXTENSIVE_CENTER_FIELDS = Union{MassField, TracerMassField,
+# Same rule for MassField, MassFluxField, ConvectionTendencyField.
+const _EXTENSIVE_CENTER_FIELDS = Union{MassField,
                                          MassFluxField, ConvectionTendencyField}
 
-# Merge-map flavors of the transform share one implementation. PressureOverlap
-# is handled separately (deferred).
-const _MERGE_MAP_TRANSFORM = Union{IdentityVertical, MergeByIndex,
+# Merge-map transforms share one implementation.
+const _MERGE_MAP_TRANSFORM = Union{IdentityVertical,
                                     MergeLayersThinnerThan,
                                     MergeAbovePressure, LevelSelection}
 
@@ -531,15 +385,7 @@ function apply_vertical!(buf_out::AbstractArray{T, 3},
                           plan::VerticalPlan{FT, <:_MERGE_MAP_TRANSFORM},
                           ::_EXTENSIVE_CENTER_FIELDS) where {T, S, FT}
     _check_center_shapes(buf_out, buf_in, plan)
-    fill!(buf_out, zero(T))
-    mm = plan.merge_map
-    @inbounds for k_native in 1:plan.Nz_native
-        l_out = mm[k_native]
-        for j in axes(buf_in, 2), i in axes(buf_in, 1)
-            buf_out[i, j, l_out] += T(buf_in[i, j, k_native])
-        end
-    end
-    return buf_out
+    return sum_merged_layers!(buf_out, buf_in, plan.merge_map)
 end
 
 # Interface fields: select kept half-level interfaces. The `merge_map`
@@ -548,7 +394,7 @@ end
 function apply_vertical!(buf_out::AbstractArray{T, 3},
                           buf_in::AbstractArray{S, 3},
                           plan::VerticalPlan{FT, <:_MERGE_MAP_TRANSFORM},
-                          ::Union{PressureFluxField, ConvectionInterfaceFlux}
+                          ::ConvectionInterfaceFlux
                           ) where {T, S, FT}
     _check_interface_shapes(buf_out, buf_in, plan)
     # Interface indices kept: TOA (1), then the bottom half-level of each
@@ -610,39 +456,7 @@ function apply_vertical!(buf_out::AbstractArray{T, 3},
     return buf_out
 end
 
-# SurfaceField: 2D passthrough. No plan reads needed.
-function apply_vertical!(buf_out::AbstractArray{T, 2},
-                          buf_in::AbstractArray{S, 2},
-                          ::VerticalPlan,
-                          ::SurfaceField) where {T, S}
-    size(buf_out) == size(buf_in) ||
-        error("apply_vertical!(SurfaceField) — out $(size(buf_out)) vs in $(size(buf_in)) shape mismatch.")
-    copyto!(buf_out, buf_in)
-    return buf_out
-end
-
-function apply_vertical!(buf_out::AbstractMatrix{T},
-                          buf_in::AbstractMatrix{S},
-                          ::VerticalPlan{FT, PressureOverlap},
-                          ::SurfaceField) where {FT, T, S}
-    size(buf_out) == size(buf_in) ||
-        error("apply_vertical!(SurfaceField) — out $(size(buf_out)) vs in $(size(buf_in)) shape mismatch.")
-    copyto!(buf_out, buf_in)
-    return buf_out
-end
-
-# PressureOverlap fallback — full implementation pending.
-function apply_vertical!(_buf_out, _buf_in,
-                          ::VerticalPlan{FT, PressureOverlap},
-                          ::AbstractFieldKind, args...) where FT
-    error("apply_vertical!(::VerticalPlan{<:Any, PressureOverlap}, …) is " *
-          "not implemented yet (Plan 41 P1). `plan_vertical` " *
-          "already builds the target hybrid coordinate; the per-field overlap " *
-          "coefficients are derived inside `apply_vertical!` and the spectral " *
-          "path uses today's `build_vertical_setup` until then.")
-end
-
-# Shape validators — exported for testing.
+# Shape validators.
 @inline function _check_center_shapes(buf_out::AbstractArray{<:Any, 3},
                                        buf_in::AbstractArray{<:Any, 3},
                                        plan::VerticalPlan)
@@ -673,4 +487,23 @@ end
         error("apply_vertical!(interface) — horizontal shapes differ: " *
               "in $(size(buf_in)[1:2]) vs out $(size(buf_out)[1:2]).")
     return nothing
+end
+
+"""Sum native layers in ascending order using a native-to-output layer map.
+
+The vertical axis is last. Each input element is converted to the output
+eltype before addition, matching `apply_vertical!` for mixed precision.
+"""
+function sum_merged_layers!(out::AbstractArray{T, N}, native::AbstractArray{S, N},
+                            mm::AbstractVector{Int}) where {T, S, N}
+    fill!(out, zero(T))
+    out_layers = reshape(out, :, size(out, N))
+    native_layers = reshape(native, :, size(native, N))
+    @inbounds for k in eachindex(mm)
+        l = mm[k]
+        for i in axes(native_layers, 1)
+            out_layers[i, l] += T(native_layers[i, k])
+        end
+    end
+    return out
 end

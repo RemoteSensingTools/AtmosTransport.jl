@@ -1,3 +1,10 @@
+"""Paths of the daily ERA5 spectral vorticity/divergence and log-pressure files."""
+function era5_spectral_paths(dir::AbstractString, date::Date)
+    stamp = Dates.format(date, "yyyymmdd")
+    return (vo_d = joinpath(dir, "era5_spectral_$(stamp)_vo_d.gb"),
+            lnsp = joinpath(dir, "era5_spectral_$(stamp)_lnsp.gb"))
+end
+
 function _check_eccodes_status(err::Integer, op::AbstractString)
     err == 0 && return nothing
     error("ecCodes $op failed with status code $err")
@@ -19,7 +26,7 @@ function _optional_grib_key(msg, key::AbstractString)
     end
 end
 
-function _validate_spectral_header(msg, nvalues::Integer, spec::AbstractMatrix)
+function validate_spectral_header(msg, nvalues::Integer, spec::AbstractMatrix)
     grid_type = String(_required_grib_key(msg, "gridType"))
     grid_type == "sh" ||
         error("unsupported spectral GRIB gridType '$grid_type'; expected 'sh'")
@@ -69,7 +76,7 @@ function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg, vals::Vect
                 (Ptr{Cvoid}, Cstring, Ref{Csize_t}), handle, "values", sz)
     _check_eccodes_status(err, "codes_get_size(values)")
 
-    T = _validate_spectral_header(msg, Int(sz[]), spec)
+    T = validate_spectral_header(msg, Int(sz[]), spec)
 
     resize!(vals, sz[])
     err = ccall((:codes_get_double_array, GRIB.eccodes), Cint,
@@ -78,7 +85,7 @@ function read_spectral_coeffs!(spec::AbstractMatrix{ComplexF64}, msg, vals::Vect
     _check_eccodes_status(err, "codes_get_double_array(values)")
 
     # One pass over `spec`: coefficients for m ≤ n ≤ T, zeros elsewhere.
-    # `_validate_spectral_header` checked the value count and the buffer size.
+    # `validate_spectral_header` checked the value count and the buffer size.
     idx = 1
     @inbounds for m in axes(spec, 2) .- 1, n in axes(spec, 1) .- 1
         if n >= m && n <= T && m <= T
@@ -94,7 +101,7 @@ end
 const SPECTRAL_DAY_CACHE_VERSION = 2
 const _ERA5_SPECTRAL_DAY_HOURS = collect(0:23)
 
-function _validate_spectral_coverage(hours,
+function validate_spectral_coverage(hours,
                                      vo_seen::AbstractDict,
                                      d_seen::AbstractDict;
                                      expected_hours = _ERA5_SPECTRAL_DAY_HOURS,
@@ -163,7 +170,7 @@ function spectral_day_cache_path(cache_dir::AbstractString,
     return joinpath(cache_dir, "era5_spectral_" * bytes2hex(sha1(key)) * ".jld2")
 end
 
-function _load_spectral_day_cache(path::AbstractString)
+function load_spectral_day_cache(path::AbstractString)
     data = JLD2.load(path)
     Int(data["format_version"]) == SPECTRAL_DAY_CACHE_VERSION ||
         error("unsupported spectral cache version in $path")
@@ -177,7 +184,7 @@ function _load_spectral_day_cache(path::AbstractString)
         (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times))
 end
 
-function _write_spectral_day_cache(path::AbstractString, spec)
+function write_spectral_day_cache(path::AbstractString, spec)
     mkpath(dirname(path))
     return atomic_publish(path) do tmp
         JLD2.jldsave(tmp;
@@ -206,7 +213,7 @@ function read_day_spectral(vo_d_path::String, lnsp_path::String;
         path = spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target)
         if isfile(path)
             try
-                spec = _load_spectral_day_cache(path)
+                spec = load_spectral_day_cache(path)
                 @info "  Spectral cache hit: $(path)"
                 return spec
             catch err
@@ -216,7 +223,7 @@ function read_day_spectral(vo_d_path::String, lnsp_path::String;
 
         spec = read_day_spectral_streaming(vo_d_path, lnsp_path; T_target)
         try
-            _write_spectral_day_cache(path, spec)
+            write_spectral_day_cache(path, spec)
             @info "  Spectral cache wrote: $(path)"
         catch err
             @warn "  Spectral cache write failed; continuing without cache" path exception=(err, catch_backtrace())
@@ -300,7 +307,7 @@ function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
         destroy(f)
     end
 
-    hours = _validate_spectral_coverage(keys(lnsp_all), vo_seen, d_seen)
+    hours = validate_spectral_coverage(keys(lnsp_all), vo_seen, d_seen)
     return (; hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times=length(hours))
 end
 
@@ -308,8 +315,8 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
                              T_target::Int=0,
                              cache_dir::AbstractString="")
     date_str = Dates.format(date, "yyyymmdd")
-    vo_d_path = joinpath(spectral_dir, "era5_spectral_$(date_str)_vo_d.gb")
-    lnsp_path = joinpath(spectral_dir, "era5_spectral_$(date_str)_lnsp.gb")
+    vo_d_path = era5_spectral_paths(spectral_dir, date).vo_d
+    lnsp_path = era5_spectral_paths(spectral_dir, date).lnsp
 
     has_vo_d = isfile(vo_d_path)
     has_lnsp = isfile(lnsp_path)
@@ -326,7 +333,7 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
         path = spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target)
         if isfile(path)
             try
-                spec = _load_spectral_day_cache(path)
+                spec = load_spectral_day_cache(path)
                 0 in spec.hours || throw(ArgumentError("spectral cache has no hour 0"))
                 return (lnsp=spec.lnsp_all[0],
                         vo=spec.vo_by_hour[0],

@@ -144,7 +144,7 @@ function _fill_era5_pin_sensitivity!(out, qv, dB, cell_areas, gravity)
             "ERA5 pin sensitivity panel $p shape $(size(s)) does not match qv $(size(q))"))
         @inbounds for k in axes(s, 3), j in axes(s, 2), i in axes(s, 1)
             s[i, j, k] = eltype(s)(Float64(dB[k]) *
-                (1.0 - clamp(Float64(q[i, j, k]), 0.0, 0.999999)) *
+                (1.0 - clamp(Float64(q[i, j, k]), 0.0, MAX_SPECIFIC_HUMIDITY)) *
                 Float64(cell_areas[i, j]) * inv_g)
         end
     end
@@ -672,7 +672,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # the binary header before close so the runtime executes it directly.
         steps_schedule = fill(steps_per_met, nwindow)
         mkpath(dirname(out_path))
-        tmp_path = _open_preprocessing_staging(out_path)
+        tmp_path = open_preprocessing_staging(out_path)
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)",
                        basename(out_path), Nc, Nz_int, string(FT))
         # The header records it and the gate uses it.
@@ -693,7 +693,7 @@ function process_era5_n320_to_cs_day(date::Date,
             surface_pressure_basis = DrySurfacePressure(),
             cs_geometry_tags(mesh)...,
             planet_radius = mesh.radius,
-            extra_header = _with_replay_record(merge(Dict{String, Any}(
+            extra_header = with_replay_record(merge(Dict{String, Any}(
                 "preprocessor" => "process_era5_n320_to_cs_day",
                 # Declare the per-window advection substep contract so the
                 # runtime applies advection at the baked substep cadence but
@@ -1024,7 +1024,7 @@ function process_era5_n320_to_cs_day(date::Date,
             pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
                                nxt_pipe.c180_fields.qv, nxt_fields.qv)
         else
-            _require_configured_terminal_day(
+            require_configured_terminal_day(
                 handles.date, configured_last_day, "ERA5 N320 preprocessor",
                 "next-day core endpoint for $(handles.date + Day(1))")
             # The configured archive boundary has no next_core_path on disk.

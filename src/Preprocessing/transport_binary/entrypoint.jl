@@ -230,7 +230,7 @@ end
 # Global dry-mass target of the native-source pin: `NaN` when the pin is off or
 # when it pins to the first window start (`mode = "initial_endpoint"`).
 function _native_mass_fix_target_kg(cfg::AbstractDict, grid, settings)
-    mass_fix_cfg = _checked_mass_fix_config(cfg)
+    mass_fix_cfg = checked_mass_fix_config(cfg)
     _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable") || return NaN
 
     mode = Symbol(replace(lowercase(String(get(mass_fix_cfg, "mode", "target_ps_dry"))),
@@ -270,7 +270,7 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     reject_removed_tm5_convection_route(cfg)
     src_cfg = cfg["source"]
     toml_relpath = String(src_cfg["toml"])
-    toml_path = isabspath(toml_relpath) ? toml_relpath : _package_path(toml_relpath)
+    toml_path = isabspath(toml_relpath) ? toml_relpath : package_path(toml_relpath)
 
     # Single source of truth for the float type: build the grid AND the
     # source settings against the same `FT` so cell areas and the reader's
@@ -489,7 +489,7 @@ function _process_day_native(cfg::AbstractDict;
         return process_day(d, day_grid, settings, vertical; day_kwargs...)
     end
 
-    threaded = _day_threading_enabled(settings, length(dates), chain_mass,
+    threaded = day_threading_enabled(settings, length(dates), chain_mass,
                                       global_mass_pin, configured_global_mass_target_kg)
     # When the day loop itself is threaded, the inner OMEGA reconstruction
     # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
@@ -571,11 +571,11 @@ function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeo
     settings_nt = resolve_runtime_settings(cfg)
     settings = ERA5SpectralSettings(
         merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
-    _check_spectral_column_weights(grid, settings)
+    check_spectral_column_weights(grid, settings)
     _validate_flux_construction(settings, "ERA5 spectral")
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
-    _spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
+    spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)
     write_replay_check         = _resolve_write_replay_check(cfg)
@@ -622,8 +622,7 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
             error("--start $(start_d) must be <= --end $(end_d)")
         [d for d in all_dates if start_d <= d <= end_d]
     else
-        day_filter = parse_day_filter(day_override === nothing ? String[] : ["--day", day_override])
-        select_processing_dates(available_spectral_dates(settings.spectral_dir), day_filter)
+            available_spectral_dates(settings.spectral_dir)
     end
 
     @info @sprintf("Processing %d days: %s to %s", length(dates), first(dates), last(dates))

@@ -65,7 +65,7 @@ amounts**, not as endpoint states to interpolate toward the next hour.
 Relevant source:
 
 - spectral mass-flux construction uses `half_dt` in
-  [`spectral_synthesis.jl`](../src/Preprocessing/spectral_synthesis.jl)
+  [`spectral_synthesis.jl`](../src/Preprocessing/Spectral/spectral_synthesis.jl)
 - the runtime then applies these prepared sweep fluxes through the Strang
   sequence in
   [`StrangSplitting.jl`](../src/Operators/Advection/Structured/StrangSplitting.jl)

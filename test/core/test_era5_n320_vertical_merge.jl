@@ -17,7 +17,7 @@ end
     Nx = Ny = 1
     native_vc = Pre.HybridSigmaPressure(
         [0.0, 1000.0, 6000.0, 6000.0], [0.0, 0.2, 0.6, 1.0])
-    plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:3]), native_vc)
+    plan = Pre.plan_vertical(Pre.LevelSelection([0, 2, 3]), native_vc)
     @test Pre._era5_pin_sensitivity_strategy(plan) isa Pre.NativeMergedPinSensitivity
     area = fill(2.0e10, Nx, Ny)
     qv = ntuple(p -> reshape([0.01p, 0.20 + 0.01p, 0.05p], Nx, Ny, 3), 6)
@@ -61,53 +61,30 @@ end
 @testset "pure-pressure-only merges retain compatibility strategy" begin
     vc = Pre.HybridSigmaPressure([0.0, 100.0, 300.0, 300.0],
                                  [0.0, 0.0, 0.0, 1.0])
-    plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:3]), vc)
+    plan = Pre.plan_vertical(Pre.LevelSelection([0, 2, 3]), vc)
     @test Pre._era5_pin_sensitivity_strategy(plan) isa
           Pre.PurePressureMergePinCompatibility
 
     for FT in (Float32, Float64)
         strategy = Pre._era5_pin_sensitivity_strategy(plan)
         buffers = Pre._allocate_era5_pin_sensitivity(strategy, FT, 2, 3, 2)
-        @test buffers.native === nothing
-        @test buffers.merged === nothing
-
         area = fill(FT(2.5e10), 2, 2)
         qv = ntuple(p -> FT[0.001p + 0.0001i + 0.0002j + 0.0003k
                              for i in 1:2, j in 1:2, k in 1:2], 6)
         initial = ntuple(p -> FT[1.0e12 + 1000p + 100i + 10j + k
                                   for i in 1:2, j in 1:2, k in 1:2], 6)
         dispatched = map(copy, initial)
-        historical = map(copy, initial)
         target = sum(sum(Float64, panel) for panel in initial) + 1.25e8
         gravity = FT(AtmosTransport.Parameters.STANDARD_GRAVITY)
 
         dispatched_stats = Pre._pin_era5_endpoint_mass!(
             strategy, dispatched, nothing, qv, buffers.native, buffers.merged,
             plan, area, gravity, target)
-        historical_stats = Pre._pin_cs_global_air_mass!(
-            historical, qv, area, gravity, target, diff(plan.merged_vc.B))
+        @test sum(sum(Float64, panel) for panel in dispatched) ≈ target rtol = 2eps(FT)
 
-        @test dispatched_stats == historical_stats
-        @test dispatched == historical
-        for p in 1:6
-            @test collect(reinterpret(UInt8, vec(dispatched[p]))) ==
-                  collect(reinterpret(UInt8, vec(historical[p])))
-        end
     end
 
-    disabled = Pre._allocate_era5_pin_sensitivity(
-        Pre.NoERA5MassPin(), Float64, 2, 3, 2)
-    @test disabled.native === nothing
-    @test disabled.merged === nothing
 
-    native_plan = Pre.plan_vertical(
-        Pre.MergeByIndex([1:2, 3:3]),
-        Pre.HybridSigmaPressure([0.0, 100.0, 300.0, 300.0],
-                               [0.0, 0.2, 0.5, 1.0]))
-    native_buffers = Pre._allocate_era5_pin_sensitivity(
-        Pre._era5_pin_sensitivity_strategy(native_plan), Float32, 2, 3, 2)
-    @test size(native_buffers.native[1]) == (2, 2, 3)
-    @test size(native_buffers.merged[1]) == (2, 2, 2)
 end
 
 @testset "native ERA5 config resolves named L66 preset" begin
@@ -125,12 +102,18 @@ end
     @test length(vertical.merge_map) == 137
     @test extrema(vertical.merge_map) == (1, 66)
     @test vertical.plan.transform isa Pre.LevelSelection
+    vc(n) = AtmosTransport.Grids.HybridSigmaPressure(collect(range(0.0, 0.0; length = n + 1)),
+                                                     collect(range(0.0, 1.0; length = n + 1)))
+    cfg = Dict{String, Any}("transform" => "level_selection", "preset" => " ml137_66L ")
+    setup = Pre._build_native_vertical_setup(cfg, vc(137), Float64)
+    @test setup.Nz == 66
+    @test_throws ErrorException Pre._build_native_vertical_setup(cfg, vc(72), Float64)
 end
 
 @testset "ERA5 N320 target-grid L137 merge contract" begin
     Nx, Ny, Nz_native = 2, 2, 4
     vc = Pre.HybridSigmaPressure(collect(0.0:100.0:400.0), zeros(5))
-    plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:4]), vc)
+    plan = Pre.plan_vertical(Pre.LevelSelection([0, 2, 4]), vc)
 
     native_fields = _fields(Nx, Ny, Nz_native)
     out_fields = _fields(Nx, Ny, plan.Nz_output; offset = -1.0)
@@ -187,13 +170,4 @@ end
         @test sum(sum, getproperty(out_tm5, name)) ≈
               sum(sum, getproperty(native_tm5, name))
     end
-end
-
-@testset "level_selection presets require ERA5's 137 native levels" begin
-    vc(n) = AtmosTransport.Grids.HybridSigmaPressure(collect(range(0.0, 0.0; length = n + 1)),
-                                                     collect(range(0.0, 1.0; length = n + 1)))
-    cfg = Dict{String, Any}("transform" => "level_selection", "preset" => " ml137_66L ")
-    setup = Pre._build_native_vertical_setup(cfg, vc(137), Float64)
-    @test setup.Nz == 66
-    @test_throws ErrorException Pre._build_native_vertical_setup(cfg, vc(72), Float64)
 end

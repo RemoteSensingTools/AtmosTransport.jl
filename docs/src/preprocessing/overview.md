@@ -31,8 +31,8 @@ abstraction:
 
 | Axis | Abstract type | Concrete examples |
 | --- | --- | --- |
-| **Source** | `AbstractMetReader` | `ERA5SpectralReader`, `GEOSNativeReader` (with chained mass policy) |
-| **Vertical transform** | `AbstractVerticalTransform` | `IdentityVertical`, `MergeAbovePressure`, `MergeLayersThinnerThan`, `PressureOverlap` |
+| **Source** | `AbstractMetReader` | `GEOSNativeReader`; spectral workspaces read GRIB directly |
+| **Vertical transform** | `AbstractVerticalTransform` | `IdentityVertical`, `MergeAbovePressure`, `MergeLayersThinnerThan`, `LevelSelection` |
 | **Target topology** | `AbstractTargetGeometry` | `LatLonTargetGeometry`, `ReducedGaussianTargetGeometry`, `CubedSphereTargetGeometry` |
 
 The driver pairs each concrete source / vertical / target combination
@@ -197,8 +197,7 @@ requested range, the unified driver runs:
    Laplacian both live here.
 2. **Allocate the topology workspace** (`allocate_window_workspace`) —
    one instance per day; reused across all 24 windows.
-3. **Open the day's source readers** — `ERA5SpectralReader` opens GRIB
-   handles, `GEOSNativeReader` opens hourly NetCDF.
+3. **Open the day's source readers** — spectral workspaces read GRIB, while `GEOSNativeReader` opens hourly NetCDF.
 4. **Per window** (typically 24 hourly windows per day):
     - **`ingest_window!`** — read the source data into the workspace's
       raw buffers. For chained sources (`GEOSNativeReader`) the
@@ -233,3 +232,10 @@ requested range, the unified driver runs:
 - [Conventions cheat sheet](conventions.md) — units, replay tolerances,
   level orientation, panel conventions — the one-page reference for
   debugging an unexpected binary.
+
+The first pipeline stages live in `Preprocessing.Core`, `Preprocessing.Vertical`
+and `Preprocessing.Spectral`. Core supplies contracts; Vertical depends on
+Core, and Spectral depends on Core and Vertical. Scripts keep using the
+`Preprocessing` facade. The erroring typed pressure-overlap stub, unused
+spectral reader placeholder and test-only seed accessors are removed; spectral
+pressure-overlap remapping and day chaining retain their production paths.

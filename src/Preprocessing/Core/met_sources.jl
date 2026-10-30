@@ -16,13 +16,19 @@ Top-level supertype for typed met-data source descriptors used by the
 preprocessor. Concrete subtypes (`GEOSITSettings`, `GEOSFPSettings`,
 `ERA5N320Settings`, `MERRA2Settings`, `ERA5SpectralSettings`) carry
 source-specific paths and parameters and implement the parts of the
-`read_window!` / `source_grid` / `windows_per_day` interface that their
-`process_day` path uses (GEOS implements all three).
+`read_window!` / `windows_per_day` interface that their
+`process_day` path uses.
 
 `process_day(date, grid::AbstractTargetGeometry, settings::AbstractMetSettings,
 vertical; ...)` dispatches on `settings` to pick the reader.
 """
 abstract type AbstractMetSettings end
+
+"""Abstract settings for GEOS native meteorology."""
+abstract type AbstractGEOSSettings <: AbstractMetSettings end
+
+"""Abstract settings for ERA5 native GRIB meteorology."""
+abstract type AbstractERA5GRIBSettings <: AbstractMetSettings end
 
 """
     ERA5SpectralSettings <: AbstractMetSettings
@@ -101,35 +107,6 @@ function RawWindow{FT, P, V}(m, ps, qv,
                              m_next, ps_next, qv_next,
                              am, bm,
                              u, v,
-                             cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
-    return RawWindow{FT, P, V, Nothing, Nothing}(
-        m, ps, qv,
-        m_next, ps_next, qv_next,
-        am, bm,
-        u, v,
-        nothing, nothing,
-        cmfmc, dtrain)
-end
-
-function RawWindow{FT, P, V}(m, ps, qv,
-                             m_next, ps_next, qv_next,
-                             am, bm,
-                             u, v,
-                             surface,
-                             cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
-    return RawWindow{FT, P, V, typeof(surface), Nothing}(
-        m, ps, qv,
-        m_next, ps_next, qv_next,
-        am, bm,
-        u, v,
-        surface, nothing,
-        cmfmc, dtrain)
-end
-
-function RawWindow{FT, P, V}(m, ps, qv,
-                             m_next, ps_next, qv_next,
-                             am, bm,
-                             u, v,
                              surface, vdiff,
                              cmfmc, dtrain) where {FT <: AbstractFloat, P, V}
     return RawWindow{FT, P, V, typeof(surface), typeof(vdiff)}(
@@ -197,15 +174,6 @@ should be idempotent in `(date, win_idx)`.
 function read_window! end
 
 """
-    source_grid(settings::AbstractMetSettings)
-
-Return the source grid mesh that `read_window!` produces data on. Used
-by the orchestrator to build the appropriate regridder for the target
-grid (or to detect the source==target passthrough case).
-"""
-function source_grid end
-
-"""
     windows_per_day(settings::AbstractMetSettings, date::Date) -> Int
 
 Number of preprocessing windows per UTC day for this source on `date`.
@@ -248,3 +216,6 @@ scheme) or the convective cloud-base layer (GCHP cloud convection).
 """
 has_pbl_eflux(::AbstractMetSettings) = false
 has_cmfmc_cloud_base(::AbstractMetSettings) = false
+
+"""Return the native source mesh for a meteorological settings type."""
+function source_grid end

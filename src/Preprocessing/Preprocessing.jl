@@ -81,7 +81,6 @@ using Logging
 using FFTW
 using Printf
 using JSON3
-using JLD2
 using SHA
 using TOML
 using LinearAlgebra: mul!, dot
@@ -93,32 +92,17 @@ using ..LogLevels: log_level, with_log_level
 using ..AtomicFiles: atomic_publish, open_atomic_staging,
                      commit_atomic_staging, abandon_atomic_staging
 using GRIB
-using FastGaussQuadrature: gausslegendre
 
 import ..expand_data_path
 import ..source_revision
 
-# Root of the package checkout. Shipped configs name their companion files
-# (met-source descriptors under `config/met_sources/`, hybrid-coefficient
-# tables `config/*_coefficients.toml`) relative to it.
-const PACKAGE_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
-_package_path(relpath::AbstractString) = normpath(joinpath(PACKAGE_ROOT, relpath))
-
-# Reserve the package-standard unique sibling staging path for preprocessing
-# writers whose existing APIs open a path themselves. Publication and cleanup
-# are handled by the writer adapters through `commit_atomic_staging` /
-# `abandon_atomic_staging`.
-function _open_preprocessing_staging(path::AbstractString)
-    staging, io = open_atomic_staging(path)
-    close(io)
-    return staging
-end
 # Source settings and binary readers extend the same public capability queries.
 import ..MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using ..Architectures: CPU
 # Physical constants, numerical defaults and met-source constants
 # (`src/Parameters`) used by the files below.
-using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, TM5_CONSTANTS, R_DRY_AIR,
+using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE,
+    TM5_CONSTANTS, R_DRY_AIR,
                     VIRTUAL_TEMPERATURE_FACTOR, HYDROSTATIC_REFERENCE_TEMPERATURE,
                     GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
                     DEFAULT_POSITIVITY_CFL_LIMIT, DEFAULT_SUBSTEP_CFL_TARGET,
@@ -135,9 +119,7 @@ using ..Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_P
                     GEOS_MASS_FLUX_DT_SECONDS, GEOS_MET_INTERVAL_SECONDS,
                     GEOS_3HOURLY_INTERVAL_SECONDS,
                     SURFACE_AIR_TEMPERATURE_RANGE, SURFACE_HEAT_FLUX_MAX_ABS,
-                    ECHLEVS_ML137_TROPO34, ECHLEVS_ML137_TROPO34A,
-                    ECHLEVS_ML137_66L, ECHLEVS_ML137_CFL94, ECHLEVS_ML137_CFL85,
-                    ECHLEVS_ML137_FULL, ERA5_L137_ECHLEVS_PRESETS,
+                    ERA5_L137_ECHLEVS_PRESETS,
                     TM5_CONVECTION_SOURCE_KEY, TM5_EC2TM_CONVENTION_KEY, TM5_EC2TM_CONVENTION
 using ..Grids: cell_centers, cell_area_matrix, unit3, arc3, slerp3, unit_xyz_from_radians,
                seam_mirror_sign, face_connectivity, cell_areas, cs_total_area, dot3, cross3,
@@ -146,19 +128,18 @@ using ..Grids: cell_centers, cell_area_matrix, unit3, arc3, slerp3, unit_xyz_fro
                cs_edge_cell, cs_edge_face_location, cs_flat_index, cs_panel_ij,
                default_cs_definition, parse_panel_convention, parse_cs_definition,
                cs_geometry_tags
-using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths, cs_corner_xyz,
+using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_lengths,
+    cs_corner_xyz,
                HybridSigmaPressure, PanelConnectivity,
                AbstractCubedSpherePanelConvention,
                AtmosGrid, ncells, nfaces, nrings, nlevels, face_cells, cell_area,
-               ring_longitudes, ring_cell_count, cell_areas_by_latitude,
-               n_levels, pressure_at_interface, level_thickness, floattype,
-               panel_convention, panel_connectivity_for,
-               panel_cell_center_lonlat,
+               ring_longitudes, cell_areas_by_latitude,
+               n_levels, pressure_at_interface, level_thickness, panel_convention, panel_cell_center_lonlat,
                panel_cell_local_tangent_basis,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag,
                EquiangularCubedSphereDefinition, GMAOCubedSphereDefinition,
-               default_panel_connectivity, gnomonic_panel_connectivity, reciprocal_edge,
+               default_panel_connectivity, reciprocal_edge,
                GnomonicPanelConvention, GEOSNativePanelConvention,
                EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST
 import ..State
@@ -171,9 +152,8 @@ using ..GriddedIO: source_latlon_mesh, SnappedFaces, find_coordinate, LongitudeA
 using ..MetDrivers: poisson_balance_target, write_padded_header!, section_elements,
                     LatLonBinaryGeometry, CubedSphereBinaryGeometry, TransportBinaryReader,
                     mesh_definition,
-                    TransportBinaryHeader, binary_geometry, grid_type,
+                    binary_geometry, grid_type,
                     binary_dry_mass_target, dry_mass_pin_enabled,
-                    write_transport_binary,
                     TRANSPORT_BINARY_FORMAT_VERSION,
                     StreamingTransportBinaryWriter,
                     open_streaming_transport_binary, write_streaming_window!,
@@ -250,45 +230,62 @@ export verify_substep_positivity_rg!, verify_rg_window_contract!,
        init_rg_positivity_accumulator, update_rg_positivity_accumulator,
        summarize_rg_positivity_status
 
-# Met source abstraction (AbstractMetSettings + RawWindow)
-include("met_sources.jl")
+# Pipeline stages load in dependency order. The facade preserves script names.
+include("Core/Core.jl")
+import .Core: AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings,
+    AbstractGEOSSettings, AbstractMetReader, AbstractMetSettings, AbstractTargetGeometry,
+    COLUMN_WEIGHT_NAMES, ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings,
+    FlushingLogger, GEOSNativeReader, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY,
+    MassWeightedColumn, NoChain, PACKAGE_ROOT, RawWindow, ReducedGaussianTargetGeometry,
+    source_grid, allocate_raw_window, build_target_geometry, check_column_weight_levels,
+    check_spectral_column_weights, checked_mass_fix_config, close_day!, close_reader!,
+    column_weights, day_threading_enabled, ensure_supported_target, grid_kind, has_cmfmc_cloud_base,
+    has_convection, has_pbl_eflux, has_surface, has_vdiff_fields, log_preprocessor_configuration,
+    nlat, nlon, open_day, open_preprocessing_staging, open_reader, package_path,
+    panel_convention_tag, parse_column_balance_weights, parse_flux_construction,
+    preprocessor_pair_supported, read_era5_reduced_gaussian_geometry,
+    read_era5_reduced_gaussian_mesh, read_window!, reject_removed_balance_mode,
+    reject_removed_horizontal_balance_keyword, reject_removed_tm5_convection_route,
+    require_configured_terminal_day, resolve_balance_settings, resolve_column_balance_weights,
+    resolve_mass_basis, resolve_mass_fix_settings, resolve_output_float_type,
+    resolve_preprocessing_cache_settings, resolve_runtime_settings, resolve_spectral_flux_settings,
+    resolve_surface_settings, spectral_column_weights, spread_column_correction!,
+    supports_day_threading, supports_initial_endpoint_mass_pin,
+    supports_spectral_massflux_preprocessing, target_balance_geometry, target_definition_tag,
+    target_header_metadata, target_spectral_truncation, target_summary,
+    validate_column_balance_weights, windows_per_day, with_column_weights_record, with_replay_record
+include("Vertical/Vertical.jl")
+import .Vertical: AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
+    ConvectionTendencyField, IdentityVertical, IntensiveCenterField, LevelSelection, MassField,
+    MassFluxField, MergeAbovePressure, MergeLayersThinnerThan, VerticalPlan,
+    ab_coefficients, apply_vertical!, build_vertical_setup, echlevs_preset,
+    load_era5_vertical_coordinate, load_hybrid_coefficients, merge_thin_levels, plan_vertical,
+    resolve_coefficients_path, select_levels_echlevs, sum_merged_layers!
+include("Spectral/Spectral.jl")
+import .Spectral: LLPoissonWorkspace, ReducedSpectralSynthesis, SPECTRAL_DAY_CACHE_VERSION,
+    apply_dry_basis_native!, available_spectral_dates, balance_column_mass_fluxes!,
+    balance_mass_fluxes!, compute_air_mass!, compute_dp!, compute_legendre_column!,
+    compute_mass_fluxes!, era5_spectral_paths, fill_ring_spectrum!, fill_xface_surface_pressure!,
+    fill_yface_surface_pressure!, load_spectral_day_cache, mass_fix_target_ps_dry_record,
+    mass_target_offset, maybe_preload_qv_day, merge_cell_field!, merge_qv!, next_day_hour0,
+    normalize_lon_to_centered, pin_global_mean_ps!, pin_global_mean_ps_using_qv!,
+    read_daily_qv_from_thermo, read_day_spectral, read_day_spectral_streaming, read_hour0_spectral,
+    read_qv_from_thermo, read_spectral_coeffs!, read_thermo_coordinates,
+    recompute_cm_from_divergence!, recompute_native_mass_fields!,
+    remap_extensive_column_pressure_overlap!, remap_extensive_field_pressure_overlap!,
+    remap_qv_pressure_overlap!, ring_max_wavenumber, spectral_day_cache_path, spectral_to_grid!,
+    spectral_to_native_fields!, stagger_winds!, synthesize_reduced!, validate_spectral_coverage,
+    validate_spectral_header, vertical_mapping_method, vod2uv!, write_spectral_day_cache,
+    xface_surface_pressure, yface_surface_pressure
 
-# Physical constants
-
-# Statistics dependency for GEOS reader (level-orientation auto-detect)
 using Statistics: mean
 
-# Logging utilities
-include("logging.jl")
-
-# Vertical coordinate handling and level merging
-include("vertical_coordinates.jl")
-
-# Typed vertical-transform surface (vertical axis of the unified
-# preprocessor). Wraps `merge_thin_levels` and
-# `select_levels_echlevs` into first-class transform types so layer
-# merging is available to every preprocessor pathway (LL/RG/CS ×
-# spectral/native), not just the ERA5 spectral path.
-include("vertical_transforms.jl")
-
-# Global 6-panel Poisson balance for cubed-sphere grids
-# (must precede target_geometry.jl which uses CSGlobalFaceTable)
-
+# Deferred mass closure and native GRIB geometry register Core interfaces.
 include("cs_poisson_solver.jl")
+target_balance_geometry(ft::CSGlobalFaceTable) =
+    (cs_cell_face_degree(ft), CSPoissonScratch(ft.nc))
 include("cs_poisson_balance.jl")
-
-# Target grid geometry (LL, RG, and CS)
 include("sources/era5_grib_geometry.jl")
-include("target_geometry.jl")
-
-# GRIB spectral IO
-include("spectral_io.jl")
-
-# Spectral synthesis (Legendre + FFT → gridpoint)
-include("spectral_synthesis.jl")
-
-# Poisson balance (LL FFT + RG conjugate gradient)
-include("mass_support.jl")
 
 # Compressed-Laplacian Poisson balance for RG (replaces slow CG on LCM faces)
 include("ring_poisson_balance.jl")
@@ -297,7 +294,6 @@ include("ring_poisson_balance.jl")
 include("reduced_transport_helpers.jl")
 include("reduced_window_buffer.jl")
 include("reduced_spectral_day.jl")
-include("reduced_spectral_synthesis.jl")
 
 # Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
@@ -307,9 +303,6 @@ include("cs_native_fluxes.jl")
 # Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
 include("face_line_integrals.jl")
 include("flux_construction.jl")
-
-# Configuration parsing
-include("configuration.jl")
 
 # Convective mass fluxes on the binary's air-mass basis (shared with GEOS).
 include("convection_mass_basis.jl")
@@ -324,7 +317,20 @@ include("era5_surface_reader.jl")
 include("tm5_bldiff.jl")
 
 # Transport-binary workflows and shared preprocessing contracts.
-include("binary_pipeline.jl")
+include("transport_binary/core.jl")
+include("transport_binary/flux_fidelity.jl")
+include("transport_binary/window_contracts.jl")
+include("transport_binary/latlon_workspaces.jl")
+include("transport_binary/latlon_contracts.jl")
+include("transport_binary/cubed_sphere_contracts.jl")
+include("transport_binary/reduced_gaussian_contracts.jl")
+include("transport_binary/writer_adapters.jl")
+include("transport_binary/driver.jl")
+include("transport_binary/topology_dispatch.jl")
+include("transport_binary/cubed_sphere_spectral.jl")
+include("transport_binary/cubed_sphere_regrid.jl")
+include("transport_binary/latlon_spectral.jl")
+include("transport_binary/entrypoint.jl")
 
 # Native GEOS NetCDF reader
 include("sources/geos.jl")
@@ -349,13 +355,6 @@ include("sources/merra2.jl")
 
 # TOML-driven met-source factory
 include("sources/loader.jl")
-
-# Typed met-reader surface (source axis of the unified preprocessor;
-# additive facade over `AbstractMetSettings` machinery above). Includes
-# here so the abstract types are visible to
-# `transport_binary/cubed_sphere_geos.jl` even though the existing
-# `process_day` orchestrators are not yet ported.
-include("met_readers.jl")
 
 # GEOS → CS passthrough orchestrator
 include("transport_binary/geos_cs_mass_helpers.jl")
@@ -436,25 +435,24 @@ export load_met_settings, load_hybrid_coefficients
 
 # Typed met-reader surface (source axis)
 export AbstractMetReader, AbstractChainPolicy, NoChain, ChainedMass
-export GEOSNativeReader, ERA5SpectralReader, ERA5SpectralSettings
-export open_reader, close_reader!, end_of_day_seed, set_end_of_day_seed!
-export native_vertical, window_metadata
+export GEOSNativeReader, ERA5SpectralSettings
+export open_reader, close_reader!
 # Note: `windows_per_day` and `read_window!` are already exported above
 # (the existing `AbstractMetSettings` trait surface). The reader surface
 # adds typed methods on the same generic functions.
 
 # Typed vertical-transform surface (vertical axis)
 export AbstractVerticalTransform, VerticalPlan
-export IdentityVertical, MergeByIndex, MergeLayersThinnerThan,
-       MergeAbovePressure, LevelSelection, PressureOverlap
+export IdentityVertical, MergeLayersThinnerThan,
+       MergeAbovePressure, LevelSelection
 export AbstractFieldKind
-export MassField, TracerMassField, MassFluxField, PressureFluxField,
+export MassField, MassFluxField,
        ConvectionInterfaceFlux, ConvectionTendencyField,
-       IntensiveCenterField, SurfaceField
+       IntensiveCenterField
 export plan_vertical, apply_vertical!
 
 # Exports for the CLI script and advanced users
-export build_target_geometry, target_summary
+export build_target_geometry, target_summary, FlushingLogger
 export process_day, regrid_transport_binary, regrid_ll_binary_to_cs
 export ec2tm_from_rates!, TM5CleanupStats
 export interface_specific_humidity, ecmwf_convection_to_basis!, tm5_convection_to_basis!

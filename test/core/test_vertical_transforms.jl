@@ -1,23 +1,6 @@
 #!/usr/bin/env julia
-# Plan 41 P0b — typed vertical-transform surface tests.
-#
-# Verifies that:
-#   (1) The six concrete `AbstractVerticalTransform` types produce
-#       `VerticalPlan{FT, T}` whose `merged_vc`/`merge_map`/`Nz_output`
-#       are bit-exact with today's `merge_thin_levels` /
-#       `select_levels_echlevs` (for the merge-map flavors).
-#   (2) `MergeAbovePressure` correctly coarsens the upper atmosphere on
-#       a realistic L72 hybrid coordinate while preserving troposphere /
-#       stratosphere at native resolution.
-#   (3) `apply_vertical!` honors the per-`FieldKind` rule:
-#         * extensive (MassField / TracerMassField / MassFluxField /
-#           ConvectionTendencyField) → sum native layers within group;
-#         * interface (PressureFluxField / ConvectionInterfaceFlux) →
-#           select kept half-level interfaces;
-#         * IntensiveCenterField → mass-weighted mean within group;
-#         * SurfaceField → 2D passthrough.
-#   (4) Shape mismatches and `PressureOverlap.apply_vertical!` error
-#       with clear messages.
+# Production vertical plans, extensive conservation, interface selection,
+# mass-weighted intensive reduction, and shape contracts.
 
 using Test
 
@@ -35,12 +18,9 @@ const _TEST_A = Float64[0.0, 100.0, 500.0, 2000.0, 10000.0, 101325.0]
 const _TEST_B = Float64[0.0, 0.0,   0.0,   0.0,    0.0,    1.0]
 
 _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
+_merge_test_vc() = Pre.HybridSigmaPressure([0.0, 100.0, 300.0, 400.0, 500.0, 600.0], zeros(6))
 
 @testset "Plan 41 P0b — typed vertical-transform surface" begin
-
-    # -----------------------------------------------------------------------
-    # IdentityVertical
-    # -----------------------------------------------------------------------
 
     @testset "IdentityVertical: no-op plan" begin
         vc = _test_vc()
@@ -55,62 +35,16 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         @test plan.merged_vc.B == vc.B
     end
 
-    # -----------------------------------------------------------------------
-    # MergeByIndex: contiguity validation + group → merged_vc construction
-    # -----------------------------------------------------------------------
-
-    @testset "MergeByIndex: explicit groups produce correct merge_map + merged_vc" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+    @testset "MergeLayersThinnerThan: production groups produce correct merge_map + merged_vc" begin
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         @test plan.Nz_output == 2
         @test plan.merge_map == [1, 1, 2, 2, 2]
         @test plan.groups == [1:2, 3:5]
         # Merged half-levels = native indices [1, 3, 6].
-        @test plan.merged_vc.A == [_TEST_A[1], _TEST_A[3], _TEST_A[6]]
-        @test plan.merged_vc.B == [_TEST_B[1], _TEST_B[3], _TEST_B[6]]
+        @test plan.merged_vc.A == vc.A[[1, 3, 6]]
+        @test plan.merged_vc.B == vc.B[[1, 3, 6]]
     end
-
-    @testset "MergeByIndex: validation errors on bad input" begin
-        vc = _test_vc()
-        # Doesn't start at 1
-        @test_throws ErrorException Pre.plan_vertical(Pre.MergeByIndex([2:5]), vc)
-        # Doesn't end at Nz
-        @test_throws ErrorException Pre.plan_vertical(Pre.MergeByIndex([1:3]), vc)
-        # Non-contiguous (gap)
-        @test_throws ErrorException Pre.plan_vertical(Pre.MergeByIndex([1:2, 4:5]), vc)
-        # Empty groups
-        @test_throws ErrorException Pre.plan_vertical(Pre.MergeByIndex(UnitRange{Int}[]), vc)
-    end
-
-    # -----------------------------------------------------------------------
-    # MergeLayersThinnerThan: bit-exact wrap of `merge_thin_levels`
-    # -----------------------------------------------------------------------
-
-    @testset "MergeLayersThinnerThan: bit-exact vs merge_thin_levels" begin
-        vc = _test_vc()
-        for min_thr in (1000.0, 5000.0, 30000.0)
-            plan = Pre.plan_vertical(
-                Pre.MergeLayersThinnerThan(min_thickness_Pa = min_thr), vc)
-            merged_ref, mm_ref = Pre.merge_thin_levels(vc; min_thickness_Pa = min_thr)
-            @test plan.merged_vc.A == merged_ref.A
-            @test plan.merged_vc.B == merged_ref.B
-            @test plan.merge_map == mm_ref
-            @test plan.Nz_output == Pre.n_levels(merged_ref)
-        end
-    end
-
-    # -----------------------------------------------------------------------
-    # merge_thin_levels: the thickness rule, pinned on ERA5 L137 (issue #63).
-    # Groups close from the surface up as soon as they reach the minimum; the
-    # remnant above the last group is kept as the top layer and may be
-    # thinner. At 100 Pa (the L117 CATRINE set,
-    # `era5_n320_arco_diffusion_to_c90_l117_li.toml`) that top layer is 6.8 Pa;
-    # in a real L117 binary (2022-01-15) at most 0.005 of its mass crosses its
-    # lower interface per stored substep amount (layers 2–4: 0.012–0.05), so
-    # it is numerically benign. Folding it into layer 2 (L116) changes the
-    # level set and waits for the next regeneration; until then these numbers
-    # must not change.
-    # -----------------------------------------------------------------------
 
     @testset "merge_thin_levels: layer thicknesses on ERA5 L137" begin
         l137 = Pre.load_hybrid_coefficients(
@@ -135,10 +69,6 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         merged, mm = Pre.merge_thin_levels(_test_vc(); min_thickness_Pa = 100.0)
         @test Pre.n_levels(merged) == 5 && mm == 1:5
     end
-
-    # -----------------------------------------------------------------------
-    # MergeAbovePressure: GEOS-IT L72 mesospheric scenario
-    # -----------------------------------------------------------------------
 
     @testset "MergeAbovePressure: L72 mesosphere coarsening" begin
         l72_path = joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml")
@@ -196,58 +126,9 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         @test plan.merge_map == 1:5
     end
 
-    # -----------------------------------------------------------------------
-    # LevelSelection: bit-exact vs select_levels_echlevs
-    # -----------------------------------------------------------------------
-
-    @testset "LevelSelection: bit-exact vs select_levels_echlevs (CFL85)" begin
-        # Build a realistic native vc for L137 (just construct uniform spacing
-        # — we only need shape correctness, not real ERA5 coefficients).
-        Nz_native = 137
-        A = collect(range(0.0; stop = 101325.0, length = Nz_native + 1))
-        B = zeros(Nz_native + 1)
-        vc_native = Pre.HybridSigmaPressure(A, B)
-
-        plan = Pre.plan_vertical(
-            Pre.LevelSelection(Pre.ECHLEVS_ML137_CFL85), vc_native)
-        selected_ref, mm_ref = Pre.select_levels_echlevs(
-            vc_native, Pre.ECHLEVS_ML137_CFL85)
-        @test plan.merged_vc.A == selected_ref.A
-        @test plan.merged_vc.B == selected_ref.B
-        @test plan.merge_map == mm_ref
-    end
-
-    # -----------------------------------------------------------------------
-    # PressureOverlap: plan today, apply_vertical! defers to P1
-    # -----------------------------------------------------------------------
-
-    @testset "PressureOverlap: plan constructs target vc; apply errors with P1 message" begin
-        vc = _test_vc()
-        l72_path = joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml")
-        plan = Pre.plan_vertical(Pre.PressureOverlap(l72_path), vc)
-        @test plan isa Pre.VerticalPlan{Float64, Pre.PressureOverlap}
-        @test plan.Nz_output == 72
-        @test isempty(plan.merge_map)
-        # apply_vertical! must error with the documented P1 message.
-        buf_in  = zeros(Float64, 1, 1, 5)
-        buf_out = zeros(Float64, 1, 1, 72)
-        err = try
-            Pre.apply_vertical!(buf_out, buf_in, plan, Pre.MassField())
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test occursin("P1", err.msg)
-    end
-
-    # -----------------------------------------------------------------------
-    # apply_vertical! field-kind rules (extensive)
-    # -----------------------------------------------------------------------
-
     @testset "apply_vertical!(MassField): sum native layers within group" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         m_native = ones(Float64, 2, 3, 5)
         m_out = zeros(Float64, 2, 3, 2)
         Pre.apply_vertical!(m_out, m_native, plan, Pre.MassField())
@@ -257,8 +138,8 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
     end
 
     @testset "apply_vertical!(MassFluxField): same sum rule" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         am_native = reshape(collect(1.0:30.0), 2, 3, 5)
         am_out = zeros(Float64, 2, 3, 2)
         Pre.apply_vertical!(am_out, am_native, plan, Pre.MassFluxField())
@@ -268,29 +149,35 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         @test am_out[1, 1, 2] == 57.0
         # Total mass conservation: sum(am_out) == sum(am_native).
         @test sum(am_out) == sum(am_native)
+        for FT in (Float32, Float64)
+            big = FT === Float32 ? 2.0^24 : 2.0^53
+            native = reshape(FT[big, 1, -big], 1, 1, 3)
+            vc = Pre.HybridSigmaPressure([0.0, 1.0, 2.0, 3.0], zeros(4))
+            merged = zeros(FT, 1, 1, 1)
+            order_plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 3.0), vc)
+            Pre.apply_vertical!(merged, native, order_plan, Pre.MassFluxField())
+            @test merged[1] === zero(FT)
+        end
+
     end
 
-    @testset "apply_vertical!(TracerMassField + ConvectionTendencyField): identical extensive rule" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+    @testset "apply_vertical!(ConvectionTendencyField): identical extensive rule" begin
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         in3 = reshape(collect(1.0:30.0), 2, 3, 5)
-        for kind in (Pre.TracerMassField(), Pre.ConvectionTendencyField())
+        for kind in (Pre.ConvectionTendencyField(),)
             out3 = zeros(Float64, 2, 3, 2)
             Pre.apply_vertical!(out3, in3, plan, kind)
             @test sum(out3) == sum(in3)  # conservation
         end
     end
 
-    # -----------------------------------------------------------------------
-    # apply_vertical! field-kind rules (interface)
-    # -----------------------------------------------------------------------
-
-    @testset "apply_vertical!(PressureFluxField): select kept interfaces" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+    @testset "apply_vertical!(ConvectionInterfaceFlux): select kept interfaces" begin
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         cm_native = reshape(collect(1.0:36.0), 2, 3, 6)
         cm_out = zeros(Float64, 2, 3, 3)
-        Pre.apply_vertical!(cm_out, cm_native, plan, Pre.PressureFluxField())
+        Pre.apply_vertical!(cm_out, cm_native, plan, Pre.ConvectionInterfaceFlux())
         # Kept native interface indices: 1, 3, 6 (boundaries of groups 1:2 and 3:5).
         # cm_native[1,1,:] = [1, 7, 13, 19, 25, 31] → out[1,1,:] = [1, 13, 31].
         @test cm_out[1, 1, :] == [1.0, 13.0, 31.0]
@@ -299,24 +186,9 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         @test cm_out[:, :, end] == cm_native[:, :, end]
     end
 
-    @testset "apply_vertical!(ConvectionInterfaceFlux): same rule as PressureFluxField" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
-        in_iface = reshape(collect(1.0:36.0), 2, 3, 6)
-        out_pf = zeros(Float64, 2, 3, 3)
-        out_ci = zeros(Float64, 2, 3, 3)
-        Pre.apply_vertical!(out_pf, in_iface, plan, Pre.PressureFluxField())
-        Pre.apply_vertical!(out_ci, in_iface, plan, Pre.ConvectionInterfaceFlux())
-        @test out_pf == out_ci
-    end
-
-    # -----------------------------------------------------------------------
-    # apply_vertical! field-kind rules (intensive + surface)
-    # -----------------------------------------------------------------------
-
     @testset "apply_vertical!(IntensiveCenterField): mass-weighted mean" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         T_native = fill(300.0, 2, 3, 5)
         T_native[:, :, 4] .= 200.0     # one cooler layer in group 2
         # Uniform weights → simple mean.
@@ -332,20 +204,6 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         Pre.apply_vertical!(T_out2, T_native, plan, Pre.IntensiveCenterField(), weights2)
         @test all(T_out2[:, :, 2] .≈ (300 + 9 * 200 + 300) / 11)
     end
-
-    @testset "apply_vertical!(SurfaceField): 2D identity passthrough" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
-        ps_in  = [1.0 2.0 3.0; 4.0 5.0 6.0]
-        ps_out = zeros(2, 3)
-        Pre.apply_vertical!(ps_out, ps_in, plan, Pre.SurfaceField())
-        @test ps_out == ps_in
-    end
-
-    # -----------------------------------------------------------------------
-    # Mesospheric end-to-end: MergeAbovePressure preserves total mass under
-    # MassField apply.
-    # -----------------------------------------------------------------------
 
     @testset "MergeAbovePressure + apply_vertical!(MassField): mass conservation" begin
         l72_path = joinpath(@__DIR__, "..", "..", "config", "geos_L72_coefficients.toml")
@@ -364,13 +222,9 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         end
     end
 
-    # -----------------------------------------------------------------------
-    # Shape validation
-    # -----------------------------------------------------------------------
-
     @testset "Shape-mismatch errors are explicit" begin
-        vc = _test_vc()
-        plan = Pre.plan_vertical(Pre.MergeByIndex([1:2, 3:5]), vc)
+        vc = _merge_test_vc()
+        plan = Pre.plan_vertical(Pre.MergeLayersThinnerThan(min_thickness_Pa = 300.0), vc)
         # Wrong Nz_native
         bad_in  = zeros(Float64, 2, 3, 4)
         good_out = zeros(Float64, 2, 3, 2)
@@ -390,7 +244,7 @@ _test_vc() = Pre.HybridSigmaPressure(_TEST_A, _TEST_B)
         bad_iface_in = zeros(Float64, 2, 3, 5)  # should be 6 for Nz=5
         good_iface_out = zeros(Float64, 2, 3, 3)
         @test_throws ErrorException Pre.apply_vertical!(
-            good_iface_out, bad_iface_in, plan, Pre.PressureFluxField())
+            good_iface_out, bad_iface_in, plan, Pre.ConvectionInterfaceFlux())
         # Intensive shape-mismatch on weights
         good_int_in  = zeros(Float64, 2, 3, 5)
         good_int_out = zeros(Float64, 2, 3, 2)

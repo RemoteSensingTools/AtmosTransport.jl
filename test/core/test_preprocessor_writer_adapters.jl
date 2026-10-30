@@ -51,7 +51,7 @@ end
         settings = (include_qv = false,
                     include_surface = false)
         final = joinpath(tmp, "ll.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         @test startswith(staging, abspath(final) * ".tmp-")
 
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
@@ -91,7 +91,7 @@ end
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv=false, include_surface=false)
         final = joinpath(tmp, "preserved.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         sentinel = Vector{UInt8}(codeunits("previous-valid-output"))
         write(final, sentinel)
         writer = LatLonBinaryWriter(
@@ -121,7 +121,7 @@ end
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv = false,
                     include_surface = false)
-        staging = Pre._open_preprocessing_staging(joinpath(tmp, "ll.bin"))
+        staging = Pre.open_preprocessing_staging(joinpath(tmp, "ll.bin"))
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis())
         write_window!(writer, ReadyWindow{LatLonTargetGeometry, FT}(1, (; storage)))
@@ -149,7 +149,7 @@ end
                   cm = zeros(FT, ncell, Nz + 1),
                   ps = fill(FT(90000), ncell))
         final = joinpath(tmp, "rg.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         inner = open_streaming_transport_binary(
             staging, grid, 1, window;
             FT = FT,
@@ -182,7 +182,7 @@ end
         Nc, npanel, Nz = 2, 6, 1
         vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
         final = joinpath(tmp, "cs.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         inner = open_streaming_cs_transport_binary(
             staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT,
@@ -236,7 +236,7 @@ end
         Nc, npanel, Nz = 2, 6, 1
         vc = HybridSigmaPressure(FT[0, 1000], FT[0, 1])
         final = joinpath(tmp, "cs.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         inner = open_streaming_cs_transport_binary(
             staging, Nc, npanel, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS,
             FT = FT, header_bytes = 8192, steps_per_window = 1, include_flux_delta = true,
@@ -270,7 +270,7 @@ end
         merged = allocate_merge_workspace(grid, Nz, Nz, FT)
         settings = (include_qv = false, include_surface = false)
         final = joinpath(tmp, "ll.bin")
-        staging = Pre._open_preprocessing_staging(final)
+        staging = Pre.open_preprocessing_staging(final)
         writer = LatLonBinaryWriter(staging, "{}", settings, merged, nothing,
                                     FT, DryBasis(); final_path = final)
         writer.fidelity.omega_none_windows = 1          # inconsistent OMEGA coverage

@@ -286,7 +286,7 @@ function apply_dry_basis_reduced!(work::ReducedTransformWorkspace,
     nf = size(work.hflux_arr, 1)
 
     @inbounds for k in 1:Nz, c in 1:nc
-        q = clamp(qv_cell[c, k], 0.0, 0.999999)
+        q = clamp(qv_cell[c, k], 0.0, MAX_SPECIFIC_HUMIDITY)
         work.m_arr[c, k] *= (1.0 - q)
     end
 
@@ -301,7 +301,7 @@ function apply_dry_basis_reduced!(work::ReducedTransformWorkspace,
             continue
         end
         q_face = 0.5 * (qv_cell[left, k] + qv_cell[right, k])
-        q_face = clamp(q_face, 0.0, 0.999999)
+        q_face = clamp(q_face, 0.0, MAX_SPECIFIC_HUMIDITY)
         work.hflux_arr[f, k] *= (1.0 - q_face)
     end
     return nothing
@@ -576,7 +576,7 @@ function apply_dry_basis_reduced_samples!(values::AbstractMatrix{Float64},
         if left == 0 || right == 0
             values[q, k] = 0.0
         else
-            q_face = clamp(0.5 * (qv_cell[left, k] + qv_cell[right, k]), 0.0, 0.999999)
+            q_face = clamp(0.5 * (qv_cell[left, k] + qv_cell[right, k]), 0.0, MAX_SPECIFIC_HUMIDITY)
             values[q, k] *= 1 - q_face
         end
     end

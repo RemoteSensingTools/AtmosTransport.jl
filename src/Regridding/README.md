@@ -177,7 +177,7 @@ and the stepping loop do not call it.
     `~/.cache/AtmosTransport/cr_regridding`. Runtime surface fluxes use it
     (`../Models/initial_conditions/surface_flux_regridding.jl`).
   - Preprocessing reads `regridder_cache_dir` from its config
-    (`../Preprocessing/target_geometry.jl`), with the same default path.
+    (`../Preprocessing/Core/target_geometry.jl`), with the same default path.
   - The cubed-sphere initial-condition path and `Visualization` use no disk
     cache.
 - New nested-mesh pair: `meshes_nested` and the regridder handle cubed

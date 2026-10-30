@@ -3,12 +3,13 @@ using TOML
 
 import AtmosTransport
 using .AtmosTransport.Grids: HybridSigmaPressure, n_levels
-using .AtmosTransport.Preprocessing:
+using .AtmosTransport.Parameters:
     ECHLEVS_ML137_TROPO34,
     ECHLEVS_ML137_TROPO34A,
     ECHLEVS_ML137_66L,
     ECHLEVS_ML137_CFL94,
-    ECHLEVS_ML137_CFL85,
+    ECHLEVS_ML137_CFL85
+using .AtmosTransport.Preprocessing:
     build_vertical_setup,
     echlevs_preset,
     select_levels_echlevs
@@ -20,6 +21,28 @@ function merge_map_from_spans(spans::Vector{UnitRange{Int}}, nz::Int)
     end
     return mm
 end
+
+
+interfaces_from_spans(spans::Vector{UnitRange{Int}}, vc) =
+    vcat([vc.A[first(span)] for span in spans], vc.A[last(spans[end]) + 1])
+
+function synthetic_l137_vc()
+    a = collect(Float64, 0:137)
+    b = zeros(Float64, 138)
+    return HybridSigmaPressure(a, b)
+end
+
+function write_synthetic_l137_coefficients(path::AbstractString)
+    open(path, "w") do io
+        TOML.print(io, Dict(
+            "coefficients" => Dict(
+                "a" => collect(Float64, 0:137),
+                "b" => zeros(Float64, 138),
+            ),
+        ))
+    end
+end
+
 
 @testset "TM5-numbered ERA5 L137 echlev presets" begin
     # Verbatim from TM5-MP r1112 levels/ml137/tropo34
@@ -88,29 +111,6 @@ end
     # Development-mode cleanup: the descriptive names are the only API.
     @test_throws ErrorException echlevs_preset("ml137_94L")
     @test_throws ErrorException echlevs_preset("ml137_85L")
-end
-
-interfaces_from_spans(spans::Vector{UnitRange{Int}}, vc) =
-    vcat([vc.A[first(span)] for span in spans], vc.A[last(spans[end]) + 1])
-
-function synthetic_l137_vc()
-    a = collect(Float64, 0:137)
-    b = zeros(Float64, 138)
-    return HybridSigmaPressure(a, b)
-end
-
-function write_synthetic_l137_coefficients(path::AbstractString)
-    open(path, "w") do io
-        TOML.print(io, Dict(
-            "coefficients" => Dict(
-                "a" => collect(Float64, 0:137),
-                "b" => zeros(Float64, 138),
-            ),
-        ))
-    end
-end
-
-@testset "CFL-oriented ERA5 L137 echlev presets" begin
     vc = synthetic_l137_vc()
 
     spans_94 = vcat(
@@ -138,7 +138,6 @@ end
     @test merge_map_85 == merge_map_from_spans(spans_85, 137)
     @test selected_85.A == interfaces_from_spans(spans_85, vc)
 end
-
 @testset "CFL-oriented echlev presets are available through config" begin
     mktempdir() do dir
         coeff_path = joinpath(dir, "synthetic_l137.toml")

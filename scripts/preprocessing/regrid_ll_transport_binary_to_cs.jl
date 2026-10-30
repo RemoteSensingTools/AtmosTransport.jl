@@ -9,7 +9,7 @@
 # All of the real work — conservative regrid, wind recovery, panel-local
 # rotation, flux reconstruction, per-level mass consistency, CS Poisson
 # balance, cm diagnosis, streaming v4 write — lives in
-# `src/Preprocessing/binary_pipeline.jl:1545`.
+# `src/Preprocessing/Core/binary_pipeline.jl:1545`.
 #
 # Timestep metadata is read from the source binary header; winds are recovered
 # with each source window's own substep count. The output substep count is

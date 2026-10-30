@@ -35,7 +35,7 @@ function _validate_flux_construction(s, source::AbstractString)
         throw(ArgumentError("$source face_interpolation applies to face_fluxes = :vector only"))
     s.face_fluxes !== :line_integral || _has_source_line_integrals(s) ||
         throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 only)"))
-    _validate_column_balance_weights(s.column_balance_weights, source)
+    validate_column_balance_weights(s.column_balance_weights, source)
     _validate_flux_time_sampling(s, source)
     return s
 end

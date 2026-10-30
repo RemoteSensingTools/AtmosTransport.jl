@@ -239,7 +239,7 @@ function build_v4_header(date::Date,
 
     settings.mass_fix_enable && (settings.include_qv || settings.mass_basis == :dry) &&
         (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
-    _with_column_weights_record(header, _check_spectral_column_weights(grid, settings))
+    with_column_weights_record(header, check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
     validate_transport_contract!(header)
     return header

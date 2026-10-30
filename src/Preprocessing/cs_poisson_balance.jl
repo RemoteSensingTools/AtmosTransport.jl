@@ -305,21 +305,7 @@ function _cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
             mean_abs = abs(mean), worst_ratio = worst_ratio)
 end
 
-"""
-How a column mass-budget correction is spread over the levels of a column.
 
-- `MassWeightedColumn()`: in proportion to layer air mass (default).
-- `HybridBWeightedColumn(B)`: in proportion to `ΔB_k`, the layer's share of a
-  surface-pressure change, as in TM5. Pure-pressure layers (`ΔB = 0`, the
-  stratosphere) receive none of it, so a column mismatch cannot appear in
-  their vertical mass flux as a coherent mode proportional to pressure.
-- `HybridMassWeightedColumn(B)`: in proportion to layer air mass, but only in
-  hybrid layers, `ΔB_k ≥ HYBRID_LAYER_MIN_DB` (1e-6); pure-pressure layers,
-  including near-pure-pressure ones such as GEOS L72 layer 41 (`ΔB = 8.2e-9`),
-  receive none of it.
-"""
-abstract type AbstractColumnWeights end
-struct MassWeightedColumn <: AbstractColumnWeights end
 
 # Layer thicknesses in B from hybrid `B` at the `Nz + 1` interfaces, top first.
 function _hybrid_layer_dB(B::AbstractVector{<:AbstractFloat})
@@ -396,7 +382,7 @@ _weight_levels(::MassWeightedColumn) = nothing
 _weight_levels(w::HybridBWeightedColumn) = length(w.dB)
 _weight_levels(w::HybridMassWeightedColumn) = length(w.hybrid)
 
-function _check_weight_levels(w::AbstractColumnWeights, Nz)
+function check_column_weight_levels(w::AbstractColumnWeights, Nz)
     n = _weight_levels(w)
     n === nothing || n == Nz || throw(DimensionMismatch(
         "column balance weights are defined for $n layers, the fluxes have $Nz"))
@@ -483,7 +469,7 @@ function _distribute_cs_column_delta!(panels_am::NTuple{6, Array{FT, 3}},
                                       col_bm_before::NTuple{6, <:Array},
                                       ft::CSGlobalFaceTable, Nz::Int,
                                       weights::AbstractColumnWeights = MassWeightedColumn()) where FT
-    _check_weight_levels(weights, Nz)
+    check_column_weight_levels(weights, Nz)
     Nc = ft.Nc
     max_face_delta = 0.0
     @inbounds for f in 1:ft.nf
@@ -791,7 +777,7 @@ function diagnose_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                           weights::AbstractColumnWeights = MassWeightedColumn();
                           residual_tol::Union{Real, AbstractVector{<:Real}} = COLUMN_CLOSURE_TOL_KG,
                           context::AbstractString = "cm diagnosis") where FT
-    _check_weight_levels(weights, Nz)
+    check_column_weight_levels(weights, Nz)
     _check_column_tolerance(residual_tol, 6 * Nc * Nc)
     max_raw_residual = 0.0
     max_ratio = 0.0

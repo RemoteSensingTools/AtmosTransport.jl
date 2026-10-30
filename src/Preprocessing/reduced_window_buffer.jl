@@ -138,7 +138,7 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     div_scratch = zeros(Float64, nc, Nz)
     dm_target_work = zeros(Float64, nc, Nz)
 
-    balance_weights = _spectral_column_weights(grid, settings, vertical)
+    balance_weights = spectral_column_weights(grid, settings, vertical)
 
     return ReducedGaussianSpectralWindowWorkspace{
         FT, typeof(work), typeof(merged), typeof(buf), typeof(qv_ws), typeof(cL),
