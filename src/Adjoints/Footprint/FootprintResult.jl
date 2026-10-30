@@ -6,8 +6,7 @@
 # returned by `cs_tape_byte_estimate` (TapeRecording.jl) to size
 # in-memory or on-disk tape allocations.
 #
-# Loaded into the `Adjoints` module via an `include` from
-# `src/Adjoints/Adjoints.jl`.
+# Loaded by `Adjoints.Footprint`.
 # ---------------------------------------------------------------------------
 
 """

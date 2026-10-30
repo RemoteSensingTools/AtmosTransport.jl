@@ -147,3 +147,10 @@ neither imports the facade or deferred stages, and PhysicsInputs has no
 MassClosure edge. Existing consumers follow the moved bindings. No debt
 allowance or reverse folder-order exception is added; the root size allowance
 is removed now that its immediate source is within budget.
+T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
+Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
+inherits the existing lower dependency budgets and permits facade child
+wiring; it removes the old folder-cycle exceptions. Clone, private-use and
+size identities receive no new allowances. Explicit relative imports resolve
+local child modules before inherited aliases, so Inversion.Observations and
+the package's Observations module remain distinct owners.

@@ -37,23 +37,23 @@ function _parity(c::Case)
     n = sum(c.steps)
 
     forward = _replay(inp)
-    ADJ._replay_steps!(forward, 1:n)
-    replayed = (_interior(ADJ._replay_rm(forward)), _interior(ADJ._replay_m(forward)))
+    ADJ.Footprint._replay_steps!(forward, 1:n)
+    replayed = (_interior(ADJ.Footprint._replay_rm(forward)), _interior(ADJ.Footprint._replay_m(forward)))
 
     recorded = _replay(inp)
-    ops = ADJ._record_cs_tape!(recorded, 1:n, AT.DeviceCSTapeStorage())
-    taped = (_interior(ADJ._replay_rm(recorded)), _interior(ADJ._replay_m(recorded)))
+    ops = ADJ.Footprint._record_cs_tape!(recorded, 1:n, AT.DeviceCSTapeStorage())
+    taped = (_interior(ADJ.Footprint._replay_rm(recorded)), _interior(ADJ.Footprint._replay_m(recorded)))
 
     # A checkpoint inside the second met window (after its first step), as the
     # Stride and Revolve drivers take them, and a restart from it.
     restart = _replay(inp)
     k = c.steps[1] + 1
-    ADJ._replay_steps!(restart, 1:k)
-    snap = ADJ._replay_snapshot(restart)
-    ADJ._replay_steps!(restart, (k + 1):n)          # disturb the state ...
-    ADJ._replay_restore!(restart, snap)             # ... and restore the checkpoint
-    ADJ._replay_steps!(restart, (k + 1):n)
-    restarted = (_interior(ADJ._replay_rm(restart)), _interior(ADJ._replay_m(restart)))
+    ADJ.Footprint._replay_steps!(restart, 1:k)
+    snap = ADJ.Footprint._replay_snapshot(restart)
+    ADJ.Footprint._replay_steps!(restart, (k + 1):n)          # disturb the state ...
+    ADJ.Footprint._replay_restore!(restart, snap)             # ... and restore the checkpoint
+    ADJ.Footprint._replay_steps!(restart, (k + 1):n)
+    restarted = (_interior(ADJ.Footprint._replay_rm(restart)), _interior(ADJ.Footprint._replay_m(restart)))
     return (; production, replayed, taped, restarted, ops)
 end
 
@@ -105,7 +105,8 @@ end
     for c in (Case(conv = :tm5, diffusion = :split),
               Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :boundary,
                    reset = :preserve_vmr),
-              Case(scheme = AT.LinRoodPPMScheme(), conv = :tm5, diffusion = :split, cadence = :substep))
+              Case(scheme = AT.LinRoodPPMScheme(), conv = :tm5, diffusion = :split, cadence = :substep),
+              Case(scheme = AT.PPMScheme(AT.CW84Limiter()), conv = :tm5, diffusion = :none))
         inp = _adjoint_inputs(c)
         objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
         footprint(checkpoint) = AT.cs_surface_emission_footprint(
@@ -134,8 +135,8 @@ end
     AT.run!(sim)
     production = _interior(_rm(sim))
     replay = _replay(inp)
-    ADJ._replay_steps!(replay, 1:sum(c.steps))
-    @test exact(_interior(ADJ._replay_rm(replay)), production)
+    ADJ.Footprint._replay_steps!(replay, 1:sum(c.steps))
+    @test exact(_interior(ADJ.Footprint._replay_rm(replay)), production)
     # The per-step composition the adjoint applied before D31 (convection every
     # step) differs from the production run by far more than rounding.
     substep = ADJ.CSStepSchedule(; physics_cadence = :substep, binary_window_contract = true,
@@ -144,8 +145,8 @@ end
                                  window_start_air_mass = ADJ.CSStepSchedule(sim).window_start_air_mass,
                                  window_end_air_mass = ADJ.CSStepSchedule(sim).window_end_air_mass)
     old = _replay(inp; schedule = substep)
-    ADJ._replay_steps!(old, 1:sum(c.steps))
-    rel = maximum(maximum(abs.(_interior(ADJ._replay_rm(old))[p] .- production[p]) ./
+    ADJ.Footprint._replay_steps!(old, 1:sum(c.steps))
+    rel = maximum(maximum(abs.(_interior(ADJ.Footprint._replay_rm(old))[p] .- production[p]) ./
                           abs.(production[p])) for p in 1:6)
     @test rel > 1e-6
 end
@@ -161,12 +162,12 @@ end
     AT.run!(sim)
     production = _interior(_rm(sim))
     replay = _replay(inp)
-    ADJ._replay_steps!(replay, 1:sum(c.steps))
-    @test exact(_interior(ADJ._replay_rm(replay)), production)
+    ADJ.Footprint._replay_steps!(replay, 1:sum(c.steps))
+    @test exact(_interior(ADJ.Footprint._replay_rm(replay)), production)
     # The coupled center V(dt/2) S V(dt/2) with S = 0 is not production's V(dt).
     coupled = _replay(inp; surface_flux = true)
-    ADJ._replay_steps!(coupled, 1:sum(c.steps))
-    rel = maximum(maximum(abs.(_interior(ADJ._replay_rm(coupled))[p] .- production[p]) ./
+    ADJ.Footprint._replay_steps!(coupled, 1:sum(c.steps))
+    rel = maximum(maximum(abs.(_interior(ADJ.Footprint._replay_rm(coupled))[p] .- production[p]) ./
                           abs.(production[p])) for p in 1:6)
     @test rel > 1e-3
 end
@@ -179,6 +180,33 @@ struct _NoAdjointConvection <: AT.AbstractConvection end
 struct _NoAdjointStage <: SP.AbstractStepStage end
 
 @testset "adjoint setup guard" begin
+    style = AT.Models.CubedSphereRuntimeRecipeStyle()
+    context = AT.Models.InversionAdvectionContext()
+    scheme_of(section) = AT.Models.materialize(AT.Models.advection_spec(section, context), style)
+    for section in (Dict("scheme" => "upwind"),
+                    Dict("scheme" => "ppm"),
+                    Dict("scheme" => "ppm", "limiter" => "cw84"),
+                    Dict("scheme" => "ppm", "limiter" => "none"),
+                    Dict("scheme" => "linrood", "vertical" => "upwind"),
+                    Dict("scheme" => "linrood", "ppm_order" => 7,
+                         "vertical" => "upwind"),
+                    Dict("scheme" => "linrood"),
+                    Dict("scheme" => "linrood", "vertical" => "fv3_kord8"),
+                    Dict("scheme" => "linrood", "ppm_order" => 7,
+                         "vertical" => "fv3_kord8_signed"))
+        scheme = scheme_of(section)
+        @test AT.require_adjoint_support(scheme) === scheme
+    end
+    for section in (Dict("scheme" => "slopes"),
+                    Dict("scheme" => "ppm", "vertical" => "fv3_kord8"),
+                    Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed"),
+                    Dict("scheme" => "none"))
+        @test_throws ArgumentError AT.require_adjoint_support(scheme_of(section))
+    end
+    # Schemes outside the runtime vocabulary follow the same rule.
+    @test AT.require_adjoint_support(AT.SlopesScheme(AT.NoLimiter())) == AT.SlopesScheme(AT.NoLimiter())
+    @test_throws ArgumentError AT.require_adjoint_support(AT.PPMScheme(AT.Operators.PositivityLimiter()))
+
     supported = _simulation(Case(conv = :tm5, diffusion = :split))
     @test AT.require_adjoint_support(supported) === supported
     @test ADJ.adjoint_support(AT.TM5Convection()) === nothing
@@ -194,6 +222,11 @@ struct _NoAdjointStage <: SP.AbstractStepStage end
                                     grid = GRID, advection = AT.UpwindScheme(),
                                     advection_workspace = nothing, kw...)
     plan = SP.StepPlan()
+    for convection in (AT.CMFMCConvection(clamp = true),
+                       AT.TM5Convection(use_collab_lu = true), AT.TM5Convection(lmax_conv = 3),
+                       AT.TM5Convection(n_merge = 2), AT.CMFMCMatrixConvection(use_collab_lu = true))
+        @test_throws ArgumentError AT.require_adjoint_support(plan, ops(; convection))
+    end
     @test occursin("use_collab_lu", message(() -> AT.require_adjoint_support(
         plan, ops(convection = AT.TM5Convection(; use_collab_lu = true)))))
     @test occursin("clamp", message(() -> AT.require_adjoint_support(
@@ -261,6 +294,11 @@ end
     objective = AT.CSLayerMeanObjective(3, 2, 2, NZ)
     J(sim) = (AT.run!(sim); ADJ.evaluate_objective(objective, _rm(sim), sim.model.state.air_mass, MESH))
     for (c, h, tol) in ((Case(conv = :tm5, diffusion = :split), 0.5, 1e-9),
+                        (Case(conv = :tm5, diffusion = :boundary), 0.5, 1e-9),
+                        (Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc,
+                              diffusion = :boundary), 1e-4, 1e-7),
+                        (Case(scheme = AT.LinRoodPPMScheme(), conv = :tm5,
+                              diffusion = :boundary), 1e-4, 1e-7),
                         (Case(conv = :cmfmc, diffusion = :boundary, cadence = :substep), 0.5, 1e-9),
                         (Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :tm5,
                               diffusion = :split, reset = :preserve_vmr), 1e-4, 1e-7),

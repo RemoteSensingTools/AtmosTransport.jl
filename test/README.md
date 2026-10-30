@@ -228,3 +228,13 @@ It calls the comparison/report functions without running any golden cases.
 on lat-lon, reduced-Gaussian and cubed-sphere models and in `StepOperators`.
 JuliaSyntax uses the same exact version pins in the root test extras and
 this folder's project; it is not a runtime dependency.
+
+The inversion topic keeps algebraic adjoint identities, gradient Taylor sweeps,
+preconditioned finite differences and control-shape checks together in
+`core/test_cs_gradient_checks.jl`, using one nonzero-flow problem. The mixed
+placed/window/retrieval-column reference and cost finite differences run in
+`core/test_cs_4dvar_retrieval_columns.jl`; their independent TM5 rebin and hat
+projection live in `helpers/cs_inversion_reference.jl`. Upward Upwind vertical
+flux and FV3 Lin–Rood footprint differences share the matrix in
+`core/test_cs_linrood_fv3_adjoint.jl`. Tape storage rejections share
+`core/test_cs_tape_path.jl`.

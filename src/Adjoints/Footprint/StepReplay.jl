@@ -1,3 +1,28 @@
+function _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+    nsteps = length(panels_am_steps)
+    nsteps > 0 || throw(ArgumentError("footprint generation requires at least one step"))
+    length(panels_bm_steps) == nsteps ||
+        throw(ArgumentError("panels_bm_steps length $(length(panels_bm_steps)) does not match panels_am_steps length $nsteps"))
+    length(panels_cm_steps) == nsteps ||
+        throw(ArgumentError("panels_cm_steps length $(length(panels_cm_steps)) does not match panels_am_steps length $nsteps"))
+    return nsteps
+end
+
+function _validate_emission_rates(rates, nsteps::Int, mesh::CubedSphereMesh,
+                                  name::AbstractString)
+    rates === nothing && return nothing
+    length(rates) == nsteps || throw(ArgumentError(
+        "$name length $(length(rates)) does not match nsteps $nsteps"))
+    @inbounds for step in 1:nsteps, p in 1:6
+        size(rates[step][p]) == (mesh.Nc, mesh.Nc) || throw(DimensionMismatch(
+            "$name step $step panel $p has shape $(size(rates[step][p])); " *
+            "expected $((mesh.Nc, mesh.Nc))"))
+    end
+    return nothing
+end
+
+
+
 # ---------------------------------------------------------------------------
 # The adjoint's forward model: the production step plan, replayed.
 #
@@ -141,11 +166,11 @@ function _resolve_schedule(s::CSStepSchedule, nsteps::Int, ::Type{FT}) where FT
             (w <= length(s.steps_per_window) ? s.steps_per_window[w] : throw(ArgumentError(
                 "the schedule has $(length(s.steps_per_window)) met windows " *
                 "($(sum(s.steps_per_window)) steps); the run has $nsteps steps")))
-        step_dt = wdt / FT(n)
+        step_dt = window_step_dt(wdt, n)
         for k in 1:n
             push!(window, w); push!(first, k == 1); push!(last, k == n); push!(dt, step_dt)
-            push!(start_time, s.start_time + Float64(s.window_dt) * ((w - 1) + (k - 1) / n))
-            push!(end_time, s.start_time + Float64(s.window_dt) * ((w - 1) + k / n))
+            push!(start_time, window_clock(s.start_time, s.window_dt, w - 1, (k - 1) / n))
+            push!(end_time, window_clock(s.start_time, s.window_dt, w - 1, k / n))
         end
     end
     resize!(window, nsteps); resize!(first, nsteps); resize!(last, nsteps)
@@ -167,10 +192,10 @@ function _call_schedule(schedule, dt, ::Type{FT}) where FT
     end
     schedule isa CSStepSchedule || throw(ArgumentError(
         "schedule must be a CSStepSchedule or nothing; got $(typeof(schedule))"))
-    step_dt = FT(schedule.window_dt) / FT(first(schedule.steps_per_window))
+    step_dt = window_step_dt(FT(schedule.window_dt), first(schedule.steps_per_window))
     if dt !== nothing
         steps = schedule.steps_per_window
-        all(n -> FT(schedule.window_dt) / FT(n) == FT(dt), steps) || throw(ArgumentError(
+        all(n -> window_step_dt(FT(schedule.window_dt), n) == FT(dt), steps) || throw(ArgumentError(
             "dt = $(dt) disagrees with the schedule's step dt window_dt / steps_per_window; " *
             "omit dt when passing a schedule"))
     end

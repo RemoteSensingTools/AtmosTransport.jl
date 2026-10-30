@@ -522,3 +522,20 @@ end
         @test any(occursin("reference to later folder", e) for e in check_fixture(root).errors)
     end
 end
+
+@testset "relative child modules shadow inherited module names" begin
+    structure_fixture() do root
+        add_source(root, "Upper.jl", """
+        module Lower
+        export local_value
+        local_value(x) = x * 2
+        end
+        using .Lower: local_value
+        local_caller(x) = local_value(x)
+        """)
+        inv = StructureCheck.inventory(root)
+        bindings, _, _ = StructureCheck.resolve_imports(inv)
+        @test StructureCheck.binding_owner(bindings, "AtmosTransport.Upper", "local_value") ==
+              ("AtmosTransport.Upper.Lower", "local_value")
+    end
+end

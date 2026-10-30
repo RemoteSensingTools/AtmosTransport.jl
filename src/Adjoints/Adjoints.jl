@@ -1,128 +1,46 @@
-"""
-    Adjoints
-
-Prototype adjoint and footprint utilities.
-
-The shipped path is a kernelized cubed-sphere reverse pass for tracer mass
-with fixed meteorology/air-mass evolution. It accumulates surface-emission
-footprints (and the initial-condition sensitivity) from an adjoint seed or
-observation forcing without perturbing each surface cell.
-
-The forward model is the production step by construction: the adjoint
-replays the production `StepPlan` (`CSStepSchedule`: physics cadence, met
-windows, air-mass resets) with the production operators on a single-tracer
-state, records its tape through the recorder hooks of the production step
-(`Operators.AbstractStepRecorder`) and walks the tape backwards with each
-operator's adjoint. `require_adjoint_support` rejects a plan containing an
-operator without an adjoint before anything is recorded.
-"""
+"""Cubed-sphere discrete adjoint core; replay and inversion live in its child modules."""
 module Adjoints
 
-using ..Grids: canonical_seams
-
-using ..Grids: edge_interior_ij, edge_halo_ij, corner_source_ij, cs_seam_axis, cs_seam_sign,
-               cs_seam_face_index, cs_seam
-
-using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
-# NCDatasets is loaded here (not inside ObservationsIO.jl) so the
-# NetCDF readers/writers under `src/Inversion/` (ObservationsIO.jl,
-# DeparturesIO.jl) share one import.
-import NCDatasets
-
-using ..Grids: CubedSphereMesh, reciprocal_edge,
-    EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST,
-    panel_cell_center_lonlat,
-    panel_convention, cs_definition, cs_definition_tag
-using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter, MonotoneLimiter,
-    CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
-    LinRoodPPMScheme, NoAdvection, FV3ScalarProfile, AbstractLimiter,
-    fill_panel_halos!, apply_linrood_horizontal_adjoint_single_panel!,
-    apply_linrood_update_adjoint!, _share_lr_seam_faces!,
-    _accumulate_linrood_halo_adjoint!, needs_column_scratch,
-    CSAdjointWorkspace, CSAdjointLinearScheme, CSAdjointNonlinearScheme,
-    CSAdjointFV3Vertical,
-    _adjoint_scheme_sweep!, _adjoint_fill_panel_halos!
-using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
-    apply_vertical_diffusion_vmr!, check_diffusion_workspace,
+using KernelAbstractions: @Const, @index, @kernel, get_backend, synchronize
+using ..Grids: CubedSphereMesh
+using ..Operators.Advection: AbstractLimiter, CSAdjointFV3Vertical, CSAdjointLinearScheme,
+    CSAdjointNonlinearScheme, CSAdjointWorkspace, FV3ScalarProfile, LinRoodPPMScheme, NoAdvection,
+    PPMScheme, SlopesScheme, UpwindScheme, _accumulate_linrood_halo_adjoint!,
+    _adjoint_fill_panel_halos!, _share_lr_seam_faces!,
+    apply_linrood_horizontal_adjoint_single_panel!, apply_linrood_update_adjoint!
+using ..Operators.Diffusion: ImplicitVerticalDiffusion, LocalHoltslagBovilleKzField, NoDiffusion,
     _vertical_diffusion_cs_single_adjoint_kernel!,
-    _vertical_diffusion_cs_single_dkg_adjoint_kernel!,
-    surface_flux_coupling, surface_flux_center!, LocalHoltslagBovilleKzField
-using ..Operators.Convection.CMFMC: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
-    CMFMCMatrixConvection, CMFMCMatrixWorkspace, invalidate_cmfmc_cache!,
-    invalidate_cmfmc_matrix_cache!, _get_or_compute_n_sub!, _refresh_cmfmc_matrix_rates!,
-    _cmfmc_matrix_synthetic_forcing, _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
-using ..Operators.Convection.CMFMC: _cmfmc_cs_panel_column_single_adjoint_kernel!
-using ..Operators.Convection.TM5: _tm5_cs_panel_column_adjoint_kernel!
+    _vertical_diffusion_cs_single_dkg_adjoint_kernel!, check_diffusion_workspace
+using ..Operators.Convection.CMFMC: CMFMCConvection, CMFMCEdgeCloudBase, CMFMCMatrixConvection,
+    CMFMCMatrixWorkspace, CMFMCWorkspace, _cmfmc_cs_panel_column_single_adjoint_kernel!,
+    _cmfmc_dtrain_array, _cmfmc_matrix_synthetic_forcing, _get_or_compute_n_sub!,
+    _refresh_cmfmc_matrix_rates!, _require_edge_cloud_base, invalidate_cmfmc_cache!,
+    invalidate_cmfmc_matrix_cache!
+using ..Operators.Convection.TM5: TM5Convection, TM5Workspace, _ensure_tm5_scratch!,
+    _tm5_cs_panel_column_adjoint_kernel!
 using ..Operators.Convection: NoConvection
-using ..Operators.Convection.TM5: TM5Convection, TM5Workspace, _ensure_tm5_scratch!
-using ..State: AbstractCubedSphereField,
-    AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
-    field_value, panel_field, update_field!
+using ..State: AbstractCSDkgField, AbstractCubedSphereField, GCHPNonlocalPBLField, panel_field,
+    update_field!
 using ..MetDrivers: ConvectionForcing
-import ..MetDrivers: current_time, uses_binary_substep_contract
-using ..Architectures: _kahan_add, CPU
-using ..Grids: AtmosGrid, HybridSigmaPressure
-using ..State: CubedSphereState, CubedSphereFaceFluxState
-using ..Operators: AbstractAdvectionScheme, apply!
-using ..Operators.SurfaceFlux: NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource
+import ..MetDrivers: current_time
+using ..Operators: AbstractAdvectionScheme
+using ..Operators.SurfaceFlux: NoSurfaceFlux, SurfaceFluxOperator
 using ..Operators.Chemistry: AbstractChemistryOperator, NoChemistry
-using ..Operators.Convection.CMFMC: CMFMCEdgeCloudBase
-# The step plan the adjoint replays and the recorder hooks its tape recorder
-# implements (Operators/StepPlan, Operators/StepRecording.jl).
-using ..Operators.StepPlans: StepPlan, StepOperators, StepTiming, AbstractStepStage,
-    TransportStage, ConvectionStage, ChemistryBeforeStage, ChemistryAfterStage,
-    AirMassResetStage, WindowStartAirMass, WindowEndAirMass, plan_stages,
-    execute_window_advance!, execute_window_start!, execute_step_stages!,
-    execute_window_end!, operator_state, restore_operator_state!, reset_operator_state!,
-    _cs_advection_workspace_for
-import ..Operators.StepPlans: air_mass_reset_target
-using ..Operators: AbstractStepRecorder, NoStepRecorder
-import ..Operators: record_halo!, record_sweep!, record_center!, record_diffusion!,
-    record_emission!, record_linrood_horizontal!, record_convection!,
-    record_air_mass_reset!, record_chemistry!
-using ..Parameters: DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN, DEFAULT_CFL_LIMIT,
-                    DEFAULT_LINROOD_PPM_ORDER, STANDARD_GRAVITY
-using ..State: AbstractMassBasis, DryBasis
-# Observation binding and vertical placement (Inversion/): the cell locator and
-# the placement rules of the forward observation sampler.
-using ..Observations: write_observation_variable!, ObservationCounters, cell_locator, locate,
-                      CellLocation, VerticalPlacementSpec, VerticalPlacement,
-                      VERTICAL_PLACEMENT_CODES, ObservationTerrain, SoundingRequest, SiteRequest,
-                      UnplacedWithoutHeight, resolve_placement, check_terrain,
-                      check_surface_height_layout, check_pressure_basis, AbstractPressureBasis,
-                      PlacementColumn, sample_column_layer!, needs_column_humidity,
-                      AbstractLayerTemperature, ConstantLayerTemperature, ProfileLayerTemperature,
-                      handle_unplaced, count_unplaced!, unplaced_example, warn_below_ground,
-                      vertical_placement_codes_description, AbstractUnplacedPolicy, ErrorOnUnplaced,
-                      SkipUnplaced, placement_pressures!, RetrievalColumn, retrieval_layer_count,
-                      retrieval_column_weights!, retrieval_prior_offset, retrieval_profile!,
-                      retrieval_model_error_variance, mole_fraction_unit_scale, mole_fraction_scale,
-                      AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column,
-                      retrieval_mapping_label, parse_retrieval_mapping, retrieval_pressure_count,
-                      read_oco2_retrieval_columns, oco2_level_form, nc_variable,
-                      raw_observation_block, pressure_unit_scale
+using ..Operators.StepPlans: AbstractStepStage, AirMassResetStage, ChemistryAfterStage,
+    ChemistryBeforeStage, ConvectionStage, StepOperators, StepPlan, TransportStage, operator_state,
+    plan_stages, restore_operator_state!
+using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractUnplacedPolicy,
+    ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
+using ..Tape: AbstractCheckpointSchedule, CSTapeSlot, DeviceCSTapeStorage, FullCheckpoint,
+    MmapCSTapeSlot, MmapCSTapeStorage, PinnedHostCSTapeSlot, PinnedHostCSTapeStorage,
+    RevolveCheckpoint, StrideCheckpoint, finalize_tape!, get_record, load_mmap_tape
 
-# Tape storage policies + record types live in src/Tape/
-# (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so
-# call sites continue to use the unqualified names.
-using ..Tape: AbstractCSTapeStorage,
-              DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
-              CSTapeSlot, PinnedHostCSTapeSlot, MmapCSTapeSlot,
-              _tape_storage, _tape_panels,
-              _resolve_tape_path, _validate_tape_path, _build_window_storage,
-              _allocate_tape_slot, stage_panels!, _stage_panels,
-              _after_tape_stage!, _after_tape_read!,
-              _sync_pinned_tape_storage!, _sync_mmap_tape_storage!,
-              _mmap_prepare_for_panels!,
-              _register_tape_read_backend!, _tape_read_cache!,
-              AbstractTapeReadRole, AirMassRead, TracerMassRead,
-              _bytes_per_panel_tuple, finalize_tape!,
-              load_mmap_tape, get_record,
-              _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
-              _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord, _CSTapeOp,
-              AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
-              RevolveCheckpoint,
-              checkpoint_window_count, checkpoint_window_range
+export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
+    CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
+    CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
+    MmapCSTapeSlot, PinnedHostCSTapeSlot, finalize_tape!, load_mmap_tape, get_record,
+    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint,
+    evaluate_objective, require_adjoint_support, adjoint_support
 
 # Sweeps whose record stages the tracer mass as well as the air mass.
 const _RmTapedSweepScheme = Union{CSAdjointNonlinearScheme, CSAdjointFV3Vertical}
@@ -130,7 +48,7 @@ const _RmTapedSweepScheme = Union{CSAdjointNonlinearScheme, CSAdjointFV3Vertical
 # tape record (`_CSLinRoodHorizRecord`, LinRoodTape.jl) and the kernel
 # adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`; its vertical
 # sweeps are `_CSSweepRecord`s of `scheme.vertical` (upwind or the FV3 profile).
-# The reverse loop (`_walk_window_reverse!` in `src/Footprint/ReverseLoop.jl`)
+# The reverse loop (`_walk_window_reverse!` in `src/Adjoints/Footprint/ReverseLoop.jl`)
 # handles the horizontal record in its own branch alongside the
 # `_CSSweepRecord`, `_CSHaloRecord`, `_CSDiffusionRecord`,
 # `_CSConvectionRecord`, and `_CSMidpointRecord` cases.
@@ -176,207 +94,37 @@ _adjoint_gap(::NoAdvection) =
     "NoAdvection (scheme = \"none\") has no record in the cubed-sphere tape."
 _adjoint_gap(s) = "$(nameof(typeof(s))) has no cubed-sphere adjoint."
 
-# Footprint-objective types + seeding/eval kernels.
+
+
 include("ObjectiveSeeding.jl")
-
-
-# CSFootprintResult + CSTapeByteEstimate.
-include("../Footprint/FootprintResult.jl")
-
-# Observation operators as sparse linear functionals (`CSLinearFunctional`)
-# and the end-of-step adjoint forcing of the reverse walk (`NoStepForcing`,
-# `CSStepForcing`, `_inject_step_forcing!`); `_seed_objective!` above injects
-# one functional through the same kernel.
-include("../Footprint/StepForcing.jl")
-
-
-# Control / observation / 4D-Var result types (`CSTimeSampling`,
-# `CSObservation`, `CSObservationStencil`, `CS4DVarResult`, ...).
-include("../Inversion/Observations.jl")
-
-# The column meteorology of placed point observations
-# (`CSObservationColumnMet`) and the per-step sampling of every objective
-# (`_sample_objective`: value, linear functional and level), used by the
-# forward replay `_observe_cs_forward`.
-include("../Inversion/ObservationColumns.jl")
-
-# On-disk observation IO (CSObservationRecord / CSObservationSet, read/write
-# to the v2 NetCDF schema documented in `schemas/cs_observations_v2.toml`).
-include("../Inversion/ObservationsIO.jl")
-
-# `bind_to_mesh` bridge from the on-disk `CSObservationSet` to a 4D-Var-ready
-# `Vector{CSObservation}`: time sampling, containing cell, and the vertical
-# placement of point records (`CSPlacedPointObjective`) or column means.
-include("../Inversion/ObservationBinding.jl")
-
-# On-disk departures (forward-pass simulated values and sampling stencils
-# paired with their originating observation records).
-include("../Inversion/DeparturesIO.jl")
-# OCO-2 / OCO-3 v11 MIP 10-second files → observation schema v2.
-include("../Inversion/OCO2MIPObservations.jl")
-
-# Surface-flux background-error covariance B and its
-# spectral square root B^(1/2) for the preconditioned 4D-Var path.
-# Self-contained (depends only on FFTW + base) so include order is not
-# load-bearing; placed here so the export block below can re-export
-# the public surface.
-include("../Inversion/Covariance.jl")
-
-# Preconditioner (χ ↔ x change of variables) with
-# Linear and LogNormal optim types. Depends on Covariance.jl for
-# `apply_B_half!` / `apply_B_half_adjoint!` / `apply_B_half_inverse!`,
-# so loaded immediately after.
-include("../Inversion/Preconditioning.jl")
-
-
-_copy_panel_tuple(panels) = ntuple(p -> copy(panels[p]), 6)
-
-function _zero_panel_tuple_like(panels)
-    return ntuple(p -> begin
-        a = similar(panels[p])
-        fill!(a, zero(eltype(a)))
-        a
-    end, 6)
-end
-
-function _zero_surface_rates(mesh::CubedSphereMesh, prototype::AbstractArray{FT}) where {FT}
-    return ntuple(_ -> begin
-        a = similar(prototype, FT, mesh.Nc, mesh.Nc)
-        fill!(a, zero(FT))
-        a
-    end, 6)
-end
-
-function _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
-    nsteps = length(panels_am_steps)
-    nsteps > 0 || throw(ArgumentError("footprint generation requires at least one step"))
-    length(panels_bm_steps) == nsteps ||
-        throw(ArgumentError("panels_bm_steps length $(length(panels_bm_steps)) does not match panels_am_steps length $nsteps"))
-    length(panels_cm_steps) == nsteps ||
-        throw(ArgumentError("panels_cm_steps length $(length(panels_cm_steps)) does not match panels_am_steps length $nsteps"))
-    return nsteps
-end
-
-function _validate_emission_rates(rates, nsteps::Int, mesh::CubedSphereMesh,
-                                  name::AbstractString)
-    rates === nothing && return nothing
-    length(rates) == nsteps || throw(ArgumentError(
-        "$name length $(length(rates)) does not match nsteps $nsteps"))
-    @inbounds for step in 1:nsteps, p in 1:6
-        size(rates[step][p]) == (mesh.Nc, mesh.Nc) || throw(DimensionMismatch(
-            "$name step $step panel $p has shape $(size(rates[step][p])); " *
-            "expected $((mesh.Nc, mesh.Nc))"))
-    end
-    return nothing
-end
-
-
-# Advection numerical transposes are imported from their forward owner above.
-
-# Vertical-diffusion adjoint kernels.
+include("StepForcing.jl")
+include("PanelArrays.jl")
 include("DiffusionAdjoint.jl")
-
-# CMFMC, TM5 and CMFMC-matrix convection adjoint kernels.
 include("ConvectionAdjoint.jl")
-
-
-# Tape storage policies + staging API live in
-# `src/Tape/TapeStorage.jl` and are imported via `using ..Tape` at
-# the top of this module.
-
-
-# Tape record types (_CSSweepRecord, _CSHaloRecord,
-# _CSMidpointRecord, _CSDiffusionRecord, _CSConvectionRecord,
-# _CSStepEndRecord) and the
-# _CSTapeOp union live in `src/Tape/TapeRecords.jl` and are imported
-# via `using ..Tape` at the top of this module. The `S <: CSAdjointSupportedScheme`
-# type constraint on `_CSSweepRecord.scheme` is relaxed to plain `S`
-# there; the constraint is now enforced at the
-# `_record_sweep!`/`_adjoint_scheme_sweep!` call sites below.
-
-# LinRoodPPMScheme tape record and its reverse: `_CSLinRoodHorizRecord`,
-# `_apply_cs_linrood_horizontal_adjoint!`.
 include("LinRoodTape.jl")
-
-# The adjoint's forward model: `CSStepSchedule` and the replay of the
-# production step plan (`_CSReplay`).
-include("../Footprint/StepReplay.jl")
-
-# The setup guard: `adjoint_support` and `require_adjoint_support`.
 include("AdjointSupport.jl")
 
-# Tape and counting recorders (the production step's recorder hooks) and the
-# record builders / tape-size estimate.
-include("../Footprint/TapeRecorder.jl")
-include("../Footprint/TapeRecording.jl")
+include("Footprint/Footprint.jl")
+using .Footprint
+include("Inversion/Inversion.jl")
+using .Inversion
 
-# Reverse walk + forward replays.
-include("../Footprint/ReverseLoop.jl")
-
-# Full, Stride and Revolve checkpoint drivers, one implementation for every
-# scheme family: they save and restore replay snapshots, record windows of
-# the replay and walk them with `_walk_window_reverse!`.
-include("../Footprint/StrideCheckpoint.jl")
-include("../Footprint/revolve_checkpoint.jl")
-
-
-# User-facing footprint API.
-include("../Footprint/FootprintAPI.jl")
-
-# Surface-flux Jacobian + aggregation.
-include("../Inversion/Jacobian.jl")
-
-# 4D-Var cost + gradient evaluation.
-include("../Inversion/CostGradient.jl")
-
-# 4D-Var optimizer backends (`CSGradientDescent`, `CSLBFGS` via Optim.jl)
-# and the `cs_surface_flux_4dvar_optimize` entry point.
-include("../Inversion/Optimizer.jl")
-
-
-
-
-
-
-export AbstractCSFootprintObjective
-export CSLayerMeanObjective, CSColumnMeanObjective, CSPlacedPointObjective, CSRetrievalColumnObjective
-export CSCellAverageObjective, CELL_AVERAGE_PLACEMENT_CODE
-export AbstractFlaggedRecordPolicy, DropFlaggedRecords, CosampleFlaggedRecords
-export AbstractCellAveraging, NoCellAveraging, CellAverage, inflate_cell_model_error
-export read_oco2_mip_observations, convert_oco2_mip_observations
-export CSSeedObjective, CSFootprintResult
-export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult
-export CSTimeSampling, CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult
-export CSObservationStencil, COLUMN_MEAN_PLACEMENT_CODE, FIXED_LEVEL_PLACEMENT_CODE
-export RETRIEVAL_COLUMN_PLACEMENT_CODE
-export CSObservationColumnMet
-export AbstractObservationKind, PointObservationKind, ColumnObservationKind
-export CSObservationRecord, CSObservationSet, read_observations, write_observations
-export AbstractOutOfRangePolicy, RejectOutOfRange, SkipOutOfRange, ClampOutOfRange
-export bind_to_mesh
-export CSDepartureRecord, CSDepartureSet, build_departure_set
-export read_departures, write_departures
-export AbstractCSSurfaceFluxCovariance
-export DiagonalCSCovariance, IsotropicGaussianCSCovariance
-export apply_B_half!, apply_B_half_adjoint!, apply_B_half_inverse!
-export AbstractCSOptimType, LinearOptimType, LogNormalOptimType
-export CSSurfaceFluxPreconditioner
-export apply_preconditioner!, apply_preconditioner_inverse!
-export apply_preconditioner_tangent!, apply_preconditioner_adjoint!
-export CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage
-export MmapCSTapeStorage, MmapCSTapeSlot
-export PinnedHostCSTapeSlot, CSTapeByteEstimate
-export finalize_tape!
-export load_mmap_tape, get_record
-export AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint
-export evaluate_objective, run_cs_footprint_forward
-export cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed
-export cs_tape_byte_estimate
-export cs_surface_flux_jacobian
-export cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize
-export AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve
-export require_adjoint_support, adjoint_support
-export CSStepSchedule
-export CSIterationLog, CSIterationLogEntry
+export CELL_AVERAGE_PLACEMENT_CODE, AbstractFlaggedRecordPolicy, DropFlaggedRecords,
+    CosampleFlaggedRecords, AbstractCellAveraging, NoCellAveraging, CellAverage,
+    inflate_cell_model_error, read_oco2_mip_observations, convert_oco2_mip_observations,
+    CSFootprintResult, CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult, CSTimeSampling,
+    CSObservation, CSSurfaceFluxControl, CS4DVarResult, CS4DVarSolveResult, CSObservationStencil,
+    COLUMN_MEAN_PLACEMENT_CODE, FIXED_LEVEL_PLACEMENT_CODE, RETRIEVAL_COLUMN_PLACEMENT_CODE,
+    CSObservationColumnMet, AbstractObservationKind, PointObservationKind, ColumnObservationKind,
+    CSObservationRecord, CSObservationSet, read_observations, write_observations,
+    AbstractOutOfRangePolicy, RejectOutOfRange, SkipOutOfRange, ClampOutOfRange, bind_to_mesh,
+    CSDepartureRecord, CSDepartureSet, build_departure_set, read_departures, write_departures,
+    AbstractCSSurfaceFluxCovariance, DiagonalCSCovariance, IsotropicGaussianCSCovariance,
+    apply_B_half!, apply_B_half_adjoint!, AbstractCSOptimType, LinearOptimType, LogNormalOptimType,
+    CSSurfaceFluxPreconditioner, apply_preconditioner!, apply_preconditioner_adjoint!,
+    CSTapeByteEstimate, run_cs_footprint_forward, cs_surface_emission_footprint,
+    cs_surface_emission_footprint_from_seed, cs_tape_byte_estimate, cs_surface_flux_jacobian,
+    cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize, AbstractCSOptimizer, CSGradientDescent,
+    CSLBFGS, cs_surface_flux_4dvar_solve, CSStepSchedule, CSIterationLog, CSIterationLogEntry
 
 end # module Adjoints

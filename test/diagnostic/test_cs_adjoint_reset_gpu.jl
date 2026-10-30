@@ -32,15 +32,15 @@ else
             @test inp.panels_m0[1] isa CuArray
             AT.run!(sim)
             expected = map(Array, _interior(_rm(sim)))
-            replay() = first(ADJ._cs_replay_for_call(inp.panels_rm0, inp.panels_m0,
+            replay() = first(ADJ.Footprint._cs_replay_for_call(inp.panels_rm0, inp.panels_m0,
                 inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh;
                 inp.kwargs...))
             forward = replay()
-            ADJ._replay_steps!(forward, 1:sum(c.steps))
-            @test map(Array, _interior(ADJ._replay_rm(forward))) == expected
+            ADJ.Footprint._replay_steps!(forward, 1:sum(c.steps))
+            @test map(Array, _interior(ADJ.Footprint._replay_rm(forward))) == expected
             recorded = replay()
-            tape = ADJ._record_cs_tape!(recorded, 1:sum(c.steps), AT.DeviceCSTapeStorage())
-            @test map(Array, _interior(ADJ._replay_rm(recorded))) == expected
+            tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.DeviceCSTapeStorage())
+            @test map(Array, _interior(ADJ.Footprint._replay_rm(recorded))) == expected
             resets = filter(op -> op isa AT.Tape._CSAirMassResetRecord, tape)
             @test length(resets) == 3 # two window ends and one window advance
             # The record stores its reset target in a tape slot (device storage).

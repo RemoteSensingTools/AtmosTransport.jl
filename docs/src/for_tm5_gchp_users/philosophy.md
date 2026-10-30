@@ -147,7 +147,7 @@ See [Mass conservation theory](../theory/mass_conservation.md) and the
 ### 6. Adjoints are a layer, not a fork
 
 Tape recording and reverse replay live in `src/Tape/`,
-`src/Adjoints/`, and `src/Footprint/`. The footprint forward pass records
+`src/Adjoints/`, and `src/Adjoints/Footprint/`. The footprint forward pass records
 typed operator data; the reverse pass walks those records backwards with
 operator-specific adjoint kernels. The shipped consumers are
 surface-emission footprints and the cubed-sphere 4D-Var cost/gradient and

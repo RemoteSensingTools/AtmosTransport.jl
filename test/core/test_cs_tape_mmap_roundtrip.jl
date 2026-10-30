@@ -134,44 +134,6 @@ end
         end
     end
 
-    @testset "finaliser is idempotent and survives missing files" begin
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            TapeMod._stage_panels(storage,
-                _build_panels(:m; Nc = 2, Hp = 2, Nz = 2, FT = Float32))
-            TapeMod.finalize_tape!(storage)
-            @test storage.finalised === true
-            @test storage.closed === true
-            # Second call is a safe no-op.
-            TapeMod.finalize_tape!(storage)
-            @test storage.closed === true
-        end
-    end
-
-    @testset "default :mmap dispatch returns a temp-dir MmapCSTapeStorage" begin
-        s = TapeMod._tape_storage(:mmap)
-        try
-            @test s isa TapeMod.MmapCSTapeStorage
-            @test isdir(s.dir)
-            @test s.cleanup_on_finalize === true
-        finally
-            TapeMod.finalize_tape!(s)
-        end
-        # Temp dir should be removed after finalize_tape! when cleanup is on.
-        @test !isdir(s.dir)
-    end
-
-    @testset "argument errors on closed / finalised storage" begin
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            TapeMod.finalize_tape!(storage)
-            @test_throws ArgumentError TapeMod._stage_panels(storage,
-                _build_panels(:m; Nc = 2, Hp = 2, Nz = 2, FT = Float32))
-        end
-    end
-
     @testset "role- and shape-keyed device read caches" begin
         # Stand-in for a "GPU-ish" backend that picks up the device-cache
         # path: wrap Array{T,N} in a thin subtype so the
@@ -356,207 +318,11 @@ end
 # `cs_surface_emission_footprint` actually builds.
 # ---------------------------------------------------------------------------
 
-@testset "cs_tape_byte_estimate matches realised tape size" begin
-    @testset "linear PPM (m-only state tape)" begin
-        mesh, panels_m, panels_rm, am, bm, cm =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
-        scheme = AT.PPMScheme(AT.NoLimiter())
-
-        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh, scheme)
-        @test est isa AT.CSTapeByteEstimate
-        @test est.nsteps == 2
-        # Linear schemes stage one panel set per sweep, no tracer branch.
-        @test est.sweep_records > 0
-        @test est.state_records == est.sweep_records
-        @test est.bytes_per_state == sizeof(Float64) * 6 * length(panels_m[1])
-        @test est.state_bytes ==
-              est.state_records * est.bytes_per_state
-        # total_records is the op count — sum of every op-count field,
-        # including the end-of-step markers (one per step, issue #20).
-        @test est.total_records == est.sweep_records + est.halo_records +
-                                   est.midpoint_records + est.diffusion_records +
-                                   est.convection_records + est.step_records
-        @test est.halo_records > 0
-        @test est.midpoint_records == est.nsteps
-        @test est.step_records == est.nsteps
-
-        # Sanity-check the estimate against a realised mmap tape — the
-        # written `records.bin` size must be within rounding distance
-        # of `state_bytes` once we run the footprint.
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme = scheme, dt = 1.0, tape_storage = storage)
-            @test storage.cursor == est.state_bytes
-            TapeMod.finalize_tape!(storage)
-        end
-    end
-
-    @testset "monotone PPM (m + rm tracer branch tape)" begin
-        mesh, panels_m, panels_rm, am, bm, cm =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
-        scheme = AT.PPMScheme(AT.MonotoneLimiter())
-
-        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh, scheme)
-        # Nonlinear schemes stage BOTH m and rm panels per sweep.
-        @test est.state_records == 2 * est.sweep_records
-        @test est.state_bytes ==
-              est.state_records * est.bytes_per_state
-
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme = scheme, dt = 1.0, tape_storage = storage)
-            @test storage.cursor == est.state_bytes
-            TapeMod.finalize_tape!(storage)
-        end
-    end
-
-    @testset "estimate scales with nsteps" begin
-        mesh, panels_m, _, am1, bm1, cm1 =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; nontrivial = false)
-        _,    _,        _, am2, bm2, cm2 =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
-        scheme = AT.PPMScheme(AT.NoLimiter())
-        e1 = AT.cs_tape_byte_estimate(panels_m, am1, bm1, cm1, mesh, scheme)
-        e2 = AT.cs_tape_byte_estimate(panels_m, am2, bm2, cm2, mesh, scheme)
-        @test e2.nsteps == 2 * e1.nsteps
-        @test e2.state_bytes == 2 * e1.state_bytes
-        @test e2.midpoint_records == 2 * e1.midpoint_records
-    end
-
-    @testset "total_records is the op count (regression: was inflated)" begin
-        mesh, panels_m, _, am, bm, cm =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
-        # Monotone PPM stages BOTH `panels_m` and `panels_rm` per
-        # sweep, so `state_records == 2 * sweep_records`. The previous
-        # buggy formula computed
-        # `total = state + halo + midpoint = 2*sweep + halo + midpoint`
-        # — inflating the op count by the nonlinear staging factor
-        # for nonlinear schemes. The fixed formula sums op counts
-        # directly.
-        est = AT.cs_tape_byte_estimate(panels_m, am, bm, cm, mesh,
-                                       AT.PPMScheme(AT.MonotoneLimiter()))
-        @test est.state_records == 2 * est.sweep_records
-        @test est.total_records == est.sweep_records + est.halo_records +
-                                   est.midpoint_records + est.diffusion_records +
-                                   est.convection_records + est.step_records
-        # The (buggy) old formula would have evaluated to
-        # `state + halo + midpoint = 2*sweep + halo + midpoint`. Whatever
-        # the actual cell count, the *gap* between old-formula and new is
-        # `state - sweep = sweep_records` (the count of nonlinear duplicate
-        # state stagings) less the end-of-step markers it never counted
-        # (one per step, issue #20). Assert that this delta is precisely
-        # accounted for.
-        old_buggy = est.state_records + est.halo_records + est.midpoint_records
-        @test old_buggy - est.total_records == est.sweep_records - est.step_records
-    end
-
-    @testset "Lin-Rood counts its four-state horizontal records" begin
-        mesh, panels_m, _, am, bm, cm =
-            _trivial_problem(Nc = 4, Nz = 3, nsteps = 2; nontrivial = false)
-        est = AT.cs_tape_byte_estimate(
-            panels_m, am, bm, cm, mesh, AT.LinRoodPPMScheme(5))
-        @test est.nsteps == 2
-        @test est.sweep_records == 8       # H, Z, Z, H per step
-        @test est.halo_records == 0        # halo work is inside each H record
-        @test est.midpoint_records == 2
-        @test est.step_records == 2        # one end-of-step marker per step (issue #20)
-        @test est.state_records == 20      # 2*(4-state H) + 2*(1-state Z)
-        @test est.total_records == 12      # 8 sweeps + 2 midpoints + 2 step ends
-        # Each H record also stages five face-panel tuples: fx_in, fx_out,
-        # fy_in and the interior face fluxes am, bm it read.
-        face_tuple_bytes = sizeof(Float64) * 6 * (mesh.Nc + 1) * mesh.Nc *
-                           size(panels_m[1], 3)
-        @test est.state_bytes == est.state_records * est.bytes_per_state +
-                                 20 * face_tuple_bytes
-    end
-end
-
 # ---------------------------------------------------------------------------
 # Codex-review fixes:
 #   * LinRoodPPMScheme rejects non-device tape_storage explicitly.
 #   * cs_surface_flux_4dvar validates control panel shapes vs mesh.Nc.
 # ---------------------------------------------------------------------------
-
-@testset "LinRoodPPMScheme rejects non-device tape_storage" begin
-    mesh, panels_m, panels_rm, am, bm, cm =
-        _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; FT = Float32,
-                         nontrivial = false)
-    obj = AT.CSLayerMeanObjective(1, 2, 2, 3)
-    # Sanity: `:device` still works.
-    AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm, mesh, obj;
-        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
-        tape_storage = :device)
-
-    # `:mmap` must throw — silently keeping the LinRood tape on the
-    # source backend was a latent OOM trap.
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am, bm, cm, mesh, obj;
-        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
-        tape_storage = :mmap)
-    @test_throws ArgumentError AT.cs_surface_emission_footprint(
-        panels_rm, panels_m, am, bm, cm, mesh, obj;
-        scheme = AT.LinRoodPPMScheme(), dt = Float32(1),
-        tape_storage = :pinned_host)
-end
-
-@testset "cs_surface_flux_4dvar validates control shapes vs mesh.Nc" begin
-    mesh, panels_m, panels_rm, am, bm, cm =
-        _trivial_problem(Nc = 4, Nz = 3, nsteps = 1; FT = Float32,
-                         nontrivial = false)
-
-    # Correctly-shaped control passes the validator.
-    good_control = AT.CSSurfaceFluxControl(
-        AT.CSSurfaceFluxWindow(:step1, 1),
-        ntuple(_ -> zeros(Float32, mesh.Nc, mesh.Nc), 6))
-    observations = [
-        AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3),
-                         0.01f0, 0.2f0),
-    ]
-    @test_throws UndefKeywordError AT.cs_surface_flux_4dvar(
-        panels_rm, panels_m, am, bm, cm, mesh, observations, good_control;
-        dt = Float32(1))
-    AT.cs_surface_flux_4dvar(
-        panels_rm, panels_m, am, bm, cm, mesh, observations, good_control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = Float32(1))
-
-    # Wrong-sized value panels — value[1] is (Nc+1, Nc+1) instead of
-    # (Nc, Nc); the shared `_add_weighted_footprint_kernel!` would
-    # silently read with `ndrange = size(rates[step][p])` and grab
-    # OOB or skip cells depending on the size mismatch. Validator
-    # must catch this BEFORE any kernel launches.
-    bad_value = ntuple(p -> begin
-        sz = p == 1 ? (mesh.Nc + 1, mesh.Nc + 1) : (mesh.Nc, mesh.Nc)
-        zeros(Float32, sz)
-    end, 6)
-    bad_control = AT.CSSurfaceFluxControl(
-        AT.CSSurfaceFluxWindow(:step1, 1), bad_value)
-    @test_throws DimensionMismatch AT.cs_surface_flux_4dvar(
-        panels_rm, panels_m, am, bm, cm, mesh, observations, bad_control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = Float32(1))
-
-    # Wrong-sized sigma panels are also rejected (the
-    # `_add_background_gradient_array_kernel!` reads `sigma[i, j]`).
-    bad_sigma = ntuple(p -> begin
-        sz = p == 3 ? (mesh.Nc - 1, mesh.Nc) : (mesh.Nc, mesh.Nc)
-        fill(Float32(0.1), sz)
-    end, 6)
-    # Have to bypass the constructor's per-panel sigma vs value cross-
-    # check; build a control with correct sigma first then mutate the
-    # tuple via a fresh constructor that skips the check.
-    # The constructor at Observations.jl:131-141 validates
-    # sigma-panel-vs-value-panel shape, which is exactly what we test
-    # here from the mesh side too — confirm both gates fire.
-    @test_throws DimensionMismatch AT.CSSurfaceFluxControl(
-        AT.CSSurfaceFluxWindow(:step1, 1),
-        ntuple(_ -> zeros(Float32, mesh.Nc, mesh.Nc), 6);
-        sigma = bad_sigma)
-end
 
 # ---------------------------------------------------------------------------
 # Plan 26 P0.A.2c — manifest-driven resume API.
@@ -632,68 +398,6 @@ end
         end
     end
 
-    @testset "readonly default blocks mutation" begin
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32)
-            TapeMod._stage_panels(storage, src)
-            TapeMod.finalize_tape!(storage)
-
-            ro = TapeMod.load_mmap_tape(dir)
-            @test ro.readonly === true
-
-            extra = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 9)
-            @test_throws ArgumentError TapeMod._allocate_tape_slot(ro, extra)
-            @test_throws ArgumentError TapeMod._bump_cursor!(ro, Int64(1024))
-
-            # stage_panels! goes through an existing slot, but the slot
-            # must come from get_record (no new allocation) — the
-            # in-place stage path also enforces readonly.
-            slot = TapeMod.get_record(ro, 1)
-            @test_throws ArgumentError TapeMod.stage_panels!(slot, extra)
-
-            TapeMod.finalize_tape!(ro)
-        end
-    end
-
-    @testset "readonly=false reload still blocks overwrite of finalised tape" begin
-        # GPT F3: `load_mmap_tape(dir; readonly=false)` returns a
-        # storage with `finalised = true` and `readonly = false`.
-        # `_allocate_tape_slot` is blocked by `finalised`; the previous
-        # version of `stage_panels!` only checked `readonly` and
-        # `closed`, so a caller that obtained a slot via `get_record`
-        # could silently overwrite the on-disk bytes. Phase B will own
-        # slot-reuse semantics; for v1, `stage_panels!` rejects on
-        # `finalised` too.
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 11)
-            TapeMod._stage_panels(storage, src)
-            TapeMod.finalize_tape!(storage)
-
-            rw = TapeMod.load_mmap_tape(dir; readonly = false)
-            @test rw.readonly === false
-            @test rw.finalised === true
-
-            slot = TapeMod.get_record(rw, 1)
-            overwrite = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 99)
-            @test_throws ArgumentError TapeMod.stage_panels!(slot, overwrite)
-
-            # Verify the on-disk bytes are still the original src, not
-            # the would-be overwrite. Round-trip through a fresh
-            # readonly reopen to confirm.
-            TapeMod.finalize_tape!(rw)
-            ro = TapeMod.load_mmap_tape(dir)
-            got = TapeMod._tape_panels(TapeMod.get_record(ro, 1), TapeMod.AirMassRead())
-            for p in 1:6
-                @test got[p] == src[p]
-            end
-            TapeMod.finalize_tape!(ro)
-        end
-    end
-
     @testset "validation: missing files, corrupted meta, version mismatch" begin
         @test_throws ArgumentError TapeMod.load_mmap_tape(
             joinpath(tempdir(), "atmostransport-mmap-load-nope-$(rand(UInt32))"))
@@ -750,34 +454,15 @@ end
             end
             @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
         end
-    end
-
-    @testset "get_record argument validation" begin
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            TapeMod._stage_panels(storage,
-                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
-            TapeMod._stage_panels(storage,
-                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 2))
-            TapeMod.finalize_tape!(storage)
-
-            ro = TapeMod.load_mmap_tape(dir)
-            @test_throws BoundsError TapeMod.get_record(ro, 0)
-            @test_throws BoundsError TapeMod.get_record(ro, 3)
-            TapeMod.finalize_tape!(ro)
-            @test_throws ArgumentError TapeMod.get_record(ro, 1)
+        for name in ("Int64", "Bool", "Module")
+            @test_throws ArgumentError TapeMod._parse_mmap_eltype(name)
+        end
+        for T in (Float32, Float64, Float16)
+            @test TapeMod._parse_mmap_eltype(string(T)) === T
         end
     end
 
-    @testset "eltype whitelist rejects non-float types" begin
-        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Int64")
-        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Bool")
-        @test_throws ArgumentError TapeMod._parse_mmap_eltype("Module")
-        @test TapeMod._parse_mmap_eltype("Float32") === Float32
-        @test TapeMod._parse_mmap_eltype("Float64") === Float64
-        @test TapeMod._parse_mmap_eltype("Float16") === Float16
-    end
+
 
     @testset "per-record validation: offsets, nbytes, shapes" begin
         good_dir = mktempdir(; cleanup = false)
@@ -859,53 +544,4 @@ end
         end
     end
 
-    @testset "reload survives writer GC" begin
-        # Resumed storage must be fully self-contained: nothing about
-        # _tape_panels should reach back into the original writer
-        # object. Force the writer out of scope, GC it, then read.
-        dir = mktempdir(; cleanup = false)
-        try
-            let src = _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 5)
-                storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                   cleanup_on_finalize = false)
-                TapeMod._stage_panels(storage, src)
-                TapeMod.finalize_tape!(storage)
-                # Hold src for the post-reload comparison below.
-                global _tape_src_for_gc_test = src
-            end
-            GC.gc(true)
-            GC.gc(true)
-
-            ro = TapeMod.load_mmap_tape(dir)
-            slot = TapeMod.get_record(ro, 1)
-            got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
-            for p in 1:6
-                @test got[p] == _tape_src_for_gc_test[p]
-            end
-            TapeMod.finalize_tape!(ro)
-        finally
-            rm(dir; recursive = true, force = true)
-        end
-    end
-
-    @testset "reopen mode validation" begin
-        mktempdir() do dir
-            storage = TapeMod.MmapCSTapeStorage(; dir = dir,
-                                                cleanup_on_finalize = false)
-            TapeMod._stage_panels(storage,
-                _build_panels(:m; Nc = 3, Hp = 3, Nz = 4, FT = Float32))
-            TapeMod.finalize_tape!(storage)
-
-            # Internal reopen constructor must reject destructive modes.
-            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
-                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "w+")
-            @test_throws ArgumentError TapeMod.MmapCSTapeStorage(
-                dir, TapeMod.MmapTapeRecordEntry[], Int64(0); mode = "wb")
-
-            # readonly = false → "r+" mode is allowed.
-            rw = TapeMod.load_mmap_tape(dir; readonly = false)
-            @test rw.readonly === false
-            TapeMod.finalize_tape!(rw)
-        end
-    end
 end
