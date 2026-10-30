@@ -53,11 +53,15 @@ _string_dict(attributes) = Dict{String, Any}(String(k) => v for (k, v) in pairs(
 _variable_spec(name::Union{AbstractString, Symbol}) = (String(name), Dict{String, Any}())
 _variable_spec(spec::Pair) = (String(first(spec)), _string_dict(last(spec)))
 
+function _check_flux_variable_names(names)
+    isempty(names) && throw(ArgumentError("a flux file needs at least one variable"))
+    allunique(names) || throw(ArgumentError("flux variable names must be unique; got $(names)"))
+    return nothing
+end
+
 function _variable_specs(variables)
     specs = [_variable_spec(v) for v in variables]
-    isempty(specs) && throw(ArgumentError("a flux file needs at least one variable"))
-    names = first.(specs)
-    allunique(names) || throw(ArgumentError("flux variable names must be unique; got $(names)"))
+    _check_flux_variable_names(first.(specs))
     return specs
 end
 

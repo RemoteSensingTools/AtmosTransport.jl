@@ -14,7 +14,6 @@ using .AtmosTransport.Regridding
 @testset "Regridding (Tier 4)" begin
     include("test_cubed_sphere_corners.jl")
     include("test_conservation.jl")
-    include("test_transpose.jl")
     include("test_serialization.jl")
     include("test_reduced_gaussian_stub.jl")
     include("test_quantity_regrid.jl")

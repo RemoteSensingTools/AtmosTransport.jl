@@ -233,36 +233,6 @@ end
         end
     end
 
-    @testset "nested GEOS CS block coarsening helpers" begin
-        R = 2
-        src3 = reshape(collect(FT_TEST, 1:16), 4, 4, 1)
-        dst3 = zeros(FT_TEST, 2, 2, 1)
-        AtmosTransport.Regridding.coarsen_sum!(dst3, src3, R)
-        @test dst3[:, :, 1] == [
-            sum(src3[1:2, 1:2, 1]) sum(src3[1:2, 3:4, 1]);
-            sum(src3[3:4, 1:2, 1]) sum(src3[3:4, 3:4, 1])
-        ]
-
-        src_area = fill(FT_TEST(1), 4, 4)
-        src2 = reshape(collect(FT_TEST, 1:16), 4, 4)
-        dst2 = zeros(FT_TEST, 2, 2)
-        AtmosTransport.Regridding.coarsen_area_weighted!(dst2, src2, src_area, R)
-        @test dst2 ≈ [
-            sum(src2[1:2, 1:2]) / 4 sum(src2[1:2, 3:4]) / 4;
-            sum(src2[3:4, 1:2]) / 4 sum(src2[3:4, 3:4]) / 4
-        ]
-
-        src_x = ones(FT_TEST, 5, 4, 1)
-        dst_x = zeros(FT_TEST, 3, 2, 1)
-        AtmosTransport.Preprocessing._coarsen_xface_sum!(dst_x, src_x, R)
-        @test all(dst_x .== 2)
-
-        src_y = ones(FT_TEST, 4, 5, 1)
-        dst_y = zeros(FT_TEST, 2, 3, 1)
-        AtmosTransport.Preprocessing._coarsen_yface_sum!(dst_y, src_y, R)
-        @test all(dst_y .== 2)
-    end
-
     @testset "process_day writes a valid CS binary with reproducible bytes" begin
         out_path = joinpath(tmpdir, "out_cs.bin")
         first = process_day(Date(2021, 12, 1), grid, settings, vertical;

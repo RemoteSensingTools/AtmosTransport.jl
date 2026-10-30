@@ -503,11 +503,11 @@ function stamp_intervals(stamps::AbstractVector{DateTime}; source::AbstractStrin
             "$(source): the time stamps do not increase strictly ($(stamps[k]) then " *
             "$(stamps[k + 1]); is a stamp in two files?)"))
     end
-    return all(_month_start, stamps) ? _month_start_intervals(stamps) :
+    return all(_is_month_start, stamps) ? _month_start_intervals(stamps) :
                                        _fixed_step_intervals(stamps, source)
 end
 
-_month_start(t::DateTime) = t == DateTime(Dates.year(t), Dates.month(t))
+_is_month_start(t::DateTime) = t == DateTime(Dates.year(t), Dates.month(t))
 
 _months_apart(a::DateTime, b::DateTime) = _month_index(MonthKey(b)) - _month_index(MonthKey(a))
 
@@ -538,7 +538,7 @@ function _fixed_step_intervals(stamps, source)
     for (lo, hi, period) in ((Dates.Day(28), Dates.Day(31), "month"),
                              (Dates.Day(365), Dates.Day(366), "year"))
         lo - STAMP_SPACING_TOLERANCE <= step <= hi + STAMP_SPACING_TOLERANCE || continue
-        odd = stamps[findfirst(!_month_start, stamps)]
+        odd = stamps[findfirst(!_is_month_start, stamps)]
         throw(ArgumentError(
             "$(source): the time stamps are about one $(period) apart (at least " *
             "$(_period_text(step))) but not all month starts ($(odd)), e.g. mid-$(period) " *
@@ -594,7 +594,7 @@ function decode_month_seconds(ds, name::AbstractString)
              vec((bounds[1, :] .+ bounds[2, :]) ./ 2)
     keys = _decode_month_keys_values(decoder, class, ds, axis, values)
     DT = _time_calendar_type(ds, axis)
-    calendar_seconds = Float64[CFTime.daysinmonth(DT, k.year, k.month) * 86400 for k in keys]
+    calendar_seconds = Float64[CFTime.daysinmonth(DT, k.year, k.month) * SECONDS_PER_DAY for k in keys]
     bounds === nothing && return calendar_seconds
 
     if class isa CFTimeUnits
@@ -646,8 +646,7 @@ _decode_month_keys(::CFDecoder, class::CFTimeUnits, ds, name::String) =
 
 _decode_month_keys_values(::MonthsSince, class::MonthsSinceUnits, ds, name::String,
                           values) = begin
-    base = 12 * class.year + (class.month - 1)
-    MonthKey[_month_key(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET)) for v in values]
+    MonthKey[_month_key(_months_since_index(class, v)) for v in values]
 end
 
 function _decode_month_keys_values(::CFDecoder, class::CFTimeUnits, ds, name::String,
@@ -710,9 +709,11 @@ const _GREGORIAN_LIKE = (CFTime.DateTimeStandard, CFTime.DateTimeProlepticGregor
 # `DateTime` for the Gregorian-like calendars (NCDatasets' decoding, rounded to
 # the millisecond), CFTime stamps otherwise (values rounded to the millisecond
 # first). An origin day beyond its month in that calendar is an error.
+_time_calendar_name(ds, name::String) =
+    lowercase(strip(_string_attribute(NCDatasets.variable(ds, name), "calendar", "standard")))
+
 function _time_calendar_type(ds, name::String)
-    raw = NCDatasets.variable(ds, name)
-    calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
+    calendar = _time_calendar_name(ds, name)
     DT = try
         CFTime.timetype(calendar)
     catch
@@ -723,8 +724,7 @@ function _time_calendar_type(ds, name::String)
 end
 
 function _check_cf_origin(class::CFTimeUnits, DT, ds, name::String)
-    calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
-                                                 "calendar", "standard")))
+    calendar = _time_calendar_name(ds, name)
     if class.date !== nothing
         y, m, d = class.date
         d <= CFTime.daysinmonth(DT, y, m) || throw(ArgumentError(
@@ -736,8 +736,7 @@ function _check_cf_origin(class::CFTimeUnits, DT, ds, name::String)
 end
 
 function _cf_calendar_stamps(class::CFTimeUnits, ds, name::String)
-    raw = NCDatasets.variable(ds, name)
-    calendar = lowercase(strip(_string_attribute(raw, "calendar", "standard")))
+    calendar = _time_calendar_name(ds, name)
     DT = _time_calendar_type(ds, name)
     _check_cf_origin(class, DT, ds, name)
     if DT in _GREGORIAN_LIKE
@@ -766,8 +765,7 @@ end
 # Raw values on the axis's units and calendar (time bounds) decoded as
 # `decode_time` decodes the axis itself.
 function _decode_time_values(::CFDecoder, class::CFTimeUnits, ds, name::String, values)
-    calendar = lowercase(strip(_string_attribute(NCDatasets.variable(ds, name),
-                                                 "calendar", "standard")))
+    calendar = _time_calendar_name(ds, name)
     DT = _time_calendar_type(ds, name)
     _check_cf_origin(class, DT, ds, name)
     return DateTime[_gregorian_datetime(t, calendar, name, ds)
@@ -795,18 +793,17 @@ function _gregorian_datetime(t, calendar, name, ds)
     return DateTime(parts...)
 end
 
-_month_start(index::Integer) = (k = _month_key(index); DateTime(k.year, k.month, 1))
+_month_start_datetime(index::Integer) = (k = _month_key(index); DateTime(k.year, k.month, 1))
 
-function _decode(::MonthsSince, class::MonthsSinceUnits, ds, name::String)
-    base = 12 * class.year + (class.month - 1)
-    return DateTime[_month_start(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET))
-                    for v in _raw_time_values(ds, name)]
-end
+_months_since_index(class::MonthsSinceUnits, v) =
+    12 * class.year + (class.month - 1) + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET)
+
+_decode(d::MonthsSince, class::MonthsSinceUnits, ds, name::String) =
+    _decode_time_values(d, class, ds, name, _raw_time_values(ds, name))
 
 function _decode_time_values(::MonthsSince, class::MonthsSinceUnits, ds, name::String,
                              values)
-    base = 12 * class.year + (class.month - 1)
-    return DateTime[_month_start(base + floor(Int, v + MONTHS_SINCE_FLOOR_OFFSET))
+    return DateTime[_month_start_datetime(_months_since_index(class, v))
                     for v in values]
 end
 
@@ -821,7 +818,7 @@ function _decimal_year_month_start(v::Float64, stamp::AbstractMonthStamp, name, 
     abs(m - k̂) <= DECIMAL_YEAR_RESIDUAL_TOLERANCE || throw(ArgumentError(
         "time axis '$(name)' of $(_dataset_path(ds)): decimal year $(v) is $(m - k̂) " *
         "months from a $(_stamp_label(stamp)) stamp (tolerance $(DECIMAL_YEAR_RESIDUAL_TOLERANCE))"))
-    return _month_start(k̂)
+    return _month_start_datetime(k̂)
 end
 
 _decode(d::DecimalYears, ::UnlabelledUnits, ds, name::String) =
@@ -837,7 +834,7 @@ function _decode(d::AuxiliaryTimeVariable, ::UnlabelledUnits, ds, name::String)
         "'$(name)' has $(n)"))
     ms_per_unit = Dates.value(Dates.Millisecond(d.unit))
     t0 = DateTime(d.origin)
-    return DateTime[_month_start(_month_index(_month_of_stamp(
+    return DateTime[_month_start_datetime(_month_index(_month_of_stamp(
                         t0 + Dates.Millisecond(round(Int64, v * ms_per_unit)), d.stamp)))
                     for v in vals]
 end

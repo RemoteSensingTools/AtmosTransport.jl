@@ -281,12 +281,9 @@ end
 
 # ---- Conversion factors ----
 
-# Seconds in a day, from `Dates` (86400).
-const _SECONDS_PER_DAY = Float64(Dates.value(Dates.Second(Dates.Day(1))))
-
 _period_seconds(::PerSecond, iv) = 1.0
-_period_seconds(::PerDay, iv) = _SECONDS_PER_DAY
-_period_seconds(::PerYear, iv) = DAYS_PER_JULIAN_YEAR * _SECONDS_PER_DAY
+_period_seconds(::PerDay, iv) = SECONDS_PER_DAY
+_period_seconds(::PerYear, iv) = DAYS_PER_JULIAN_YEAR * SECONDS_PER_DAY
 _period_seconds(::PerMonth, ::Nothing) = throw(ArgumentError(
     "per-month flux units need the time interval the flux applies to"))
 function _period_seconds(::PerMonth, iv::TimeInterval)
@@ -316,14 +313,11 @@ function _molar_mass(species::Symbol)
     return Float64(getproperty(SPECIES_MOLAR_MASS, species))
 end
 
-# Carbon atoms per molecule of the carbon-bearing species of SPECIES_MOLAR_MASS.
-const _CARBON_ATOMS = (co2 = 1,)
-
 function _carbon_to_species(species::Symbol)
-    hasproperty(_CARBON_ATOMS, species) || throw(ArgumentError(
+    hasproperty(SPECIES_CARBON_ATOMS, species) || throw(ArgumentError(
         "carbon fluxes can be converted only to species with carbon " *
-        "($(join(repr.(propertynames(_CARBON_ATOMS)), ", "))); got $(repr(species))"))
-    return getproperty(_CARBON_ATOMS, species)
+        "($(join(repr.(propertynames(SPECIES_CARBON_ATOMS)), ", "))); got $(repr(species))"))
+    return getproperty(SPECIES_CARBON_ATOMS, species)
 end
 
 _species_kg(::TargetSpecies, molar::Bool, amount, species) = amount
@@ -371,9 +365,6 @@ mass_rate_factor(u::FluxUnits, species::Symbol, iv::TimeInterval) =
     kg_per_unit(u, species) / period_seconds(u, iv)
 mass_rate_factor(u::FluxUnits, species::Symbol) = kg_per_unit(u, species) / period_seconds(u)
 
-# Spelling of species names in units strings.
-const _SPECIES_LABELS = (co2 = "CO2", sf6 = "SF6", rn222 = "Rn222")
-
 """
     canonical_units_string(species::Symbol) -> String
 
@@ -384,7 +375,7 @@ second. The species must be one of `SPECIES_MOLAR_MASS`.
 """
 function canonical_units_string(species::Symbol)
     _molar_mass(species)                                   # known species only
-    label = hasproperty(_SPECIES_LABELS, species) ? getproperty(_SPECIES_LABELS, species) :
+    label = hasproperty(SPECIES_LABELS, species) ? getproperty(SPECIES_LABELS, species) :
                                                     uppercase(String(species))
     return "kg $(label) m-2 s-1"
 end

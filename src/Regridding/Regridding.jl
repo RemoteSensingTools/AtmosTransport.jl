@@ -38,11 +38,9 @@ apply_regridder!(dst_field, r, src_field)
 
 # Per-cell totals (kg per cell) are regridded through their density
 apply_regridder!(dst_field, r, src_field, ExtensiveCellField())
-regrid_conservation_report(r, src_field, dst_field, ExtensiveCellField())
 
-# Persist / export
+# Persist
 save_regridder("weights.jld2", r)
-save_esmf_weights("weights_esmf.nc", r)
 ```
 
 ## Supported mesh types
@@ -82,12 +80,10 @@ module Regridding
 
 using ..Grids: cell_areas, float64_cell_areas, flat_float64_cell_areas, cs_flat_index
 
-using ..Grids: AbstractHorizontalMesh, AbstractStructuredMesh,
-               LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
-               AbstractCubedSpherePanelConvention,
+using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
                GnomonicPanelConvention, GEOSNativePanelConvention,
-               nrings, nboundaries, ring_cell_count, cell_index,
-               nx, ny, ncells, cell_area, panel_cell_corner_lonlat,
+               nrings, cell_index,
+               nx, ny, ncells, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
                cs_definition_tag, coordinate_law_tag, center_law_tag, cs_corner_xyz
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
@@ -101,24 +97,20 @@ using ConservativeRegridding.Trees
 import GeometryOps as GO
 import GeometryOpsCore as GOCore
 import GeoInterface as GI
-import GeometryOps: SpatialTreeInterface as STI
 using GeometryOps.UnitSpherical: UnitSphericalPoint
 
 using JLD2
-using NCDatasets
-using SparseArrays
 using LinearAlgebra
-using Dates
 using SHA
 using StaticArrays: SA
 
 export build_regridder, save_regridder, load_regridder, default_regrid_cache_dir
-export save_esmf_weights, apply_regridder!, regrid_conservation_report, source_coverage
+export apply_regridder!, source_coverage
 export cubed_sphere_face_corners
 export IdentityRegrid, meshes_equivalent
 export meshes_nested, AbstractNestingDirection, Restriction, Prolongation,
        NestedCubedSphereRegrid
-export coarsen_sum!, coarsen_area_weighted!
+export coarsen_sum!, coarsen_area_weighted!, coarsen_xface_sum!, coarsen_yface_sum!
 
 include("treeify_meshes.jl")
 include("identity_regrid.jl")

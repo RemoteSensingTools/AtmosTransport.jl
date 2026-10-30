@@ -131,8 +131,8 @@ _geos_cs_strategy_name(::GEOSCSBlockCoarsenStrategy{R}) where {R} =
 
 # Block kernels of the coarsen strategy: cell sums and area-weighted means are
 # `Regridding.coarsen_sum!` / `coarsen_area_weighted!` (Float64 accumulation and
-# one rounding for the means), face sums `_coarsen_xface_sum!` /
-# `_coarsen_yface_sum!` (`cubed_sphere_coarsen.jl`). The ratio `R` of the
+# one rounding for the means), face sums `coarsen_xface_sum!` /
+# `coarsen_yface_sum!` (`Regridding/cs_nesting.jl`). The ratio `R` of the
 # strategy type is passed as an `Int`.
 
 function _geos_strategy_workspace(::GEOSCSIdentityStrategy,
@@ -197,8 +197,8 @@ function _geos_fluxes_to_target!(::GEOSCSBlockCoarsenStrategy{R}, ws,
     geos_native_to_face_flux!(ws.fine_am_v4, ws.fine_bm_v4, raw.am, raw.bm,
                               ws.source_mesh.connectivity, Nsrc, Nz, flux_scale)
     for p in 1:CS_PANEL_COUNT
-        _coarsen_xface_sum!(am_v4[p], ws.fine_am_v4[p], R)
-        _coarsen_yface_sum!(bm_v4[p], ws.fine_bm_v4[p], R)
+        coarsen_xface_sum!(am_v4[p], ws.fine_am_v4[p], R)
+        coarsen_yface_sum!(bm_v4[p], ws.fine_bm_v4[p], R)
     end
     return nothing
 end

@@ -37,14 +37,11 @@ function _check_metre_units(var, name::AbstractString, path::AbstractString)
     return nothing
 end
 
-_centre_chord(lon1, lat1, lon2, lat2) =
-    sqrt(sum(abs2, lonlat_to_unit_xyz(lon1, lat1) .- lonlat_to_unit_xyz(lon2, lat2)))
-
-function _check_centres(file_lon, file_lat, mesh_lon, mesh_lat, path::AbstractString, what::AbstractString,
+function _check_mesh_centres(file_lon, file_lat, mesh_lon, mesh_lat, path::AbstractString, what::AbstractString,
                         tolerance::Float64)
     size(file_lon) == size(mesh_lon) && size(file_lat) == size(mesh_lat) || throw(DimensionMismatch(
         "$(what) centres in $(path) have shape $(size(file_lon)); the mesh needs $(size(mesh_lon))"))
-    worst = maximum(_centre_chord(file_lon[k], file_lat[k], mesh_lon[k], mesh_lat[k])
+    worst = maximum(lonlat_chord_distance(file_lon[k], file_lat[k], mesh_lon[k], mesh_lat[k])
                     for k in eachindex(file_lon, file_lat, mesh_lon, mesh_lat); init = 0.0)
     worst <= tolerance || throw(ArgumentError(
         "$(what) centres in $(path) are up to $(round(rad2deg(worst); sigdigits = 3))° from the " *
@@ -164,7 +161,7 @@ function _read_surface_height(ds, path::String, mesh::LatLonMesh)
     file_lat = read_raw(ds, lat_name, FillValueOnly())
     mesh_lon = Float64.(mesh.λᶜ)
     mesh_lat = Float64.(mesh.φᶜ)
-    _check_centres([file_lon[i] for i in 1:mesh.Nx, j in 1:mesh.Ny], [file_lat[j] for i in 1:mesh.Nx, j in 1:mesh.Ny],
+    _check_mesh_centres([file_lon[i] for i in 1:mesh.Nx, j in 1:mesh.Ny], [file_lat[j] for i in 1:mesh.Nx, j in 1:mesh.Ny],
                    [mesh_lon[i] for i in 1:mesh.Nx, j in 1:mesh.Ny], [mesh_lat[j] for i in 1:mesh.Nx, j in 1:mesh.Ny],
                    path, "lat-lon", _centre_tolerance(mesh))
     field = read_raw(ds, _SURFACE_HEIGHT_VARIABLE, MaskedAsNaN())
@@ -185,7 +182,7 @@ function _read_surface_height(ds, path::String, mesh::CubedSphereMesh)
     twin = float64_twin(mesh)
     for p in 1:6
         lon, lat = panel_cell_center_lonlat(twin, p)
-        _check_centres(view(file_lon, :, :, p), view(file_lat, :, :, p), lon, lat,
+        _check_mesh_centres(view(file_lon, :, :, p), view(file_lat, :, :, p), lon, lat,
                        path, "cubed-sphere panel $(p)", 1e-7)
     end
     check_cell_area(ds, mesh; file = path)
@@ -200,7 +197,7 @@ function _read_surface_height(ds, path::String, mesh::ReducedGaussianMesh)
     length(var) == ncells(mesh) || throw(DimensionMismatch(
         "'$(_SURFACE_HEIGHT_VARIABLE)' in $(path) has $(length(var)) cells; the mesh has $(ncells(mesh))"))
     mesh_lon, mesh_lat = cell_centers(mesh; FT=Float64)
-    _check_centres(read_raw(ds, "longitude", FillValueOnly()), read_raw(ds, "latitude", FillValueOnly()),
+    _check_mesh_centres(read_raw(ds, "longitude", FillValueOnly()), read_raw(ds, "latitude", FillValueOnly()),
                    mesh_lon, mesh_lat, path, "reduced-Gaussian", _centre_tolerance(mesh))
     field = read_raw(ds, _SURFACE_HEIGHT_VARIABLE, MaskedAsNaN())
     _check_finite_heights(field, path)
@@ -357,35 +354,6 @@ function _check_land_surface(values, name::AbstractString, path::AbstractString)
     return nothing
 end
 
-# Bracketing indices and the weight of the upper one along latitude; a point
-# within half a spacing outside the outermost centre takes that row, farther
-# away it is outside the DEM (`nothing`).
-function _lat_bracket(lat::Vector{Float64}, φ::Float64)
-    n = length(lat)
-    if φ < lat[1]
-        return lat[1] - φ <= (lat[2] - lat[1]) / 2 ? (1, 1, 0.0) : nothing
-    elseif φ > lat[n]
-        return φ - lat[n] <= (lat[n] - lat[n - 1]) / 2 ? (n, n, 0.0) : nothing
-    end
-    j = min(searchsortedlast(lat, φ), n - 1)
-    return j, j + 1, (φ - lat[j]) / (lat[j + 1] - lat[j])
-end
-
-# Same along longitude, with `λ` taken into [lon[1], lon[1] + 360).
-function _lon_bracket(dem::LatLonPointElevation, λ::Float64)
-    lon = dem.lon
-    n = length(lon)
-    x = mod(λ - lon[1], 360.0) + lon[1]
-    if x <= lon[n]
-        i = min(searchsortedlast(lon, x), n - 1)
-        return i, i + 1, (x - lon[i]) / (lon[i + 1] - lon[i])
-    end
-    spacing = (lon[n] - lon[1]) / (n - 1)
-    dem.periodic && return n, 1, (x - lon[n]) / (lon[1] + 360.0 - lon[n])
-    return x - lon[n] <= spacing / 2 ? (n, n, 0.0) :
-           lon[1] + 360.0 - x <= spacing / 2 ? (1, 1, 0.0) : nothing
-end
-
 """
     point_elevation(dem::LatLonPointElevation, lon, lat) -> Float64
 
@@ -395,8 +363,8 @@ when all four are `NaN` or the point is more than half a spacing outside the
 DEM.
 """
 function Observations.point_elevation(dem::LatLonPointElevation, lon::Real, lat::Real)
-    bx = _lon_bracket(dem, Float64(lon))
-    by = _lat_bracket(dem.lat, Float64(lat))
+    bx = longitude_bilinear_bracket(dem.lon, Float64(lon), dem.periodic)
+    by = half_cell_bilinear_bracket(dem.lat, Float64(lat))
     (bx === nothing || by === nothing) && return NaN
     i0, i1, wx = bx
     j0, j1, wy = by

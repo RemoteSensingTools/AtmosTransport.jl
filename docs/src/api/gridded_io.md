@@ -21,10 +21,7 @@ is a type the caller names, and the methods dispatch on it:
   the snapping rule for regular global axes, faces at the centres ± half a cell
   for longitudes centred on 0° or ±180°, midpoint faces with pole and
   truncation rules for pole-centred, truncated and Gaussian latitudes.
-  [`UniformSpanFaces`](@ref AtmosTransport.GriddedIO.UniformSpanFaces): the
-  uniform mesh the runtime surface-flux and initial-condition loaders used
-  before they moved to `SnappedFaces`; the runtime no longer uses it.
-  Bounds variables are never used.
+  Pass coordinate vectors read with `find_coordinate`; bounds variables are never used.
 - **Time axes.** [`decode_time`](@ref AtmosTransport.GriddedIO.decode_time)
   classifies an axis by its raw `units` before any CFTime call and decodes it
   with [`CFDecoder`](@ref AtmosTransport.GriddedIO.CFDecoder),

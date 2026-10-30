@@ -73,6 +73,9 @@ const HYDROSTATIC_REFERENCE_TEMPERATURE = 260.0
 "Days in a Julian year, for annual totals given as rates."
 const DAYS_PER_JULIAN_YEAR = 365.25
 
+"Seconds in a day (24 hours of 60 minutes of 60 seconds)."
+const SECONDS_PER_DAY = 86400.0
+
 """
 Global-mean dry surface pressure the preprocessing dry-mass pin holds, for every
 meteorological source [Pa]. The pin holds the dry column below the model top,
@@ -104,6 +107,12 @@ Molar masses of the transported species [kg mol⁻¹], for converting fluxes and
 mixing ratios to and from mass: CO₂ (IUPAC atomic weights), SF₆ and ²²²Rn.
 """
 const SPECIES_MOLAR_MASS = (co2 = 44.0095e-3, sf6 = 146.055e-3, rn222 = 222.0e-3)
+
+"Carbon atoms per molecule of the carbon-bearing transported species."
+const SPECIES_CARBON_ATOMS = (co2 = 1,)
+
+"Spelling of transported species names in flux units strings."
+const SPECIES_LABELS = (co2 = "CO2", sf6 = "SF6", rn222 = "Rn222")
 
 """
 Molar mass of carbon [kg mol⁻¹] (IUPAC 2007 standard atomic weight, the value
@@ -158,5 +167,6 @@ export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DR
        VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN, STANDARD_SEA_LEVEL_AIR_DENSITY, STANDARD_LAPSE_RATE,
        STANDARD_TROPOPAUSE_TEMPERATURE, HYDROSTATIC_REFERENCE_TEMPERATURE, DAYS_PER_JULIAN_YEAR,
        GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
+       SECONDS_PER_DAY, SPECIES_CARBON_ATOMS, SPECIES_LABELS,
        SPECIES_MOLAR_MASS, GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE, CARBON_MOLAR_MASS,
        TM5_CONSTANTS, GEOSCHEM_CONSTANTS

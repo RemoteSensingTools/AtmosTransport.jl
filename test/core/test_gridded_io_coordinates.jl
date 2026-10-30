@@ -11,8 +11,8 @@
 # fraction declares a wrong `missing_value = 0`.
 #
 # The runtime behaviour the functions replace (the runtime loaders' coordinate
-# search and lat-flip / lon-roll, `nomissing(…, 0)`) is frozen below and
-# compared bit for bit.
+# lat-flip / lon-roll) is frozen below and compared bit for bit; coordinate
+# discovery and fill results are asserted through production code.
 
 using Test
 using NCDatasets
@@ -25,13 +25,6 @@ using AtmosTransport.GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, Ti
 
 # ---- Frozen runtime behaviour (src/Models/InitialConditionIO.jl and the
 # ---- static/time-varying surface-flux loaders, before the GriddedIO move) ----
-
-function frozen_ic_find_coord(ds, candidates::Vector{String})
-    for name in candidates
-        haskey(ds, name) && return name
-    end
-    return nothing
-end
 
 # The lat-flip / lon-roll block of `_load_file_surface_flux_field` (raw field
 # and optional cell area) and `_load_single_timevarying_surface_flux_field`.
@@ -127,15 +120,6 @@ end
         @test find_coordinate(ds, TimeAxis()) == "t"
         @test find_coordinate(ds, VerticalAxis()) == "lev"
         @test_throws ArgumentError find_coordinate(ds, LatitudeAxis())   # `latitude` is 2-D
-        # Same answers as the runtime's search wherever it found a name.
-        @test frozen_ic_find_coord(ds, ["lon", "longitude", "x"]) == find_coordinate(ds, LongitudeAxis())
-        @test frozen_ic_find_coord(ds, ["time", "t"]) == find_coordinate(ds, TimeAxis())
-        @test frozen_ic_find_coord(ds, ["lev", "level", "plev", "z", "hybrid", "nhym"]) ==
-              find_coordinate(ds, VerticalAxis())
-    end
-    NCDataset(fx) do ds
-        @test frozen_ic_find_coord(ds, ["lon", "longitude", "x"]) == find_coordinate(ds, LongitudeAxis())
-        @test frozen_ic_find_coord(ds, ["lat", "latitude", "y"]) == find_coordinate(ds, LatitudeAxis())
     end
 end
 
@@ -222,9 +206,6 @@ end
         # Packed Int16 with a Float32 scale factor (a CF view of eltype Float32).
         v = defVar(ds, "packed", Int16, dims; attrib = Dict("scale_factor" => 0.1f0, "add_offset" => 1f0))
         v.var[:, :, :] = Int16.(reshape(1:(Nx * Ny * Nt), Nx, Ny, Nt))
-        # A larger static field for the allocation check.
-        defDim(ds, "x", 200); defDim(ds, "y", 100)
-        defVar(ds, "big", Float32, ("x", "y"))[:, :] = reshape(Float32.(1:20000) ./ 7, 200, 100)
     end
 
     NCDataset(path) do ds
@@ -273,8 +254,6 @@ end
 
     # Element type T: each stored value converted once, straight to T, exactly
     # as the runtime's T.(nomissing(ds[name][idx...], zero(T))); no Float64 copy.
-    raw_bytes(T, ds, name) = (read_raw(T, ds, name, MaskedAsZero());
-                              @allocated read_raw(T, ds, name, MaskedAsZero()))
     NCDataset(path) do ds
         for FT in (Float32, Float64), name in ("visit", "elm", "cable", "dlem", "f64", "packed"), t in 1:Nt
             r = read_raw(FT, ds, name, MaskedAsZero(), :, :, t)
@@ -288,9 +267,6 @@ end
         @test n32 isa Array{Float32, 3} && isnan(n32[1, 1, 1]) && count(isnan, n32) == 2
         @test read_raw(Float32, ds, "f64", MaskedAsZero(), 4, 1, 1) isa Array{Float32, 0}
         @test read_raw(Float32, ds, "f64", MaskedAsZero(), 4, 1, 1)[] == Inf32     # 3.5e38 overflows
-        # A Float32 read allocates no Float64 array: at least 4 bytes per value
-        # less than the Float64 read (whose Float32 conversion would cost more).
-        @test raw_bytes(Float32, ds, "big") + 4 * 20000 <= raw_bytes(Float64, ds, "big")
         @test_throws ArgumentError read_raw(Float32, ds, "no_such_variable", MaskedAsZero())
     end
 

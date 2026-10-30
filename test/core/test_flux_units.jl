@@ -2,9 +2,8 @@
 #
 # GriddedIO flux units: one grammar for every units string of a surface-flux
 # input (design 2.4; P0 facts memo Section 3), conversion factors built from
-# `Parameters` constants, and bit-identity with the runtime's unit handling it
-# replaces (`_normalize_units_string` + `_per_second_flux_scale`, the GridFED
-# month-length branch with `_days_in_month`, the EDGAR tonnes-per-year branch).
+# `Parameters` constants, species factors, calendar-month durations and the
+# canonical strings written to flux files.
 
 using Test
 using Dates
@@ -17,24 +16,6 @@ using AtmosTransport.GriddedIO: parse_flux_units, FluxUnits, TargetSpecies, Carb
 using AtmosTransport.Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR
 
 const K = SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS        # M(CO2)/M(C)
-
-# ---- Frozen runtime unit handling (src/Models/initial_conditions/surface_flux.jl) ----
-
-const FROZEN_KG_PER_M2_S = r"^kg(\(?[a-z][a-z0-9]*\)?)?(/m2/s|m-2s-1|/m2s|/s/m2|s-1m-2)$"
-frozen_normalize(units) = lowercase(replace(strip(String(units)), " " => "", "^" => "", "²" => "2"))
-function frozen_per_second_flux_scale(units_norm)
-    m = match(FROZEN_KG_PER_M2_S, units_norm)
-    m === nothing && throw(ArgumentError("unsupported surface-flux units '$(units_norm)'"))
-    species = m.captures[1] === nothing ? "" : strip(m.captures[1], ['(', ')'])
-    return species == "c" ? SPECIES_MOLAR_MASS.co2 / CARBON_MOLAR_MASS : 1.0
-end
-frozen_is_leap_year(year) = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
-function frozen_days_in_month(year, month)
-    month == 2 && frozen_is_leap_year(year) && return 29
-    return (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)[month]
-end
-frozen_gridfed_month_seconds(year, month) = Float64(frozen_days_in_month(year, month)) * 86400.0
-const FROZEN_EDGAR_SECONDS_PER_YEAR = DAYS_PER_JULIAN_YEAR * 86400
 
 @testset "every units string in use parses" begin
     per_m2_s(s, substance) = (u = parse_flux_units(s);
@@ -74,6 +55,7 @@ const FROZEN_EDGAR_SECONDS_PER_YEAR = DAYS_PER_JULIAN_YEAR * 86400
     @test per_m2_s("kg(CO2) m^-2 s^-1", Species(:co2))
     @test per_m2_s("kg CO2 m-2 s-1", Species(:co2))
     @test per_m2_s("kg(C)/m2/s", Carbon())
+    @test per_m2_s("kgc/m2/s", Carbon())
     @test per_m2_s("kgsf6 m-2 s-1", Species(:sf6))
     # Other amounts and times.
     @test parse_flux_units("umol m-2 s-1"; substance = :co2).amount_per_unit == 1e-6
@@ -125,32 +107,6 @@ end
     @test_throws ArgumentError mass_rate_factor(parse_flux_units("kgCO2 m-2 s-1"), :sf6)
     @test_throws ArgumentError mass_rate_factor(parse_flux_units("kgC m-2 s-1"), :sf6)
     @test_throws ArgumentError mass_rate_factor(parse_flux_units("mmol m-2 s-1"; substance = :n2o), :n2o)
-end
-
-@testset "bit-identical to the runtime unit handling" begin
-    # Per-second units the runtime accepted: same species factor, bit for bit.
-    for s in ("kg m-2 s-1", "kg/m2/s", "kg/m2s", "kg/s/m2", "kg s-1 m-2", "kg/m²/s", "kg m^-2 s^-1",
-              "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kgC m-2 s-1", "kg(C)/m2/s", "kgc/m2/s", "KGC M-2 S-1")
-        old = frozen_per_second_flux_scale(frozen_normalize(s))
-        @test mass_rate_factor(parse_flux_units(s), :co2) === old
-    end
-    for s in ("kgsf6 m-2 s-1", "kg m-2 s-1")
-        @test mass_rate_factor(parse_flux_units(s), :sf6) === frozen_per_second_flux_scale(frozen_normalize(s))
-    end
-    # GridFED kgCO2/month/m2: the runtime divides by the month's seconds.
-    u = parse_flux_units("kgCO2/month/m2")
-    for year in 1999:2025, month in 1:12
-        @test period_seconds(u, interval(MonthKey(year, month))) === frozen_gridfed_month_seconds(year, month)
-        @test kg_per_unit(u, :co2) === 1.0
-        @test Dates.daysinmonth(year, month) == frozen_days_in_month(year, month)
-    end
-    for year in 1600:2400
-        @test Dates.isleapyear(year) == frozen_is_leap_year(year)
-    end
-    # EDGAR Tonnes: 1000 kg per tonne over the runtime's Julian-year seconds.
-    u = parse_flux_units("Tonnes")
-    @test period_seconds(u) === FROZEN_EDGAR_SECONDS_PER_YEAR
-    @test kg_per_unit(u, :sf6) === 1000.0
 end
 
 @testset "canonical units string" begin

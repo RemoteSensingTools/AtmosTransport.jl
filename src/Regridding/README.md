@@ -44,11 +44,6 @@ and the stepping loop do not call it.
     element type of `src`, in the keyword `scratch` or a vector allocated per
     call), regrid, `× dst_areas`;
   - `HorizontalVectorField()`, `HorizontalFluxField()`: `ArgumentError`.
-- `regrid_conservation_report(r, src, dst, kind)` in
-  [`quantity_regrid.jl`](quantity_regrid.jl): `(; src_total, dst_total,
-  rel_error)`, Float64 sums (extensive: `Σx`; intensive: `Σ x·area`); a
-  leading dimension that differs from `length(r.src_areas)` /
-  `length(r.dst_areas)` throws `DimensionMismatch`.
 - `source_coverage(r)` in [`quantity_regrid.jl`](quantity_regrid.jl): the
   area of each source cell that the destination covers, `C_s = Σ_t W_ts`
   (`r.src_areas` for `IdentityRegrid` and `NestedCubedSphereRegrid`). The
@@ -63,9 +58,6 @@ and the stepping loop do not call it.
   [`cs_nesting.jl`](cs_nesting.jl).
 - `save_regridder(path, r)` and `load_regridder(path)` round-trip a regridder
   through JLD2.
-- `save_esmf_weights(path, r; src_shape, dst_shape, src_grid_name, dst_grid_name)`
-  writes an ESMF offline-weights NetCDF file (`S`, `row`, `col`, `frac_a`,
-  `frac_b`, `area_a`, `area_b`).
 - `IdentityRegrid` and `meshes_equivalent(src, dst)` are in
   [`identity_regrid.jl`](identity_regrid.jl).
 - `cubed_sphere_face_corners(mesh)` in [`treeify_meshes.jl`](treeify_meshes.jl)
@@ -83,15 +75,15 @@ and the stepping loop do not call it.
 - [`identity_regrid.jl`](identity_regrid.jl): `IdentityRegrid`,
   `meshes_equivalent`, `_same_cs_definition` (shared with `meshes_nested`),
   `identity_regrid_or_nothing`, and a `copyto!` `apply_regridder!`
-- [`cs_nesting.jl`](cs_nesting.jl): the block kernels `coarsen_sum!` and
-  `coarsen_area_weighted!`, `meshes_nested` (with the corner check),
+- [`cs_nesting.jl`](cs_nesting.jl): the block kernels `coarsen_sum!`,
+  `coarsen_area_weighted!`, `coarsen_xface_sum!`, `coarsen_yface_sum!`, `meshes_nested` (with the corner check),
   the nesting directions, `NestedCubedSphereRegrid` and its
   `apply_regridder!`, `nested_regrid_or_nothing`
 - [`weights_io.jl`](weights_io.jl): cache key (`_hash_mesh!`,
   `_regridder_cache_key`), `default_regrid_cache_dir`, `build_regridder`,
-  JLD2 save/load, ESMF export, and `apply_regridder!` for `Regridder`
+  JLD2 save/load, and `apply_regridder!` for `Regridder`
 - [`quantity_regrid.jl`](quantity_regrid.jl): `apply_regridder!` by quantity
-  kind, `regrid_conservation_report` and `source_coverage`
+  kind and `source_coverage`
 
 ## Invariants
 
@@ -200,15 +192,39 @@ and the stepping loop do not call it.
   Float32 meshes give Float64 corners and manifold
 - [`../../test/core/test_binary_planet_radius.jl`](../../test/core/test_binary_planet_radius.jl):
   the runtime source mesh shares the destination radius
-- [`../../test/core/test_regrid_cache_dir.jl`](../../test/core/test_regrid_cache_dir.jl):
-  `default_regrid_cache_dir`
 - The `test/regridding/` tier is part of the default `test/runtests.jl`
   selection: `test_conservation.jl`, `test_cubed_sphere_corners.jl`,
-  `test_serialization.jl` (cache hit; cache files published with mode
-  `0o666 & ~umask`), `test_transpose.jl`,
+  `test_serialization.jl` (identical weights after save/load and cache hit),
   `test_reduced_gaussian_stub.jl`,
   `test_quantity_regrid.jl` (extensive totals to 1e-13; the CS regrid helpers
   bit-identical to the pre-move code), `test_nested_cs_regrid.jl` (nesting
   test; C4 ↔ C8 conservation to 1e-13 and agreement with CR.jl to 1e-12; the
-  block kernels against verbatim copies of the two earlier kernel sets)
+  block and face kernels against the independent Set A reference)
 - API page: [`../../docs/src/api/regridding.md`](../../docs/src/api/regridding.md)
+
+## Depends on
+
+Grids, Quantities and AtomicFiles; ConservativeRegridding, GeometryOps,
+GeometryOpsCore, GeoInterface, JLD2, LinearAlgebra, SHA and StaticArrays.
+
+## Used by
+
+Preprocessing, Models.InitialConditionIO and Visualization.
+
+## Shared helpers owned here
+
+The exported regridder constructors, application, persistence and coverage
+interfaces, and `coarsen_sum!`, `coarsen_area_weighted!`,
+`coarsen_xface_sum!`, `coarsen_yface_sum!`. Face restriction lives in
+`cs_nesting.jl`: each coarse boundary face sums its fine faces in array
+precision and the original order; fine faces inside coarse cells are omitted.
+
+## Forward<->adjoint mirrors
+
+No transport-adjoint kernels. Restriction/prolongation share nesting geometry;
+conservative regridding and block restriction retain their own sum orders.
+
+`meshes_equivalent` compares horizontal regrid geometry. Models' runtime
+compatibility check additionally requires equal CS halo width and compares
+representations of definitions/conventions; it stays separate to preserve its
+acceptance policy (including signed-zero longitude offsets).

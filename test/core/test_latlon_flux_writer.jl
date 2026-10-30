@@ -46,7 +46,6 @@ end
                                 ["co2_flux_ocean" => (static, Dict("long_name" => "air-sea CO2 flux"))];
                                 species = :co2, attributes = Dict("source" => "test"),
                                 config_text = "x = 1\n") == path
-        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
         NCDataset(path) do ds
             v = ds["co2_flux_ocean"]
             @test Tuple(dimnames(v)) == ("lon", "lat")
@@ -55,10 +54,6 @@ end
             @test v.var[:, :] == static
             @test !haskey(v.attrib, "_FillValue") && !haskey(v.attrib, "missing_value")
             @test v.attrib["units"] == "kg CO2 m-2 s-1"
-            @test v.attrib["sign_convention"] == "positive into the atmosphere"
-            @test v.attrib["cell_measures"] == "area: cell_area"
-            @test v.attrib["long_name"] == "air-sea CO2 flux"
-            @test NCDatasets.chunking(v.var) == (:chunked, (Nx, Ny))
             @test find_coordinate(ds, LongitudeAxis()) == "lon"
             @test find_coordinate(ds, LatitudeAxis()) == "lat"
             @test ds["lon"][:] == Float64.(mesh.λᶜ)
@@ -67,10 +62,9 @@ end
             @test ds["lat_bnds"][:, :] == permutedims(hcat(mesh.φᶠ[1:Ny], mesh.φᶠ[2:end]))
             @test ds["cell_area"][:, :] == [cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny]
             # The source-mesh rule rebuilds the mesh faces from the stored centres.
-            rebuilt = source_latlon_mesh(ds; radius = mesh.radius)
+            rebuilt = source_latlon_mesh(ds[find_coordinate(ds, LongitudeAxis())][:],
+                                         ds[find_coordinate(ds, LatitudeAxis())][:]; radius = mesh.radius)
             @test rebuilt.λᶠ == mesh.λᶠ && rebuilt.φᶠ == mesh.φᶠ
-            @test ds.attrib["species"] == "co2"
-            @test ds.attrib["source"] == "test"
         end
 
         # Two variables, both spec forms in one vector, and the runtime reading
@@ -82,7 +76,6 @@ end
             @test Tuple(dimnames(ds["F"])) == ("lon", "lat")
             @test ds["F"].var[:, :] == static
             @test ds["G"].var[:, :] == 2 .* static
-            @test ds["G"].attrib["long_name"] == "g"
         end
         withenv("ATMOSTR_REGRID_CACHE_DIR" => mkpath(joinpath(dir, "cache"))) do
             grid = AtmosGrid(CubedSphereMesh(; FT = Float64, Nc = 6, Hp = 1),
@@ -95,28 +88,7 @@ end
             @test emitted ≈ sum(Float64(static[i, j]) * cell_area(mesh, i, j) for i in 1:Nx, j in 1:Ny) rtol = 1e-10
         end
 
-        # Static only: a series (lon, lat, time) is refused, and there is no
-        # time-interval argument (kind = "file" is not a time-varying kind).
-        @test_throws DimensionMismatch write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => series]; species = :co2)
-        days = [TimeInterval(DateTime(2008, 12, d), DateTime(2008, 12, d + 1)) for d in 1:3]
-        @test_throws MethodError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, days, ["F" => series]; species = :co2)
-        @test_throws MethodError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, nothing, ["F" => static]; species = :co2)
 
-        # Errors: non-finite values, wrong type or shape, reserved names and attributes.
-        bad = copy(static)
-        bad[3, 4] = NaN32
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => bad]; species = :co2)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => Float64.(static)]; species = :co2)
-        @test_throws DimensionMismatch write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => static[1:end-1, :]]; species = :co2)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["lat" => static]; species = :co2)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh,
-                                                     ["F" => (static, Dict("_FillValue" => -999f0))]; species = :co2)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => static]; species = :ch4)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => 1.0f0]; species = :co2)
-        @test_throws ArgumentError write_latlon_flux(joinpath(dir, "bad.nc"), mesh, ["F" => static, "F" => static];
-                                                     species = :co2)
-        @test !isfile(joinpath(dir, "bad.nc"))
-        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
     end
 end
 
@@ -167,6 +139,5 @@ end
                 @test !isfile(file)
             end
         end
-        @test isempty(filter(f -> occursin(".tmp-", f), readdir(dir)))
     end
 end

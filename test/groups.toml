@@ -517,11 +517,10 @@ paths = [
 ]
 
 [topics.regridding]
-description = "Conservative regridding: weights, conservation, transposes, serialization, nested cubed spheres, the identity regridder and the weight cache"
+description = "Conservative regridding: weights, conservation, serialization, nested cubed spheres, the identity regridder and the weight cache"
 files = [
     "regridding/runtests.jl",
     "core/test_identity_regrid.jl",
-    "core/test_regrid_cache_dir.jl",
 ]
 paths = [
     "src/Regridding/**",

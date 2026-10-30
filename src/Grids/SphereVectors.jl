@@ -24,3 +24,9 @@ export unit_xyz_from_radians
 @inline slerp3(a, b, θ, t) = (sin((1 - t) * θ) .* a .+ sin(t * θ) .* b) ./ sin(θ)
 
 export unit3, arc3, slerp3
+
+"""Chord distance between degree longitude/latitude pairs on the unit sphere."""
+lonlat_chord_distance(lon1, lat1, lon2, lat2) =
+    sqrt(sum(abs2, lonlat_to_unit_xyz(lon1, lat1) .- lonlat_to_unit_xyz(lon2, lat2)))
+
+export lonlat_chord_distance

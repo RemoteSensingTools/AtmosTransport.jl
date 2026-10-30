@@ -15,7 +15,6 @@ regridder = build_regridder(src_mesh, dst_mesh;
                              cache_dir = nothing)   # opt-in caching
 apply_regridder!(dst, regridder, src)                         # intensive field
 apply_regridder!(dst, regridder, src, ExtensiveCellField())   # per-cell totals
-regrid_conservation_report(regridder, src, dst, ExtensiveCellField())
 source_coverage(regridder)                                    # covered area per source cell
 ```
 
@@ -38,9 +37,6 @@ source_coverage(regridder)                                    # covered area per
   `scratch = buf` (the cubed-sphere preprocessing workspace does, so its
   regrids allocate nothing after the first call). Vector and face-flux kinds
   throw.
-- **`regrid_conservation_report`** returns `(; src_total, dst_total,
-  rel_error)` with Float64 sums; the leading dimensions of `src` and `dst`
-  must match the regridder's cell counts.
 - **`source_coverage(r)`** returns the area of each source cell that the
   destination covers, ``C_s = \sum_t W_{ts}``. It equals the source polygon
   area when the destination tiles the source. A reduced-Gaussian destination

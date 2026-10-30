@@ -5,7 +5,7 @@ bytes = 281159
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Models"]
-bytes = 300309
+bytes = 298454
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Operators/Advection"]
@@ -17,5 +17,5 @@ bytes = 521360
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
 [allow."src/Preprocessing/transport_binary"]
-bytes = 629293
+bytes = 626914
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."

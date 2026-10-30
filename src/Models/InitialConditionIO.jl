@@ -46,6 +46,8 @@ via `AtmosTransport.Models.InitialConditionIO.<name>` if needed.
 """
 module InitialConditionIO
 
+using ..Grids: bilinear_bracket, uniform_periodic_bilinear_bracket
+
 using ..Grids: cell_areas
 
 using NCDatasets
@@ -203,59 +205,6 @@ function _latlon_centres(ds, field_var)
 end
 
 """
-    _bilinear_bracket(val, arr) -> (lo, w)
-
-Find the 1-based bracket index `lo` and fractional weight `w ∈ [0, 1]`
-such that `val ≈ arr[lo] + w × (arr[lo+1] − arr[lo])`. Uses binary
-search on a **strictly increasing, non-periodic** array (e.g. latitude).
-
-Clamps: if `val ≤ arr[1]`, returns `(1, 0.0)` (extrapolate to first value).
-If `val ≥ arr[end]`, returns `(N, 0.0)` (extrapolate to last value).
-"""
-function _bilinear_bracket(val::Float64, arr::Vector{Float64})
-    N = length(arr)
-    N == 1 && return (1, 0.0)
-    val <= arr[1] && return (1, 0.0)
-    val >= arr[N] && return (N, 0.0)
-    lo, hi = 1, N
-    while hi - lo > 1
-        mid = (lo + hi) >> 1
-        if arr[mid] <= val
-            lo = mid
-        else
-            hi = mid
-        end
-    end
-    denom = arr[hi] - arr[lo]
-    w = denom > 0 ? (val - arr[lo]) / denom : 0.0
-    return lo, w
-end
-
-"""
-    _periodic_bilinear_bracket(val, arr) -> (ilo, w)
-
-Periodic (longitude) version of `_bilinear_bracket`. `arr` must be
-strictly increasing with uniform spacing `Δ = arr[2] − arr[1]` over a
-360° domain (e.g. `[-179.5, -178.5, ..., 179.5]` or `[0.5, 1.5, ..., 359.5]`).
-
-Returns 1-based index `ilo` and fractional weight `w` for the bracket
-surrounding `mod(val − arr[1], 360)` in the periodic domain. Wraps both
-`val` and the index modulo `length(arr)`.
-
-The caller should also compute `ihi = (ilo == N) ? 1 : ilo + 1` for the
-upper bracket (periodic wrap at the last cell).
-"""
-function _periodic_bilinear_bracket(val::Float64, arr::Vector{Float64})
-    N = length(arr)
-    N == 1 && return (1, 0.0)
-    Δ = arr[2] - arr[1]   # assumed uniform spacing [degrees]
-    Δ > 0 || throw(ArgumentError("longitude coordinate must be strictly increasing"))
-    u = mod(val - arr[1], 360.0) / Δ   # fractional index into the periodic domain
-    ilo0 = floor(Int, u)
-    return mod1(ilo0 + 1, N), u - ilo0  # (1-indexed, fractional weight)
-end
-
-"""
     _horizontal_interp_weights(lon, lat, lon_src, lat_src)
 
 Compute bilinear interpolation indices and weights for a target point
@@ -272,9 +221,9 @@ Returns `(ilo, ihi, jlo, jhi, w00, w10, w01, w11)` where `w00` through
 """
 function _horizontal_interp_weights(lon::Real, lat::Real, lon_src::Vector{Float64}, lat_src::Vector{Float64})
     lon_m = wrapped_longitude_360(Float64(lon))  # → [0, 360)
-    ilo, wx = _periodic_bilinear_bracket(lon_m, lon_src)
+    ilo, wx = uniform_periodic_bilinear_bracket(lon_m, lon_src)
     ihi = ilo == length(lon_src) ? 1 : ilo + 1   # periodic wrap at last cell
-    jlo, wy = _bilinear_bracket(Float64(lat), lat_src)
+    jlo, wy = bilinear_bracket(Float64(lat), lat_src)
     jhi = min(jlo + 1, length(lat_src))           # clamp at poles (no wrap)
     w00 = (1.0 - wx) * (1.0 - wy)
     w10 = wx * (1.0 - wy)

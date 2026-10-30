@@ -10,9 +10,9 @@ contract.
 - `apply_regridder!(dst, r, src)` maps an intensive field;
   `apply_regridder!(dst, r, src, kind)` takes the quantity kind
   (`IntensiveCellField()`, `ExtensiveCellField()` for per-cell totals),
-  `regrid_conservation_report` compares the global totals, and
   `source_coverage` gives the covered area of each source cell.
-- `coarsen_sum!` and `coarsen_area_weighted!` are the cubed-sphere block
+- `coarsen_sum!`, `coarsen_area_weighted!`, `coarsen_xface_sum!` and
+  `coarsen_yface_sum!` are the cubed-sphere cell and face restriction
   kernels of the transport-binary coarseners.
 - `default_regrid_cache_dir` is the shared weight cache.
 

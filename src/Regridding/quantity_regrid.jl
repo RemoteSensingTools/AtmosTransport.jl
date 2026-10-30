@@ -116,51 +116,6 @@ end
 _times_areas!(x::AbstractVector, areas::AbstractVector) = (x .*= areas)
 
 """
-    regrid_conservation_report(r, src, dst, kind::QuantityKind) -> (; src_total, dst_total, rel_error)
-
-Global totals of a field before (`src`) and after (`dst`) regridding with `r`,
-and the relative error ``|T_{\\rm dst} - T_{\\rm src}| / |T_{\\rm src}|`` (0 when
-both totals are 0, `Inf` when only `src_total` is). Axis 1 is the flat
-horizontal index, of length `length(r.src_areas)` for `src` and
-`length(r.dst_areas)` for `dst` (else a `DimensionMismatch`, for both kinds);
-totals include every trailing column.
-
-- `ExtensiveCellField()`: ``T = \\sum_c x_c``.
-- `IntensiveCellField()`: ``T = \\sum_c x_c A_c``, with `r.src_areas` for `src`
-  and `r.dst_areas` for `dst`.
-
-Sums are taken in Float64 in a fixed order. Vector and flux kinds throw an
-`ArgumentError`.
-"""
-function regrid_conservation_report(r, src::AbstractArray, dst::AbstractArray,
-                                    kind::Union{IntensiveCellField, ExtensiveCellField})
-    size(src, 1) == length(r.src_areas) || throw(DimensionMismatch(
-        "src leading dim $(size(src, 1)) ≠ regridder n_src $(length(r.src_areas))"))
-    size(dst, 1) == length(r.dst_areas) || throw(DimensionMismatch(
-        "dst leading dim $(size(dst, 1)) ≠ regridder n_dst $(length(r.dst_areas))"))
-    src_total = _regrid_total(src, r.src_areas, kind)
-    dst_total = _regrid_total(dst, r.dst_areas, kind)
-    rel_error = if iszero(src_total)
-        iszero(dst_total) ? 0.0 : Inf
-    else
-        abs(dst_total - src_total) / abs(src_total)
-    end
-    return (; src_total, dst_total, rel_error)
-end
-
-regrid_conservation_report(r, src::AbstractArray, dst::AbstractArray, kind::QuantityKind) =
-    throw(ArgumentError("regrid_conservation_report needs a scalar cell field " *
-                        "(IntensiveCellField or ExtensiveCellField); got $(typeof(kind))"))
-
-_regrid_total(x::AbstractArray, ::AbstractVector, ::ExtensiveCellField) = sum(Float64, x)
-
-# Leading dimensions are checked by `regrid_conservation_report`.
-function _regrid_total(x::AbstractArray, areas::AbstractVector, ::IntensiveCellField)
-    n = length(areas)
-    return sum(k -> Float64(x[k]) * Float64(areas[mod1(k, n)]), 1:length(x))
-end
-
-"""
     source_coverage(r) -> Vector{Float64}
 
 The area of each source cell that the destination cells of `r` cover,

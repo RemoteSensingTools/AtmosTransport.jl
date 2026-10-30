@@ -33,8 +33,7 @@ traits:
 - `apply_regridder!(dst, r, src, kind)` in
   [`../Regridding/quantity_regrid.jl`](../Regridding/quantity_regrid.jl)
   implements it for every regridder (`ConservativeRegridding.Regridder`,
-  `IdentityRegrid`, `NestedCubedSphereRegrid`), and
-  `regrid_conservation_report(r, src, dst, kind)` totals a field by its kind.
+  `IdentityRegrid`, `NestedCubedSphereRegrid`).
   `HorizontalVectorField` and `HorizontalFluxField` throw `ArgumentError`
   there. Winds go through `rotate_winds_to_panel_local!`, and face fluxes
   through `reconstruct_cs_fluxes!`.
@@ -65,8 +64,8 @@ traits:
 ## Tests And Docs
 
 - [`../../test/regridding/test_quantity_regrid.jl`](../../test/regridding/test_quantity_regrid.jl)
-  tests every trait through `apply_regridder!` and
-  `regrid_conservation_report`, and that the CS regrid helpers give the same
+  tests every trait through `apply_regridder!`, conservation totals computed
+  in the test, and that the CS regrid helpers give the same
   bits as before the rule moved to `Regridding`.
   [`../../test/core/test_cs_face_fluxes.jl`](../../test/core/test_cs_face_fluxes.jl)
   calls `regrid_3d_to_cs_panels!` with the default trait.
