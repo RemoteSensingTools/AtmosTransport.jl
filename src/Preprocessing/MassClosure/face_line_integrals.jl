@@ -1,3 +1,23 @@
+# Hybrid interfaces use Float64 differences before multiplying by surface pressure.
+struct HybridFaceThickness{P,A,B}
+    ps::P
+    A::A
+    B::B
+end
+_layer_thickness_at(dp::AbstractMatrix, k) = @view dp[:, k]
+_layer_thickness_at(h::HybridFaceThickness, k) =
+    (ps = h.ps, dA = Float64(h.A[k + 1]) - Float64(h.A[k]),
+     dB = Float64(h.B[k + 1]) - Float64(h.B[k]))
+_thickness_at(dp::AbstractVector, c) = Float64(dp[c])
+_thickness_at(h::NamedTuple, c) = abs(h.dA + h.dB * Float64(h.ps[c]))
+
+@inline function east_north_to_cartesian(uu::Float64, vv::Float64, trig, c)
+    (; sinλ, cosλ, sinφ, cosφ) = trig
+    return (-sinλ[c] * uu - sinφ[c] * cosλ[c] * vv,
+             cosλ[c] * uu - sinφ[c] * sinλ[c] * vv,
+             cosφ[c] * vv)
+end
+
 # ---------------------------------------------------------------------------
 # Cube-face mass fluxes as line integrals of the source-grid flow.
 #
@@ -57,31 +77,31 @@ function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, 
     samples_per_face >= 1 || throw(ArgumentError("samples_per_face must be ≥ 1, got $samples_per_face"))
     R = Float64(target.radius)
     nsrc = ncells(source)
-    centre, _, _ = _cs_cell_bases(target)
+    centre, _, _ = cs_cell_bases(target)
     I, J, V = Int[], Int[], Float64[]
     for f in 1:ft.nf
-        a, b = _cs_face_corners(target, ft, f)
+        a, b = cs_face_corners(target, ft, f)
         n = unit3(cross3(a, b))                       # normal of the face's great circle,
         s = dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1 : -1   # pointing left → right
         θ = arc3(a, b)
         w = s * R * θ / samples_per_face                # arc length per sample (midpoint rule)
         for q in 1:samples_per_face
             x = slerp3(a, b, θ, (q - 0.5) / samples_per_face)
-            for (c, wc) in _point_weights(source, x), d in 1:3
+            for (c, wc) in point_weights(source, x), d in 1:3
                 push!(I, f); push!(J, (d - 1) * nsrc + c); push!(V, w * wc * n[d])
             end
         end
     end
-    lon, lat = _source_cell_centers(source)
+    lon, lat = source_cell_centers(source)
     nt = Threads.maxthreadid()
     return LineIntegralFaceFluxes(sparse(I, J, V, ft.nf, 3nsrc),   # repeated (face, cell) pairs add up
-                                  ft, _trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
+                                  ft, wind_basis_trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
                                   [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt],
                                   Int(samples_per_face), source, target)
 end
 
 """
-    _point_weights(mesh::LatLonMesh, x) -> NTuple{4, Tuple{Int, Float64}}
+    point_weights(mesh::LatLonMesh, x) -> NTuple{4, Tuple{Int, Float64}}
 
 Bilinear interpolation weights at the unit vector `x` from a regular
 latitude-longitude mesh. Longitude is periodic and is bracketed relative to
@@ -90,7 +110,7 @@ the mesh's actual first centre (so meshes centred on 0° and meshes centred on
 the outermost centres the nearest row is used. Flat indices use the mesh's
 longitude-fast storage order, `c = i + (j - 1) Nx`.
 """
-function _point_weights(m::LatLonMesh, x)
+function point_weights(m::LatLonMesh, x)
     λ = mod(atand(x[2], x[1]) - Float64(first(m.λᶜ)), 360.0)
     φ = asind(clamp(x[3], -1.0, 1.0))
 
@@ -123,14 +143,14 @@ end
 
 
 """
-    _point_weights(mesh::ReducedGaussianMesh, x) -> NTuple{4, Tuple{Int, Float64}}
+    point_weights(mesh::ReducedGaussianMesh, x) -> NTuple{4, Tuple{Int, Float64}}
 
 Bilinear interpolation weights at the unit vector `x` from the cell centres of a
 reduced Gaussian mesh: linear in longitude along the two rings that bracket the
 latitude (cell centres at `(i − ½) Δλ`), then linear in latitude between them.
 Poleward of the outermost ring the outermost ring is used alone.
 """
-function _point_weights(m::ReducedGaussianMesh, x)
+function point_weights(m::ReducedGaussianMesh, x)
     λ = mod(atand(x[2], x[1]), 360.0)
     φ = asind(clamp(x[3], -1.0, 1.0))
     lats = m.latitudes
@@ -165,33 +185,11 @@ panel-seam faces are written from the canonical ones.
 function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, Array{FT, 3}},
                                     m::LineIntegralFaceFluxes, u::AbstractMatrix, v::AbstractMatrix,
                                     ps::AbstractVector, A, B, gravity, dt_factor, Nz::Int) where FT
-    ft = m.face_table
-    (; sinλ, cosλ, sinφ, cosφ) = m.src_trig
+    (; sinλ,) = m.src_trig
     size(u) == size(v) && size(u, 1) == length(ps) == length(sinλ) && size(u, 2) >= Nz ||
         throw(DimensionMismatch("source winds $(size(u)), $(size(v)) and ps $(length(ps)) do not match the operator"))
-    scale = Float64(dt_factor) / Float64(gravity)
-    nsrc = length(ps)
-    Threads.@threads :static for k in 1:Nz              # levels are independent
-        XYZ = m.src_flux[Threads.threadid()]
-        F = m.face_flux[Threads.threadid()]
-        dA = Float64(A[k + 1]) - Float64(A[k])
-        dB = Float64(B[k + 1]) - Float64(B[k])
-        @inbounds for c in 1:nsrc                       # Cartesian components of V Δp per source cell
-            dp = abs(dA + dB * Float64(ps[c]))
-            uu, vv = Float64(u[c, k]) * dp, Float64(v[c, k]) * dp
-            XYZ[c]         = -sinλ[c] * uu - sinφ[c] * cosλ[c] * vv    # X
-            XYZ[nsrc + c]  =  cosλ[c] * uu - sinφ[c] * sinλ[c] * vv    # Y
-            XYZ[2nsrc + c] =  cosφ[c] * vv                             # Z
-        end
-        mul!(F, m.L, XYZ)                               # ∫ (V · N) Δp dl for every face
-        @inbounds for f in 1:ft.nf                      # canonical entry, positive from left to right cell
-            p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
-            target = ft.face_dir[f] == 1 ? am[p] : bm[p]
-            target[i, j, k] = FT(F[f] * scale)
-        end
-    end
-    _sync_cs_mirrors!(am, bm, ft, Nz)
-    return nothing
+    return _line_integral_face_fluxes!(am, bm, m, u, v, HybridFaceThickness(ps, A, B),
+                                       gravity, dt_factor, length(ps), Nz)
 end
 
 """
@@ -199,27 +197,33 @@ end
 
 Line-integral face fluxes with explicitly supplied pressure thickness
 `dp[source_cell, level]`. The dry-air path supplies
-`dp = (1-q) |ΔA + ΔB ps| = g m_dry / cell_area`.
+`dp` selected by the caller's existing dry-thickness policy.
 """
 function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, Array{FT, 3}},
                                     m::LineIntegralFaceFluxes, u::AbstractMatrix, v::AbstractMatrix,
                                     dp::AbstractMatrix, gravity, dt_factor, Nz::Int) where FT
-    ft = m.face_table
-    (; sinλ, cosλ, sinφ, cosφ) = m.src_trig
+    (; sinλ,) = m.src_trig
     size(u) == size(v) == size(dp) && size(u, 1) == length(sinλ) && size(u, 2) >= Nz ||
         throw(DimensionMismatch(
             "source winds $(size(u)), $(size(v)) and thickness $(size(dp)) do not match the operator"))
+    return _line_integral_face_fluxes!(am, bm, m, u, v, dp,
+                                       gravity, dt_factor, size(dp, 1), Nz)
+end
+
+function _line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, Array{FT, 3}},
+                                     m::LineIntegralFaceFluxes, u, v, thickness,
+                                     gravity, dt_factor, nsrc, Nz) where FT
+    ft = m.face_table
     scale = Float64(dt_factor) / Float64(gravity)
-    nsrc = size(dp, 1)
     Threads.@threads :static for k in 1:Nz
         XYZ = m.src_flux[Threads.threadid()]
         F = m.face_flux[Threads.threadid()]
+        layer_dp = _layer_thickness_at(thickness, k)
         @inbounds for c in 1:nsrc
-            uu = Float64(u[c, k]) * Float64(dp[c, k])
-            vv = Float64(v[c, k]) * Float64(dp[c, k])
-            XYZ[c]         = -sinλ[c] * uu - sinφ[c] * cosλ[c] * vv
-            XYZ[nsrc + c]  =  cosλ[c] * uu - sinφ[c] * sinλ[c] * vv
-            XYZ[2nsrc + c] =  cosφ[c] * vv
+            uu = Float64(u[c, k]) * _thickness_at(layer_dp, c)
+            vv = Float64(v[c, k]) * _thickness_at(layer_dp, c)
+            XYZ[c], XYZ[nsrc + c], XYZ[2nsrc + c] =
+                east_north_to_cartesian(uu, vv, m.src_trig, c)
         end
         mul!(F, m.L, XYZ)
         @inbounds for f in 1:ft.nf
@@ -228,6 +232,6 @@ function line_integral_face_fluxes!(am::NTuple{6, Array{FT, 3}}, bm::NTuple{6, A
             target[i, j, k] = FT(F[f] * scale)
         end
     end
-    _sync_cs_mirrors!(am, bm, ft, Nz)
+    sync_cs_mirrors!(am, bm, ft, Nz)
     return nothing
 end

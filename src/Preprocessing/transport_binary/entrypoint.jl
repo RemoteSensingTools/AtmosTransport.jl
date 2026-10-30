@@ -572,7 +572,7 @@ function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeo
     settings = ERA5SpectralSettings(
         merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
     check_spectral_column_weights(grid, settings)
-    _validate_flux_construction(settings, "ERA5 spectral")
+    validate_flux_construction(settings, "ERA5 spectral")
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
     spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers

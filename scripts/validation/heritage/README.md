@@ -16,3 +16,7 @@ are listed under "Retired scripts" in [`scripts/README.md`](../../README.md).
 | `validate_geos_native_lonlat.jl` | Checks `CubedSphereMesh` GEOS-native cell centers and corners against the lons/lats of a raw GEOS-IT C180 file | Independent-reference panel-convention check; no test compares against a real GEOS file (candidate for `test/real_data/`) |
 | `validate_regridding.py` | Produces an xESMF conservative-regridding reference of a lat-lon emission field on the GEOS CS grid | External cross-check method for ConservativeRegridding; nothing consumes its output. Needs xesmf/xarray |
 | `write_geosit_agreement_netcdf.jl` | Writes layer-by-layer agreement diagnostics between an ERA5-on-GEOS-native L72 binary and GEOS-IT C180 to NetCDF | Stricter companion of `compare_geosit_reference.jl`; hard-codes the GEOS-IT root |
+
+`cs_wind_recovery.jl` contains the inverse wind rotation and CS flux recovery
+used only by the two GEOS comparison scripts; preprocessing has no runtime use
+for these study helpers.

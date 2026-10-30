@@ -10,7 +10,9 @@ per-source pages [ERA5 spectral path](@ref) and
 Modules = [AtmosTransport.Preprocessing,
            AtmosTransport.Preprocessing.Core,
            AtmosTransport.Preprocessing.Vertical,
-           AtmosTransport.Preprocessing.Spectral]
+           AtmosTransport.Preprocessing.Spectral,
+           AtmosTransport.Preprocessing.MassClosure,
+           AtmosTransport.Preprocessing.PhysicsInputs]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

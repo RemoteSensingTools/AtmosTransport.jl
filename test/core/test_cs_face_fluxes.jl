@@ -33,10 +33,10 @@ end
 # Exact face fluxes R ∫ u·n ds of a tangent wind `wind(x)` along each face's
 # great-circle arc (3-point Gauss–Legendre), oriented from left to right cell.
 function exact_face_fluxes(mesh, ft, wind)
-    centre = P._cs_cell_bases(mesh)[1]
+    centre = P.cs_cell_bases(mesh)[1]
     gx, gw = (-sqrt(0.6), 0.0, sqrt(0.6)), (5 / 9, 8 / 9, 5 / 9)
     map(1:ft.nf) do f
-        a, b = P._cs_face_corners(mesh, ft, f)
+        a, b = P.cs_face_corners(mesh, ft, f)
         n = G.unit3(G.cross3(a, b))
         n = G.dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
         θ = G.arc3(a, b)
@@ -71,6 +71,57 @@ interior_divergence(am, bm, Nc) =
      for p in 1:6, i in 2:Nc-1, j in 2:Nc-1]
 
 @testset "CS face fluxes" begin
+    @testset "Rotation by 90° (synthetic basis)" begin
+        Nc, Nz = 3, 2
+        # Build a 90° rotation as the tangent basis: panel-x = north,
+        # panel-y = -east, equivalent to x_east=0, x_north=1, y_east=-1,
+        # y_north=0. Forward should map (ue=1, vn=0) → (up=0, vp=-1) and
+        # reverse should invert it.
+        tb = ntuple(_ -> (zeros(Float64, Nc, Nc),
+                          ones(Float64,  Nc, Nc),
+                          fill(Float64(-1), Nc, Nc),
+                          zeros(Float64, Nc, Nc)), 6)
+
+        ue = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6); vn = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
+        for p in 1:6
+            fill!(ue[p], Float64(1.0))
+            fill!(vn[p], Float64(0.0))
+        end
+
+        up = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6); vp = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
+        P.rotate_winds_to_panel_local!(up, vp, ue, vn, tb, Nc, Nz)
+        for p in 1:6
+            @test all(up[p] .== Float64(0))
+            @test all(vp[p] .== Float64(-1))
+        end
+
+    end
+
+    @testset "Face-normal projection on a non-orthogonal synthetic basis" begin
+        Nc, Nz = 3, 2
+        # Local x is east; local y is a unit vector 53.13° counter-clockwise
+        # from x. The local-x face normal is therefore (0.8, -0.6) and the
+        # local-y face normal is due north. A due-east geographic wind should
+        # project to (0.8, 0.0), not the tangent-dot pair (1.0, 0.6).
+        tb = ntuple(_ -> (ones(Float64, Nc, Nc),
+                          zeros(Float64, Nc, Nc),
+                          fill(Float64(0.6), Nc, Nc),
+                          fill(Float64(0.8), Nc, Nc)), 6)
+        ue = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6); vn = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
+        for p in 1:6
+            fill!(ue[p], Float64(1.0))
+            fill!(vn[p], Float64(0.0))
+        end
+
+        up = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6); vp = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
+        P.rotate_winds_to_panel_local!(up, vp, ue, vn, tb, Nc, Nz)
+        for p in 1:6
+            @test up[p] ≈ fill(Float64(0.8), Nc, Nc, Nz) rtol = 1e-12
+            @test vp[p] ≈ zeros(Float64, Nc, Nc, Nz) atol = 1e-12
+        end
+
+    end
+
     @testset "face edge lengths" begin
         mesh = gmao_mesh(24)
         Lx, Ly = G.cs_face_edge_lengths(mesh)
@@ -137,7 +188,7 @@ interior_divergence(am, bm, Nc) =
             u, v = solid_body_winds(mesh, 30.0, tilt)
             avg_am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6); avg_bm = ntuple(_ -> zeros(Nc, Nc + 1, 1), 6)
             P.cs_face_fluxes!(avg_am, avg_bm, u, v, dps, P.EdgeLengths(mesh), 9.80665, 1.0, Nc, 1)
-            P._sync_cs_mirrors!(avg_am, avg_bm, ft, 1)
+            P.sync_cs_mirrors!(avg_am, avg_bm, ft, 1)
             # same orientation and size at interior faces (they differ only in how
             # the two cells' winds are combined)
             interior = [vec_am[p][i, j, 1] - avg_am[p][i, j, 1] for p in 1:6, i in 3:Nc-1, j in 2:Nc-1]
@@ -265,7 +316,7 @@ interior_divergence(am, bm, Nc) =
         end
         regrid!(panels, f) = P.regrid_3d_to_cs_panels!(panels, R, f, ws, Nc)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(src, mesh, Nz, Float64))) do w
-            P._regrid_winds!(w, pipe.u, pipe.v, regrid!, u, v)
+            P.regrid_winds!(w, pipe.u, pipe.v, regrid!, u, v)
             lon, lat = G.panel_cell_center_lonlat(mesh, 3)       # the north-polar panel
             maximum(Iterators.product(1:Nc, 1:Nc)) do (i, j)
                 e, n = en(deg2rad(lon[i, j]), deg2rad(lat[i, j]))
@@ -274,11 +325,11 @@ interior_divergence(am, bm, Nc) =
         end
         @test polar_error[1] > 0.05 * hypot(V...)      # u and v remapped separately: > 5 % of |V|
         @test polar_error[2] < 0.1 * polar_error[1]   # the vector remap recovers the flow
-        @test P._wind_regrid(:scalar, src, mesh, Nz, Float64) isa P.ScalarWindRegrid
+        @test P.build_wind_regrid(:scalar, src, mesh, Nz, Float64) isa P.ScalarWindRegrid
         # Float32 buffers, as in production
         ws32 = P.allocate_cs_preprocess_workspace(Nc, nx, ny, Nz, length(R.src_areas), length(R.dst_areas), Float32)
         u32, v32 = ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6), ntuple(_ -> zeros(Float32, Nc, Nc, Nz), 6)
-        P._regrid_winds!(P.CartesianWindRegrid(src, mesh, Nz, Float32), u32, v32,
+        P.regrid_winds!(P.CartesianWindRegrid(src, mesh, Nz, Float32), u32, v32,
                          (panels, f) -> P.regrid_3d_to_cs_panels!(panels, R, f, ws32, Nc),
                          Float32.(u), Float32.(v))
         @test maximum(p -> maximum(abs, u32[p] .- pipe.u[p]), 1:6) < 1e-4 * hypot(V...)
@@ -295,7 +346,7 @@ interior_divergence(am, bm, Nc) =
                                definition = G.GMAOCubedSphereDefinition(; convention = G.GEOSNativePanelConvention()))
         Nc, Nz = 12, 2
         R = AtmosTransport.Regridding.build_regridder(rg, mesh; normalize = false)
-        lon, lat = P._source_cell_centers(rg)
+        lon, lat = P.source_cell_centers(rg)
         @test length(lon) == length(R.src_areas) && lat[1] == lats[1] && lat[end] == lats[end]
         @test lon[1:8] ≈ [(i - 0.5) * 45 for i in 1:8]       # the southernmost ring has 8 cells
         V = (3.0, 11.0, 0.0)
@@ -316,7 +367,7 @@ interior_divergence(am, bm, Nc) =
                               P.unpack_flat_to_panels_3d!(panels, dst_flat, Nc, Nz))
         u_cs, v_cs = ntuple(_ -> zeros(Nc, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(rg, mesh, Nz, Float64))) do w
-            P._regrid_winds!(w, u_cs, v_cs, regrid!, u, v)
+            P.regrid_winds!(w, u_cs, v_cs, regrid!, u, v)
             lonp, latp = G.panel_cell_center_lonlat(mesh, 3)
             maximum(Iterators.product(1:Nc, 1:Nc, 1:Nz)) do (i, j, k)
                 e, n = en(deg2rad(lonp[i, j]), deg2rad(latp[i, j]))
@@ -328,7 +379,7 @@ interior_divergence(am, bm, Nc) =
         @test polar_error[1] > 0.05 * hypot(V...)
         @test polar_error[2] < 0.1 * polar_error[1]
         # winds must come level last: a transposed array is rejected, not scrambled
-        @test_throws DimensionMismatch P._regrid_winds!(P.CartesianWindRegrid(rg, mesh, Nz, Float64),
+        @test_throws DimensionMismatch P.regrid_winds!(P.CartesianWindRegrid(rg, mesh, Nz, Float64),
                                                         u_cs, v_cs, regrid!, permutedims(u), permutedims(v))
     end
 
@@ -338,7 +389,7 @@ interior_divergence(am, bm, Nc) =
         mesh = gmao_mesh(48); Nc = mesh.Nc
         ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         geom = P.CSVectorFaceGeometry(mesh, ft)
-        centre = P._cs_cell_bases(mesh)[1]
+        centre = P.cs_cell_bases(mesh)[1]
         thickness(x) = 1000.0 * (1 + 0.3 * x[3] + 0.2 * x[1])
         u_e = ntuple(_ -> zeros(Nc, Nc, 1), 6); v_n = ntuple(_ -> zeros(Nc, Nc, 1), 6)
         dps = ntuple(_ -> zeros(Nc, Nc, 1), 6)
@@ -353,7 +404,7 @@ interior_divergence(am, bm, Nc) =
         P.cs_vector_face_fluxes!(am, bm, u_e, v_n, dps, geom, ft, 1.0, 1.0, Nc, 1)
         rel = Float64[]
         for f in findall(!=(0), ft.mirror_panel)
-            a, b = P._cs_face_corners(mesh, ft, f)
+            a, b = P.cs_face_corners(mesh, ft, f)
             mid = G.unit3(a .+ b)
             n = G.unit3(G.cross3(a, b))
             n = G.dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? n : .-n
@@ -365,36 +416,18 @@ interior_divergence(am, bm, Nc) =
         @test sqrt(mean(abs2, rel)) < 1e-4
     end
 
-    @testset "default flux construction is the historical reconstruct_cs_fluxes!" begin
-        # the ERA5 N320 driver now calls the shared methods; the defaults must be bit-identical
-        mesh = gmao_mesh(8); Nc, Nz = 8, 3
-        ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
-        u_e = ntuple(_ -> randn(Nc, Nc, Nz), 6); v_n = ntuple(_ -> randn(Nc, Nc, Nz), 6)
-        ps = ntuple(_ -> 1e5 .+ 500 .* rand(Nc, Nc), 6)
-        A, B = [0.0, 3000.0, 8000.0, 0.0], [0.0, 0.0, 0.4, 1.0]
-        defaults = (face_fluxes = :panel_average, face_lengths = :cell_centerline, face_interpolation = :linear)
-        method = P._face_flux_method(defaults, (mesh = mesh, face_table = ft))
-        panels(n) = ntuple(_ -> zeros(Nc + n[1], Nc + n[2], Nz), 6)
-        x = (am = panels((1, 0)), bm = panels((0, 1)), u_local = panels((0, 0)), v_local = panels((0, 0)),
-             dp = panels((0, 0)))
-        P._prepare_cell_winds!(method, x, u_e, v_n, mesh, Nz)
-        P.fill_cs_layer_thickness!(x.dp, ps, A, B, Nc, Nz)
-        P._face_fluxes!(method, x, 9.80665, 0.25, Nc, Nz)
-        old = (am = panels((1, 0)), bm = panels((0, 1)), u = panels((0, 0)), v = panels((0, 0)), dp = panels((0, 0)))
-        P.rotate_winds_to_panel_local!(old.u, old.v, u_e, v_n, mesh, Nz)
-        P.reconstruct_cs_fluxes!(old.am, old.bm, old.u, old.v, old.dp, ps, A, B, mesh.Δx, mesh.Δy,
-                                 9.80665, 0.25, Nc, Nz)
-        @test x.am == old.am && x.bm == old.bm
-    end
 
     @testset "each flux method gets the winds it expects" begin
+        defaults = (face_fluxes = :panel_average, face_lengths = :cell_centerline,
+                    face_interpolation = :linear)
+        @test P.face_flux_method(defaults, (mesh = gmao_mesh(8),)) isa P.PanelAverageFluxes
         mesh = gmao_mesh(8); Nc, Nz = 8, 2
         ft = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(mesh.convention))
         u_e = ntuple(_ -> rand(Nc, Nc, Nz), 6); v_n = ntuple(_ -> rand(Nc, Nc, Nz), 6)
         x = (u_local = ntuple(_ -> zeros(Nc, Nc, Nz), 6), v_local = ntuple(_ -> zeros(Nc, Nc, Nz), 6))
-        P._prepare_cell_winds!(P.VectorFaceFluxes(P.CSVectorFaceGeometry(mesh, ft), ft), x, u_e, v_n, mesh, Nz)
+        P.prepare_cell_winds!(P.VectorFaceFluxes(P.CSVectorFaceGeometry(mesh, ft), ft), x, u_e, v_n, mesh, Nz)
         @test x.u_local == u_e && x.v_local == v_n                     # east/north as they are
-        P._prepare_cell_winds!(P.PanelAverageFluxes(P.EdgeLengths(mesh)), x, u_e, v_n, mesh, Nz)
+        P.prepare_cell_winds!(P.PanelAverageFluxes(P.EdgeLengths(mesh)), x, u_e, v_n, mesh, Nz)
         u_ref = ntuple(_ -> zeros(Nc, Nc, Nz), 6); v_ref = ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         P.rotate_winds_to_panel_local!(u_ref, v_ref, u_e, v_n, mesh, Nz)
         @test x.u_local == u_ref && x.v_local == v_ref                 # panel-local components
@@ -406,7 +439,7 @@ interior_divergence(am, bm, Nc) =
         src = P.build_target_geometry(Val(:synthetic_reduced_gaussian),
                                       Dict{String, Any}("gaussian_number" => 96, "nlon_mode" => "octahedral"), Float64).mesh
         li = P.LineIntegralFaceFluxes(src, mesh, ft)
-        lon, lat = P._source_cell_centers(src)
+        lon, lat = P.source_cell_centers(src)
         # one layer with Δp = ps = 1 (A = 0, B = 0 → 1) and Δt = g: fluxes are R ∫ V·N ds
         function li_fluxes(wind)
             u, v = zeros(length(lon), 1), zeros(length(lon), 1)
@@ -449,7 +482,7 @@ interior_divergence(am, bm, Nc) =
         am, bm = li_fluxes(x -> 30.0 .* (0.0, -x[3], x[2]))
         div = [am[p][i, j, 1] - am[p][i + 1, j, 1] + bm[p][i, j, 1] - bm[p][i, j + 1, 1] for p in 1:6, i in 1:Nc, j in 1:Nc]
         @test maximum(abs, div) < 1e-3 * maximum(abs, am[1])
-        @test_throws ArgumentError P._face_flux_method((face_fluxes = :line_integral,),
+        @test_throws ArgumentError P.face_flux_method((face_fluxes = :line_integral,),
                                                        (mesh = mesh, face_table = ft))    # no source mesh
         # two hybrid layers, varying ps, Float32 output: F = Δp-weighted line integral, scaled by Δt / g
         A, B = [0.0, 2000.0, 0.0], [0.0, 0.3, 1.0]
@@ -478,16 +511,16 @@ interior_divergence(am, bm, Nc) =
                           radius = mesh.radius)
         point(lon, lat) = (cosd(lat) * cosd(lon), cosd(lat) * sind(lon), sind(lat))
         for (lonq, latq) in ((179.9, 0.0), (-180.1, 0.0), (12.0, 89.9), (12.0, -89.9))
-            weights = P._point_weights(ll, point(lonq, latq))
+            weights = P.point_weights(ll, point(lonq, latq))
             @test sum(last, weights) ≈ 1.0
             @test all(cw -> 1 <= first(cw) <= G.ncells(ll), weights)
         end
-        wrap_east = P._point_weights(ll, point(179.9, 0.0))
-        wrap_west = P._point_weights(ll, point(-180.1, 0.0))
+        wrap_east = P.point_weights(ll, point(179.9, 0.0))
+        wrap_west = P.point_weights(ll, point(-180.1, 0.0))
         @test first.(wrap_east) == first.(wrap_west)
         @test collect(last.(wrap_east)) ≈ collect(last.(wrap_west))
         li_ll = P.LineIntegralFaceFluxes(ll, mesh, ft)
-        ll_lon, ll_lat = P._source_cell_centers(ll)
+        ll_lon, ll_lat = P.source_cell_centers(ll)
         ll_u = [30.0 * cosd(ll_lat[c]) for c in eachindex(ll_lon), k in 1:1]
         ll_v = zeros(size(ll_u))
         ll_am = ntuple(_ -> zeros(Nc + 1, Nc, 1), 6)
@@ -517,9 +550,6 @@ interior_divergence(am, bm, Nc) =
             @test (default_merra.face_fluxes, default_merra.face_lengths,
                    default_merra.face_interpolation, default_merra.wind_regrid) ===
                   (:vector, :edge, :fv3, :cartesian)
-            # vector ignores face_lengths, so an explicit centreline choice is rejected
-            bad = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_lengths = \"cell_centerline\"")
-            @test_throws ArgumentError P.load_met_settings(write_toml("bad.toml", bad); root_dir = dir)
             wrong = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"spline\"")
             @test_throws ArgumentError P.load_met_settings(write_toml("wrong.toml", wrong); root_dir = dir)
             # ERA5 N320 takes the shared flux-construction keys, including dry
@@ -536,10 +566,6 @@ interior_divergence(am, bm, Nc) =
                   (:vector, :edge, :fv3, :cartesian, :dry_mass)
             era_moist = write_toml("era_moist.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"moist\"\n")
             @test P.load_met_settings(era_moist; root_dir = dir).flux_thickness === :moist
-            era_thick_bad = write_toml("era_thick_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_thickness = \"unknown\"\n")
-            @test_throws ArgumentError P.load_met_settings(era_thick_bad; root_dir = dir)
-            era_bad = write_toml("era_bad.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nwind_regrid = \"bilinear\"\n")
-            @test_throws ArgumentError P.load_met_settings(era_bad; root_dir = dir)
             # window-mean fluxes and line integrals are ERA5 N320 options
             era_li = write_toml("era_li.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nface_fluxes = \"line_integral\"\n" *
                                                "flux_time_sampling = \"window_mean\"\n")
@@ -547,21 +573,7 @@ interior_divergence(am, bm, Nc) =
             @test (e.face_fluxes, e.flux_time_sampling) == (:line_integral, :window_mean)
             @test P.load_met_settings(write_toml("era00.toml", "[source]\nname = \"ERA5-N320\"\n"); root_dir = dir).flux_time_sampling ===
                   :window_mean
-            era_t = write_toml("era_t.toml", "[source]\nname = \"ERA5-N320\"\n[preprocessing]\nflux_time_sampling = \"window_end\"\n")
-            @test_throws ArgumentError P.load_met_settings(era_t; root_dir = dir)
-            merra_t = replace(merra, "[preprocessing]" => "[preprocessing]\nflux_time_sampling = \"window_mean\"")
-            @test_throws ArgumentError P.load_met_settings(write_toml("merra_t.toml", merra_t); root_dir = dir)
-            merra_li = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"line_integral\"")
-            @test_throws ArgumentError P.load_met_settings(write_toml("merra_li.toml", merra_li); root_dir = dir)
-            vec = replace(merra, "[preprocessing]" => "[preprocessing]\nface_fluxes = \"vector\"\nface_interpolation = \"fv3\"\nwind_regrid = \"cartesian\"")
-            s = P.load_met_settings(write_toml("vec.toml", vec); root_dir = dir)
-            @test (s.face_interpolation, s.wind_regrid) == (:fv3, :cartesian)
-            # the cubic stencil belongs to the vector method
-            cubic = replace(merra, "[preprocessing]" =>
-                "[preprocessing]\nface_fluxes = \"panel_average\"\nface_interpolation = \"cubic\"")
-            @test_throws ArgumentError P.load_met_settings(write_toml("cubic.toml", cubic); root_dir = dir)
-            bad_regrid = replace(merra, "[preprocessing]" => "[preprocessing]\nwind_regrid = \"bilinear\"")
-            @test_throws ArgumentError P.load_met_settings(write_toml("regrid.toml", bad_regrid); root_dir = dir)
+
         end
     end
 

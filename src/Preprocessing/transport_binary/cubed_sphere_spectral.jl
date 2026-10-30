@@ -102,8 +102,8 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     ps_offsets = zeros(Float64, spec.n_times + 1)
     cs_ws = allocate_cs_preprocess_workspace(Nc, Nx_stg, Ny_stg, Nz,
                                              n_src, n_dst, FT)
-    flux_method = _face_flux_method(settings, grid; source = staging_grid.mesh)
-    wind_regrid = _wind_regrid(settings.wind_regrid, staging_grid.mesh,
+    flux_method = face_flux_method(settings, grid; source = staging_grid.mesh)
+    wind_regrid = build_wind_regrid(settings.wind_regrid, staging_grid.mesh,
                                grid.mesh, Nz, FT)
 
     vc_merged = vertical.merged_vc
@@ -165,16 +165,16 @@ function _spectral_endpoint_face_fluxes!(method::Union{PanelAverageFluxes, Vecto
     Nc = grid.Nc
     regrid! = (panels, field) -> regrid_3d_to_cs_panels!(
         panels, workspace.regridder, field, cs_ws, Nc, IntensiveCellField())
-    _regrid_winds!(workspace.wind_regrid, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+    regrid_winds!(workspace.wind_regrid, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                    regrid!, cs_ws.u_cc, cs_ws.v_cc)
     x = (am = am_out, bm = bm_out,
          u_local = cs_ws.u_cs_panels, v_local = cs_ws.v_cs_panels,
          dp = cs_ws.dp_panels)
-    _prepare_cell_winds!(method, x, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
+    prepare_cell_winds!(method, x, cs_ws.u_cs_panels, cs_ws.v_cs_panels,
                          grid.mesh, Nz)
     fill_cs_layer_thickness!(x.dp, ps_out, workspace.A_ifc, workspace.B_ifc,
                              Nc, Nz)
-    return _face_fluxes!(method, x, workspace.gravity, workspace.dt_factor, Nc, Nz)
+    return face_fluxes!(method, x, workspace.gravity, workspace.dt_factor, Nc, Nz)
 end
 
 function _spectral_endpoint_face_fluxes!(method::LineIntegralFaceFluxes,
@@ -429,7 +429,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         for p in 1:CS_PANEL_COUNT
             fill!(cur_cm[p], zero(FT))
         end
-        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+        cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                             cur_m, Nc, Nz, bal_diag,
                                             "ERA5 spectral window $win", ctx.balance_weights)
         closure = column_closure_record(bal_diag, cm_diag)
@@ -592,7 +592,7 @@ function process_day(date::Date,
                      next_day_hour0=nothing,
                      run_cache = nothing)
     FT = settings.output_float_type
-    _validate_flux_construction(settings, "ERA5 spectral")
+    validate_flux_construction(settings, "ERA5 spectral")
     Nc = grid.Nc
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)

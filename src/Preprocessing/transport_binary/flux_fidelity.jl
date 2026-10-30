@@ -9,7 +9,7 @@
 #   (registration, level order, units).
 # - The panel-average and line-integral evaluators are independent of the
 #   production constructors. The vector evaluator reuses the production face
-#   geometry and FV3 filter (`_vector_face_value`, `geom.len`), so it catches
+#   geometry and FV3 filter (`vector_face_value`, `geom.len`), so it catches
 #   assembly, scatter and time-scaling errors but not geometry errors.
 # - Native GEOS fluxes have no independent source: their certificate is
 #   `not_applicable` and records only the balance correction.
@@ -939,12 +939,12 @@ end
 function LineIntegralFidelityStencil(method::LineIntegralFaceFluxes,
                                      sample_map::FidelitySampleMap)
     source, target, ft = method.source_mesh, method.target_mesh, method.face_table
-    centre, _, _ = _cs_cell_bases(target)
+    centre, _, _ = cs_cell_bases(target)
     cells = Vector{Vector{Int}}(undef, length(sample_map.faces))
     weights = Vector{Vector{Float64}}(undef, length(sample_map.faces))
     normals = Vector{NTuple{3,Float64}}(undef, length(sample_map.faces))
     for (slot, f) in pairs(sample_map.faces)
-        a, b = _cs_face_corners(target, ft, f)
+        a, b = cs_face_corners(target, ft, f)
         n = unit3(cross3(a, b))
         sign = dot3(n, centre[ft.face_right[f]] .- centre[ft.face_left[f]]) >= 0 ? 1.0 : -1.0
         theta = arc3(a, b)
@@ -955,7 +955,7 @@ function LineIntegralFidelityStencil(method::LineIntegralFaceFluxes,
         sizehint!(face_weights, 4 * method.samples_per_face)
         for q in 1:method.samples_per_face
             x = slerp3(a, b, theta, (q - 0.5) / method.samples_per_face)
-            for (c, wc) in _point_weights(source, x)
+            for (c, wc) in point_weights(source, x)
                 push!(face_cells, c)
                 push!(face_weights, segment_weight * wc)
             end
@@ -1045,7 +1045,7 @@ function capture_cs_wind_flux_samples(method::PanelAverageFluxes,
                 un = 0.5 * (u[p][i - 1, j, k] + u[p][i, j, k])
                 thick = 0.5 * (dp[p][i - 1, j, k] + dp[p][i, j, k])
             end
-            return un * thick * _xface_length(method.lengths, i, j, Nc) * scale
+            return un * thick * xface_length(method.lengths, i, j, Nc) * scale
         else
             if j == 1
                 un, thick = v[p][i, 1, k], dp[p][i, 1, k]
@@ -1055,14 +1055,14 @@ function capture_cs_wind_flux_samples(method::PanelAverageFluxes,
                 un = 0.5 * (v[p][i, j - 1, k] + v[p][i, j, k])
                 thick = 0.5 * (dp[p][i, j - 1, k] + dp[p][i, j, k])
             end
-            return un * thick * _yface_length(method.lengths, i, j, Nc) * scale
+            return un * thick * yface_length(method.lengths, i, j, Nc) * scale
         end
     end
     return _capture_cs_samples(raw_am, raw_bm, ft, sample_map, Nz, evaluator)
 end
 
 # The vector evaluator re-evaluates the face formula, but with the production
-# face geometry and FV3 filter (`_vector_face_value`, `geom.len`): it catches
+# face geometry and FV3 filter (`vector_face_value`, `geom.len`): it catches
 # assembly, scatter and time-scaling errors, not geometry errors.
 function capture_cs_wind_flux_samples(method::VectorFaceFluxes,
                                       raw_am, raw_bm, u, v, dp,
@@ -1071,11 +1071,11 @@ function capture_cs_wind_flux_samples(method::VectorFaceFluxes,
                                       sample_map=FidelitySampleMap(ft))
     scale = Float64(dt_factor) / Float64(gravity)
     function evaluator(f, k)
-        un, thick = _vector_face_value(method.geom, f, u, v, dp, k)
+        un, thick = vector_face_value(method.geom, f, u, v, dp, k)
         filter = method.geom.filter
         if filter !== nothing
             un = sum(filter.w[f][m] *
-                     first(_vector_face_value(method.geom, filter.face[f][m],
+                     first(vector_face_value(method.geom, filter.face[f][m],
                                               u, v, dp, k)) for m in 1:5)
         end
         return un * thick * method.geom.len[f] * scale

@@ -67,8 +67,8 @@ end
 
 const ERA5N320Settings = ERA5GRIBSettings{:n320}
 const ERA5_FLUX_TIME_SAMPLINGS = (:window_start, :window_mean)
-_has_source_line_integrals(::ERA5GRIBSettings) = true
-_validate_flux_time_sampling(s::ERA5GRIBSettings, source) =
+has_source_line_integrals(::ERA5GRIBSettings) = true
+validate_flux_time_sampling(s::ERA5GRIBSettings, source) =
     s.flux_time_sampling in ERA5_FLUX_TIME_SAMPLINGS || throw(ArgumentError(
         "$source flux_time_sampling must be one of $(join(ERA5_FLUX_TIME_SAMPLINGS, ", ")); got :$(s.flux_time_sampling)"))
 

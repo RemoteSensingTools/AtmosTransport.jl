@@ -280,7 +280,7 @@ end
 function _endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes}, thickness,
                                 x, pipe, vc, gravity, dt_factor, Nc, Nz)
     _fill_era5_flux_thickness!(thickness, x, pipe, vc, Nc, Nz)
-    _face_fluxes!(method, x, gravity, dt_factor, Nc, Nz)
+    face_fluxes!(method, x, gravity, dt_factor, Nc, Nz)
     return nothing
 end
 
@@ -340,7 +340,7 @@ function fill_tm5_dkg_payload!(dkg_c180, c180_fields, air_mass,
                                c::BLDiffConstants{FT},
                                scratches::Vector{BLDiffColumnScratch{FT}}) where FT
     for s in scratches
-        _reset!(s.diag)
+        reset_bldiff_diag!(s.diag)
     end
     # `:static` pins each iteration to one thread, which the per-thread
     # `scratches[threadid()]` indexing requires.
@@ -434,8 +434,8 @@ function process_era5_n320_to_cs_day(date::Date,
                                        configured_last_day::Union{Nothing, Date} = nothing) where FT
     mass_basis === :dry ||
         throw(ArgumentError("ERA5 N320 → CS writer only supports mass_basis=:dry; got $(mass_basis)"))
-    _validate_flux_construction(settings, "ERA5")
-    _validate_flux_thickness(settings.flux_thickness, "ERA5")
+    validate_flux_construction(settings, "ERA5")
+    validate_flux_thickness(settings.flux_thickness, "ERA5")
     native_vc_cfg = load_hybrid_coefficients(settings.coefficients_file)
     native_vc_ft = HybridSigmaPressure(FT.(native_vc_cfg.A), FT.(native_vc_cfg.B))
     plan = if vertical_plan === nothing
@@ -534,8 +534,8 @@ function process_era5_n320_to_cs_day(date::Date,
         gravity = FT(STANDARD_GRAVITY)
         # Flux construction (`[preprocessing]` keys; defaults reproduce the
         # historical panel-average fluxes and mass-weighted column balance).
-        flux_method = _face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)
-        flux_thickness = _flux_thickness(settings.flux_thickness)
+        flux_method = face_flux_method(settings, target_grid; source = cur_pipe.source_grid.mesh)
+        flux_thickness = flux_thickness_method(settings.flux_thickness)
         flux_x = (am = native_am, bm = native_bm, u_local = native_u_local,
                   v_local = native_v_local, dp = native_dp)
         # Window-mean fluxes also need the face fluxes at the window end, and the
@@ -831,7 +831,7 @@ function process_era5_n320_to_cs_day(date::Date,
             sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             for p in 1:6; fill!(cm[p], zero(FT)); end
-            cm_diag = _diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
+            cm_diag = diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
                                                 bal_diag, "ERA5 N320 window", balance_weights)
             closure_record[] = column_closure_record(bal_diag, cm_diag)
             return bal_diag
@@ -843,9 +843,9 @@ function process_era5_n320_to_cs_day(date::Date,
         # final balance diagnostics. Re-prepares at each candidate `steps`
         # (mirrors the GEOS path; guarantees continuity closes at that count).
         _adapt_window! = function (pipe, pipe_end, m_dry, m_next, am, bm, cm, dm)
-            _prepare_cell_winds!(flux_method, flux_x, pipe.c180_fields.u, pipe.c180_fields.v,
+            prepare_cell_winds!(flux_method, flux_x, pipe.c180_fields.u, pipe.c180_fields.v,
                                  mesh, Nz_native)
-            window_mean && _prepare_cell_winds!(flux_method, flux_x_end, pipe_end.c180_fields.u,
+            window_mean && prepare_cell_winds!(flux_method, flux_x_end, pipe_end.c180_fields.u,
                                                 pipe_end.c180_fields.v, mesh, Nz_native)
             @inbounds for p in 1:6
                 for k in 1:Nz_native

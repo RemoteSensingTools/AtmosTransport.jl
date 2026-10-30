@@ -184,7 +184,7 @@ function allocate_merra2_to_c180_pipeline(target_grid::CubedSphereTargetGeometry
     has_vdiff_fields(settings) && (phys = merge(phys, (; t = panels3(Nz_int))))
     edge_src = conv ? zeros(FT, n_src, Nz_int + 1) : nothing
     edge_dst = conv ? zeros(FT, n_dst, Nz_int + 1) : nothing
-    wind = _wind_regrid(settings.wind_regrid, source_ll_mesh, target_grid.mesh, Nz_int, FT)
+    wind = build_wind_regrid(settings.wind_regrid, source_ll_mesh, target_grid.mesh, Nz_int, FT)
     return MERRA2ToC180Pipeline{FT, typeof(regridder), typeof(phys), typeof(edge_src), typeof(wind)}(
         regridder, ws, Nz_int, c180_fields, Ref(false), phys, edge_src, edge_dst, wind)
 end
@@ -205,7 +205,7 @@ function process_merra2_window!(pipe::MERRA2ToC180Pipeline{FT},
     regrid_2d_to_cs_panels!(pipe.c180_fields.ps, pipe.regridder, fields.ps,
                             pipe.ws, Nc, IntensiveCellField())
     regrid_3d_to_cs_panels!(pipe.c180_fields.qv, pipe.regridder, fields.qv, pipe.ws, Nc)
-    _regrid_winds!(pipe.wind, pipe.c180_fields.u, pipe.c180_fields.v,
+    regrid_winds!(pipe.wind, pipe.c180_fields.u, pipe.c180_fields.v,
                    (panels, f) -> regrid_3d_to_cs_panels!(panels, pipe.regridder, f, pipe.ws, Nc),
                    fields.u, fields.v)
     pipe.omega_available[] = fields.omega !== nothing
@@ -523,7 +523,7 @@ end
 
 function _reconstruct_window_fluxes!(flux, x, ps_moist, m_a, vc, mesh, g, dt, Nc, Nz)
     _fill_flux_thickness!(flux.thickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
-    return _face_fluxes!(flux.method, x, g, dt, Nc, Nz)
+    return face_fluxes!(flux.method, x, g, dt, Nc, Nz)
 end
 
 # Fluxes from the panel-local winds, Poisson-balanced against the window's mass
@@ -547,7 +547,7 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
-    cm_diag = _diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
+    cm_diag = diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
                                         "MERRA-2 window", d.balance.weights)
     x.closure_record[] = column_closure_record(diag, cm_diag)
     return diag
@@ -599,7 +599,7 @@ end
 function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2BlockState,
                       blk::Integer, diag::MERRA2DayDiagnostics)
     x, FT = d.scratch, eltype(cur.m_dry[1])
-    _prepare_cell_winds!(d.flux.method, x, cur.pipe.c180_fields.u, cur.pipe.c180_fields.v,
+    prepare_cell_winds!(d.flux.method, x, cur.pipe.c180_fields.u, cur.pipe.c180_fields.v,
                          d.grid.mesh, cur.pipe.Nz)
     for h in 1:d.nsub
         win = (blk - 1) * d.nsub + h
@@ -799,8 +799,8 @@ function process_merra2_to_cs_day(date::Date,
             Int(steps_per_window), Float64(substep_cfl_target),
             (tol = Float64(cs_balance_tol), project_every = Int(cs_balance_project_every),
              weights = column_weights(settings.column_balance_weights, vc.B)),
-            (method = _face_flux_method(settings, target_grid),
-             thickness = _flux_thickness(settings.flux_thickness)),
+            (method = face_flux_method(settings, target_grid),
+             thickness = flux_thickness_method(settings.flux_thickness)),
             Float64(positivity_cfl_limit), replay_tolerance(FT),
             write_replay_on, mass_target, configured_last_day,
             _merra2_window_scratch(FT, target_grid.Nc, Nz, target_grid.face_table),

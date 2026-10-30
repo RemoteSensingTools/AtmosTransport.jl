@@ -188,7 +188,7 @@ function regrid_n320_to_c180!(c180_fields::ERA5C180RegridFields{FT},
                            workspace.regridder, workspace.coverage, src_field)
         return unpack_flat_to_panels_3d!(dst_panels, workspace.dst_flat_3d, Nc, Nz)
     end
-    _regrid_winds!(wind, c180_fields.u, c180_fields.v, regrid3d!, n320_window.u, n320_window.v)
+    regrid_winds!(wind, c180_fields.u, c180_fields.v, regrid3d!, n320_window.u, n320_window.v)
     regrid3d!(c180_fields.t, n320_window.t)
     regrid3d!(c180_fields.qv, n320_window.qv)
 
@@ -513,7 +513,7 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
     tm5_c180_fields = include_convection ?
         allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
     c180_fields   = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
-    wind          = _wind_regrid(wind_regrid, source_grid.mesh, target_grid.mesh, Nz_int, FT)
+    wind          = build_wind_regrid(wind_regrid, source_grid.mesh, target_grid.mesh, Nz_int, FT)
 
     return ERA5N320ToC180Pipeline{FT, typeof(regrid_ws), typeof(target_grid), typeof(source_grid),
                                   typeof(wind)}(
