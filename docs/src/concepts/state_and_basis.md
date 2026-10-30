@@ -254,9 +254,7 @@ types currently in the tree:
 | Type | Use |
 |---|---|
 | `ConstantField{FT, N}` | Scalar broadcast to a fixed value. |
-| `ProfileKzField{FT, V, N}` | Fixed vertical profile, uniform horizontally. |
 | `PreComputedKzField{FT, N, A}` | Wrap a precomputed spatial Kz field. |
-| `DerivedKzField{FT, SF, DELP, A, P}` | Beljaars-Viterbo Kz derived from meteorological fields. |
 | `StepwiseField{FT, N, A, B, W}` | Piecewise-constant in time (read from binary). |
 | `WindowPBLKzField` | Cubed-sphere local Kz from `pblh/ustar/pbl_hflux/t2m`. |
 | `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Kz from surface and column fields. |

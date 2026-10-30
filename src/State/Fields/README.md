@@ -1,100 +1,59 @@
 # Fields
 
-Time-varying field abstraction for operator inputs.
-
-This folder provides the host-side field objects that physics operators
-query through a uniform interface. The core idea is that operators
-should not care whether a rate or diffusivity came from a constant, a
-profile, a precomputed array, a derived meteorological calculation, or a
-panel-native cubed-sphere wrapper.
-
-## Entry Points
-
-- Interface and common exports:
-  [`Fields.jl`](Fields.jl)
-- Precomputed spatial field wrapper:
-  [`PreComputedKzField.jl`](PreComputedKzField.jl)
-- Horizontally uniform profile field:
-  [`ProfileKzField.jl`](ProfileKzField.jl)
-- Panel-native cubed-sphere field wrapper:
-  [`CubedSphereField.jl`](CubedSphereField.jl)
-- Derived boundary-layer Kz:
-  [`DerivedKzField.jl`](DerivedKzField.jl)
-- Piecewise-constant time-varying field:
-  [`StepwiseField.jl`](StepwiseField.jl)
+Generic time-varying field containers consumed by runtime operators.
+Boundary-layer calculations live in [Diffusion](../../Operators/Diffusion/README.md).
 
 ## Interface Contract
 
-Every concrete field type must satisfy:
-
-- `field_value(f, idx) -> FT`
-- `update_field!(f, t) -> f`
-
-`field_value` must be kernel-safe and allocation-free. `update_field!`
-runs on the host and may refresh caches before an operator launch.
+`field_value(f, idx)` is a pure, allocation-free, kernel-safe read.
+`update_field!(f, t)` refreshes a field's time selection on the host.
+`panel_field(f, p)` selects one cubed-sphere panel.
 
 ## File Map
 
-- [`Fields.jl`](Fields.jl) — abstract interface, `ConstantField`,
-  exports, include order
-- [`ProfileKzField.jl`](ProfileKzField.jl) — vertically varying,
-  horizontally uniform Kz profiles
-- [`PreComputedKzField.jl`](PreComputedKzField.jl) — wrapper around a
-  rank-2 or rank-3 spatial array
-- [`CubedSphereField.jl`](CubedSphereField.jl) — explicit panel-native
-  wrapper over six structured rank-3 fields
-- [`DerivedKzField.jl`](DerivedKzField.jl) — Kz derived from
-  meteorological inputs and PBL parameter choices
-- [`WindowPBLKzField.jl`](WindowPBLKzField.jl) — window-cached
-  panel-native PBL Kz field from runtime surface forcing
-- [`LocalHoltslagBovilleKzField.jl`](LocalHoltslagBovilleKzField.jl) —
-  local Holtslag-Boville Kz field backed by GEOS VDIFF inputs.
-  No non-local counter-gradient term is applied, so this is not full GCHP
-  VDIFF parity.
-- [`PrecomputedCSDkgField.jl`](PrecomputedCSDkgField.jl) — exact TM5
-  dry-air interface exchange loaded from the binary `:dkg` payload;
-  the runtime half of `[diffusion] kind = "tm5_dkg"`. Defines
-  `AbstractCSDkgField`, the supertype the conservative `dkg` solver accepts.
-- [`GCHPNonlocalPBLField.jl`](GCHPNonlocalPBLField.jl) — GEOS-Chem's non-local
-  VDIFF PBL scheme (port of `vdiff_mod.F90`): per-window `dkg` from the
-  Holtslag-Boville and Richardson K profiles, plus the counter-gradient
-  emission profile; the runtime half of `[diffusion] kind = "geoschem_nonlocal_vdiff"`.
-- [`StepwiseField.jl`](StepwiseField.jl) — piecewise-constant-in-time
-  field cache
+- [`Fields.jl`](Fields.jl) — abstract contracts and `ConstantField`
+- [`PreComputedKzField.jl`](PreComputedKzField.jl) — caller-owned rank-2/3 arrays
+- [`CubedSphereField.jl`](CubedSphereField.jl) — six-panel field wrapper
+- [`PrecomputedCSDkgField.jl`](PrecomputedCSDkgField.jl) — precomputed interface
+  exchange storage and per-window payload copy
+- [`GCHPNonlocalPBLField.jl`](GCHPNonlocalPBLField.jl) — non-local PBL storage,
+  parameter container, constructor and Adapt. Kept here for the fenced
+  SurfaceFlux dependency; all physics and refresh live in Diffusion.
+- [`StepwiseField.jl`](StepwiseField.jl) — half-open time-window selection
+
+`ProfileKzField`, `DerivedKzField` and `integral_between` had no production
+callers and were removed. Spatial profiles use `PreComputedKzField`;
+production PBL tests exercise `WindowPBLKzField` in Diffusion.
 
 ## Common Tasks
 
-- Adding a new operator-consumable field:
-  implement the two required interface methods in a new file and include
-  it from [`Fields.jl`](Fields.jl)
-- Wiring time into an operator:
-  check where `current_time(meteo)` is passed into `update_field!`
-  before changing the field type
-- Extending cubed-sphere physics cleanly:
-  prefer [`CubedSphereField.jl`](CubedSphereField.jl) over inventing fake
-  rank-polymorphic panel packing
-- Debugging unexpected stale values:
-  verify that the caller actually invokes `update_field!` once per
-  operator application
+Add generic field storage here and implement the interface above. Add physics
+closures next to their consuming operator. Stepwise fields reject times
+outside the covered half-open interval; surface-flux temporal policies have
+separate contracts.
 
-## Cross-Dependencies
+## Depends on
 
-- [`../README.md`](../README.md) re-exports these field contracts into
-  the runtime state layer
-- [`../../Operators/Diffusion/README.md`](../../Operators/Diffusion/README.md)
-  is the main consumer today
-- [`../../Operators/Chemistry/README.md`](../../Operators/Chemistry/README.md)
-  consumes scalar time-varying rate fields
-- [`../../MetDrivers/README.md`](../../MetDrivers/README.md) and
-  [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl)
-  provide the time source for `update_field!`
+Adapt and Parameters (GEOS-Chem parameter container defaults). No operator
+dependency.
 
-## Related Docs And Tests
+## Used by
 
-- Field-model design:
-  this directory's field implementations and
-  [`../../MetDrivers/README.md`](../../MetDrivers/README.md)
-- Tests:
-  - [`../../../test/core/test_fields.jl`](../../../test/core/test_fields.jl)
-  - [`../../../test/core/test_diffusion_mass_flux_conservation.jl`](../../../test/core/test_diffusion_mass_flux_conservation.jl)
-  - [`../../../test/core/test_multiday_source_clock.jl`](../../../test/core/test_multiday_source_clock.jl)
+State re-exports the containers; Diffusion, Chemistry, SurfaceFlux, StepPlan,
+Models and Adjoints consume them.
+
+## Shared helpers owned here
+
+`AbstractTimeVaryingField`, `AbstractCubedSphereField`, `AbstractCSDkgField`,
+`field_value`, `update_field!`, `panel_field` and the containers in the file map.
+`refresh_precomputed_cs_dkg_cache!` copies window forcing into storage.
+
+## Forward<->adjoint mirrors
+
+Storage and indexing are shared by forward and adjoint consumers. Numerical
+PBL and diffusion transpose kernels live in Operators/Diffusion.
+
+## Related Tests
+
+`test/core/test_fields.jl`, `test/core/test_diffusion_flux_form.jl`,
+`test/core/test_conservative_dkg.jl` and `test/core/test_gchp_nonlocal_pbl.jl`.

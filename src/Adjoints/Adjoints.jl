@@ -53,8 +53,10 @@ using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
     _wrap_periodic, _HaloPaddedAxis, _validate_halo_for_scheme,
     needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
-    apply_vertical_diffusion_vmr!, _dkg_transfer_ratios,
-    surface_flux_coupling, surface_flux_center!
+    apply_vertical_diffusion_vmr!, check_diffusion_workspace,
+    _vertical_diffusion_cs_single_adjoint_kernel!,
+    _vertical_diffusion_cs_single_dkg_adjoint_kernel!,
+    surface_flux_coupling, surface_flux_center!, LocalHoltslagBovilleKzField
 using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWorkspace,
     NoConvection, TM5Convection, TM5Workspace,
     CMFMCMatrixConvection, CMFMCMatrixWorkspace,
@@ -65,7 +67,7 @@ using ..Operators.Convection: CMFMCConvection, _require_edge_cloud_base, CMFMCWo
     _launch_cmfmc_matrix_derivation!,
     _cmfmc_tiny, _cmfmc_cloud_base, _cmfmc_dtrain_array
 using ..State: AbstractCubedSphereField,
-    LocalHoltslagBovilleKzField, AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
+    AbstractCSDkgField, PrecomputedCSDkgField, GCHPNonlocalPBLField,
     field_value, panel_field, update_field!
 using ..MetDrivers: ConvectionForcing
 import ..MetDrivers: current_time, uses_binary_substep_contract

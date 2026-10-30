@@ -102,7 +102,7 @@ function strang_split_mt!(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
                           dt::Union{Nothing, Real} = nothing) where FT
     _require_structured_vertical(scheme)
     _preflight_advection_workspace(ws, rm_4d, m)
-    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          m, size(rm_4d, 4))
     cfl_ft = convert(FT, cfl_limit)
 

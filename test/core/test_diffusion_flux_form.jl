@@ -5,20 +5,20 @@
 # The column solve gives the new mixing ratio g; the tracer mass then changes by
 # the interface fluxes F_{k+½} = Δt D_{k+½} (g_k − g_{k+1}), each applied with
 # opposite signs to its two layers, so the column total telescopes. Writing back
-# m_k (g_k + c) instead (the matrix form, kept by the VMR-level reference solve)
+# m_k (g_k + c) instead (the matrix form, the historical VMR-level solve)
 # loses mass with one sign in Float32 where x = Δt D/m is the same in every
 # column, as in pure-pressure levels. Checked on every layout:
 #
 #   1. one solve agrees with an independent Float64 Backward-Euler solution;
 #   2. uniform columns and layers without exchange keep their mass bit for bit;
-#   3. over a day of Float32 solves the matrix form drifts and the flux form
+#   3. over a day of Float32 solves the flux form
 #      stays at the rounding level;
 #   4. the same on CUDA when a GPU is available.
 
 using Test, Random, LinearAlgebra
 using AtmosTransport
 using .AtmosTransport.Operators: ImplicitVerticalDiffusion, DiffusionWorkspace
-using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!, apply_vertical_diffusion!
+using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
 using .AtmosTransport.State: PreComputedKzField, CubedSphereField
 using Adapt: adapt
 
@@ -79,7 +79,7 @@ end
 # Each layout stores the same columns; `unpack` returns (ncol, Nz, Nt) tracer
 # mass. `solve!(layout, form, dt)` applies the flux form (`:flux`, production
 # `apply_vertical_diffusion_vmr!`) or the matrix form (`:matrix`, the VMR-level
-# reference `apply_vertical_diffusion!` on rm/m, then times m).
+# independent Backward-Euler solutions on tracer mass).
 
 struct LatLonLayout{R, M, O, W}
     rm::R; m::M; op::O; ws::W; Nx::Int; Ny::Int
@@ -176,21 +176,6 @@ solve!(l::PanelLayout, ::Val{:flux}, dt; slot = 1) = single(l) ?
     apply_vertical_diffusion_vmr!(l.rm, l.m, l.op, l.ws, dt; halo_width = l.Hp, tracer = slot) :
     apply_vertical_diffusion_vmr!(l.rm, l.m, l.op, l.ws, dt; halo_width = l.Hp)
 
-function solve!(l::Union{LatLonLayout, FaceLayout}, ::Val{:matrix}, dt)
-    m = reshape(l.m, size(l.m)..., ntuple(_ -> 1, ndims(l.rm) - ndims(l.m))...)
-    q = l.rm ./ m
-    apply_vertical_diffusion!(q, l.m, l.op, l.ws, dt)
-    l.rm .= q .* m
-    return nothing
-end
-function solve!(l::PanelLayout, ::Val{:matrix}, dt)
-    Diff = AtmosTransport.Operators.Diffusion
-    Diff._cs_scale_tracer_mass_to_vmr!(l.rm, l.m, l.Hp)
-    apply_vertical_diffusion!(l.rm, l.m, l.op, l.ws, dt; halo_width = l.Hp)
-    Diff._cs_scale_vmr_to_tracer_mass!(l.rm, l.m, l.Hp)
-    return nothing
-end
-
 const LAYOUTS = (("lat-lon packed", latlon_layout, 2), ("reduced-Gaussian packed", face_layout, 2),
                  ("reduced-Gaussian single", face_layout, 0), ("cubed-sphere packed", panel_layout, 2),
                  ("cubed-sphere single", panel_layout, 0))
@@ -219,6 +204,15 @@ function check_backward_euler(to; FT, dt = 900.0)
             worst = max(worst, maximum(abs, actual[c, :, t] .- expected) / allowed)
         end
         @test worst <= 1
+        # The merged mass-conservation tests retain both precisions and every layout.
+        for t in axes(actual, 3)
+            carry = column_carry(l, t)
+            for c in axes(actual, 1)
+                before_total = sum(Float64, cols.rm[c, :, t])
+                residual = sum(Float64, actual[c, :, t]) - before_total + carry[c]
+                @test abs(residual) / before_total < 1e-12
+            end
+        end
         l isa PanelLayout && @test all(==(FT(-7)), halo_values(l))
     end
 end
@@ -269,9 +263,13 @@ carry_total(l::Union{LatLonLayout, FaceLayout}) =
     sum(Float64, Array(selectdim(l.ws.ledger_carry, ndims(l.ws.ledger_carry), 1)))
 carry_total(l::PanelLayout) = sum(c -> sum(Float64, Array(c)[:, :, 1]), l.ws.ledger_carry)
 
+column_carry(l::Union{LatLonLayout, FaceLayout}, t) =
+    vec(Array(selectdim(l.ws.ledger_carry, ndims(l.ws.ledger_carry), t)))
+column_carry(l::PanelLayout, t) = vcat((vec(Array(c)[:, :, t]) for c in l.ws.ledger_carry)...)
+
 # 192 solves of 450 s of tracer 1 (no background). Returns the relative change
 # of the global total for the flux form, of the flux form's total plus its
-# outstanding ledger carries, and of the matrix form.
+# outstanding ledger carries.
 function day_of_solves(layout, Nt, to; kz = 1.0)
     cols = flux_form_columns(Float32, 216, 20; kz)
     before = cols.rm[:, :, 1]
@@ -281,11 +279,18 @@ function day_of_solves(layout, Nt, to; kz = 1.0)
     end
     flux = relative_change(unpack(l)[:, :, 1], before)
     with_carry = flux + carry_total(l) / sum(Float64, before)
-    reference = layout(cols, Nt, to)
-    for _ in 1:192
-        solve!(reference, Val(:matrix), 450f0)
+    # Both the perturbation tracer and a large background must conserve.
+    for t in 1:max(Nt, 1)
+        after = unpack(l)[:, :, t]
+        before_t = cols.rm[:, :, t]
+        carry = column_carry(l, t)
+        for c in axes(after, 1)
+            total = sum(Float64, before_t[c, :])
+            residual = sum(Float64, after[c, :]) - total + carry[c]
+            @test abs(residual) / total < FLUXFORM_CARRY_LIMIT
+        end
     end
-    return flux, with_carry, relative_change(unpack(reference)[:, :, 1], before)
+    return flux, with_carry
 end
 
 @testset "Kz diffusion flux form agrees with Backward Euler" begin
@@ -298,15 +303,12 @@ end
     check_bit_exact(Array)
 end
 
-@testset "Float32 Kz diffusion: matrix form drifts, flux form telescopes" begin
-    # Measured on CPU: matrix form 7.7e-7 to 5.1e-6 of the tracer; flux form
-    # within 1.2e-9, which the outstanding ledger carries hold (field plus
-    # carries within 2e-15).
+@testset "Float32 Kz diffusion: flux form and ledger conserve" begin
+    # The remaining rounding is held in the outstanding ledger carries.
     for (name, layout, Nt) in LAYOUTS, kz in (0.3, 1.0, 3.0)
-        flux, with_carry, matrix = day_of_solves(layout, Nt, Array; kz)
+        flux, with_carry = day_of_solves(layout, Nt, Array; kz)
         @test abs(flux) < 5e-9
         @test abs(with_carry) < FLUXFORM_CARRY_LIMIT
-        @test abs(matrix) > 1e-7
     end
 end
 
@@ -317,9 +319,19 @@ if HAS_CUDA_FLUX_FORM
         end
         check_bit_exact(CuArray)
         for (name, layout, Nt) in LAYOUTS
-            flux, with_carry, _ = day_of_solves(layout, Nt, CuArray)
+            flux, with_carry = day_of_solves(layout, Nt, CuArray)
             @test abs(flux) < 5e-9
             @test abs(with_carry) < FLUXFORM_CARRY_LIMIT
         end
     end
+end
+
+@testset "packed diffusion rejects a workspace without tracer ledger slots before touching the state" begin
+    m = ones(Float32, 4, 3, 5)
+    rm = fill(4f-4, 4, 3, 5, 2)
+    before = copy(rm)
+    op = ImplicitVerticalDiffusion(; kz_field = ConstantField{Float32, 3}(50f0))
+    @test_throws DimensionMismatch apply_vertical_diffusion_vmr!(rm, m, op, DiffusionWorkspace(m), 900f0)
+    @test rm == before
+    @test apply_vertical_diffusion_vmr!(similar(rm, 4, 3, 5, 0), m, op, DiffusionWorkspace(m), 900f0) === nothing
 end

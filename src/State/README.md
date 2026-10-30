@@ -115,8 +115,8 @@ time-varying field contracts consumed by operators.
 ## Depends on
 
 Grids (mesh and topology interfaces), Architectures (compensated totals),
-Adapt, and the existing Fields submodule. Fields physics is maintained in its
-own cleanup PR.
+Adapt, and the Fields submodule (generic containers only). Boundary-layer
+calculations live in Operators/Diffusion.
 
 ## Used by
 

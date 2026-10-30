@@ -62,7 +62,7 @@ end
     op = DkgDiff.ImplicitVerticalDiffusion(; kz_field=DkgState.PrecomputedCSDkgField(d))
     good = DkgDiff.DiffusionWorkspace(m, 1, 7)
     factors = ntuple(p -> p == 6 ? zeros(1,1,1) : good.factors[p], 6)
-    bad = DkgDiff.DiffusionWorkspace(factors, good.layer_thickness, good.references)
+    bad = DkgDiff.DiffusionWorkspace(factors, good.layer_thickness, good.ledger_carry)
     original = map(copy, rm)
     @test_throws DimensionMismatch DkgDiff.apply_vertical_diffusion_vmr!(rm,m,op,bad,1;halo_width=1)
     @test rm == original
@@ -70,7 +70,7 @@ end
     @test rm == original
 end
 
-@testset "Dkg zero-carrier convention matches the VMR solve" begin
+@testset "Dkg zero-carrier convention uses an absorbing empty layer" begin
     m, d, rm = dkg_mass_fixture(Float64, 2, 4, 2, 0.7)
     for p in 1:6
         m[p][2,2,2] = 0
@@ -78,10 +78,23 @@ end
     op = DkgDiff.ImplicitVerticalDiffusion(; kz_field=DkgState.PrecomputedCSDkgField(d))
     ws = DkgDiff.DiffusionWorkspace(m,1,2)
     expected = map(copy, rm)
-    DkgDiff._cs_scale_tracer_mass_to_vmr!(expected,m,1)
-    DkgDiff.apply_vertical_diffusion!(expected,m,op,ws,1;halo_width=1)
-    DkgDiff._cs_scale_vmr_to_tracer_mass!(expected,m,1)
+    for p in 1:6, j in 2:3, i in 2:3
+        mass = m[p][i, j, :]
+        invmass = [v > 0 ? 1 / v : 0.0 for v in mass]
+        exchange = d[p][i-1, j-1, 1:3]
+        lower = -exchange .* invmass[2:end]
+        upper = -exchange .* invmass[1:end-1]
+        diagonal = ones(4)
+        diagonal[1:3] .+= exchange .* invmass[1:3]
+        diagonal[2:4] .+= exchange .* invmass[2:4]
+        matrix = Tridiagonal(lower, diagonal, upper)
+        for t in 1:2
+            q = [mass[k] > 0 ? rm[p][i, j, k, t] / mass[k] : 0.0 for k in 1:4]
+            expected[p][i, j, :, t] .= mass .* (matrix \ q)
+        end
+    end
     DkgDiff.apply_vertical_diffusion_vmr!(rm,m,op,ws,1;halo_width=1)
+    @test all(iszero, rm[1][2, 2, 2, :])
     @test all(p -> isapprox(rm[p],expected[p];rtol=3e-15),1:6)
 end
 

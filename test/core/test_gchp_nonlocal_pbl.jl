@@ -2,10 +2,11 @@
 # GEOS-Chem non-local VDIFF port: column exchange `dkg`, the counter-gradient
 # emission profile, and the profile-weighted surface emission deposit.
 
+using AtmosTransport.Operators.Diffusion: refresh_gchp_nonlocal_pbl!
 using Test
 using AtmosTransport
 using AtmosTransport.Operators: CMFMCWorkspace, apply_convection!
-using AtmosTransport.State: GCHPNonlocalPBLField, GCHPVdiffParameters, refresh_gchp_nonlocal_pbl!,
+using AtmosTransport.State: GCHPNonlocalPBLField, GCHPVdiffParameters,
                             panel_field
 using AtmosTransport.Operators.SurfaceFlux: SurfaceFluxSource, SurfaceFluxOperator,
                                             ProfileDeposit, apply_surface_flux!
@@ -37,7 +38,7 @@ synthetic_window(; kw...) = synthetic_pbl_window(; kw...)
     @test maximum(dkg[z .< 1500]) > 100 * dkg[k - 1]
 
     # GEOS-Chem's npbl: bottom layers with reference pressure above 400 hPa.
-    @test AtmosTransport.State.Fields.gchp_pbl_layer_count(col.vertical.A, col.vertical.B, prm) ==
+    @test AtmosTransport.Operators.Diffusion.gchp_pbl_layer_count(col.vertical.A, col.vertical.B, prm) ==
           count(>(4e4), col.p_mid)
 
     stable, _ = refreshed(hflux = -30.0, eflux = 0.0)
@@ -173,7 +174,7 @@ end
     field, col = refreshed(T; hflux = 250.0)
     prof = field.emission_profile[1][1, 1, :]
     prm = GCHPVdiffParameters{T}()
-    n_pbl = AtmosTransport.State.Fields.gchp_pbl_layer_count(col.vertical.A, col.vertical.B, prm)
+    n_pbl = AtmosTransport.Operators.Diffusion.gchp_pbl_layer_count(col.vertical.A, col.vertical.B, prm)
     lofted = findall(!iszero, prof[1:Nz-1])
     @test !isempty(lofted) && minimum(lofted) >= Nz - n_pbl + 1
     @test any(<(0), prof)                                         # a layer the profile lowers

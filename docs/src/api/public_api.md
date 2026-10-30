@@ -78,7 +78,7 @@ helpers are advanced construction APIs rather than a second reader hierarchy.
 | `AbstractCloudBase`, `CMFMCEdgeCloudBase`, `ArchivedCloudBase` | Cloud-base rule of `CMFMCConvection`: lowest layer with updraft inflow (default) or the archived GEOS-Chem base (`cloud_base = "dqrcu"`). |
 | `Callback`, `IterationInterval`, `WindowInterval`, `WallTimeInterval`, `NaNChecker` | Runtime callbacks and their schedules (see *Callbacks and runtime checks*). |
 | `NoChemistry`, `ExponentialDecay`, `CompositeChemistry` | Chemistry operator choices. |
-| `ConstantField`, `ProfileKzField` | Simple time-varying fields used by physics operators. |
+| `ConstantField`, `PreComputedKzField` | Simple time-varying fields used by physics operators. |
 | `apply!` | Generic low-level operator application hook. |
 | `TransportModel` | Low-level bundle of state, fluxes, grid, and operators. |
 | `Simulation`, `DrivenSimulation` | Low-level harnesses for custom in-memory and window-driven loops. |
@@ -203,3 +203,8 @@ helpers; inversion and sampling use
 `Parameters.DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN` (280 K) when no layer
 temperature is supplied. CF time decoding is unchanged and remains separate
 from the later-loaded GriddedIO module.
+
+Boundary-layer field types and refresh methods are owned by
+`AtmosTransport.Operators.Diffusion`. Its public staged pressure/dz APIs reuse
+`HybridCoefficientWorkspace`; allocating geometry wrappers and the test-only
+VMR matrix-form solver were removed.

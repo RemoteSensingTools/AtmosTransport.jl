@@ -65,14 +65,10 @@
 # each total falls from −2.0e-6 (matrix form) to about 1e-8 per day (flux form)
 # and below 5e-10 per day (flux form with the ledger). The solve for g, and
 # therefore the fluxes, are those of the matrix form, and the two forms agree in
-# exact arithmetic, so the transpose in `src/Adjoints/DiffusionAdjoint.jl` is
+# exact arithmetic, so the transpose in `adjoint_kernels.jl` is
 # unchanged. Layers without exchange keep their mass bit for bit. A layer with
 # no air (m_k = 0) keeps the absorbing convention of the matrix form: it is
 # emptied.
-#
-# The VMR-level reference solve (`apply_vertical_diffusion!`, mixing ratio in
-# and out) keeps the matrix form q′ = g + c; with no tracer mass to update
-# there is nothing to telescope.
 #
 # One work item owns one column. It computes the tracer-independent factors
 # once (`exchange`: D_{k+½}, `factors`: the Thomas ratios w_k = c_k/denom_k) and
@@ -93,23 +89,10 @@ struct KzExchange{K, Z}
     dz :: Z
 end
 
-"""
-    DkgExchange(dkg)
-
-Interface exchange read from a precomputed TM5 `dkg` field: entry `k` is the
-exchange [kg s⁻¹] between layers `k` and `k+1`.
-"""
-struct DkgExchange{K}
-    dkg :: K
-end
-
 Adapt.@adapt_structure KzExchange
-Adapt.@adapt_structure DkgExchange
 
 # What the solved array holds, and so how the solution is written back.
-# `_MixingRatioMatrixForm`: mixing ratios in and out, q′ = g + c (reference).
 # `_TracerMassFluxForm`: tracer mass in and out, rm′_k = (rm_k + F_{k−½}) − F_{k+½}.
-struct _MixingRatioMatrixForm end
 struct _TracerMassFluxForm end
 
 # Column accessors. `I` indexes the column in the tracer and air-mass arrays
@@ -126,9 +109,7 @@ struct _TracerMassFluxForm end
 @inline _set_tracer_value!(::Val{1}, x, I, k, t, value) = (@inbounds x[I..., k] = value; nothing)
 @inline _set_tracer_value!(::Val{2}, x, I, k, t, value) = (@inbounds x[I..., k, t] = value; nothing)
 
-@inline _mixing_ratio(::_MixingRatioMatrixForm, x, m, I, k, t) = _tracer_value(x, I, k, t)
-
-@inline function _mixing_ratio(::_TracerMassFluxForm, x, m, I, k, t)
+@inline function _diffusion_column_ratio(::_TracerMassFluxForm, x, m, I, k, t)
     FT = eltype(x)
     m_k = @inbounds m[I..., k]
     return m_k > zero(FT) ? _tracer_value(x, I, k, t) / m_k : zero(FT)
@@ -138,7 +119,7 @@ end
 # layer. Factor and solve passes share this so they agree bit for bit.
 @inline function _diffusion_coefficients(m_k, exchange_above, exchange_below, dt, k, Nz)
     FT = typeof(m_k)
-    inv_m_k = m_k > zero(FT) ? one(FT) / m_k : zero(FT)
+    inv_m_k = _safe_inverse_mass(m_k)
     a_k = k > 1  ? -dt * exchange_above * inv_m_k : zero(FT)
     c_k = k < Nz ? -dt * exchange_below * inv_m_k : zero(FT)
     b_k = one(FT) + dt * (exchange_above + exchange_below) * inv_m_k
@@ -181,8 +162,7 @@ value is loaded once.
                 Kz_next = field_value(source.kz, (J..., k + 1))
                 dz_next = source.dz[J..., k + 1]
                 m_next  = m[I..., k + 1]
-                sum_dz = dz_k + dz_next
-                exchange_below = (m_k + m_next) * (Kz_k + Kz_next) / (sum_dz * sum_dz)
+                exchange_below = _kz_exchange(m_k, m_next, Kz_k, Kz_next, dz_k, dz_next)
             end
             w_prev = _store_diffusion_factor!(exchange, factors, J, k, Nz, m_k, exchange_above,
                                               exchange_below, w_prev, dt)
@@ -195,26 +175,11 @@ value is loaded once.
     return nothing
 end
 
-@inline function _diffusion_factors!(exchange, factors, source::DkgExchange, m, dt, I, J, Nz)
-    FT = eltype(factors)
-    @inbounds begin
-        exchange_above = zero(FT)
-        w_prev = zero(FT)
-        for k in 1:Nz
-            exchange_below = k < Nz ? field_value(source.dkg, (J..., k)) : zero(FT)
-            w_prev = _store_diffusion_factor!(exchange, factors, J, k, Nz, m[I..., k],
-                                              exchange_above, exchange_below, w_prev, dt)
-            exchange_above = exchange_below
-        end
-    end
-    return nothing
-end
+
 
 # Forward elimination of tracer `t` on the departure from the column minimum c.
-# The matrix form keeps the eliminated values in the tracer array; the flux
-# form keeps them in `elimination`, because the tracer mass is still needed.
-@inline _store_eliminated!(::_MixingRatioMatrixForm, x, elimination, I, J, k, t, g) =
-    _set_tracer_value!(x, I, k, t, g)
+# Keep eliminated values in `elimination`, because the flux-form update
+# still needs the original tracer mass.
 @inline _store_eliminated!(::_TracerMassFluxForm, x, elimination, I, J, k, t, g) =
     (@inbounds elimination[J..., k] = g; nothing)
 """
@@ -229,9 +194,9 @@ column ledger with carry slot `slot` of `carry` (`nothing`: no carry).
                                    carry, slot)
     FT = eltype(x)
     @inbounds begin
-        cref = _mixing_ratio(form, x, m, I, 1, t)
+        cref = _diffusion_column_ratio(form, x, m, I, 1, t)
         for k in 2:Nz
-            v = _mixing_ratio(form, x, m, I, k, t)
+            v = _diffusion_column_ratio(form, x, m, I, k, t)
             cref = v < cref ? v : cref
         end
         exchange_above = zero(FT)
@@ -242,7 +207,7 @@ column ledger with carry slot `slot` of `carry` (`nothing`: no carry).
             a_k, b_k, _ = _diffusion_coefficients(m[I..., k], exchange_above, exchange_below,
                                                   dt, k, Nz)
             denom = k == 1 ? b_k : b_k - a_k * w_prev
-            d_k = _mixing_ratio(form, x, m, I, k, t) - cref
+            d_k = _diffusion_column_ratio(form, x, m, I, k, t) - cref
             g_k = k == 1 ? d_k / denom : (d_k - a_k * g_prev) / denom
             _store_eliminated!(form, x, elimination, I, J, k, t, g_k)
             w_prev = factors[J..., k]
@@ -251,19 +216,6 @@ column ledger with carry slot `slot` of `carry` (`nothing`: no carry).
         end
         _diffusion_write_back!(form, x, elimination, exchange, factors, m, dt, I, J, Nz, t, cref,
                                carry, slot)
-    end
-    return nothing
-end
-
-# Matrix form: back substitution in place, then restore the column minimum.
-@inline function _diffusion_write_back!(form::_MixingRatioMatrixForm, x, elimination, exchange,
-                                        factors, m, dt, I, J, Nz, t, cref, carry, slot)
-    @inbounds for k in (Nz - 1):-1:1
-        _set_tracer_value!(x, I, k, t, _tracer_value(x, I, k, t) -
-                                       factors[J..., k] * _tracer_value(x, I, k + 1, t))
-    end
-    for k in 1:Nz
-        _set_tracer_value!(x, I, k, t, _tracer_value(x, I, k, t) + cref)
     end
     return nothing
 end
@@ -387,47 +339,10 @@ end
     end
 end
 
-# ---------------------------------------------------------------------------
-# Mass <-> mixing-ratio scaling of cubed-sphere panels, for VMR-level reference
-# comparisons of tracer-mass states.
-# ---------------------------------------------------------------------------
 
-@kernel function _cs_tracer_mass_to_vmr_kernel!(q, @Const(air_mass), Hp::Int)
-    ii, jj, k = @index(Global, NTuple)
-    FT = eltype(q)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        m = air_mass[i, j, k]
-        q[i, j, k] = m > zero(FT) ? q[i, j, k] / m : zero(FT)
-    end
+# Identical scalar arithmetic shared with the transpose kernels.
+@inline function _kz_exchange(m_k, m_next, Kz_k, Kz_next, dz_k, dz_next)
+    sum_dz = dz_k + dz_next
+    return (m_k + m_next) * (Kz_k + Kz_next) / (sum_dz * sum_dz)
 end
-
-@kernel function _cs_vmr_to_tracer_mass_kernel!(q, @Const(air_mass), Hp::Int)
-    ii, jj, k = @index(Global, NTuple)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        q[i, j, k] *= air_mass[i, j, k]
-    end
-end
-
-@kernel function _cs_tracer_mass_to_vmr_4d_kernel!(q, @Const(air_mass), Hp::Int)
-    ii, jj, k, t = @index(Global, NTuple)
-    FT = eltype(q)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        m = air_mass[i, j, k]
-        q[i, j, k, t] = m > zero(FT) ? q[i, j, k, t] / m : zero(FT)
-    end
-end
-
-@kernel function _cs_vmr_to_tracer_mass_4d_kernel!(q, @Const(air_mass), Hp::Int)
-    ii, jj, k, t = @index(Global, NTuple)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        q[i, j, k, t] *= air_mass[i, j, k]
-    end
-end
+@inline _safe_inverse_mass(m::FT) where FT = m > zero(FT) ? one(FT) / m : zero(FT)

@@ -128,3 +128,22 @@ submodules before assuming it is cosmetic.
   - [`../../test/core/test_basis_explicit_core.jl`](../../test/core/test_basis_explicit_core.jl)
   - [`../../test/core/test_driven_simulation.jl`](../../test/core/test_driven_simulation.jl)
   - submodule-specific tests listed in each subfolder README
+
+## Depends on
+
+State, Grids, MetDrivers and foundation modules. Each physics submodule imports
+its own lower dependencies. Diffusion loads before SurfaceFlux and Advection.
+
+## Used by
+
+Models and Adjoints compose the public operator APIs; extensions provide backend hooks.
+
+## Shared helpers owned here
+
+Operator roots, `apply!`, recorder hooks and re-exports from physics submodules.
+Diffusion owns PBL physics, diffusion workspace validation and staged geometry APIs.
+
+## Forward<->adjoint mirrors
+
+Diffusion transpose kernels live beside their forward code. Tape/objective wiring
+stays in Adjoints. Other operator mirrors are listed in `test/structure/mirrors.toml`.

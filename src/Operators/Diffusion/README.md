@@ -2,7 +2,7 @@
 
 Implicit vertical diffusion for the transport runtime.
 
-This folder owns backward-Euler vertical diffusion, its column solves and
+This folder owns backward-Euler vertical diffusion, its column solves, boundary-layer closures, matching adjoint kernels and
 conservative Dkg factorization, and the topology-specific runtime adapters that let the same operator family
 run on structured, face-indexed, and panel-native cubed-sphere state.
 
@@ -30,7 +30,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   [`diffusion_kernels.jl`](diffusion_kernels.jl) and
   [`conservative_dkg.jl`](conservative_dkg.jl)
 
-Kz fields (and the VMR-level reference solve of any field) use one column
+Kz fields use one column
 kernel for every topology: one work item per column builds the interface
 exchange `D_{k+½}` and the Thomas ratios once, then solves each tracer for the
 new mixing ratio on the departure from the column minimum. Tracer-mass states
@@ -45,9 +45,8 @@ which can keep one sign where the fluxes keep one direction, goes through the
 same column mass ledger with persistent carry as the Dkg solve. Layers
 without exchange stay bit-exact. Lat-lon, reduced-Gaussian and all six
 cubed-sphere panels each take one launch. The numerics are documented at the
-top of [`diffusion_kernels.jl`](diffusion_kernels.jl). The VMR-level
-`apply_vertical_diffusion!` (mixing ratios in and out) keeps the matrix form
-as the reference solve.
+top of [`diffusion_kernels.jl`](diffusion_kernels.jl). Tests compare the
+production tracer-mass path with an independent Backward-Euler matrix.
 
 Precomputed cubed-sphere Dkg acts directly on tracer mass through paired
 retention/transfer passes. It shares factors across tracers, carries rounding
@@ -82,7 +81,7 @@ halos, against that serial kernel.
 - [`Diffusion.jl`](Diffusion.jl) — submodule assembly and public exports
 - [`diffusion_kernels.jl`](diffusion_kernels.jl) — the numerics (matrix
   solve for the mixing ratio, flux-form tracer-mass update with column
-  ledger), exchange sources (`KzExchange`, `DkgExchange`), and the
+  ledger), exchange sources (`KzExchange`), and the
   KernelAbstractions kernels for structured, face-indexed, and six-panel
   cubed-sphere solves
 - [`conservative_dkg.jl`](conservative_dkg.jl) — mass-conservative bidiagonal
@@ -95,6 +94,22 @@ halos, against that serial kernel.
 - [`operators.jl`](operators.jl) — operator hierarchy, surface-flux
   coupling policies and `surface_flux_center!`, constructor validation,
   state-level `apply!`, array-level `apply_vertical_diffusion_vmr!`
+
+- [`pbl_physics.jl`](pbl_physics.jl) — Beljaars-Viterbo constants, scalar
+  closure and shared column bodies. WindowPBL uses isothermal geometry;
+  LocalHB retains virtual-temperature geometry and shear enhancement.
+- [`WindowPBLKzField.jl`](WindowPBLKzField.jl) and
+  [`LocalHoltslagBovilleKzField.jl`](LocalHoltslagBovilleKzField.jl) — the
+  concrete window-cached fields, kernels and host fallback staging
+- [`window_kz_cache.jl`](window_kz_cache.jl) — shared constructor, panel
+  access, Adapt, area cache and device-refresh orchestration
+- [`gchp_nonlocal_pbl.jl`](gchp_nonlocal_pbl.jl) — non-local GEOS-Chem PBL
+  physics and refresh. Its field container remains in State/Fields for
+  the fenced SurfaceFlux consumer.
+- [`workspace_validation.jl`](workspace_validation.jl) — forward, adjoint
+  and advection workspace checks plus the shared ledger selector
+- [`adjoint_kernels.jl`](adjoint_kernels.jl) — Kz transpose solve and Dkg
+  transpose partitions; tape and objective wiring stays in Adjoints
 
 ## Common Tasks
 
@@ -148,3 +163,59 @@ halos, against that serial kernel.
   and [`../../../test/core/test_driven_simulation.jl`](../../../test/core/test_driven_simulation.jl).
   V100/A100 checks are opt-in through
   [`../../../test/diagnostic/test_conservative_dkg_gpu.jl`](../../../test/diagnostic/test_conservative_dkg_gpu.jl).
+
+## Depends on
+
+State/Fields (generic field containers and GCHP storage), State (tracer
+storage), Architectures (launches and compensated ledgers), Parameters
+(physical constants), MetDrivers (clock), Adapt and KernelAbstractions.
+Diffusion loads before Tape and Adjoints and imports neither.
+
+## Used by
+
+Advection (transport midpoint), SurfaceFlux (coupling and emission profile),
+Models (runtime recipes and window refresh), and Adjoints (transpose kernels).
+
+## Shared helpers owned here
+
+- `check_diffusion_workspace`, `preflight_diffusion`: storage ownership,
+  tracer-count, precision, backend and shape validation before advection.
+- `HybridCoefficientWorkspace`, `stage_hybrid_coefficients!`: reusable
+  coefficient storage; `recover_total_surface_pressure_staged!`,
+  `fill_dz_hydrostatic_constT_staged!`, `fill_dz_hydrostatic_virtualT_staged!`
+  consume those coefficients and require explicit `sync`. The allocating
+  wrappers were removed because only tests called them.
+- `WindowPBLKzField`, `LocalHoltslagBovilleKzField`, `PBLPhysicsParameters`,
+  their refresh functions and `refresh_gchp_nonlocal_pbl!` own the runtime
+  boundary-layer calculations. `DerivedKzField` and `ProfileKzField` had no
+  production callers and were removed; use the window cache or
+  `PreComputedKzField` for spatial inputs.
+- `surface_flux_coupling`, `surface_flux_center!`: the shared midpoint order.
+- The following numerical kernels are explicitly shared with Adjoints;
+  CUDA's tile hooks remain shared with its extension.
+
+# shared: _vertical_diffusion_cs_single_adjoint_kernel!, _vertical_diffusion_cs_single_dkg_adjoint_kernel!, _cs_dkg_mass_workgroupsize, _cs_dkg_tracer_workgroupsize
+
+## Forward<->adjoint mirrors
+
+`diffusion_kernels.jl` and `conservative_dkg.jl` pair with
+`adjoint_kernels.jl` in this folder. `_kz_exchange`, `_safe_inverse_mass`,
+`_dkg_transfer_ratios` and `_dkg_small_fraction` share identical expressions.
+The transpose's neighbour-mass normalization, scalar-carry loop, rounding
+partitions and launch order are unchanged. Ledger rounding has no adjoint.
+`Adjoints/DiffusionAdjoint.jl` retains tape validation, sequence selection
+and operator-adjoint wiring.
+
+WindowPBL and LocalHB each use one inline body from host and kernel paths.
+They keep distinct column bodies: LocalHB uses per-layer virtual temperature,
+`delp * R_dry * tv / (gravity * p_mid)`, a different surface-temperature floor
+and shear enhancement. WindowPBL uses the precomputed isothermal
+`R_dry * T_sfc / gravity`. Host area staging converts the entire area array to
+FT; the kernel converts each loaded area. Neither path has been replaced by
+the other. Runtime hydrostatic dz and preprocessing retain their different
+operation orders, pressure floors and humidity clamps.
+
+Deferred numerical changes: GCHP's Float64 `cbrt` (BF6), cross-operator
+mixing-ratio floors and LocalHB's shear-dependent background floor. Diffusion
+retains its absorbing `m <= 0` convention; Advection and diagnostics keep
+their respective policies.

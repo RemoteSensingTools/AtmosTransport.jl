@@ -327,7 +327,7 @@ export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
 export ConvectionForcing, apply_convection!, has_convection_forcing
 export AbstractMetDriver, TransportWindow, current_time
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
-export ConstantField, ProfileKzField
+export ConstantField
 export apply!
 
 # Low-level model hooks for custom loops

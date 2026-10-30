@@ -42,10 +42,10 @@ forward = "src/Operators/Convection/tm5_column_solve.jl"
 adjoint = "src/Adjoints/ConvectionAdjoint.jl"
 forward = "src/Operators/Convection/tm5_kernels.jl"
 [[pairs]]
-adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+adjoint = "src/Operators/Diffusion/adjoint_kernels.jl"
 forward = "src/Operators/Diffusion/conservative_dkg.jl"
 [[pairs]]
-adjoint = "src/Adjoints/DiffusionAdjoint.jl"
+adjoint = "src/Operators/Diffusion/adjoint_kernels.jl"
 forward = "src/Operators/Diffusion/diffusion_kernels.jl"
 [[pairs]]
 adjoint = "src/Adjoints/DiffusionAdjoint.jl"

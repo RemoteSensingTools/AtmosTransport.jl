@@ -14,8 +14,9 @@
 #         delp[i,j,k] = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * ps[i,j]
 #         p_ctr[i,j,k] = ½·((ak[k] + ak[k+1]) + (bk[k] + bk[k+1])·ps[i,j])
 #         dz[i,j,k]   = R · T_ref / g · delp / p_ctr
-#     Matches the preprocessing-side `dz_hydrostatic_constT!` in
-#     `src/Preprocessing/tm5_convection_conversion.jl`. Default for any
+#     Related to the preprocessing-side `dz_hydrostatic_constT!` in
+#     `src/Preprocessing/tm5_convection_conversion.jl`, whose rounding
+#     order and TOA guard differ. Default for any
 #     configuration without VDIFF payload (legacy LL / RG / WindowPBLKzField).
 #
 #   * `fill_dz_hydrostatic_virtualT!` — virtual T from VDIFF:
@@ -34,7 +35,13 @@
 # on the operator's Kz field type.
 # ---------------------------------------------------------------------------
 
-function _stage_hybrid_coefficients!(coefficients::HybridCoefficientWorkspace,
+"""
+    stage_hybrid_coefficients!(coefficients, A, B)
+
+Copy hybrid interface coefficients to persistent backend storage in its own
+precision and cache the coordinate traits used by pressure recovery.
+"""
+function stage_hybrid_coefficients!(coefficients::HybridCoefficientWorkspace,
                                      ak_ifc::AbstractVector,
                                      bk_ifc::AbstractVector)
     length(coefficients.A) == length(ak_ifc) || throw(DimensionMismatch(
@@ -48,14 +55,6 @@ function _stage_hybrid_coefficients!(coefficients::HybridCoefficientWorkspace,
     coefficients.positive_b_coordinate =
         all(>=(zero(eltype(db))), db) && any(>(zero(eltype(db))), db)
     return coefficients
-end
-
-function _stage_hybrid_coefficients(reference, ak_ifc::AbstractVector,
-                                    bk_ifc::AbstractVector)
-    FT = eltype(reference)
-    coefficients = HybridCoefficientWorkspace(similar(reference, FT, length(ak_ifc)),
-                                              similar(reference, FT, length(bk_ifc)))
-    return _stage_hybrid_coefficients!(coefficients, ak_ifc, bk_ifc)
 end
 
 @kernel function _recover_total_ps_2d_kernel!(ps_total, @Const(ps_dry),
@@ -133,66 +132,20 @@ function _validate_recovery_panels(dest::NTuple{6}, ps_dry::NTuple{6},
 end
 
 """
-    recover_total_surface_pressure!(dest, ps_dry, qv, A, B)
+    recover_total_surface_pressure_staged!(dest, ps_dry, qv, coefficients; sync)
 
-Recover total surface pressure on the array backend used by `dest`. For the
-hybrid interfaces `p_{k+1/2}=A_{k+1/2}+B_{k+1/2}p_{s,total}`, stored dry
-surface pressure satisfies
-
-```math
-p_{s,dry}=\\sum_k(1-q_{v,k})
-  [\\Delta A_k+\\Delta B_k p_{s,total}],\\qquad
-p_{s,total}=\\frac{p_{s,dry}-\\sum_k(1-q_{v,k})\\Delta A_k}
-                  {\\sum_k(1-q_{v,k})\\Delta B_k}.
-```
-
-The implementation uses KernelAbstractions for CPU and the package's supported
-CUDA and Metal backends; device arrays are never scalar-indexed by the host.
-For an A-only coordinate (`B ≡ 0`) recovery is unobservable and unnecessary,
-so `ps_dry` is copied unchanged. Otherwise the humidity-weighted B slope must
-be finite and positive or the function throws `ArgumentError`.
+Recover total surface pressure from the humidity-weighted hybrid-coordinate
+identity `ps_dry = sum((1-qv) * (ΔA + ΔB*ps_total))`. An A-only coordinate
+copies `ps_dry` unchanged. With `sync=true`, reject a nonfinite or nonpositive
+humidity-weighted B slope after the launch. Supports structured, face-indexed
+and six-panel arrays; `coefficients` comes from `stage_hybrid_coefficients!`.
 """
-function recover_total_surface_pressure!(dest::AbstractMatrix, ps_dry::AbstractMatrix,
-                                         qv::AbstractArray{<:AbstractFloat, 3},
-                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
-    Nx, Ny = size(dest)
-    size(ps_dry) == (Nx, Ny) || throw(DimensionMismatch("dry ps shape mismatch"))
-    size(qv)[1:2] == (Nx, Ny) || throw(DimensionMismatch("humidity horizontal shape mismatch"))
-    Nz = size(qv, 3)
-    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
-        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
-    coefficients = _stage_hybrid_coefficients(dest, ak_ifc, bk_ifc)
-    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
-                                                    coefficients; sync = true)
-end
-
-function recover_total_surface_pressure!(dest::AbstractVector, ps_dry::AbstractVector,
-                                         qv::AbstractMatrix,
-                                         ak_ifc::AbstractVector, bk_ifc::AbstractVector)
-    ncells = length(dest)
-    length(ps_dry) == ncells || throw(DimensionMismatch("dry ps length mismatch"))
-    size(qv, 1) == ncells || throw(DimensionMismatch("humidity cell count mismatch"))
-    Nz = size(qv, 2)
-    length(ak_ifc) == Nz + 1 && length(bk_ifc) == Nz + 1 ||
-        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
-    coefficients = _stage_hybrid_coefficients(dest, ak_ifc, bk_ifc)
-    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
-                                                    coefficients; sync = true)
-end
-
-function recover_total_surface_pressure!(dest::NTuple{6}, ps_dry::NTuple{6},
-                                         qv::NTuple{6}, ak_ifc, bk_ifc)
-    _validate_recovery_panels(dest, ps_dry, qv, length(ak_ifc), length(bk_ifc))
-    coefficients = _stage_hybrid_coefficients(dest[1], ak_ifc, bk_ifc)
-    return _recover_total_surface_pressure_staged!(dest, ps_dry, qv,
-                                                    coefficients; sync = true)
-end
-
-function _recover_total_surface_pressure_staged!(dest::AbstractMatrix,
+function recover_total_surface_pressure_staged!(dest::AbstractMatrix,
                                                   ps_dry::AbstractMatrix,
                                                   qv::AbstractArray{<:AbstractFloat, 3},
                                                   coefficients::HybridCoefficientWorkspace;
                                                   sync::Bool)
+    _validate_recovery_panel(dest, ps_dry, qv, length(coefficients.A), length(coefficients.B))
     if coefficients.pure_pressure
         copyto!(dest, ps_dry)
         sync && synchronize(get_backend(dest))
@@ -208,11 +161,17 @@ function _recover_total_surface_pressure_staged!(dest::AbstractMatrix,
     return dest
 end
 
-function _recover_total_surface_pressure_staged!(dest::AbstractVector,
+function recover_total_surface_pressure_staged!(dest::AbstractVector,
                                                   ps_dry::AbstractVector,
                                                   qv::AbstractMatrix,
                                                   coefficients::HybridCoefficientWorkspace;
                                                   sync::Bool)
+    ncells = length(dest)
+    length(ps_dry) == ncells || throw(DimensionMismatch("dry ps length mismatch"))
+    size(qv, 1) == ncells || throw(DimensionMismatch("humidity cell count mismatch"))
+    Nz = size(qv, 2)
+    length(coefficients.A) == Nz + 1 && length(coefficients.B) == Nz + 1 ||
+        throw(DimensionMismatch("humidity levels must match hybrid coefficients"))
     if coefficients.pure_pressure
         copyto!(dest, ps_dry)
         sync && synchronize(get_backend(dest))
@@ -228,7 +187,7 @@ function _recover_total_surface_pressure_staged!(dest::AbstractVector,
 end
 
 
-function _recover_total_surface_pressure_staged!(dest::NTuple{6},
+function recover_total_surface_pressure_staged!(dest::NTuple{6},
                                                   ps_dry::NTuple{6},
                                                   qv::NTuple{6},
                                                   coefficients::HybridCoefficientWorkspace;
@@ -298,40 +257,21 @@ end
 end
 
 """
-    fill_dz_hydrostatic_constT!(dz, ps, ak_ifc, bk_ifc;
-                                 T_ref = HYDROSTATIC_REFERENCE_TEMPERATURE,
-                                 R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
+    fill_dz_hydrostatic_constT_staged!(dz, ps, coefficients; sync, T_ref, R, gravity)
 
-Populate a 3D `(Nx, Ny, Nz)` `dz` array (host or device) from surface
-pressure `ps` and hybrid sigma-pressure interface coefficients
-`ak_ifc, bk_ifc` (length `Nz + 1`). Backend follows `dz`.
+Fill hydrostatic layer thickness `R*T_ref/gravity * Δp/p_center` from staged
+hybrid coefficients and total surface pressure. The default temperature is
+`HYDROSTATIC_REFERENCE_TEMPERATURE`. Supports structured, face-indexed and
+six-panel arrays; coefficient storage is reused between window refreshes.
 """
-function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 3},
-                                      ps::AbstractArray{<:AbstractFloat, 2},
-                                      ak_ifc::AbstractVector,
-                                      bk_ifc::AbstractVector;
-                                      T_ref::Real    = HYDROSTATIC_REFERENCE_TEMPERATURE,
-                                      R::Real        = R_DRY_AIR,
-                                      gravity::Real  = STANDARD_GRAVITY)
-    Nx, Ny, Nz = size(dz)
-    size(ps) == (Nx, Ny) || throw(DimensionMismatch(
-        "ps shape $(size(ps)) ≠ ($Nx, $Ny) expected from dz"))
-    length(ak_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz+1)"))
-    length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz+1)"))
-    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
-    return _fill_dz_hydrostatic_constT_staged!(dz, ps, coefficients;
-                                               T_ref, R, gravity, sync = true)
-end
-
-function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 3},
+function fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 3},
                                               ps::AbstractArray{<:AbstractFloat, 2},
                                               coefficients::HybridCoefficientWorkspace;
                                               T_ref::Real = HYDROSTATIC_REFERENCE_TEMPERATURE,
                                               R::Real = R_DRY_AIR,
                                               gravity::Real = STANDARD_GRAVITY,
                                               sync::Bool)
+    _validate_constT_panel(dz, ps, length(coefficients.A), length(coefficients.B))
     Nx, Ny, Nz = size(dz)
     FT = eltype(dz)
     backend = get_backend(dz)
@@ -340,34 +280,14 @@ function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 
     return dz
 end
 
-"""
-    fill_dz_hydrostatic_constT!(dz_panels::NTuple{6}, ps_panels::NTuple{6},
-                                 ak_ifc, bk_ifc; ...)
-
-Cubed-sphere variant: per-panel 3D `(Nc, Nc, Nz)` `dz` arrays are filled
-from per-panel `ps` arrays of shape `(Nc, Nc)` (interior only — the
-runtime stores `surface_pressure` without the advection halo).
-"""
-function fill_dz_hydrostatic_constT!(dz_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 3}},
-                                      ps_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 2}},
-                                      ak_ifc::AbstractVector,
-                                      bk_ifc::AbstractVector;
-                                      kwargs...)
-    _validate_constT_panels(dz_panels, ps_panels, length(ak_ifc), length(bk_ifc))
-    coefficients = _stage_hybrid_coefficients(dz_panels[1], ak_ifc, bk_ifc)
-    _fill_dz_hydrostatic_constT_staged!(dz_panels, ps_panels, coefficients;
-                                        kwargs..., sync = true)
-    return dz_panels
-end
-
-function _fill_dz_hydrostatic_constT_staged!(dz_panels::NTuple{6},
+function fill_dz_hydrostatic_constT_staged!(dz_panels::NTuple{6},
                                               ps_panels::NTuple{6},
                                               coefficients::HybridCoefficientWorkspace;
                                               sync::Bool, kwargs...)
     _validate_constT_panels(dz_panels, ps_panels, length(coefficients.A),
                             length(coefficients.B))
     @inbounds for p in 1:6
-        _fill_dz_hydrostatic_constT_staged!(dz_panels[p], ps_panels[p], coefficients;
+        fill_dz_hydrostatic_constT_staged!(dz_panels[p], ps_panels[p], coefficients;
                                             kwargs..., sync = false)
     end
     sync && synchronize(get_backend(dz_panels[1]))
@@ -420,7 +340,7 @@ end
 #
 # Note: this helper is intentionally LESS defensive than the Holtslag-Boville
 # closure's `_virtual_temperature` in
-# `src/State/Fields/LocalHoltslagBovilleKzField.jl:83`, which additionally
+# `LocalHoltslagBovilleKzField.jl`, which additionally
 # clamps T to ≥ 180 K. The HB clamp guards against pathological Kz when the
 # diagnosed mixing length collapses for very cold T (its closure divides by
 # theta_mid). Here we only need a geometric `dz`, so a physically realistic
@@ -448,45 +368,14 @@ end
 end
 
 """
-    fill_dz_hydrostatic_virtualT!(dz, t_lyr, qv_lyr, ps, ak_ifc, bk_ifc;
-                                   R = R_DRY_AIR, gravity = STANDARD_GRAVITY)
+    fill_dz_hydrostatic_virtualT_staged!(dz, T, qv, ps, coefficients; sync, R, gravity)
 
-Populate a 3D `(Nx, Ny, Nz)` `dz` array using virtual temperature per
-layer: `T_v = T · (1 + VIRTUAL_TEMPERATURE_FACTOR · qv)` (factor 0.61).
-Matches the geometry the
-[`LocalHoltslagBovilleKzField`](@ref AtmosTransport.State.Fields.LocalHoltslagBovilleKzField)
-uses for its column-mid heights, closing the inconsistency between
-solver `dz` and Kz-cache `dz`.
-
-`t_lyr`, `qv_lyr` are layer-center 3D fields with shape `(Nx, Ny, Nz)`,
-typically pulled from the active window's VDIFF payload.
+Fill hydrostatic layer thickness from staged hybrid coefficients and each
+layer's virtual temperature `T * (1 + VIRTUAL_TEMPERATURE_FACTOR * max(qv,0))`.
+Supports structured arrays and six-panel tuples. `sync` explicitly controls
+the completion barrier; tuples validate every panel before launching.
 """
-function fill_dz_hydrostatic_virtualT!(dz::AbstractArray{<:AbstractFloat, 3},
-                                        t_lyr::AbstractArray{<:AbstractFloat, 3},
-                                        qv_lyr::AbstractArray{<:AbstractFloat, 3},
-                                        ps::AbstractArray{<:AbstractFloat, 2},
-                                        ak_ifc::AbstractVector,
-                                        bk_ifc::AbstractVector;
-                                        R::Real       = R_DRY_AIR,
-                                        gravity::Real = STANDARD_GRAVITY)
-    Nx, Ny, Nz = size(dz)
-    size(t_lyr)  == (Nx, Ny, Nz) || throw(DimensionMismatch(
-        "t_lyr shape $(size(t_lyr)) ≠ ($Nx, $Ny, $Nz) expected from dz"))
-    size(qv_lyr) == (Nx, Ny, Nz) || throw(DimensionMismatch(
-        "qv_lyr shape $(size(qv_lyr)) ≠ ($Nx, $Ny, $Nz) expected from dz"))
-    size(ps)     == (Nx, Ny)     || throw(DimensionMismatch(
-        "ps shape $(size(ps)) ≠ ($Nx, $Ny) expected from dz"))
-    length(ak_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz + 1)"))
-    length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz + 1)"))
-    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
-    return _fill_dz_hydrostatic_virtualT_staged!(dz, t_lyr, qv_lyr, ps,
-                                                  coefficients;
-                                                  R, gravity, sync = true)
-end
-
-function _fill_dz_hydrostatic_virtualT_staged!(
+function fill_dz_hydrostatic_virtualT_staged!(
         dz::AbstractArray{<:AbstractFloat, 3},
         t_lyr::AbstractArray{<:AbstractFloat, 3},
         qv_lyr::AbstractArray{<:AbstractFloat, 3},
@@ -495,6 +384,7 @@ function _fill_dz_hydrostatic_virtualT_staged!(
         R::Real = R_DRY_AIR,
         gravity::Real = STANDARD_GRAVITY,
         sync::Bool)
+    _validate_virtualT_panel(dz, t_lyr, qv_lyr, ps, length(coefficients.A), length(coefficients.B))
     Nx, Ny, Nz = size(dz)
     FT = eltype(dz)
     backend = get_backend(dz)
@@ -504,42 +394,14 @@ function _fill_dz_hydrostatic_virtualT_staged!(
     return dz
 end
 
-"""
-    fill_dz_hydrostatic_virtualT!(dz_panels::NTuple{6}, t_panels::NTuple{6},
-                                   qv_panels::NTuple{6}, ps_panels::NTuple{6},
-                                   ak_ifc, bk_ifc; ...)
-
-Cubed-sphere variant of [`fill_dz_hydrostatic_virtualT!`](@ref). Per-panel
-3D `(Nc, Nc, Nz)` `dz`/`t_lyr`/`qv_lyr` arrays + per-panel `(Nc, Nc)` `ps`.
-The VDIFF payload is panel-native, so passing the panel tuples directly is
-the natural runtime shape.
-"""
-function fill_dz_hydrostatic_virtualT!(
-        dz_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 3}},
-        t_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 3}},
-        qv_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 3}},
-        ps_panels::NTuple{6, <:AbstractArray{<:AbstractFloat, 2}},
-        ak_ifc::AbstractVector,
-        bk_ifc::AbstractVector;
-        kwargs...)
-    _validate_virtualT_panels(dz_panels, t_panels, qv_panels, ps_panels,
-                              length(ak_ifc), length(bk_ifc))
-    coefficients = _stage_hybrid_coefficients(dz_panels[1], ak_ifc, bk_ifc)
-    _fill_dz_hydrostatic_virtualT_staged!(dz_panels, t_panels, qv_panels,
-                                          ps_panels, coefficients;
-                                          kwargs..., sync = true)
-    return dz_panels
-end
-
-
-function _fill_dz_hydrostatic_virtualT_staged!(
+function fill_dz_hydrostatic_virtualT_staged!(
         dz_panels::NTuple{6}, t_panels::NTuple{6}, qv_panels::NTuple{6},
         ps_panels::NTuple{6}, coefficients::HybridCoefficientWorkspace;
         sync::Bool, kwargs...)
     _validate_virtualT_panels(dz_panels, t_panels, qv_panels, ps_panels,
                               length(coefficients.A), length(coefficients.B))
     @inbounds for p in 1:6
-        _fill_dz_hydrostatic_virtualT_staged!(dz_panels[p], t_panels[p], qv_panels[p],
+        fill_dz_hydrostatic_virtualT_staged!(dz_panels[p], t_panels[p], qv_panels[p],
                                               ps_panels[p], coefficients;
                                               kwargs..., sync = false)
     end
@@ -562,35 +424,7 @@ end
     end
 end
 
-"""
-    fill_dz_hydrostatic_constT!(dz::AbstractArray{<:Any, 2},
-                                 ps::AbstractArray{<:Any, 1},
-                                 ak_ifc, bk_ifc; ...)
-
-Face-indexed variant for ReducedGaussian topology: `dz` shape `(ncells, Nz)`,
-`ps` shape `(ncells,)`. Same constant-`T_ref` formula as the structured/CS
-overloads, just unrolled over the face-indexed cell axis.
-"""
-function fill_dz_hydrostatic_constT!(dz::AbstractArray{<:AbstractFloat, 2},
-                                      ps::AbstractArray{<:AbstractFloat, 1},
-                                      ak_ifc::AbstractVector,
-                                      bk_ifc::AbstractVector;
-                                      T_ref::Real    = HYDROSTATIC_REFERENCE_TEMPERATURE,
-                                      R::Real        = R_DRY_AIR,
-                                      gravity::Real  = STANDARD_GRAVITY)
-    ncells, Nz = size(dz)
-    length(ps) == ncells || throw(DimensionMismatch(
-        "ps length $(length(ps)) ≠ ncells=$(ncells) expected from dz"))
-    length(ak_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "ak_ifc length $(length(ak_ifc)) ≠ Nz+1=$(Nz + 1)"))
-    length(bk_ifc) == Nz + 1 || throw(DimensionMismatch(
-        "bk_ifc length $(length(bk_ifc)) ≠ Nz+1=$(Nz + 1)"))
-    coefficients = _stage_hybrid_coefficients(dz, ak_ifc, bk_ifc)
-    return _fill_dz_hydrostatic_constT_staged!(dz, ps, coefficients;
-                                               T_ref, R, gravity, sync = true)
-end
-
-function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 2},
+function fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 2},
                                               ps::AbstractArray{<:AbstractFloat, 1},
                                               coefficients::HybridCoefficientWorkspace;
                                               T_ref::Real = HYDROSTATIC_REFERENCE_TEMPERATURE,
@@ -598,6 +432,9 @@ function _fill_dz_hydrostatic_constT_staged!(dz::AbstractArray{<:AbstractFloat, 
                                               gravity::Real = STANDARD_GRAVITY,
                                               sync::Bool)
     ncells, Nz = size(dz)
+    length(ps) == ncells || throw(DimensionMismatch("ps cell count mismatch"))
+    length(coefficients.A) == Nz + 1 && length(coefficients.B) == Nz + 1 ||
+        throw(DimensionMismatch("dz levels must match hybrid coefficients"))
     FT = eltype(dz)
     backend = get_backend(dz)
     launch!(_dz_hydrostatic_constT_face_kernel!, backend, (256, 1), (ncells, Nz), dz, ps,

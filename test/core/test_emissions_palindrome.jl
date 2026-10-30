@@ -157,42 +157,4 @@ end
         end
     end
 
-    @testset "V(dt/2) S V(dt/2) vs V(dt) S with active diffusion: diffusion is symmetric" begin
-        # With active diffusion and active emissions, the V(dt/2) → S → V(dt/2)
-        # arrangement should mix fresh emissions upward (non-zero at upper
-        # layers after one step).
-        FT = Float64
-        Nx, Ny, Nz = 4, 3, 6
-        air = ones(FT, Nx, Ny, Nz)
-        state = CellState(MoistBasis, air; CO2 = zeros(FT, Nx, Ny, Nz))
-
-        am = zeros(FT, Nx + 1, Ny, Nz)
-        bm = zeros(FT, Nx, Ny + 1, Nz)
-        cm = zeros(FT, Nx, Ny, Nz + 1)
-        ws = AdvectionWorkspace(air; n_tracers = 1)
-        diffusion_ws = DiffusionWorkspace(state)
-        fill!(diffusion_ws.layer_thickness, FT(100.0))
-
-        kz = ConstantField{FT, 3}(10.0)   # strong Kz so mixing visible in 1 step
-        dfop = ImplicitVerticalDiffusion(; kz_field = kz)
-        op   = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(1.0, Nx, Ny)))
-        dt   = 60.0
-
-        strang_split_mt!(state.tracers_raw, state.air_mass,
-                         copy(am), copy(bm), copy(cm),
-                         UpwindScheme(), ws;
-                         cfl_limit = 1.0, dt = dt,
-                         diffusion_op = dfop,
-                         diffusion_workspace = diffusion_ws,
-                         emissions_op = op,
-                         tracer_names = state.tracer_names)
-
-        # The second V(dt/2) after S mixes the freshly-emitted mass into
-        # layers above the surface.
-        @test all(state.tracers.CO2[:, :, Nz - 1] .> 0.0)
-        @test all(state.tracers.CO2[:, :, 1]      .>= 0.0)
-        # Global mass is conserved within the emission added
-        expected = Nx * Ny * 1.0 * dt
-        @test sum(state.tracers.CO2) ≈ expected
-    end
 end

@@ -52,7 +52,7 @@ function smoke_model(FT, cs, convection; scheme = UpwindScheme(), backend = "cpu
     dtrain = max.(zero(FT), cmfmc[:,:,2:end] .- cmfmc[:,:,1:end-1])
     forcing = ConvectionForcing(cs ? ntuple(_ -> copy(cmfmc),6) : cmfmc,
                                 cs ? ntuple(_ -> copy(dtrain),6) : dtrain, fields)
-    kz = ProfileKzField(fill(FT(10), nz))
+    kz = ConstantField{FT, 3}(FT(10))
     diffusion = ImplicitVerticalDiffusion(; kz_field = cs ? CubedSphereField(ntuple(_ -> kz,6)) : kz)
     state = Adapt.adapt(adapter, state)
     fluxes = Adapt.adapt(adapter, fluxes)

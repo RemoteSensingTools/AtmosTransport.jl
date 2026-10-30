@@ -192,40 +192,6 @@ function update_field!(f::StepwiseField, t::Real)
 end
 
 # ==========================================================================
-# Optional interface
-# ==========================================================================
-
-"""
-    integral_between(f::StepwiseField, t1::Real, t2::Real, idx::NTuple{N, Int}) -> FT
-
-Exact integral of the piecewise-constant field between times `t1` and
-`t2` at spatial index `idx`. Sums `samples[idx..., n] × overlap(n)`
-over every window `n` that intersects `[t1, t2]`, where `overlap(n) =
-max(0, min(t2, b[n+1]) - max(t1, b[n]))`.
-
-Host-side helper — not kernel-safe. Included for operators that care
-about the time-integrated flux (e.g. an emissions operator that integrates
-across a window boundary within a single step). The surface flux
-kernel uses the instantaneous `field_value × dt` form and does NOT consume
-`integral_between`.
-"""
-function integral_between(f::StepwiseField{FT, N}, t1::Real, t2::Real,
-                          idx::NTuple{N, Int}) where {FT, N}
-    t1 <= t2 || throw(ArgumentError("integral_between: t1=$t1 must be ≤ t2=$t2"))
-    b = f.boundaries
-    n_win = length(b) - 1
-    acc = zero(FT)
-    @inbounds for n in 1:n_win
-        lo = max(t1, b[n])
-        hi = min(t2, b[n + 1])
-        overlap = hi - lo
-        overlap > 0 || continue
-        acc += f.samples[idx..., n] * FT(overlap)
-    end
-    return acc
-end
-
-# ==========================================================================
 # Adapt — GPU dispatch
 # ==========================================================================
 

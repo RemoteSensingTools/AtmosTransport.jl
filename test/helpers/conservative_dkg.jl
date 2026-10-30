@@ -70,7 +70,7 @@ function check_conservative_dkg(FT, Nc, Nz, Nt, strength; array_type=Array)
     rng = MersenneTwister(1974)
     seed = ntuple(_ -> randn(rng, FT, Nc+2, Nc+2, Nz), 6)
     gradient = map(array_type, seed)
-    kernel! = DkgAdj._vertical_diffusion_cs_single_dkg_adjoint_kernel!(get_backend(gradient[1]), (8,8))
+    kernel! = DkgDiff._vertical_diffusion_cs_single_dkg_adjoint_kernel!(get_backend(gradient[1]), (8,8))
     for p in 1:6
         kernel!(gradient[p], device_m[p], DkgState.panel_field(field,p), ws.factors[p],
                 one(FT), Nz, 1; ndrange=(Nc,Nc))
@@ -141,7 +141,7 @@ function check_dkg_weak_exchange(FT; array_type=Array)
             lambda[p][2,2,2] = 1
         end
         gradient = map(array_type,lambda)
-        kernel! = DkgAdj._vertical_diffusion_cs_single_dkg_adjoint_kernel!(get_backend(gradient[1]),(8,8))
+        kernel! = DkgDiff._vertical_diffusion_cs_single_dkg_adjoint_kernel!(get_backend(gradient[1]),(8,8))
         for p in 1:6
             kernel!(gradient[p],device_m[p],DkgState.panel_field(field,p),ws.factors[p],
                     one(FT),2,1;ndrange=(1,1))

@@ -4,7 +4,7 @@
 Physical constants and scheme parameters for the Beljaars-Viterbo
 (revised LTG) boundary-layer diffusivity parameterization, as implemented
 in TM5 (`diffusion.F90`, `bldiff`). Defaults reproduce the values used in
-the legacy `PBLDiffusion`. `DerivedKzField`, `WindowPBLKzField` and
+the legacy `PBLDiffusion`. `WindowPBLKzField` and
 `LocalHoltslagBovilleKzField` all read their constants, surface-input
 floors and profile shape from here.
 
@@ -152,129 +152,17 @@ commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:198-210`).
     return one(FT)
 end
 
-# =========================================================================
-# DerivedKzField
-# =========================================================================
+abstract type AbstractWindowKzCache{FT} <: AbstractCubedSphereField{FT} end
 
-"""
-    DerivedKzField(; surface, delp, cache, params = PBLPhysicsParameters{FT}())
-
-A rank-3 `AbstractTimeVaryingField{FT, 3}` whose values are Kz [m²/s]
-computed per column from Beljaars-Viterbo surface-field closure.
-
-# Inputs
-
-| Name       | Type                                            | Role                                  |
-|------------|-------------------------------------------------|---------------------------------------|
-| `surface`  | `NamedTuple` of four rank-2 `TimeVaryingField`s | `(pblh, ustar, hflux, t2m)` fields    |
-| `delp`     | rank-3 `TimeVaryingField`                       | Layer pressure thickness [Pa], k=1 at TOA |
-| `cache`    | `AbstractArray{FT, 3}`                          | Backing storage for computed Kz, size `(Nx, Ny, Nz)` |
-| `params`   | `PBLPhysicsParameters{FT}`                      | Physical constants                    |
-
-# Interface
-
-- `field_value(f, (i, j, k))` → `f.cache[i, j, k]`. Kernel-safe.
-- `update_field!(f, t)` →
-  1. Refreshes every input field at time `t` (surface + delp).
-  2. Recomputes every cell's Kz on the cache backend.
-
-Kz is stored at **cell centers**. Consumers that need interface Kz
-(e.g. a Thomas solve) should interpolate between adjacent k-levels.
-
-# Vertical convention
-
-`k = 1` is TOA; `k = Nz` is surface. This matches the legacy
-`_pbl_diffuse_kernel!` which accumulates `p_top` upward from `0` Pa
-and integrates hydrostatic `dz` downward. Configs that provide
-ground-up delp must flip the k axis before passing in.
-
-# Example (test-style construction)
-
-```julia
-surface = (
-    pblh  = ConstantField{Float64, 2}(1000.0),
-    ustar = ConstantField{Float64, 2}(0.3),
-    hflux = ConstantField{Float64, 2}(100.0),
-    t2m   = ConstantField{Float64, 2}(295.0),
-)
-delp  = PreComputedKzField(fill(3000.0, 4, 3, 10))   # 10 layers of 3 kPa
-cache = zeros(Float64, 4, 3, 10)
-f     = DerivedKzField(; surface, delp, cache)
-
-update_field!(f, 0.0)
-Kz_surface_cell = field_value(f, (1, 1, 10))   # populated m²/s
-```
-"""
-struct DerivedKzField{FT, SF, DELP, A,
-                      P <: PBLPhysicsParameters{FT}} <: AbstractTimeVaryingField{FT, 3}
-    surface :: SF
-    delp    :: DELP
-    cache   :: A
-    params  :: P
-
-    function DerivedKzField{FT, SF, DELP, A, P}(surface::SF, delp::DELP,
-                                                cache::A, params::P) where {
-            FT <: AbstractFloat,
-            SF <: NamedTuple{(:pblh, :ustar, :hflux, :t2m)},
-            DELP <: AbstractTimeVaryingField{FT, 3},
-            A <: AbstractArray{FT, 3},
-            P <: PBLPhysicsParameters{FT}}
-        for (name, field) in pairs(surface)
-            field isa AbstractTimeVaryingField{FT, 2} ||
-                throw(ArgumentError("surface.$name must be an AbstractTimeVaryingField{$FT, 2}; got $(typeof(field))"))
-        end
-        new{FT, SF, DELP, A, P}(surface, delp, cache, params)
-    end
-end
-
-function DerivedKzField(; surface::NamedTuple, delp, cache::AbstractArray{FT, 3},
-                        params = nothing) where FT
-    resolved = params === nothing ? PBLPhysicsParameters{FT}() : params
-    resolved isa PBLPhysicsParameters{FT} ||
-        throw(ArgumentError("params must be a PBLPhysicsParameters{$FT}; got $(typeof(resolved))"))
-    DerivedKzField{FT, typeof(surface), typeof(delp), typeof(cache), typeof(resolved)}(
-        surface, delp, cache, resolved)
-end
-
-function Adapt.adapt_structure(to, f::DerivedKzField{FT}) where FT
-    surface = Adapt.adapt(to, f.surface)
-    delp = Adapt.adapt(to, f.delp)
-    cache = Adapt.adapt(to, f.cache)
-    return DerivedKzField{FT, typeof(surface), typeof(delp), typeof(cache),
-                          typeof(f.params)}(surface, delp, cache, f.params)
-end
-
-@inline field_value(f::DerivedKzField, idx::NTuple{3, Int}) =
-    @inbounds f.cache[idx[1], idx[2], idx[3]]
-
-function update_field!(f::DerivedKzField, t::Real)
-    update_field!(f.surface.pblh,  t)
-    update_field!(f.surface.ustar, t)
-    update_field!(f.surface.hflux, t)
-    update_field!(f.surface.t2m,   t)
-    update_field!(f.delp, t)
-    _recompute_kz_cache!(f)
-    return f
-end
-
-"""
-    _recompute_kz_cache!(f::DerivedKzField) -> f
-
-Fill `f.cache[i, j, k]` with Kz at cell-center height, using the
-current state of the surface fields and `delp`. One backend-portable kernel
-runs per horizontal column and performs the vertical pressure-to-height
-integration locally, so adapted fields refresh without host scalar indexing.
-"""
-@kernel function _derived_kz_cache_kernel!(cache, surface, delp, p)
-    i, j = @index(Global, NTuple)
+@inline function _window_pbl_column!(cache, air_mass, pblh, ustar, hflux, t2m, areas, p, Hp, i, j)
     Nz = size(cache, 3)
     FT = eltype(cache)
     R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
 
-    h_pbl = max(field_value(surface.pblh,  (i, j)), p.h_pbl_min)
-    us    = max(field_value(surface.ustar, (i, j)), p.ustar_min)
-    H_sfc = field_value(surface.hflux, (i, j))
-    T_sfc = max(field_value(surface.t2m,   (i, j)), p.T_sfc_min)
+    h_pbl = max(FT(pblh[i, j]), p.h_pbl_min)
+    us = max(FT(ustar[i, j]), p.ustar_min)
+    H_sfc = FT(hflux[i, j])
+    T_sfc = max(FT(t2m[i, j]), p.T_sfc_min)
 
     L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
     Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
@@ -283,7 +171,7 @@ integration locally, so adapted fields refresh without host scalar indexing.
     z_col = zero(FT)
     p_top = zero(FT)
     @inbounds for k in 1:Nz
-        delp_k = field_value(delp, (i, j, k))
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
         p_bot = p_top + delp_k
         p_mid = max((p_top + p_bot) / FT(2), FT(1))
         z_col += delp_k * R_T_over_g / p_mid
@@ -293,7 +181,7 @@ integration locally, so adapted fields refresh without host scalar indexing.
     z_above = z_col
     p_top = zero(FT)
     @inbounds for k in 1:Nz
-        delp_k = field_value(delp, (i, j, k))
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
         p_bot = p_top + delp_k
         p_mid = max((p_top + p_bot) / FT(2), FT(1))
         dz_k = delp_k * R_T_over_g / p_mid
@@ -303,14 +191,64 @@ integration locally, so adapted fields refresh without host scalar indexing.
         z_above -= dz_k
         p_top = p_bot
     end
+    return nothing
 end
 
-function _recompute_kz_cache!(f::DerivedKzField)
-    cache = f.cache
-    Nx, Ny, _ = size(cache)
-    backend = get_backend(cache)
-    kernel! = _derived_kz_cache_kernel!(backend)
-    kernel!(cache, f.surface, f.delp, f.params; ndrange = (Nx, Ny))
-    synchronize(backend)
-    return f
+@inline function _local_hb_column!(cache, air_mass, pblh, ustar, hflux, t2m, u, v, t, qv, areas, p, Hp, i, j)
+    Nz = size(cache, 3)
+    FT = eltype(cache)
+    R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
+
+    h_pbl = max(FT(pblh[i, j]), p.h_pbl_min)
+    us = max(FT(ustar[i, j]), p.ustar_min)
+    H_sfc = FT(hflux[i, j])
+    T_sfc = max(max(FT(t2m[i, j]), FT(t[i, j, Nz])), p.T_sfc_min)
+
+    L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
+    Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+
+    z_col = zero(FT)
+    p_top = zero(FT)
+    @inbounds for k in 1:Nz
+        tv = _virtual_temperature(t[i, j, k], qv[i, j, k], FT)
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        z_col += delp_k * R_dry * tv / (p.gravity * p_mid)
+        p_top = p_bot
+    end
+
+    z_above = z_col
+    p_top = zero(FT)
+    prev_z = zero(FT)
+    prev_theta = zero(FT)
+    prev_u = zero(FT)
+    prev_v = zero(FT)
+    @inbounds for k in 1:Nz
+        tv = _virtual_temperature(t[i, j, k], qv[i, j, k], FT)
+        delp_k = FT(air_mass[i + Hp, j + Hp, k]) * p.gravity / FT(areas[i, j])
+        p_bot = p_top + delp_k
+        p_mid = max((p_top + p_bot) / FT(2), FT(1))
+        dz_k = delp_k * R_dry * tv / (p.gravity * p_mid)
+        z_center = z_above - dz_k / FT(2)
+        theta = _local_hb_theta(tv, p_mid, p)
+        base_kz = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob, Pr_inv, p)
+        kz = base_kz
+        if k > 1
+            kz = _shear_enhanced_kz(base_kz, z_center, prev_z,
+                                    theta, prev_theta,
+                                    FT(u[i, j, k]), prev_u,
+                                    FT(v[i, j, k]), prev_v, p)
+        end
+        cache[i, j, k] = kz
+        prev_z = z_center
+        prev_theta = theta
+        prev_u = FT(u[i, j, k])
+        prev_v = FT(v[i, j, k])
+        z_above -= dz_k
+        p_top = p_bot
+    end
+    return nothing
 end
+
+@inline _potential_temperature(T, p, κ, p_ref) = T * (p_ref / p)^κ

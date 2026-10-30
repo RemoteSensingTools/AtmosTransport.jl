@@ -8,6 +8,8 @@ if get(ENV, "ATMOSTR_RUN_METAL_TESTS", "0") != "1"
     @info "Skipping opt-in Metal kernel tests"
 else
     using Metal              # before AtmosTransport, so its Metal extension loads
+    import AtmosTransport
+    include(joinpath(@__DIR__, "..", "helpers", "diffusion_geometry.jl"))
     @assert Metal.functional() "Metal is not functional on this machine"
     Metal.allowscalar(false)
     helpers = joinpath(@__DIR__, "..", "helpers")
@@ -16,8 +18,8 @@ else
     include(joinpath(helpers, "cmfmc_cfl.jl"))
     include(joinpath(helpers, "surface_flux_window_buffer.jl"))
     include(joinpath(helpers, "ledger_carry.jl"))
-    using .AtmosTransport.Operators.Diffusion: recover_total_surface_pressure!,
-                                                fill_dz_hydrostatic_constT!
+    using .AtmosTransport.Operators.Diffusion: recover_total_surface_pressure_staged!,
+                                                fill_dz_hydrostatic_constT_staged!
     @testset "Metal point operations" begin
         # Separate launches with bound contexts on Metal (faster there).
         @test PointArch.fusion_policy(Metal.MetalBackend()) === PointArch.SeparateLaunches()
@@ -48,9 +50,9 @@ else
                         ((A[k + 1] - A[k]) + (B[k + 1] - B[k]) * ps_total[i, j])
                         for k in 1:Nz) for i in 1:Nx, j in 1:Ny]
         recovered = MtlArray(zeros(FT, Nx, Ny))
-        recover_total_surface_pressure!(recovered, MtlArray(ps_dry), MtlArray(qv), A, B)
+        recover_total_surface_pressure_staged!(recovered, MtlArray(ps_dry), MtlArray(qv), diffusion_coefficients(MtlArray(qv), A, B); sync = true)
         dz = MtlArray(zeros(FT, Nx, Ny, Nz))
-        fill_dz_hydrostatic_constT!(dz, recovered, A, B)
+        fill_dz_hydrostatic_constT_staged!(dz, recovered, diffusion_coefficients(dz, A, B); sync = true)
         @test Array(recovered) ≈ ps_total rtol = 32eps(FT)
         @test all(isfinite, Array(dz))
     end

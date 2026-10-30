@@ -42,7 +42,7 @@ using ...SectionTimer
 # concretions. `NoDiffusion`'s `apply_vertical_diffusion_vmr!` method is
 # `= nothing`, keeping the default path bit-exact with the no-op behavior.
 using ..Diffusion: AbstractDiffusion, DiffusionWorkspace, NoDiffusion,
-                   apply_vertical_diffusion_vmr!, _packed_references,
+                   apply_vertical_diffusion_vmr!, preflight_diffusion,
                    uses_diffusive_surface_flux_boundary,
                    surface_flux_coupling, surface_flux_center!
 # SurfaceFlux is loaded before Advection in Operators.jl so the palindrome
