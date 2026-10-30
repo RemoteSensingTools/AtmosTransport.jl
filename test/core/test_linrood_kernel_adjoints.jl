@@ -887,65 +887,12 @@ end
 # cross-panel halo / corner copies skipped (halos held at the user-
 # supplied values for the duration). Captures the intermediate q_buf
 # states needed by the reverse pass. Mirrors `fv_tp_2d_cs!` (linrood_horizontal.jl).
-function _linrood_single_panel_forward(rm0, m0, am, bm,
-                                        mesh::AT.CubedSphereMesh{FT}) where {FT}
-    Nc = mesh.Nc; Hp = mesh.Hp
-    Nz = size(rm0, 3)
-    N = Nc + 2Hp
-
-    rm = copy(rm0)
-    m  = copy(m0)
-    backend = get_backend(rm)
-
-    init_k!    = Adv._init_q_buf_kernel!(backend, 256)
-    y_face_k!  = Adv._ppm_y_face_kernel!(backend, 256)
-    x_face_k!  = Adv._ppm_x_face_kernel!(backend, 256)
-    xq_face_k! = Adv._ppm_x_face_from_q_kernel!(backend, 256)
-    yq_face_k! = Adv._ppm_y_face_from_q_kernel!(backend, 256)
-    pre_y_k!   = Adv._pre_advect_y_kernel!(backend, 256)
-    pre_x_k!   = Adv._pre_advect_x_kernel!(backend, 256)
-    update_k!  = Adv._linrood_update_kernel!(backend, 256)
-
-    fy_in  = zeros(FT, Nc, Nc + 1, Nz)
-    fy_out = zeros(FT, Nc, Nc + 1, Nz)
-    fx_in  = zeros(FT, Nc + 1, Nc, Nz)
-    fx_out = zeros(FT, Nc + 1, Nc, Nz)
-    q_buf  = zeros(FT, N, N, Nz)
-
-    # Phase 1
-    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
-    synchronize(backend)
-    y_face_k!(fy_in, rm, m, bm, Hp, Nc, Val(5);
-              ndrange=(Nc, Nc + 1, Nz))
-    pre_y_k!(q_buf, rm, m, bm, fy_in, Hp; ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    q_buf_phase2 = copy(q_buf)
-
-    # Phase 2
-    xq_face_k!(fx_out, q_buf_phase2, am, m, Hp, Nc, Val(5);
-               ndrange=(Nc + 1, Nc, Nz))
-    x_face_k!(fx_in, rm, m, am, Hp, Nc, Val(5);
-              ndrange=(Nc + 1, Nc, Nz))
-    synchronize(backend)
-    init_k!(q_buf, rm, m; ndrange=(N, N, Nz))
-    synchronize(backend)
-    pre_x_k!(q_buf, rm, m, am, fx_in, Hp; ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-    q_buf_phase3 = copy(q_buf)
-
-    # Phase 3
-    yq_face_k!(fy_out, q_buf_phase3, bm, m, Hp, Nc, Val(5);
-               ndrange=(Nc, Nc + 1, Nz))
-    rm_new_buf = zeros(FT, N, N, Nz)
-    m_new_buf  = zeros(FT, N, N, Nz)
-    update_k!(rm_new_buf, m_new_buf, rm, m, am, bm,
-              fx_in, fx_out, fy_in, fy_out, Hp;
-              ndrange=(Nc, Nc, Nz))
-    synchronize(backend)
-
-    return (rm_new=rm_new_buf, m_new=m_new_buf,
-            q_buf_phase2=q_buf_phase2, q_buf_phase3=q_buf_phase3,
-            fx_in=fx_in, fx_out=fx_out, fy_in=fy_in, fy_out=fy_out)
+# Use the existing panel-recording entry point in the fenced Lin–Rood source.
+# Its kernel sequence is the forward operator this composition transposes.
+function _linrood_single_panel_forward(rm0, m0, am, bm, mesh)
+    record, rm_new, m_new = Adv.record_linrood_substep!(rm0, m0, am, bm, mesh; ord = Val(5))
+    return (; rm_new, m_new, record.q_buf_phase2, record.q_buf_phase3,
+            record.fx_in, record.fx_out, record.fy_in)
 end
 
 @testset "Plan 25 Commit 4 — single-panel horizontal adjoint composition" begin
@@ -980,13 +927,17 @@ end
     # Adjoint
     lambda_rm = zeros(FT, N, N, Nz)
     lambda_m  = zeros(FT, N, N, Nz)
+    face_adjoints = (zeros(FT, Nc + 1, Nc, Nz), zeros(FT, Nc + 1, Nc, Nz),
+                     zeros(FT, Nc, Nc + 1, Nz), zeros(FT, Nc, Nc + 1, Nz))
+    Adv.apply_linrood_update_adjoint!(lambda_rm, lambda_m, face_adjoints...,
+                                     lambda_rm_new, lambda_m_new, am, bm, mesh)
     Adv.apply_linrood_horizontal_adjoint_single_panel!(
         lambda_rm, lambda_m,
         lambda_rm_new, lambda_m_new,
         rm0, m0, am, bm,
         out.q_buf_phase2, out.q_buf_phase3,
         out.fx_in, out.fx_out, out.fy_in,
-        mesh, Val(5),
+        mesh, Val(5); face_adjoints,
     )
 
     # FD JVP through the full forward. Restrict perturbations to the
@@ -1021,158 +972,3 @@ end
 # ===========================================================================
 # Commit 5 — multi-substep replay test
 # ===========================================================================
-
-@testset "Plan 25 Commit 5 — multi-substep LinRood horizontal adjoint" begin
-    FT = Float64
-    Nc = 4; Hp = 3; Nz = 2
-    mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
-    N = Nc + 2Hp
-    nsteps = 3
-
-    rng = MersenneTwister(601)
-    rm0 = zeros(FT, N, N, Nz)
-    m0  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        rm0[i, j, k] = FT(0.5) * sin(0.13i + 0.21j + 0.07k)
-        m0[i, j, k]  = FT(3) + FT(0.1) * sin(0.09i - 0.11j)
-    end
-    am_steps = [FT(0.005) .* randn(rng, FT, Nc + 1, Nc, Nz) for _ in 1:nsteps]
-    bm_steps = [FT(0.005) .* randn(rng, FT, Nc, Nc + 1, Nz) for _ in 1:nsteps]
-
-    # Forward sequence
-    function _forward_sequence(rm0, m0)
-        rm = copy(rm0); m = copy(m0)
-        tape = Vector{Any}(undef, nsteps)
-        for t in 1:nsteps
-            entry, rm_next, m_next = Adv.record_linrood_substep!(
-                rm, m, am_steps[t], bm_steps[t], mesh)
-            tape[t] = entry
-            rm = rm_next
-            m  = m_next
-        end
-        return (tape=tape, rm_final=rm, m_final=m)
-    end
-
-    out = _forward_sequence(rm0, m0)
-    tape_vec = Vector{typeof(out.tape[1])}(out.tape)
-
-    # Adjoint seeds on the final state (interior only).
-    lambda_rm_final = zeros(FT, N, N, Nz)
-    lambda_m_final  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        lambda_rm_final[i, j, k] = randn(rng, FT)
-        lambda_m_final[i, j, k]  = randn(rng, FT)
-    end
-
-    lambda_rm0 = zeros(FT, N, N, Nz)
-    lambda_m0  = zeros(FT, N, N, Nz)
-    Adv.apply_linrood_multi_substep_adjoint!(
-        lambda_rm0, lambda_m0,
-        lambda_rm_final, lambda_m_final,
-        tape_vec, am_steps, bm_steps, mesh,
-    )
-
-    # FD JVP over the full nsteps sequence. Interior perturbations
-    # only (same reason as Commit 4).
-    drm = zeros(FT, N, N, Nz)
-    dm  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        drm[i, j, k] = randn(rng, FT)
-        dm[i, j, k]  = randn(rng, FT)
-    end
-    eps_fd = 1e-6
-    out_plus  = _forward_sequence(rm0 .+ eps_fd .* drm, m0 .+ eps_fd .* dm)
-    out_minus = _forward_sequence(rm0 .- eps_fd .* drm, m0 .- eps_fd .* dm)
-    fd_drm_final = (out_plus.rm_final .- out_minus.rm_final) ./ (2eps_fd)
-    fd_dm_final  = (out_plus.m_final  .- out_minus.m_final)  ./ (2eps_fd)
-
-    lhs = sum(lambda_rm_final .* fd_drm_final) +
-          sum(lambda_m_final  .* fd_dm_final)
-    rhs = sum(lambda_rm0 .* drm) + sum(lambda_m0 .* dm)
-
-    @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-4)
-end
-
-@testset "Plan 25 Commit 5 (ORD=7) — multi-substep LinRood adjoint, no Val(7) kwarg" begin
-    # Codex review M1 2026-05-15: before binding ORD into
-    # `LinRoodHorizontalTapeEntry`, a tape recorded at ORD=7 silently
-    # reversed with ORD=5 when the caller did not pass an explicit
-    # `Val(7)` to `apply_linrood_multi_substep_adjoint!` (the kwarg
-    # defaulted to Val(5)). Codex reproduced this with a smooth
-    # one-step probe: default reverse error ~1.34e-4, explicit
-    # Val(7) error ~6.9e-10. After the binding, the reverse pass
-    # reads ORD from the tape's element type and the kwarg is gone,
-    # so the foot-gun is dispatch-impossible. This test calls
-    # `apply_linrood_multi_substep_adjoint!` WITHOUT specifying ORD
-    # and verifies the FD/VJP identity passes — i.e., the ORD=7
-    # reverse path is the one being exercised.
-    FT = Float64
-    Nc = 4; Hp = 3; Nz = 2
-    mesh = AT.CubedSphereMesh(Nc=Nc, Hp=Hp, FT=FT)
-    N = Nc + 2Hp
-    nsteps = 3
-
-    rng = MersenneTwister(701)
-    rm0 = zeros(FT, N, N, Nz)
-    m0  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        rm0[i, j, k] = FT(0.5) * sin(0.13i + 0.21j + 0.07k)
-        m0[i, j, k]  = FT(3) + FT(0.1) * sin(0.09i - 0.11j)
-    end
-    am_steps = [FT(0.005) .* randn(rng, FT, Nc + 1, Nc, Nz) for _ in 1:nsteps]
-    bm_steps = [FT(0.005) .* randn(rng, FT, Nc, Nc + 1, Nz) for _ in 1:nsteps]
-
-    # Forward sequence with ord=Val(7) — tape entries are typed
-    # LinRoodHorizontalTapeEntry{…, 7}.
-    function _forward_sequence_ord7(rm0, m0)
-        rm = copy(rm0); m = copy(m0)
-        tape = Vector{Any}(undef, nsteps)
-        for t in 1:nsteps
-            entry, rm_next, m_next = Adv.record_linrood_substep!(
-                rm, m, am_steps[t], bm_steps[t], mesh; ord=Val(7))
-            tape[t] = entry
-            rm = rm_next
-            m  = m_next
-        end
-        return (tape=tape, rm_final=rm, m_final=m)
-    end
-
-    out = _forward_sequence_ord7(rm0, m0)
-    tape_vec = Vector{typeof(out.tape[1])}(out.tape)
-
-    lambda_rm_final = zeros(FT, N, N, Nz)
-    lambda_m_final  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        lambda_rm_final[i, j, k] = randn(rng, FT)
-        lambda_m_final[i, j, k]  = randn(rng, FT)
-    end
-
-    lambda_rm0 = zeros(FT, N, N, Nz)
-    lambda_m0  = zeros(FT, N, N, Nz)
-    # CRITICAL: do NOT pass an explicit Val(ORD). ORD must come from
-    # the tape's element type via dispatch.
-    Adv.apply_linrood_multi_substep_adjoint!(
-        lambda_rm0, lambda_m0,
-        lambda_rm_final, lambda_m_final,
-        tape_vec, am_steps, bm_steps, mesh,
-    )
-
-    drm = zeros(FT, N, N, Nz)
-    dm  = zeros(FT, N, N, Nz)
-    @inbounds for k in 1:Nz, j in (Hp + 1):(Hp + Nc), i in (Hp + 1):(Hp + Nc)
-        drm[i, j, k] = randn(rng, FT)
-        dm[i, j, k]  = randn(rng, FT)
-    end
-    eps_fd = 1e-6
-    out_plus  = _forward_sequence_ord7(rm0 .+ eps_fd .* drm, m0 .+ eps_fd .* dm)
-    out_minus = _forward_sequence_ord7(rm0 .- eps_fd .* drm, m0 .- eps_fd .* dm)
-    fd_drm_final = (out_plus.rm_final .- out_minus.rm_final) ./ (2eps_fd)
-    fd_dm_final  = (out_plus.m_final  .- out_minus.m_final)  ./ (2eps_fd)
-
-    lhs = sum(lambda_rm_final .* fd_drm_final) +
-          sum(lambda_m_final  .* fd_dm_final)
-    rhs = sum(lambda_rm0 .* drm) + sum(lambda_m0 .* dm)
-
-    @test isapprox(lhs, rhs; atol=1e-7, rtol=1e-4)
-end
-

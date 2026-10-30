@@ -74,17 +74,6 @@ function _record_cs_tape!(replay::_CSReplay, steps::AbstractUnitRange, storage)
     return recorder.ops
 end
 
-# The tape of a whole run, for tests and diagnostics: `(ops, final_m)`.
-function _record_cs_adjoint_tape(panels_rm0, panels_m0,
-                                 panels_am_steps, panels_bm_steps, panels_cm_steps,
-                                 mesh::CubedSphereMesh, scheme;
-                                 tape_storage = :device, kwargs...)
-    replay, _ = _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                                    panels_cm_steps, mesh; scheme, kwargs...)
-    ops = _record_cs_tape!(replay, 1:_replay_nsteps(replay), _tape_storage(tape_storage))
-    return ops, _replay_m(replay)
-end
-
 """
     cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                           panels_cm_steps, mesh, scheme;

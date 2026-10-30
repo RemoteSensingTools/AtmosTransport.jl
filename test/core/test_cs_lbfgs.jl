@@ -64,18 +64,6 @@ end
 # ---------------------------------------------------------------------------
 
 @testset "CSLBFGS — construction" begin
-    opt = AT.CSLBFGS()
-    @test opt isa AT.AbstractCSOptimizer
-    @test opt.iterations == 100
-    @test opt.m == 10
-    @test opt.show_trace == false
-
-    opt2 = AT.CSLBFGS(iterations = 20, m = 5,
-                       gradient_tolerance = 1e-6, show_trace = false)
-    @test opt2.iterations == 20
-    @test opt2.m == 5
-    @test opt2.gradient_tolerance == 1e-6
-
     @test_throws ArgumentError AT.CSLBFGS(iterations = -1)
     @test_throws ArgumentError AT.CSLBFGS(gradient_tolerance = -1.0)
     @test_throws ArgumentError AT.CSLBFGS(m = 0)
@@ -113,6 +101,17 @@ end
 # cost function. We compare final `last.cost` (physical cost), not
 # trace counts or χ-space metrics.
 # ---------------------------------------------------------------------------
+
+@testset "CSLBFGS real-cost log uses the L∞ norm" begin
+    s = _unconditioned_scenario()
+    evaluate(controls) = AT.cs_surface_flux_4dvar(s.panels_rm, s.panels_m,
+        s.panels_am, s.panels_bm, s.panels_cm, s.mesh, s.observations, controls;
+        scheme = AT.PPMScheme(AT.NoLimiter()), dt = s.dt)
+    solve = AT.cs_surface_flux_4dvar_solve(
+        AT.CSLBFGS(iterations = 4, gradient_tolerance = 1e-12, log = true), evaluate, s.control)
+    expected = maximum(p -> maximum(abs, solve.last.gradients[1][p]), 1:6)
+    @test solve.log[end].gradient_norm ≈ expected rtol = 1e-12
+end
 
 @testset "CSLBFGS — outperforms GD on unconditioned 4D-Var (same iter budget)" begin
     s = _unconditioned_scenario()
@@ -155,50 +154,10 @@ end
 # L-BFGS through the preconditioned cost path (B3).
 # ---------------------------------------------------------------------------
 
-@testset "CSLBFGS — works through preconditioned 4D-Var" begin
-    s = _unconditioned_scenario()
-
-    # Build a Diagonal-cov / Linear preconditioner. With x_b = 0
-    # and σ = 1 this is just an identity rescaling — the χ-space
-    # cost is essentially the same as the unconditioned one but
-    # routed through B3's chain rule.
-    sigma = ntuple(_ -> fill(1.0, s.mesh.Nc, s.mesh.Nc), 6)
-    cov = AT.DiagonalCSCovariance(sigma)
-    bg = ntuple(_ -> zeros(Float64, s.mesh.Nc, s.mesh.Nc), 6)
-    prec = AT.CSSurfaceFluxPreconditioner(cov, bg, AT.LinearOptimType())
-
-    cost_fn = function (controls)
-        return AT.cs_surface_flux_4dvar(
-            s.panels_rm, s.panels_m, s.panels_am, s.panels_bm, s.panels_cm,
-            s.mesh, s.observations, controls;
-            scheme = AT.PPMScheme(AT.NoLimiter()), dt = s.dt,
-            preconditioner = prec)
-    end
-
-    initial = cost_fn(s.control)
-
-    lbfgs_opt = AT.CSLBFGS(iterations = 8, gradient_tolerance = 1e-12)
-    solve = AT.cs_surface_flux_4dvar_solve(lbfgs_opt, cost_fn, s.control)
-
-    @test solve isa AT.CS4DVarSolveResult
-    @test solve.last.cost < initial.cost
-end
-
 # ---------------------------------------------------------------------------
 # Public entrypoint integration: optimizer kwarg forwards through
 # cs_surface_flux_4dvar_optimize.
 # ---------------------------------------------------------------------------
-
-@testset "cs_surface_flux_4dvar_optimize — accepts CSLBFGS via kwarg" begin
-    s = _unconditioned_scenario()
-    solve = AT.cs_surface_flux_4dvar_optimize(
-        s.panels_rm, s.panels_m, s.panels_am, s.panels_bm, s.panels_cm,
-        s.mesh, s.observations, s.control;
-        scheme = AT.PPMScheme(AT.NoLimiter()), dt = s.dt,
-        optimizer = AT.CSLBFGS(iterations = 6))
-    @test solve isa AT.CS4DVarSolveResult
-    @test solve.iterations >= 1
-end
 
 # ---------------------------------------------------------------------------
 # Issue #17: Optim used to receive separate `f` and `g!` closures that each

@@ -67,3 +67,27 @@ it differentiates is the production step by construction.
 
 The checkpoint-state generic interface lives in `../OperatorState.jl`;
 Convection owns its workspace snapshot methods in `../Convection/workspace_state.jl`.
+
+`window_clock` and `window_step_dt` own the driven/replay clock and dt formulas.
+
+# shared: _cs_advection_workspace_for
+
+## Depends on
+
+Architectures, Grids, State, SectionTimer and the earlier Operators modules.
+
+## Used by
+
+Models executes the plan; Adjoints.Footprint replays it with a tape recorder.
+
+## Shared helpers owned here
+
+`StepPlan`, `StepOperators`, `StepTiming`, stage executors, operator-state
+snapshot/restore/reset, `window_clock` and `window_step_dt`. The workspace
+factory listed above is shared by production and replay.
+
+## Forward<->adjoint mirrors
+
+Driven stepping and replay call the same clock/dt functions and execute the
+same stages. Recorder hooks preserve operator order; checkpoint restoration
+preserves persistent operator state.

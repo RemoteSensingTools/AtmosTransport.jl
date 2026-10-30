@@ -8,7 +8,7 @@ module AtmosTransportAMDGPUExt
 
 import AtmosTransport
 import AMDGPU
-import AtmosTransport.Adjoints:
+import AtmosTransport.Tape:
     PinnedHostCSTapeStorage,
     PinnedHostCSTapeSlot,
     MmapCSTapeStorage,

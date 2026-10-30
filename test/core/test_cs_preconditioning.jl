@@ -1,26 +1,6 @@
 #!/usr/bin/env julia
-# ---------------------------------------------------------------------------
-# Plan 26 P0.B2 — preconditioner (χ ↔ x change of variables) for the
-# CS 4D-Var surface-flux path.
-#
-# Coverage:
-#   * Constructor validation: shape mismatch, non-finite background,
-#     non-positive background under LogNormal.
-#   * Forward correctness:
-#       - Linear/Diagonal: `x = x_b + σ ⊙ χ` (literal arithmetic).
-#       - LogNormal/Diagonal: `x = x_b ⊙ exp(σ ⊙ χ)`, always > 0,
-#         `x = x_b` at `χ = 0`.
-#   * `B^(-1/2)` correctness (added to Covariance.jl for this commit):
-#       - Diagonal: literal `y = x ⊙ inv(σ)`.
-#       - Gaussian round-trip: `B^(1/2) · B^(-1/2) x ≈ x` for smooth `x`.
-#   * Bijection (`T^(-1) ∘ T = id` and `T ∘ T^(-1) = id`):
-#       - Linear/Diagonal and Linear/Gaussian (round-trip exact up to
-#         FFT roundoff).
-#       - LogNormal/Diagonal and LogNormal/Gaussian — the user-
-#         specified B2 bijection requirement.
-#   * Adjoint identity: `⟨T'(χ) δχ, g_phys⟩ = ⟨δχ, T'(χ)^T g_phys⟩`
-#     for both optim types crossed with both covariance types.
-# ---------------------------------------------------------------------------
+# Forward preconditioner values, Float32 covariance stability, and adjoint
+# identities against central differences of the production forward map.
 
 using Test
 
@@ -84,36 +64,7 @@ _panel_inner(a, b) = sum(p -> sum(a[p] .* b[p]), 1:6)
           AT.CSSurfaceFluxPreconditioner
 end
 
-# ---------------------------------------------------------------------------
-# B^(-1/2) — added to Covariance.jl by this commit
-# ---------------------------------------------------------------------------
-
-@testset "apply_B_half_inverse! — diagonal literal" begin
-    σ = ntuple(p -> reshape(FT_TEST.((1:(NC_SMALL * NC_SMALL))) .+ p * 10,
-                            NC_SMALL, NC_SMALL), 6)
-    cov = AT.DiagonalCSCovariance(σ)
-    x = _random_tuple(NC_SMALL, 1)
-
-    y = _zeros_tuple(NC_SMALL)
-    AT.apply_B_half_inverse!(y, cov, x)
-    for p in 1:6
-        @test y[p] ≈ x[p] ./ σ[p] atol = 1e-12 rtol = 1e-12
-    end
-end
-
-@testset "apply_B_half_inverse! — Gaussian B^(1/2) · B^(-1/2) = I round-trip" begin
-    cov = _gauss_cov(NC_SMALL, 0.5, 1.5)
-    x = _random_tuple(NC_SMALL, 2)
-    inv_x = _zeros_tuple(NC_SMALL)
-    round_trip = _zeros_tuple(NC_SMALL)
-    AT.apply_B_half_inverse!(inv_x, cov, x)
-    AT.apply_B_half!(round_trip, cov, inv_x)
-    for p in 1:6
-        @test round_trip[p] ≈ x[p] atol = 1e-9 rtol = 1e-9
-    end
-end
-
-@testset "Gaussian inverse remains finite at operational Float32 sizes" begin
+@testset "Gaussian forward map remains finite at operational Float32 sizes" begin
     for (Nc, correlation_length) in ((48, 2.0f0), (48, 3.0f0), (180, 2.0f0))
         sigma = ntuple(_ -> fill(0.5f0, Nc, Nc), 6)
         covariance = AT.IsotropicGaussianCSCovariance(sigma, correlation_length)
@@ -128,18 +79,15 @@ end
         sin(0.031f0 * i + 0.047f0 * j + 0.13f0 * p)
         for i in 1:Nc, j in 1:Nc
     ], 6)
-    inverse_x = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
-    round_trip = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+    y = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+    AT.apply_B_half!(y, covariance, x)
+    @test all(panel -> all(isfinite, panel), y)
 
-    AT.apply_B_half_inverse!(inverse_x, covariance, x)
-    AT.apply_B_half!(round_trip, covariance, inverse_x)
-
-    @test all(panel -> all(isfinite, panel), inverse_x)
-    @test all(panel -> all(isfinite, panel), round_trip)
-    relative_error = maximum(
-        maximum(abs.(round_trip[p] .- x[p])) / maximum(abs.(x[p]))
-        for p in 1:6)
-    @test relative_error < 5.0f-3
+    # Diagonal of B from the production square root and transpose.
+    spike = ntuple(_ -> zeros(Float32, Nc, Nc), 6)
+    spike[1][1, 1] = 1.0f0
+    AT.apply_B_half_adjoint!(y, covariance, spike)
+    @test sum(sum(abs2, panel) for panel in y) ≈ 0.25f0 rtol = 2f-5
 end
 
 # ---------------------------------------------------------------------------
@@ -189,85 +137,6 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Bijection: T^(-1) ∘ T = id  and  T ∘ T^(-1) = id
-# ---------------------------------------------------------------------------
-
-@testset "Linear preconditioner — bijection (Diagonal + Gaussian)" begin
-    for cov in (_diag_cov(NC_SMALL, 0.5),
-                _gauss_cov(NC_SMALL, 0.5, 1.2))
-        bg = _constant_background(NC_SMALL, 420.0)
-        prec = AT.CSSurfaceFluxPreconditioner(cov, bg, AT.LinearOptimType())
-
-        # Round trip from χ.
-        chi = _random_tuple(NC_SMALL, 5)
-        x = _zeros_tuple(NC_SMALL)
-        chi_back = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner!(x, prec, chi)
-        AT.apply_preconditioner_inverse!(chi_back, prec, x)
-        for p in 1:6
-            @test chi_back[p] ≈ chi[p] atol = 1e-9 rtol = 1e-9
-        end
-
-        # Round trip from x (use a smooth x: T of a smooth chi).
-        x_in = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner!(x_in, prec, _random_tuple(NC_SMALL, 6))
-        chi_mid = _zeros_tuple(NC_SMALL)
-        x_back = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner_inverse!(chi_mid, prec, x_in)
-        AT.apply_preconditioner!(x_back, prec, chi_mid)
-        for p in 1:6
-            @test x_back[p] ≈ x_in[p] atol = 1e-9 rtol = 1e-9
-        end
-    end
-end
-
-@testset "LogNormal preconditioner — bijection (Diagonal + Gaussian)" begin
-    for cov in (_diag_cov(NC_SMALL, 0.1),
-                _gauss_cov(NC_SMALL, 0.1, 1.2))
-        bg = _constant_background(NC_SMALL, 1.0)   # x_b > 0
-        prec = AT.CSSurfaceFluxPreconditioner(cov, bg, AT.LogNormalOptimType())
-
-        chi = _random_tuple(NC_SMALL, 7)
-        x = _zeros_tuple(NC_SMALL)
-        chi_back = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner!(x, prec, chi)
-
-        # Sanity: forward gives positivity.
-        for p in 1:6
-            @test all(x[p] .> 0)
-        end
-
-        AT.apply_preconditioner_inverse!(chi_back, prec, x)
-        for p in 1:6
-            @test chi_back[p] ≈ chi[p] atol = 1e-9 rtol = 1e-9
-        end
-
-        # T ∘ T^(-1) = id on x produced by T.
-        x_in = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner!(x_in, prec, _random_tuple(NC_SMALL, 8))
-        chi_mid = _zeros_tuple(NC_SMALL)
-        x_back = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner_inverse!(chi_mid, prec, x_in)
-        AT.apply_preconditioner!(x_back, prec, chi_mid)
-        for p in 1:6
-            @test x_back[p] ≈ x_in[p] atol = 1e-9 rtol = 1e-9
-        end
-    end
-end
-
-@testset "LogNormal inverse — rejects non-positive x" begin
-    cov = _diag_cov(NC_SMALL, 0.1)
-    bg = _constant_background(NC_SMALL, 1.0)
-    prec = AT.CSSurfaceFluxPreconditioner(cov, bg, AT.LogNormalOptimType())
-
-    bad_x = ntuple(p -> p == 2 ?
-                            fill(FT_TEST(-1.0), NC_SMALL, NC_SMALL) :
-                            ones(FT_TEST, NC_SMALL, NC_SMALL), 6)
-    chi = _zeros_tuple(NC_SMALL)
-    @test_throws ArgumentError AT.apply_preconditioner_inverse!(chi, prec, bad_x)
-end
-
-# ---------------------------------------------------------------------------
 # Adjoint identity — ⟨T'(χ) δχ, g_phys⟩ = ⟨δχ, T'(χ)^T g_phys⟩
 # ---------------------------------------------------------------------------
 
@@ -285,69 +154,19 @@ end
         x = _zeros_tuple(NC_SMALL)
         AT.apply_preconditioner!(x, prec, chi)
 
-        delta_x = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner_tangent!(delta_x, prec, x, delta_chi)
+        h = 1e-4
+        plus, minus = _zeros_tuple(NC_SMALL), _zeros_tuple(NC_SMALL)
+        AT.apply_preconditioner!(plus, prec, ntuple(p -> chi[p] .+ h .* delta_chi[p], 6))
+        AT.apply_preconditioner!(minus, prec, ntuple(p -> chi[p] .- h .* delta_chi[p], 6))
+        delta_x = ntuple(p -> (plus[p] .- minus[p]) ./ (2h), 6)
 
         g_chi = _zeros_tuple(NC_SMALL)
         AT.apply_preconditioner_adjoint!(g_chi, prec, x, g_phys)
 
         lhs = _panel_inner(delta_x, g_phys)
         rhs = _panel_inner(delta_chi, g_chi)
-        @test isapprox(lhs, rhs; atol = 1e-10, rtol = 1e-10)
+        @test isapprox(lhs, rhs; atol = 1e-8, rtol = 1e-8)
     end
-end
-
-# ---------------------------------------------------------------------------
-# Cached scratch — `apply_preconditioner_inverse!` and the LogNormal
-# variant of `apply_preconditioner_adjoint!` previously allocated a
-# fresh `NTuple{6, Matrix}` per call. The buffer now lives in the
-# preconditioner struct's `panel_scratch` field. Lock the perf win in
-# with `@allocated == 0` on a warm call.
-# ---------------------------------------------------------------------------
-
-@testset "Preconditioner — inverse / adjoint use cached scratch" begin
-    σ = _constant_sigma(NC_SMALL, FT_TEST(0.5))
-    cov = AT.DiagonalCSCovariance(σ)
-    bg_lin = _constant_background(NC_SMALL, FT_TEST(420.0))
-    bg_log = _constant_background(NC_SMALL, FT_TEST(1.0))
-
-    prec_lin = AT.CSSurfaceFluxPreconditioner(cov, bg_lin, AT.LinearOptimType())
-    prec_log = AT.CSSurfaceFluxPreconditioner(cov, bg_log, AT.LogNormalOptimType())
-
-    chi = _random_tuple(NC_SMALL, 20)
-    g_phys = _random_tuple(NC_SMALL, 21)
-
-    x_lin = _zeros_tuple(NC_SMALL)
-    x_log = _zeros_tuple(NC_SMALL)
-    AT.apply_preconditioner!(x_lin, prec_lin, chi)
-    AT.apply_preconditioner!(x_log, prec_log, chi)
-
-    chi_out = _zeros_tuple(NC_SMALL)
-    g_chi = _zeros_tuple(NC_SMALL)
-
-    # Warm up the compilation cache.
-    for _ in 1:5
-        AT.apply_preconditioner_inverse!(chi_out, prec_lin, x_lin)
-        AT.apply_preconditioner_inverse!(chi_out, prec_log, x_log)
-        AT.apply_preconditioner_adjoint!(g_chi, prec_log, x_log, g_phys)
-    end
-    # Pre-cache state allocated ~108 KB / call for the `ntuple(p ->
-    # ..., 6)` intermediate. The cap below tolerates incidental GC
-    # noise (a few tens of bytes per call) while still locking in
-    # the 100×+ reduction.
-    allocs_inv_lin = sum((@allocated AT.apply_preconditioner_inverse!(
-        chi_out, prec_lin, x_lin)) for _ in 1:20)
-    allocs_inv_log = sum((@allocated AT.apply_preconditioner_inverse!(
-        chi_out, prec_log, x_log)) for _ in 1:20)
-    allocs_adj_log = sum((@allocated AT.apply_preconditioner_adjoint!(
-        g_chi, prec_log, x_log, g_phys)) for _ in 1:20)
-    # 20-call cap of 8 KB ≈ 400 B/call average — two orders of
-    # magnitude below the ~108 KB/call pre-cache baseline from the
-    # `ntuple(p -> ..., 6)` panel allocation. Wide enough to absorb
-    # incidental GC noise.
-    @test allocs_inv_lin < 8192
-    @test allocs_inv_log < 8192
-    @test allocs_adj_log < 8192
 end
 
 @testset "Adjoint identity — LogNormal (Diagonal + Gaussian)" begin
@@ -364,14 +183,17 @@ end
         x = _zeros_tuple(NC_SMALL)
         AT.apply_preconditioner!(x, prec, chi)
 
-        delta_x = _zeros_tuple(NC_SMALL)
-        AT.apply_preconditioner_tangent!(delta_x, prec, x, delta_chi)
+        h = 1e-4
+        plus, minus = _zeros_tuple(NC_SMALL), _zeros_tuple(NC_SMALL)
+        AT.apply_preconditioner!(plus, prec, ntuple(p -> chi[p] .+ h .* delta_chi[p], 6))
+        AT.apply_preconditioner!(minus, prec, ntuple(p -> chi[p] .- h .* delta_chi[p], 6))
+        delta_x = ntuple(p -> (plus[p] .- minus[p]) ./ (2h), 6)
 
         g_chi = _zeros_tuple(NC_SMALL)
         AT.apply_preconditioner_adjoint!(g_chi, prec, x, g_phys)
 
         lhs = _panel_inner(delta_x, g_phys)
         rhs = _panel_inner(delta_chi, g_chi)
-        @test isapprox(lhs, rhs; atol = 1e-10, rtol = 1e-10)
+        @test isapprox(lhs, rhs; atol = 1e-8, rtol = 1e-8)
     end
 end

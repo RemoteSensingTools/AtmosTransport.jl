@@ -453,7 +453,6 @@ files = [
     "core/test_linrood_kernel_adjoints.jl",
     "core/test_cs_adjoint_production_parity.jl",
     "core/test_cs_adjoint_step_plan_parity.jl",
-    "core/test_cs_linrood_footprint_fd.jl",
     "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
     "core/test_cs_stride_checkpoint.jl",
@@ -462,7 +461,7 @@ files = [
 ]
 paths = [
     "src/Adjoints/**",
-    "src/Footprint/**",
+    "src/**/Footprint/**",
     "src/Tape/**",
     "src/Operators/Advection/linrood_adjoint*.jl",
     # The production step composition the adjoint replays and records.
@@ -484,10 +483,7 @@ files = [
     "core/test_cs_4dvar_placed_observations.jl",
     "core/test_cs_4dvar_retrieval_columns.jl",
     "core/test_cs_4dvar_oco2_mip.jl",
-    "core/test_adjoint_identity_model_space.jl",
-    "core/test_adjoint_identity_preconditioned.jl",
-    "core/test_gradient_taylor_sweep.jl",
-    "core/test_cs_4dvar_preconditioned.jl",
+    "core/test_cs_gradient_checks.jl",
     "core/test_cs_covariance.jl",
     "core/test_cs_preconditioning.jl",
     "core/test_cs_optimizer_dispatch.jl",
@@ -500,8 +496,8 @@ files = [
     "core/test_cs_inversion_truth_recovery.jl",
 ]
 paths = [
-    "src/Inversion/**",
-    "src/Footprint/**",
+    "src/**/Inversion/**",
+    "src/**/Footprint/**",
     # The end-of-step record and objective seeds behind the single-sweep gradient.
     "src/Tape/TapeRecords.jl",
     "src/Adjoints/ObjectiveSeeding.jl",
@@ -513,6 +509,7 @@ paths = [
     # with the forward observation sampler.
     "src/Observations/**",
     "test/helpers/cs_observation_columns.jl",
+    "test/helpers/cs_inversion_reference.jl",
 ]
 
 [topics.regridding]

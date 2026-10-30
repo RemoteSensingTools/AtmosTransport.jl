@@ -79,7 +79,7 @@ mutable struct MmapCSTapeStorage <: AbstractHostCSTapeStorage
     closed::Bool
     cleanup_on_finalize::Bool
     # Read-only tapes block `_allocate_tape_slot` / `_bump_cursor!`.
-    # `load_mmap_tape` opens an existing tape with `readonly = true`;
+    # `load_mmap_tape` opens an existing tape read-only;
     # the forward-recording constructor leaves this false.
     readonly::Bool
 
@@ -123,23 +123,20 @@ mutable struct MmapCSTapeStorage <: AbstractHostCSTapeStorage
     # is restored from a finalised manifest; `cursor` reflects the
     # total bytes written by the original forward pass.
     function MmapCSTapeStorage(dir::AbstractString, records::Vector{MmapTapeRecordEntry},
-                               cursor::Int64; mode::AbstractString = "r")
-        mode in ("r", "r+") || throw(ArgumentError(
-            "MmapCSTapeStorage reopen mode $(repr(mode)) is not supported; " *
-            "use \"r\" (default, readonly) or \"r+\" (forward-compat for Phase B)"))
+                               cursor::Int64)
         isdir(dir) || throw(ArgumentError("tape directory $(repr(dir)) does not exist"))
         bin_path = joinpath(dir, "records.bin")
         manifest_path = joinpath(dir, "manifest.toml")
         isfile(bin_path) || throw(ArgumentError(
             "tape directory $(repr(dir)) is missing records.bin"))
-        bin_io = open(bin_path, mode)
+        bin_io = open(bin_path, "r")
         local storage
         try
             storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
                           records,
                           nothing, Dict{CSTapeReadCacheKey, CSPanelCache}(),
                           nothing,
-                          true, false, false, mode == "r")
+                          true, false, false, true)
             finalizer(_mmap_storage_gc_close!, storage)
         catch
             close(bin_io)
@@ -207,6 +204,10 @@ end
 
 _mmap_file_size(io::IOStream) = stat(io).size
 
+# NOTE: this assumes POSIX semantics — growing the file via
+# `Base.truncate` while earlier mmap views are still alive is
+# well-defined on Linux/macOS (existing pages stay valid; the kernel
+# refcounts the file). Windows is not supported.
 """
     _bump_cursor!(storage, nbytes)
 
@@ -215,10 +216,6 @@ the file via `truncate` (sparse on filesystems that support it) so that
 subsequent `Mmap.mmap` calls find the region backed.
 Returns the base offset of the reserved region.
 """
-# NOTE: this assumes POSIX semantics — growing the file via
-# `Base.truncate` while earlier mmap views are still alive is
-# well-defined on Linux/macOS (existing pages stay valid; the kernel
-# refcounts the file). Windows is not supported.
 function _bump_cursor!(storage::MmapCSTapeStorage, nbytes::Int64)
     storage.readonly && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is readonly; cannot extend records.bin"))
@@ -331,7 +328,7 @@ function stage_panels!(slot::MmapCSTapeSlot, src::NTuple{6})
     storage.finalised && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is finalised; cannot stage panels. " *
         "A reopened tape (`load_mmap_tape`) is for inspection only; slot " *
-        "reuse / overwrite semantics are reserved for Phase B."))
+        "reuse and overwrite are unsupported."))
     storage.closed && throw(ArgumentError(
         "MmapCSTapeStorage at $(storage.dir) is closed; cannot stage panels"))
     @inbounds for p in 1:6
@@ -374,20 +371,6 @@ function _tape_panels(slot::MmapCSTapeSlot, role::AbstractTapeReadRole)
     _after_tape_read!(storage)
     return cache
 end
-
-# ---------------------------------------------------------------------------
-# Stage / read hooks — sync the device cache for GPU runs.
-# ---------------------------------------------------------------------------
-
-function _sync_mmap_tape_storage!(storage::MmapCSTapeStorage)
-    storage.synchronize === nothing || storage.synchronize()
-    return nothing
-end
-
-_after_tape_stage!(storage::MmapCSTapeStorage) =
-    _sync_mmap_tape_storage!(storage)
-_after_tape_read!(storage::MmapCSTapeStorage) =
-    _sync_mmap_tape_storage!(storage)
 
 # ---------------------------------------------------------------------------
 # Finalisation + cleanup
@@ -584,7 +567,7 @@ function _parse_mmap_record(d::AbstractDict, cursor::Int64)
 end
 
 """
-    load_mmap_tape(dir; readonly = true) -> MmapCSTapeStorage
+    load_mmap_tape(dir) -> MmapCSTapeStorage
 
 Reopen a finalised `MmapCSTapeStorage` directory written by an earlier
 session. The loader parses `manifest.toml`, validates the format
@@ -594,11 +577,8 @@ them through `_tape_panels`.
 
 The returned storage has `finalised = true` and `cleanup_on_finalize
 = false`; it never touches the on-disk files except through mmap reads
-on the existing slots. With `readonly = true` (the default)
-`_bump_cursor!`, `_allocate_tape_slot`, and `stage_panels!` throw on
-mutation; `readonly = false` opens the binary in `r+` mode but is
-intended for future Phase B work (slot reuse), not for forward
-appends — appends are blocked by the `finalised` flag.
+on the existing slots. `_bump_cursor!`, `_allocate_tape_slot`, and
+`stage_panels!` reject mutation. Reopened tapes are inspection-only.
 
 Validation:
 
@@ -606,11 +586,11 @@ Validation:
 * Format version must equal `$(_MMAP_TAPE_FORMAT_VERSION)`.
 * Endianness must match the loading machine.
 * `meta.finalised` must be `true`; a torn tape from an interrupted
-  run is rejected here (Phase B is responsible for repairing it).
+  run is rejected.
 * `records.bin` must be at least `meta.total_bytes` long; the cursor
   is restored from `meta.total_bytes`.
 """
-function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
+function load_mmap_tape(dir::AbstractString)
     isdir(dir) || throw(ArgumentError(
         "tape directory $(repr(dir)) does not exist"))
     manifest_path = joinpath(dir, "manifest.toml")
@@ -665,8 +645,7 @@ function load_mmap_tape(dir::AbstractString; readonly::Bool = true)
             "ids must be 1-indexed and contiguous"))
     end
 
-    mode = readonly ? "r" : "r+"
-    return MmapCSTapeStorage(dir, records, cursor; mode = mode)
+    return MmapCSTapeStorage(dir, records, cursor)
 end
 
 """

@@ -35,7 +35,7 @@ const O = AT.Observations
 const Adv = AT.Operators.Advection
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))
-include(joinpath(@__DIR__, "..", "helpers", "oco2_mip_fixture.jl"))
+include(joinpath(@__DIR__, "..", "helpers", "cs_inversion_reference.jl"))
 
 const T0 = DateTime(2024, 6, 15)
 const DT = 600.0
@@ -43,13 +43,7 @@ const DT = 600.0
 _dc(s) = (t = T0 + Second(round(Int, s)); (year(t), month(t), day(t), hour(t), minute(t), second(t)))
 
 # An OCO-2 level retrieval at surface pressure `ps` (Pa), surface first, in mol/mol.
-function _level(ps; tilt = 0.0, sigma = Float64[], mapping = O.HatLevelProjection(), prior_column = NaN)
-    r = oco2_fixture_retrieval(ps / 100; tilt)
-    column = O.RetrievalColumn(; pressure_pa = reverse(OCO2_SIGMA .* ps), pressure_weight = reverse(r.pw),
-                               averaging_kernel = reverse(r.ak), prior_profile = reverse(r.prior) .* 1e-6,
-                               profile_sigma = sigma, mapping = O.HatLevelProjection(), prior_column)
-    return O.oco2_level_form(mapping, column)
-end
+
 
 function _record(id; lat, lon, t = 450.0, value = 405e-6, value_sigma = 0.6e-6, kind = "column", kwargs...)
     return AT.CSObservationRecord(; id, date_components = _dc(t), lat, lon, kind, value, value_sigma,
@@ -78,126 +72,6 @@ end
 
 _relerr(g, ref) = maximum(maximum(abs.(g[c][p] .- ref[c][p])) for c in eachindex(ref), p in 1:6) /
                   maximum(maximum(abs.(ref[c][p])) for c in eachindex(ref), p in 1:6)
-
-# ---------------------------------------------------------------------------
-# Single sweep vs the per-observation reference
-# ---------------------------------------------------------------------------
-
-function _replayed_states(P, controls; scheme)
-    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
-    replay, _ = ADJ._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
-                                       scheme, dt = DT, emission_rates = rates)
-    states = NamedTuple[]
-    ADJ._replay_steps!(replay, 1:P.nsteps; on_step_end = (s, state) -> push!(states,
-        (m = map(copy, ADJ._replay_m(replay)), rm = map(copy, ADJ._replay_rm(replay)))))
-    return states, rates
-end
-
-# The weights of an averaging-kernel column on the tracer mass of one sampled
-# column: the hat projection from the independent construction (a level
-# column) or TM5's rebin (a layer column), on the total interfaces.
-function _column_weights(o::AT.CSRetrievalColumnObjective, m, P)
-    p_half = O.total_interface_pressures!(zeros(P.Nz + 1), m, COLUMN_Q, o.area, COLUMN_GRAVITY, P.p_top)
-    rc = o.retrieval
-    proj = rc.mapping isa O.HatLevelProjection ? hat_projection_reference(p_half, Float64.(m), rc.pressure_pa).P :
-                                                  hcat([O.retrieval_profile!(zeros(O.retrieval_layer_count(rc)), zeros(length(p_half)),
-                                                      p_half, nothing, rc, Float64.(eachindex(m) .== k))
-                                                        for k in eachindex(m)]...)
-    H = vec((rc.pressure_weight .* rc.averaging_kernel)' * proj)
-    return H ./ max.(Float64.(m), eps(P.FT)), O.retrieval_prior_offset(rc), proj
-end
-
-function _reference(P, observations, stencils, controls; scheme)
-    FT = P.FT
-    states, rates = _replayed_states(P, controls; scheme)
-    Hp = P.mesh.Hp
-    gradients = [ntuple(_ -> zeros(FT, P.Nc, P.Nc), 6) for _ in controls]
-    simulated = FT[]
-    profiles = Vector{Float64}[]
-    for (obs, stencil) in zip(observations, stencils)
-        o = obs.objective
-        parts = map(zip(stencil.steps, stencil.weights)) do (s, ω)
-            m = states[s].m[o.panel][Hp + o.i, Hp + o.j, :]
-            rm = states[s].rm[o.panel][Hp + o.i, Hp + o.j, :]
-            w, offset, profile = if o isa AT.CSRetrievalColumnObjective
-                w, c, proj = _column_weights(o, m, P)
-                (FT.(w), FT(c), proj * (Float64.(rm) ./ Float64.(m)))
-            else
-                (fill(one(FT) / sum(m), P.Nz), zero(FT), Float64[])
-            end
-            seed = ntuple(q -> zeros(FT, size(P.rm[q])), 6)
-            seed[o.panel][Hp + o.i, Hp + o.j, :] .= w
-            footprint = AT.cs_surface_emission_footprint_from_seed(seed, P.m, P.am[1:s], P.bm[1:s], P.cm[1:s],
-                                                                   P.mesh; scheme, dt = DT, base_panels_rm0 = P.rm,
-                                                                   base_emission_rates = rates[1:s])
-            (; s, ω, value = offset + sum(w .* rm), footprint, profile)
-        end
-        H = sum(part.ω * part.value for part in parts)
-        push!(simulated, H)
-        push!(profiles, o isa AT.CSRetrievalColumnObjective ? sum(part.ω .* part.profile for part in parts) : Float64[])
-        obs.assimilate || continue
-        scale = (H - obs.value) / obs.sigma^2
-        for part in parts, (c, control) in enumerate(controls)
-            for (idx, step) in enumerate(control.window.steps)
-                step <= part.s || continue
-                weight = FT(scale) * FT(part.ω) * FT(control.window.weights[idx])
-                for q in 1:6
-                    gradients[c][q] .+= weight .* part.footprint.footprints[step][q]
-                end
-            end
-        end
-    end
-    return (; simulated, gradients, profiles)
-end
-
-# Level columns (instantaneous, windowed, model surface above and below the
-# retrieval's, with a profile uncertainty), a TM5-mode record and a column mean.
-function _level_observations(P; kwargs...)
-    a, b = _site(P), _site(P; panel = 5, i = 3, j = 1)
-    records = [_record(1; a..., t = 100.0, value = 402e-6, retrieval = _level(97000.0; prior_column = 404.2e-6)),
-               _record(2; a..., t = 1000.0, time_window_s = 1500.0, value = 399e-6,
-                       retrieval = _level(101500.0; tilt = 0.3, sigma = fill(1e-6, 20))),
-               _record(3; b..., t = 700.0, time_window_s = 900.0, value = 404e-6, retrieval = _level(99500.0; tilt = -0.2)),
-               _record(4; b..., t = 1500.0, value = 405e-6, retrieval = _level(98500.0; mapping = O.LayerRebin())),
-               _record(5; a..., t = 1700.0, value = 403e-6)]
-    return _bind(P, records; kwargs...)
-end
-
-@testset "single sweep == per-observation reference for level columns (hat projection)" begin
-    P = hydrostatic_cs_problem()
-    observations = _level_observations(P)
-    @test observations[1].objective.retrieval.mapping isa O.HatLevelProjection
-    @test observations[4].objective.retrieval.mapping isa O.LayerRebin
-    controls = _controls(P)
-    @testset "$(nameof(typeof(scheme)))" for scheme in (AT.UpwindScheme(), AT.PPMScheme(AT.MonotoneLimiter()))
-        full = _fourdvar(P, observations, controls; scheme)
-        ref = _reference(P, observations, full.stencils, controls; scheme)
-        @test full.simulated ≈ ref.simulated rtol = 1e-14
-        @test _relerr(full.gradients, ref.gradients) <= 1e-12
-        for idx in 1:4
-            @test full.stencils[idx].retrieval_profile ≈ ref.profiles[idx] rtol = 1e-13
-        end
-        @test length(full.stencils[1].retrieval_profile) == 20 && length(full.stencils[4].retrieval_profile) == 19
-    end
-end
-
-@testset "central finite differences of the cost match the gradient (level columns)" begin
-    P = hydrostatic_cs_problem()
-    observations = _level_observations(P)
-    controls = _controls(P)
-    direction = _controls(P; scale = 0.37)
-    shifted(ε) = [AT.CSSurfaceFluxControl(c.window, ntuple(q -> c.value[q] .+ ε .* d.value[q], 6))
-                  for (c, d) in zip(controls, direction)]
-    for (scheme, tol) in ((AT.UpwindScheme(), 1e-8), (AT.PPMScheme(AT.MonotoneLimiter()), 1e-6))
-        base = _fourdvar(P, observations, controls; scheme)
-        directional = sum(sum(sum(g[q] .* d.value[q]) for q in 1:6) for (g, d) in zip(base.gradients, direction))
-        ε = 1e-2
-        fd = (_fourdvar(P, observations, shifted(ε); scheme).cost -
-              _fourdvar(P, observations, shifted(-ε); scheme).cost) / 2ε
-        @test abs(fd - directional) <= tol * abs(directional)
-        @test base.observation_cost > 1
-    end
-end
 
 # ---------------------------------------------------------------------------
 # Forward-only co-sampling
@@ -229,11 +103,11 @@ end
     @test AT.bind_to_mesh(_set(records), P.mesh, T0, DT; nsteps = P.nsteps, flagged_records = AT.CosampleFlaggedRecords(),
                           limit...)[2].id == 11
     @test_throws ArgumentError _bind(P, records; flagged_records = "keep")
-    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
+    rates = ADJ.Inversion.Solver._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
     # What the reverse pass receives: the step forcing of the assimilated
     # observations and the length of the taped run.
     function reverse_input(observations, scheme)
-        f = ADJ._observe_cs_forward(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, observations; scheme, dt = DT,
+        f = ADJ.Inversion.Observations._observe_cs_forward(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, observations; scheme, dt = DT,
                                     emission_rates = rates, column_met = column_met(P), build_functionals = true)
         active = findall(s -> s.assimilated, f.stencils)
         scales = [(f.simulated[i] - observations[i].value) / observations[i].sigma^2 for i in active]

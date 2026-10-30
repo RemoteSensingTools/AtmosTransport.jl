@@ -126,17 +126,17 @@ end
 # does not establish freshness: the runner reuses a model across daily binaries.
 # Reject before met refresh consumes the simulation, including a valid CMFMC
 # CFL cache (which replay would otherwise invalidate/reset).
-_initial_adjoint_state(::Nothing) = true
-_initial_adjoint_state(a::AbstractArray) = all(iszero, a)
-_initial_adjoint_state(t::Tuple) = all(_initial_adjoint_state, t)
-_initial_adjoint_state(s::NamedTuple) =
-    _initial_adjoint_state(s.carry) && (!hasproperty(s, :valid) || !s.valid)
+_has_initial_operator_state(::Nothing) = true
+_has_initial_operator_state(a::AbstractArray) = all(iszero, a)
+_has_initial_operator_state(t::Tuple) = all(_has_initial_operator_state, t)
+_has_initial_operator_state(s::NamedTuple) =
+    _has_initial_operator_state(s.carry) && (!hasproperty(s, :valid) || !s.valid)
 
 function _require_fresh_adjoint_state(model)
     for (name, op) in (("surface emissions", model.emissions),
                        ("diffusion", model.workspace.diffusion_ws),
                        ("convection", model.workspace.convection_ws))
-        _initial_adjoint_state(Operators.StepPlans.operator_state(op)) ||
+        _has_initial_operator_state(Operators.StepPlans.operator_state(op)) ||
             throw(ArgumentError("cs_adjoint_inputs cannot discard initial persistent operator state " *
                 "of $name (Kahan compensation, ledger carry or valid CMFMC CFL cache); " *
                 "capture a fresh model, rather than one continued from a previous binary"))

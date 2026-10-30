@@ -59,11 +59,11 @@ else
             cpu_ws = Adj.CSAdjointWorkspace(mesh, m[1])
             gpu_ws = Adj.CSAdjointWorkspace(mesh, gm[1])
             if scheme isa PPMScheme{MonotoneLimiter}
-                Adj._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, cpu_ws, FT(1))
-                Adj._adjoint_scheme_sweep!(actual, gm, gr, gf, symbol, scheme, mesh, gpu_ws, FT(1))
+                CSSeamAdv._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, cpu_ws, FT(1))
+                CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gr, gf, symbol, scheme, mesh, gpu_ws, FT(1))
             else
-                Adj._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, cpu_ws, FT(1))
-                Adj._adjoint_scheme_sweep!(actual, gm, gf, symbol, scheme, mesh, gpu_ws, FT(1))
+                CSSeamAdv._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, cpu_ws, FT(1))
+                CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gf, symbol, scheme, mesh, gpu_ws, FT(1))
             end
             Adj._adjoint_fill_panel_halos!(gradient, mesh)
             Adj._adjoint_fill_panel_halos!(actual, mesh)

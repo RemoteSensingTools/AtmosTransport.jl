@@ -45,14 +45,6 @@ function _aggregate_surface_window(result::CSFootprintResult,
     return aggregate
 end
 
-function _zero_surface_like(values::NTuple{6, A2}) where {FT, A2 <: AbstractArray{FT, 2}}
-    return ntuple(p -> begin
-        a = similar(values[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
-end
-
 # ---------------------------------------------------------------------------
 # Public Jacobian entry
 # ---------------------------------------------------------------------------

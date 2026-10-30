@@ -133,3 +133,11 @@ C1 splits Convection into the facade and TM5/CMFMC children. The LAYERS-only
 baseline migration inherits the old lower dependencies and maps existing
 consumers to the children. CMFMC may call the earlier TM5 solve; no new reverse
 edge, clone digest, private-use allowance or folder budget is accepted.
+
+T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
+Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
+inherits the existing lower dependency budgets and permits facade child
+wiring; it removes the old folder-cycle exceptions. Clone, private-use and
+size identities receive no new allowances. Explicit relative imports resolve
+local child modules before inherited aliases, so Inversion.Observations and
+the package's Observations module remain distinct owners.
