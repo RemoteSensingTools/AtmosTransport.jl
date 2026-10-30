@@ -1,3 +1,6 @@
+import AtmosTransport
+include(joinpath(@__DIR__, "..", "helpers", "diffusion_geometry.jl"))
+
 #!/usr/bin/env julia
 """
 Tests for diffusion pressure recovery and hydrostatic `dz` helpers. Checks
@@ -21,14 +24,14 @@ covered by `test/diagnostic/test_metal_kernels.jl` on supported CI hosts.
 
 using Test
 import AtmosTransport
-using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT!,
-                                            fill_dz_hydrostatic_constT!,
-                                            recover_total_surface_pressure!
+using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT_staged!,
+                                            fill_dz_hydrostatic_constT_staged!,
+                                            recover_total_surface_pressure_staged!
 using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
 using .AtmosTransport.Models: _diffusion_pressure_humidity,
                                _diffusion_total_surface_pressure!
 using .AtmosTransport.Operators: DiffusionWorkspace
-using .AtmosTransport.Operators.Diffusion: _stage_hybrid_coefficients!
+using .AtmosTransport.Operators.Diffusion: stage_hybrid_coefficients!
 
 const _R_DRY  = R_DRY_AIR
 const _G_REF  = STANDARD_GRAVITY
@@ -55,19 +58,18 @@ end
     end
 
     recovered = similar(ps_total)
-    recover_total_surface_pressure!(recovered, ps_dry, qv, ak, bk)
+    recover_total_surface_pressure_staged!(recovered, ps_dry, qv, diffusion_coefficients(qv, ak, bk); sync = true)
     dz_total, dz_dry = zeros(FT, Nx, Ny, Nz), zeros(FT, Nx, Ny, Nz)
-    fill_dz_hydrostatic_constT!(dz_total, ps_total, ak, bk)
-    fill_dz_hydrostatic_constT!(dz_dry, recovered, ak, bk)
+    fill_dz_hydrostatic_constT_staged!(dz_total, ps_total, diffusion_coefficients(dz_total, ak, bk); sync = true)
+    fill_dz_hydrostatic_constT_staged!(dz_dry, recovered, diffusion_coefficients(dz_dry, ak, bk); sync = true)
     @test recovered ≈ ps_total rtol = 32eps(FT)
     @test dz_dry ≈ dz_total rtol = 64eps(FT)
 
     if HAS_CUDA_DZ
         recovered_gpu = CUDA.zeros(FT, Nx, Ny)
-        recover_total_surface_pressure!(recovered_gpu, CUDA.CuArray(ps_dry),
-                                        CUDA.CuArray(qv), ak, bk)
+        recover_total_surface_pressure_staged!(recovered_gpu, CUDA.CuArray(ps_dry), CUDA.CuArray(qv), diffusion_coefficients(CUDA.CuArray(qv), ak, bk); sync = true)
         dz_gpu = CUDA.zeros(FT, Nx, Ny, Nz)
-        fill_dz_hydrostatic_constT!(dz_gpu, recovered_gpu, ak, bk)
+        fill_dz_hydrostatic_constT_staged!(dz_gpu, recovered_gpu, diffusion_coefficients(dz_gpu, ak, bk); sync = true)
         @test Array(recovered_gpu) ≈ ps_total rtol = 32eps(FT)
         @test Array(dz_gpu) ≈ dz_total rtol = 64eps(FT)
     end
@@ -87,7 +89,7 @@ end
                 for i in 1:Nx, j in 1:Ny]
 
     workspace = DiffusionWorkspace(ones(FT, Nx, Ny, Nz))
-    staged = _stage_hybrid_coefficients!(workspace.hybrid_coefficients, A64, B64)
+    staged = stage_hybrid_coefficients!(workspace.hybrid_coefficients, A64, B64)
     @test eltype(staged.A) === FT
     @test eltype(staged.B) === FT
     @test staged.A == A32
@@ -95,14 +97,14 @@ end
 
     recovered64 = zeros(FT, Nx, Ny)
     recovered32 = similar(recovered64)
-    recover_total_surface_pressure!(recovered64, ps_dry, qv, A64, B64)
-    recover_total_surface_pressure!(recovered32, ps_dry, qv, A32, B32)
+    recover_total_surface_pressure_staged!(recovered64, ps_dry, qv, diffusion_coefficients(qv, A64, B64); sync = true)
+    recover_total_surface_pressure_staged!(recovered32, ps_dry, qv, diffusion_coefficients(qv, A32, B32); sync = true)
     @test recovered64 == recovered32
 
     dz64 = zeros(FT, Nx, Ny, Nz)
     dz32 = similar(dz64)
-    fill_dz_hydrostatic_constT!(dz64, recovered64, A64, B64)
-    fill_dz_hydrostatic_constT!(dz32, recovered32, A32, B32)
+    fill_dz_hydrostatic_constT_staged!(dz64, recovered64, diffusion_coefficients(dz64, A64, B64); sync = true)
+    fill_dz_hydrostatic_constT_staged!(dz32, recovered32, diffusion_coefficients(dz32, A32, B32); sync = true)
     @test dz64 == dz32
 end
 
@@ -117,21 +119,19 @@ end
     ps_matrix = fill(FT(90_000), 3, 2)
     qv_matrix = zeros(FT, 3, 2, 1)
     recovered_matrix = fill(FT(NaN), 3, 2)
-    recover_total_surface_pressure!(recovered_matrix, ps_matrix, qv_matrix,
-                                    ak_pressure, bk_pressure)
+    recover_total_surface_pressure_staged!(recovered_matrix, ps_matrix, qv_matrix, diffusion_coefficients(qv_matrix, ak_pressure, bk_pressure); sync = true)
     @test recovered_matrix == ps_matrix
 
     ps_vector = fill(FT(90_000), 5)
     qv_vector = zeros(FT, 5, 1)
     recovered_vector = fill(FT(NaN), 5)
-    recover_total_surface_pressure!(recovered_vector, ps_vector, qv_vector,
-                                    ak_pressure, bk_pressure)
+    recover_total_surface_pressure_staged!(recovered_vector, ps_vector, qv_vector, diffusion_coefficients(qv_vector, ak_pressure, bk_pressure); sync = true)
     @test recovered_vector == ps_vector
 
     dz_matrix = zeros(FT, 3, 2, 1)
     dz_vector = zeros(FT, 5, 1)
-    fill_dz_hydrostatic_constT!(dz_matrix, recovered_matrix, ak_pressure, bk_pressure)
-    fill_dz_hydrostatic_constT!(dz_vector, recovered_vector, ak_pressure, bk_pressure)
+    fill_dz_hydrostatic_constT_staged!(dz_matrix, recovered_matrix, diffusion_coefficients(dz_matrix, ak_pressure, bk_pressure); sync = true)
+    fill_dz_hydrostatic_constT_staged!(dz_vector, recovered_vector, diffusion_coefficients(dz_vector, ak_pressure, bk_pressure); sync = true)
     @test all(isfinite, dz_matrix)
     @test all(isfinite, dz_vector)
 
@@ -140,34 +140,27 @@ end
     # emitting NaN/Inf into the following dz kernel.
     ak_sigma = FT[0, 0]
     bk_sigma = FT[0, 1]
-    @test_throws ArgumentError recover_total_surface_pressure!(
-        similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), ak_sigma, bk_sigma)
-    @test_throws ArgumentError recover_total_surface_pressure!(
-        similar(ps_vector), ps_vector, ones(FT, 5, 1), ak_sigma, bk_sigma)
+    @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), diffusion_coefficients(ones(FT, 3, 2, 1), ak_sigma, bk_sigma); sync = true)
+    @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(ps_vector), ps_vector, ones(FT, 5, 1), diffusion_coefficients(ones(FT, 5, 1), ak_sigma, bk_sigma); sync = true)
 
     # Validation is performed on the actual accumulated slope inside the
     # recovery kernel, including non-finite inputs and arithmetic overflow.
     ps_one = fill(FT(90_000), 1, 1)
     dest_one = similar(ps_one)
     for bad_qv in (fill(FT(-Inf), 1, 1, 1), fill(FT(NaN), 1, 1, 1))
-        @test_throws ArgumentError recover_total_surface_pressure!(
-            dest_one, ps_one, bad_qv, ak_sigma, bk_sigma)
+        @test_throws ArgumentError recover_total_surface_pressure_staged!(dest_one, ps_one, bad_qv, diffusion_coefficients(bad_qv, ak_sigma, bk_sigma); sync = true)
     end
     qv_overflow = fill(-floatmax(FT), 1, 1, 2)
-    @test_throws ArgumentError recover_total_surface_pressure!(
-        dest_one, ps_one, qv_overflow, FT[0, 0, 0], FT[0, 1, 2])
+    @test_throws ArgumentError recover_total_surface_pressure_staged!(dest_one, ps_one, qv_overflow, diffusion_coefficients(qv_overflow, FT[0, 0, 0], FT[0, 1, 2]); sync = true)
 
     # One shared device-style status flag covers all six panel launches.
     panel_ps = ntuple(_ -> fill(FT(90_000), 1, 1), 6)
     panel_dest = ntuple(_ -> zeros(FT, 1, 1), 6)
     panel_qv = ntuple(p -> p == 4 ? fill(FT(NaN), 1, 1, 1) : zeros(FT, 1, 1, 1), 6)
-    @test_throws ArgumentError recover_total_surface_pressure!(
-        panel_dest, panel_ps, panel_qv, ak_sigma, bk_sigma)
+    @test_throws ArgumentError recover_total_surface_pressure_staged!(panel_dest, panel_ps, panel_qv, diffusion_coefficients(panel_qv, ak_sigma, bk_sigma); sync = true)
 
     pure_panel_dest = ntuple(_ -> fill(FT(NaN), 1, 1), 6)
-    recover_total_surface_pressure!(pure_panel_dest, panel_ps,
-                                    ntuple(_ -> zeros(FT, 1, 1, 1), 6),
-                                    ak_pressure, bk_pressure)
+    recover_total_surface_pressure_staged!(pure_panel_dest, panel_ps, ntuple(_ -> zeros(FT, 1, 1, 1), 6), diffusion_coefficients(ntuple(_ -> zeros(FT, 1, 1, 1), 6), ak_pressure, bk_pressure); sync = true)
     @test all(pure_panel_dest[p] == panel_ps[p] for p in 1:6)
 end
 
@@ -181,22 +174,20 @@ end
 
     recovered = ntuple(_ -> fill(FT(-1), Nc, Nc), 6)
     bad_ps = ntuple(p -> p == 6 ? zeros(FT, Nc + 1, Nc) : ps[p], 6)
-    @test_throws DimensionMismatch recover_total_surface_pressure!(recovered, bad_ps, qv, A, B)
+    @test_throws DimensionMismatch recover_total_surface_pressure_staged!(recovered, bad_ps, qv, diffusion_coefficients(qv, A, B); sync = true)
     @test all(all(==(-one(FT)), recovered[p]) for p in 1:6)
-    @test_throws DimensionMismatch recover_total_surface_pressure!(
-        recovered, ps, qv, A[1:end-1], B)
+    @test_throws DimensionMismatch recover_total_surface_pressure_staged!(recovered, ps, qv, diffusion_coefficients(qv, A[1:end-1], B); sync = true)
 
     dz = ntuple(_ -> fill(FT(-1), Nc, Nc, Nz), 6)
-    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, bad_ps, A, B)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT_staged!(dz, bad_ps, diffusion_coefficients(dz, A, B); sync = true)
     @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
-    @test_throws DimensionMismatch fill_dz_hydrostatic_constT!(dz, ps, A, B[1:end-1])
+    @test_throws DimensionMismatch fill_dz_hydrostatic_constT_staged!(dz, ps, diffusion_coefficients(dz, A, B[1:end-1]); sync = true)
 
     t = ntuple(_ -> fill(FT(250), Nc, Nc, Nz), 6)
     bad_t = ntuple(p -> p == 5 ? fill(FT(250), Nc, Nc, Nz + 1) : t[p], 6)
-    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(dz, bad_t, qv, ps, A, B)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT_staged!(dz, bad_t, qv, ps, diffusion_coefficients(dz, A, B); sync = true)
     @test all(all(==(-one(FT)), dz[p]) for p in 1:6)
-    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT!(
-        dz, t, qv, ps, A[1:end-1], B)
+    @test_throws DimensionMismatch fill_dz_hydrostatic_virtualT_staged!(dz, t, qv, ps, diffusion_coefficients(dz, A[1:end-1], B); sync = true)
 end
 
 @testset "diffusion runtime humidity selection and missing-humidity fallback" begin
@@ -209,7 +200,7 @@ end
 
     ps = fill(90_000.0, 2, 2)
     workspace = DiffusionWorkspace(ones(2, 2, 2))
-    coefficients = _stage_hybrid_coefficients!(workspace.hybrid_coefficients,
+    coefficients = stage_hybrid_coefficients!(workspace.hybrid_coefficients,
                                                [0.0, 0.0, 0.0],
                                                [0.0, 0.5, 1.0])
     returned = Ref{Any}()
@@ -221,7 +212,7 @@ end
     @test returned[] === ps
 end
 
-@testset "fill_dz_hydrostatic_virtualT! — single 3D array matches hand formula" begin
+@testset "fill_dz_hydrostatic_virtualT_staged! — single 3D array matches hand formula" begin
     FT = Float64
     Nx, Ny, Nz = 3, 3, 6
 
@@ -242,7 +233,7 @@ end
     end
 
     dz = zeros(FT, Nx, Ny, Nz)
-    fill_dz_hydrostatic_virtualT!(dz, t_lyr, qv_lyr, ps, ak, bk)
+    fill_dz_hydrostatic_virtualT_staged!(dz, t_lyr, qv_lyr, ps, diffusion_coefficients(dz, ak, bk); sync = true)
 
     # Spot-check a few cells against the hand formula.
     for (i, j, k) in ((1, 1, 1), (2, 2, 3), (3, 3, Nz))
@@ -252,9 +243,17 @@ end
         expected = _R_DRY * Tv / _G_REF * delp / p_ctr
         @test isapprox(dz[i, j, k], expected; rtol = 1e-12)
     end
+    dz_const = similar(dz)
+    fill_dz_hydrostatic_constT_staged!(dz_const, ps, diffusion_coefficients(dz_const, ak, bk); sync = true)
+    for k in 1:Nz, j in 1:Ny, i in 1:Nx
+        dp = (ak[k+1] - ak[k]) + (bk[k+1] - bk[k]) * ps[i,j]
+        pc = ((ak[k] + ak[k+1]) + (bk[k] + bk[k+1]) * ps[i,j]) / 2
+        @test dz_const[i,j,k] ≈ _R_DRY * 260 / _G_REF * dp / pc rtol=1e-14
+    end
+
 end
 
-@testset "fill_dz_hydrostatic_virtualT! — clamps negative qv to zero" begin
+@testset "fill_dz_hydrostatic_virtualT_staged! — clamps negative qv to zero" begin
     # Tiny post-regrid negative-qv values shouldn't make T_v drop below T.
     FT = Float64
     Nx, Ny, Nz = 2, 2, 4
@@ -266,12 +265,12 @@ end
     qv_zero = fill(FT(0.0), Nx, Ny, Nz)
     dz_neg = zeros(FT, Nx, Ny, Nz)
     dz_zero = zeros(FT, Nx, Ny, Nz)
-    fill_dz_hydrostatic_virtualT!(dz_neg, t_lyr, qv_neg, ps, ak, bk)
-    fill_dz_hydrostatic_virtualT!(dz_zero, t_lyr, qv_zero, ps, ak, bk)
+    fill_dz_hydrostatic_virtualT_staged!(dz_neg, t_lyr, qv_neg, ps, diffusion_coefficients(dz_neg, ak, bk); sync = true)
+    fill_dz_hydrostatic_virtualT_staged!(dz_zero, t_lyr, qv_zero, ps, diffusion_coefficients(dz_zero, ak, bk); sync = true)
     @test dz_neg ≈ dz_zero atol = 1e-14
 end
 
-@testset "fill_dz_hydrostatic_virtualT! — CS panel-tuple dispatch" begin
+@testset "fill_dz_hydrostatic_virtualT_staged! — CS panel-tuple dispatch" begin
     FT = Float64
     Nc, Nz = 4, 5
     ak = collect(LinRange(FT(100.0), FT(0.0), Nz + 1))
@@ -283,33 +282,12 @@ end
     qv_panels = ntuple(p -> fill(FT(0.002 * p), Nc, Nc, Nz), 6)
     ps_panels = ntuple(p -> fill(FT(95000 + 1000 * p), Nc, Nc), 6)
 
-    fill_dz_hydrostatic_virtualT!(dz_panels, t_panels, qv_panels,
-                                   ps_panels, ak, bk)
+    fill_dz_hydrostatic_virtualT_staged!(dz_panels, t_panels, qv_panels, ps_panels, diffusion_coefficients(dz_panels, ak, bk); sync = true)
 
     # Reference: per-panel single-array call.
     for p in 1:6
         ref = zeros(FT, Nc, Nc, Nz)
-        fill_dz_hydrostatic_virtualT!(ref, t_panels[p], qv_panels[p],
-                                       ps_panels[p], ak, bk)
+        fill_dz_hydrostatic_virtualT_staged!(ref, t_panels[p], qv_panels[p], ps_panels[p], diffusion_coefficients(ref, ak, bk); sync = true)
         @test dz_panels[p] ≈ ref atol = 1e-14
     end
-end
-
-@testset "fill_dz_hydrostatic_virtualT! vs constT — differ when T_v != T_ref" begin
-    # The whole point of D6 is that the two functions should disagree
-    # when virtual T differs significantly from 260 K. Sanity check.
-    FT = Float64
-    Nx, Ny, Nz = 2, 2, 4
-    ak = collect(LinRange(FT(100.0), FT(0.0), Nz + 1))
-    bk = collect(LinRange(FT(0.0),  FT(1.0),  Nz + 1))
-    ps = fill(FT(100000.0), Nx, Ny)
-    t_lyr  = fill(FT(290.0), Nx, Ny, Nz)   # well above 260 K T_ref
-    qv_lyr = fill(FT(0.015), Nx, Ny, Nz)
-    dz_v = zeros(FT, Nx, Ny, Nz)
-    dz_c = zeros(FT, Nx, Ny, Nz)
-    fill_dz_hydrostatic_virtualT!(dz_v, t_lyr, qv_lyr, ps, ak, bk)
-    fill_dz_hydrostatic_constT!(dz_c, ps, ak, bk)
-    # T_v = 290 · 1.00915 ≈ 292.6, T_ref = 260. dz_v / dz_c ≈ 1.125.
-    @test all(dz_v .> dz_c)
-    @test isapprox(dz_v[1, 1, 1] / dz_c[1, 1, 1], 292.6 / 260.0; rtol = 1e-3)
 end

@@ -165,7 +165,7 @@ or profile-shaped Kz from runtime config" model. Cubed-sphere runs with
 `diffusion.kind = "tm5_beljaars_viterbo_local_kz"` consumes
 the four surface fields from the binary at each window; the GCHP VDIFF
 non-local Kz path consumes the four `:vdiff_*` fields. The `ImplicitVerticalDiffusion`
-operator still also supports static `ProfileKzField` / `ConstantField` when no
+operator still also supports static `PreComputedKzField` / `ConstantField` when no
 binary Kz payload is present.
 
 A run config that asks for an operator the binary does not carry is

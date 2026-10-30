@@ -220,3 +220,27 @@ the former test-only Models copy has been removed.
 
 Initial-condition coordinate brackets come from `Grids/BilinearBrackets.jl`;
 the clamped latitude and uniform periodic longitude policies are unchanged.
+
+Diffusion window refresh uses the public staged coefficient/dz/pressure APIs
+from Operators/Diffusion. Models chooses the window humidity and cadence;
+Diffusion owns the numerical calculations and workspace validation.
+
+## Depends on
+
+State, Grids, MetDrivers, Operators, Adjoints, Output, Observations, GriddedIO,
+Regridding and foundation modules. Numerical diffusion geometry belongs to Diffusion.
+
+## Used by
+
+The package facade, CLI runners and runtime-aware diagnostics.
+
+## Shared helpers owned here
+
+TransportModel/DrivenSimulation composition, runtime recipes, initial-condition
+builders and runner entry points. Window cadence and humidity selection use the
+public Diffusion staged APIs.
+
+## Forward<->adjoint mirrors
+
+`adjoint_schedule.jl` captures production stepping for Adjoints. Numerical diffusion
+transposes are owned by Operators/Diffusion; Models contains no adjoint kernels.

@@ -203,17 +203,15 @@ be regenerated with a safer preprocessing schedule.
 
 `ImplicitVerticalDiffusion` is the production diffusion operator. It
 runs the standard tri-diagonal Thomas solve column-by-column. The
-diffusivity profile is supplied by an `AbstractKzField`:
+diffusivity profile is supplied by an `AbstractTimeVaryingField` or panel-native field:
 
 | Kz field | Source | Status |
 | --- | --- | --- |
-| `ProfileKzField` | Static profile from TOML | Production |
-| `DerivedKzField` | Beljaars–Viterbo local Kz from `(ps, u, v, T, q, z0)` | Production |
 | `WindowPBLKzField` | PBL-aware variant of Beljaars–Viterbo | Production |
 | `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Supported when the v4 binary carries all VDIFF fields |
 | `GCHPNonlocalPBLField` | GEOS-Chem VDIFF: Holtslag–Boville Kz with the non-local counter-gradient term (`kind = "geoschem_nonlocal_vdiff"`) | Cubed sphere; needs the VDIFF fields and `:pbl_eflux` |
 
-For TM5 users: `DerivedKzField` is the closest analogue to the
+For TM5 users: `WindowPBLKzField` is the closest analogue to the
 Holtslag–Boville-with-Beljaars-correction profile TM5 ships with.
 For GCHP users: `GCHPNonlocalPBLField` ports GEOS-Chem's `vdiff_mod.F90`,
 including the counter-gradient transport of fresh emissions.

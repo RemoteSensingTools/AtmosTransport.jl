@@ -91,8 +91,8 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - [`HaloAdjoint.jl`](HaloAdjoint.jl) — transpose of `fill_panel_halos!` and
   `copy_corners!`. Halo seeds are atomically added into the source interior
   cells.
-- [`DiffusionAdjoint.jl`](DiffusionAdjoint.jl) — transposed implicit
-  vertical diffusion for CS `Kz` fields and for precomputed `Dkg` fields,
+- [`DiffusionAdjoint.jl`](DiffusionAdjoint.jl) — input validation and launch wiring for
+  CS diffusion; numerical Kz/Dkg transpose kernels live in Diffusion,
   plus input validation
 - [`ConvectionAdjoint.jl`](ConvectionAdjoint.jl) — TM5 LU solves and their
   transposes, the CMFMC and TM5 adjoint column kernels, and the adjoint arms
@@ -192,3 +192,27 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 - End-to-end footprint tests: see [`../Footprint/README.md`](../Footprint/README.md).
   Opt-in GPU checks: `../../test/diagnostic/test_cs_transport_adjoint_gpu.jl`
   and `test_linrood_adjoint_integration.jl`
+
+## Depends on
+
+Grids, State, Operators, MetDrivers, Architectures, Parameters and Tape.
+Diffusion transpose kernels are imported from Operators/Diffusion; no lower
+module imports Adjoints.
+
+## Used by
+
+Models, Footprint and Inversion compose schedules, recording and reverse walks.
+Backend extensions supply tape/adjoint backend hooks.
+
+## Shared helpers owned here
+
+Objective seeding, `adjoint_support`, `require_adjoint_support`, schedules and
+operator-adjoint wiring remain here. Diffusion workspace checks and numerical
+kernels have one home in Operators/Diffusion.
+
+## Forward<->adjoint mirrors
+
+Diffusion's `diffusion_kernels.jl` / `conservative_dkg.jl` now pair with
+`Operators/Diffusion/adjoint_kernels.jl`. `DiffusionAdjoint.jl` retains tape
+validation, sequence lookup and the launch wiring. Other mirrors are recorded
+in `test/structure/mirrors.toml`.

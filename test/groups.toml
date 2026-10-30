@@ -115,7 +115,6 @@ files = [
     "core/test_reduced_gaussian_mesh.jl",
     "core/test_latlon_explicit_faces.jl",
     "core/test_cs_lonlat_inverse_projection.jl",
-    "core/test_gpu_field_adaptation.jl",
     "core/test_fields.jl",
     "core/test_float32_conservation.jl",
 ]
@@ -201,13 +200,13 @@ paths = [
 [topics.diffusion]
 description = "Vertical diffusion: implicit and conservative Dkg solves, Kz fields, TM5 bldiff, GCHP non-local PBL, layer thickness (dz) from dry or total pressure"
 files = [
+    "core/test_pbl_fields.jl",
     "core/test_conservative_dkg.jl",
     "core/test_diffusion_flux_form.jl",
     "core/test_diffusion_mass_flux_conservation.jl",
     "core/test_diffusion_palindrome_contract.jl",
     "core/test_dz_helpers_virtual_T.jl",
     "core/test_gchp_nonlocal_pbl.jl",
-    "core/test_packed_diffusion_f32_conservation.jl",
     "core/test_precomputed_dkg_binary_payload.jl",
     "core/test_tm5_bldiff.jl",
 ]

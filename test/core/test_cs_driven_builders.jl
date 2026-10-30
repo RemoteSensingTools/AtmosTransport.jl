@@ -18,10 +18,10 @@ using .AtmosTransport.Models:
     WindowPBLKzDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec,
     TM5DkgDiffusionSpec, materialize
 using .AtmosTransport.State.Fields:
-    CubedSphereField, WindowPBLKzField, LocalHoltslagBovilleKzField,
+    CubedSphereField,
     PrecomputedCSDkgField, field_value, panel_field
 using .AtmosTransport.Operators.Diffusion:
-    uses_diffusive_surface_flux_boundary
+    WindowPBLKzField, LocalHoltslagBovilleKzField, uses_diffusive_surface_flux_boundary
 using .AtmosTransport.Operators: MonotoneLimiter, SameAsHorizontal, FV3ScalarProfile,
     NoLimiter, CW84Limiter
 

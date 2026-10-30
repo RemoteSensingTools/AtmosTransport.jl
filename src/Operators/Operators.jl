@@ -78,6 +78,9 @@ export AbstractDiffusion, NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorks
 export AbstractSurfaceFluxCoupling, SplitSurfaceFluxCoupling,
        DiffusiveSurfaceFluxBoundary, uses_diffusive_surface_flux_boundary
 export apply_vertical_diffusion_vmr!
+export refresh_gchp_nonlocal_pbl!
+export WindowPBLKzField, LocalHoltslagBovilleKzField, PBLPhysicsParameters
+export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!
 
 # SurfaceFlux data types + operator hierarchy
 export SurfaceFluxSource, AbstractSurfaceFluxSource, TimeVaryingSurfaceFluxSource,

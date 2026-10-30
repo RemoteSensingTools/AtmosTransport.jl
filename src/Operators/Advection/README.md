@@ -210,3 +210,26 @@ regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
   - [`../../../test/core/test_basis_explicit_core.jl`](../../../test/core/test_basis_explicit_core.jl)
   - [`../../../test/core/test_emissions_palindrome.jl`](../../../test/core/test_emissions_palindrome.jl)
   - [`../../../test/core/test_diffusion_palindrome_contract.jl`](../../../test/core/test_diffusion_palindrome_contract.jl)
+
+Diffusion owns `preflight_diffusion` and all DiffusionWorkspace validation;
+advection calls that public preflight before any sweep mutates tracers.
+
+## Depends on
+
+State, Grids, MetDrivers, Architectures, Parameters, the parent operator roots,
+Diffusion and SurfaceFlux. Diffusion owns its storage preflight.
+
+## Used by
+
+Models, StepPlan, Adjoints and preprocessing continuity/CFL checks.
+
+## Shared helpers owned here
+
+Public advection schemes, workspaces, sweep/halo APIs and transport palindromes.
+Diffusion midpoint calls use `preflight_diffusion` and `apply_vertical_diffusion_vmr!`.
+
+## Forward<->adjoint mirrors
+
+Structured/CS sweep and halo mirrors remain recorded in `test/structure/mirrors.toml`.
+Lin-Rood and its adjoint files remain fenced; D2 changes only the diffusion preflight
+import and unfenced callers.

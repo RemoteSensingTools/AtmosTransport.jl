@@ -2,7 +2,8 @@
 # A column with a 1.5 km boundary layer: 6.5 K/km lapse rate up to a 210 K
 # tropopause, moist near the surface, wind shear only below 3 km.
 
-using AtmosTransport.State: GCHPNonlocalPBLField, refresh_gchp_nonlocal_pbl!
+using AtmosTransport.State: GCHPNonlocalPBLField
+using AtmosTransport.Operators.Diffusion: refresh_gchp_nonlocal_pbl!
 
 const NONLOCAL_NC, NONLOCAL_NZ, NONLOCAL_HP = 2, 40, 1
 

@@ -101,7 +101,7 @@ end
 _diffusion_workspace() = _fill_layer_thickness!(AT.DiffusionWorkspace(PB.m, HP, 0))
 
 _kz_diffusion(coupling) = AT.ImplicitVerticalDiffusion(;
-    kz_field = AT.CubedSphereField(ntuple(_ -> AT.ProfileKzField(Float64[30.0 / k for k in 1:NZ]), 6)),
+    kz_field = AT.CubedSphereField(ntuple(_ -> AT.PreComputedKzField(repeat(reshape(Float64[30.0 / k for k in 1:NZ], 1, 1, NZ), NC, NC, 1)), 6)),
     surface_flux_coupling = coupling)
 
 const COUPLINGS = (AT.SplitSurfaceFluxCoupling(), AT.DiffusiveSurfaceFluxBoundary())

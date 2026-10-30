@@ -105,7 +105,7 @@ _diffusion_op(d, kz = 30.0) = d === :none ? AT.NoDiffusion() :
     d === :dkg ? AT.ImplicitVerticalDiffusion(;
         kz_field = AT.PrecomputedCSDkgField(ntuple(_ -> fill(S * 1e-5, NC, NC, NZ), 6))) :
     AT.ImplicitVerticalDiffusion(;
-    kz_field = AT.CubedSphereField(ntuple(_ -> AT.ProfileKzField([kz / k for k in 1:NZ]), 6)),
+    kz_field = AT.CubedSphereField(ntuple(_ -> AT.PreComputedKzField(repeat(reshape([kz / k for k in 1:NZ], 1, 1, NZ), NC, NC, 1)), 6)),
     surface_flux_coupling = d === :split ? AT.SplitSurfaceFluxCoupling() : AT.DiffusiveSurfaceFluxBoundary())
 
 _initial_rm(air) = ntuple(p -> [air[p][i, j, k] * (0.08 + 0.01sin(0.27i + 0.13j + 0.19k + 0.07p))

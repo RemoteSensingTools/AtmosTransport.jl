@@ -11,7 +11,7 @@ using .AtmosTransport.Operators: ImplicitVerticalDiffusion, DiffusionWorkspace
 using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
 using .AtmosTransport.State: PrecomputedCSDkgField, panel_field
 using .AtmosTransport.State.Fields: refresh_precomputed_cs_dkg_cache!, field_value
-using .AtmosTransport.Adjoints: _vertical_diffusion_cs_single_dkg_adjoint_kernel!
+using .AtmosTransport.Operators.Diffusion: _vertical_diffusion_cs_single_dkg_adjoint_kernel!
 
 @testset "Exact TM5 dkg binary and runtime path" begin
     FT = Float64

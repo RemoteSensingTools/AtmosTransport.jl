@@ -15,36 +15,23 @@ Required interface (every concrete type):
 
 Concrete types:
 - `ConstantField{FT, N}` — one scalar presented as a rank-N field.
-- `ProfileKzField{FT}` — rank-2/3 vertical profile, horizontally uniform.
 - `PreComputedKzField{FT, A}` — rank-2/3 wrapper over a spatial array.
-- `DerivedKzField{FT, ...}` — Beljaars-Viterbo Kz from surface fields.
-- `WindowPBLKzField{FT, ...}` — cubed-sphere per-window Beljaars-Viterbo Kz.
-- `LocalHoltslagBovilleKzField{FT, ...}` — cubed-sphere GEOS VDIFF local-Kz cache.
 - `GCHPNonlocalPBLField{FT, ...}` — cubed-sphere GEOS-Chem non-local PBL exchange.
 - `StepwiseField{FT, N, A, B, W}` — piecewise-constant in time at any rank.
 
-`PBLPhysicsParameters{FT}` carries the physical constants and scheme
-parameters of the Beljaars-Viterbo Kz closure shared by `DerivedKzField`,
-`WindowPBLKzField` and `LocalHoltslagBovilleKzField`.
 """
 module Fields
 
 using Adapt
-using KernelAbstractions: @kernel, @index, @Const, get_backend, synchronize
-using ...Architectures: select_panel
-using ...Parameters: STANDARD_GRAVITY, CP_DRY_AIR, CP_OVER_R_DIATOMIC, THETA_REFERENCE_PRESSURE,
-                     GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR, VON_KARMAN,
-                     STANDARD_SEA_LEVEL_AIR_DENSITY
+using ...Parameters: GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR
 
 export AbstractTimeVaryingField, AbstractCubedSphereField
-export ConstantField, ProfileKzField, PreComputedKzField, CubedSphereField
-export DerivedKzField, WindowPBLKzField, LocalHoltslagBovilleKzField
+export ConstantField, PreComputedKzField, CubedSphereField
 export AbstractCSDkgField, PrecomputedCSDkgField
-export GCHPNonlocalPBLField, GCHPVdiffParameters, refresh_gchp_nonlocal_pbl!
-export PBLPhysicsParameters, StepwiseField
-export field_value, update_field!, integral_between, panel_field
-export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!,
-       refresh_precomputed_cs_dkg_cache!
+export GCHPNonlocalPBLField, GCHPVdiffParameters
+export StepwiseField
+export field_value, update_field!, panel_field
+export refresh_precomputed_cs_dkg_cache!
 
 # =========================================================================
 # Abstract type
@@ -115,20 +102,12 @@ end
 
 update_field!(f::ConstantField, ::Real) = f
 
-# Potential temperature θ = T (p_ref / p)^κ of air at temperature T and pressure p, κ = R/cp;
-# the boundary-layer fields call it with their own constant sets.
-@inline _potential_temperature(T, p, κ, p_ref) = T * (p_ref / p)^κ
-
 # =========================================================================
 # Rank-3 concrete types
 # =========================================================================
 
-include("ProfileKzField.jl")
 include("PreComputedKzField.jl")
 include("CubedSphereField.jl")
-include("DerivedKzField.jl")
-include("WindowPBLKzField.jl")
-include("LocalHoltslagBovilleKzField.jl")
 include("PrecomputedCSDkgField.jl")
 include("GCHPNonlocalPBLField.jl")
 include("StepwiseField.jl")

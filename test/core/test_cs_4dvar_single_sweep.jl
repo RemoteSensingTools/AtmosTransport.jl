@@ -74,7 +74,7 @@ function _physics(kind::Symbol, P)
         coupling = kind === :split ? AT.SplitSurfaceFluxCoupling() :
                                      AT.DiffusiveSurfaceFluxBoundary()
         op = AT.ImplicitVerticalDiffusion(;
-            kz_field = AT.CubedSphereField(ntuple(_ -> AT.ProfileKzField(FT[30 / k for k in 1:Nz]), 6)),
+            kz_field = AT.CubedSphereField(ntuple(_ -> AT.PreComputedKzField(repeat(reshape(FT[30 / k for k in 1:Nz], 1, 1, Nz), Nc, Nc, 1)), 6)),
             surface_flux_coupling = coupling)
         ws = AT.DiffusionWorkspace(P.m, P.mesh.Hp, 0)
         for p in 1:6, k in 1:Nz

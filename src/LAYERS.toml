@@ -75,7 +75,7 @@ src = ["src/Adjoints", "src/Diagnostics", "src/Extras/Analysis", "src/Extras/Dow
 "src/Quantities" = []
 "src/Regridding" = ["src", "src/Grids", "src/Quantities"]
 "src/State" = ["src", "src/Grids", "src/State/Fields"]
-"src/State/Fields" = ["src", "src/Parameters"]
+"src/State/Fields" = ["src/Parameters"]
 "src/Tape" = []
 
 [modules]
@@ -116,7 +116,7 @@ AtmosTransport = ["AtmosTransport.Adjoints", "AtmosTransport.Analysis", "AtmosTr
 "AtmosTransport.Regridding" = ["AtmosTransport.AtomicFiles", "AtmosTransport.Grids", "AtmosTransport.Quantities"]
 "AtmosTransport.SectionTimer" = []
 "AtmosTransport.State" = ["AtmosTransport.Architectures", "AtmosTransport.Grids", "AtmosTransport.State.Fields"]
-"AtmosTransport.State.Fields" = ["AtmosTransport.Architectures", "AtmosTransport.Parameters"]
+"AtmosTransport.State.Fields" = ["AtmosTransport.Parameters"]
 "AtmosTransport.Tape" = []
 "AtmosTransport.Visualization" = ["AtmosTransport.GriddedIO", "AtmosTransport.Grids", "AtmosTransport.Parameters", "AtmosTransport.Regridding"]
 AtmosTransportAMDGPUExt = ["AtmosTransport", "AtmosTransport.Adjoints", "AtmosTransport.Architectures", "AtmosTransport.Tape"]

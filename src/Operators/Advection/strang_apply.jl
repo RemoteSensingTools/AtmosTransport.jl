@@ -49,7 +49,7 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state))
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion: skip the Strang half-step structure
@@ -80,33 +80,6 @@ end
     return nothing
 end
 
-# Validate the direct operator API before any advection sweep mutates state.
-# TransportModel supplies this workspace automatically; direct callers must
-# make the operator's storage ownership explicit.
-@inline _preflight_diffusion(::NoDiffusion, _, _, ::AbstractArray, ::Integer) = nothing
-@inline _preflight_diffusion(::NoDiffusion, _, _, ::NTuple{6}, ::Integer, ::Integer) = nothing
-
-function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
-                              air_mass::AbstractArray, n_tracers::Integer)
-    workspace isa DiffusionWorkspace || throw(ArgumentError(
-        "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
-        "got $(typeof(workspace))."))
-    dt isa Real || throw(ArgumentError("$(typeof(op)) requires a real-valued `dt`; got $(repr(dt))."))
-    expected = size(air_mass)
-    size(workspace.factors) == expected || throw(DimensionMismatch(
-        "diffusion factor workspace has shape $(size(workspace.factors)); expected $(expected)"))
-    size(workspace.layer_thickness) == expected || throw(DimensionMismatch(
-        "diffusion layer-thickness workspace has shape $(size(workspace.layer_thickness)); expected $(expected)"))
-    eltype(workspace.factors) === eltype(air_mass) &&
-        eltype(workspace.layer_thickness) === eltype(air_mass) || throw(ArgumentError(
-            "diffusion workspace and state must share one element type"))
-    typeof(get_backend(workspace.factors)) === typeof(get_backend(air_mass)) &&
-        typeof(get_backend(workspace.layer_thickness)) === typeof(get_backend(air_mass)) ||
-        throw(ArgumentError("diffusion workspace and state must use the same backend"))
-    _packed_references(workspace, expected[1:end-1], n_tracers, eltype(air_mass), get_backend(air_mass))
-    return nothing
-end
-
 function _preflight_advection_workspace(workspace::AdvectionWorkspace,
                                         tracers_raw::AbstractArray{FT, 4},
                                         air_mass::AbstractArray{FT, 3}) where FT
@@ -126,41 +99,6 @@ function _preflight_advection_workspace(workspace::AdvectionWorkspace,
         (workspace.rm_A, workspace.m_A, workspace.rm_B, workspace.m_B,
          workspace.rm_4d_A, workspace.rm_4d_B)) || throw(ArgumentError(
             "advection workspace and state must share one element type and backend"))
-    return nothing
-end
-
-function _preflight_diffusion(op::AbstractDiffusion, workspace, dt,
-                              air_mass::NTuple{6}, n_tracers::Integer,
-                              halo_width::Integer)
-    workspace isa DiffusionWorkspace || throw(ArgumentError(
-        "$(typeof(op)) requires `diffusion_workspace = DiffusionWorkspace(state)`; " *
-        "got $(typeof(workspace))."))
-    dt isa Real || throw(ArgumentError("$(typeof(op)) requires a real-valued `dt`; got $(repr(dt))."))
-    Hp = Int(halo_width)
-    Nxi, Nyi, Nz = size(air_mass[1])
-    expected = (Nxi - 2Hp, Nyi - 2Hp, Nz)
-    reference_expected = (expected[1], expected[2], Int(n_tracers))
-    workspace.factors isa NTuple{6} &&
-        workspace.layer_thickness isa NTuple{6} &&
-        workspace.references isa NTuple{6} || throw(DimensionMismatch(
-            "cubed-sphere diffusion workspace must contain six factor, layer-thickness, and reference panels"))
-    @inbounds for p in 1:6
-        size(workspace.factors[p]) == expected || throw(DimensionMismatch(
-            "diffusion factor workspace panel $p has shape $(size(workspace.factors[p])); expected $(expected)"))
-        size(workspace.layer_thickness[p]) == expected || throw(DimensionMismatch(
-            "diffusion layer-thickness workspace panel $p has shape $(size(workspace.layer_thickness[p])); expected $(expected)"))
-        size(workspace.references[p]) == reference_expected || throw(DimensionMismatch(
-            "diffusion reference workspace panel $p has shape $(size(workspace.references[p])); expected $(reference_expected)"))
-        eltype(workspace.factors[p]) === eltype(air_mass[p]) &&
-            eltype(workspace.layer_thickness[p]) === eltype(air_mass[p]) &&
-            eltype(workspace.references[p]) === eltype(air_mass[p]) || throw(ArgumentError(
-                "diffusion workspace panel $p and state must share one element type"))
-        backend = typeof(get_backend(air_mass[p]))
-        typeof(get_backend(workspace.factors[p])) === backend &&
-            typeof(get_backend(workspace.layer_thickness[p])) === backend &&
-            typeof(get_backend(workspace.references[p])) === backend || throw(ArgumentError(
-                "diffusion workspace panel $p and state must use the same backend"))
-    end
     return nothing
 end
 
@@ -204,7 +142,7 @@ end
     recorder isa NoStepRecorder || throw(ArgumentError(
         "NoAdvection (scheme = \"none\") has no record in the cubed-sphere adjoint tape"))
     _noadvection_reject_emissions_op(emissions_op)
-    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state), state.halo_width)
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on CS: single V(dt) step via the
@@ -232,7 +170,7 @@ end
                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
     _noadvection_reject_emissions_op(emissions_op)
-    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state))
     if !(diffusion_op isa NoDiffusion)
         # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
@@ -267,7 +205,7 @@ for (scheme_type, h_sweep, v_sweep) in (
                           diffusion_op::AbstractDiffusion = NoDiffusion(),
                           emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                           meteo = nothing) where {B <: AbstractMassBasis}
-        _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+        preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                              state.air_mass, ntracers(state))
         # The palindrome below couples emissions as V(dt/2) → S(dt) → V(dt/2) only.
         uses_diffusive_surface_flux_boundary(diffusion_op) && throw(ArgumentError(

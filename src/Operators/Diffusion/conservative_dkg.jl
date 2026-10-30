@@ -29,14 +29,14 @@ end
     if ratio > one(ratio)
         # Retain the smaller portion directly, and carry the large remainder
         # with its rounding residual to the next layer.
-        fraction = one(ratio) / (one(ratio) + ratio)
+        fraction = _dkg_small_fraction(ratio)
         retained = muladd(fraction, amount, fraction * low)
         remainder, error = _two_sum(amount, -retained)
         incoming, correction = _two_sum(remainder, error + low)
     else
         # Compute a weak transfer directly. Reconstructing it as amount minus
         # rounded retained mass would erase sub-ulp exchange into empty cells.
-        fraction = ratio / (one(ratio) + ratio)
+        fraction = _dkg_small_fraction(ratio)
         incoming = fraction * amount
         correction = fma(fraction, amount, -incoming) + fraction * low
         remainder, error = _two_sum(amount, -incoming)
@@ -206,3 +206,6 @@ end
                               select_panel(dkg_field, p), select_panel(factors, p),
                               dt, ii, jj, Nz, Hp, t, t)
 end
+
+@inline _dkg_small_fraction(ratio) = ratio > one(ratio) ?
+    one(ratio) / (one(ratio) + ratio) : ratio / (one(ratio) + ratio)

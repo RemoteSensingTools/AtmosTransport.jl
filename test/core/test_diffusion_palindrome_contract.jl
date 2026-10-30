@@ -39,10 +39,8 @@ end
 
     @test rm ≈ expected rtol=1e-13 atol=0
     @test m == expected_m
-end
 
-@testset "Backward-Euler full and half-step maps differ at second order" begin
-    FT = Float64
+    # A full backward-Euler step must remain distinguishable from two halves.
     function split_error(dt)
         full, m, _, _, _, _, full_ws = _ll_diffusion_fixture(FT)
         half = copy(full)
@@ -86,4 +84,23 @@ end
     apply_vertical_diffusion_vmr!(expected, m, reference_op, diffusion, dt)
 
     @test rm ≈ expected rtol=1e-13 atol=0
+end
+
+@testset "Split diffusion midpoint equals explicit half diffusion, emission, half diffusion" begin
+    FT = Float64
+    rm, m, am, bm, cm, advection, diffusion = _ll_diffusion_fixture(FT)
+    expected = copy(rm)
+    reference_ws = DiffusionWorkspace(m, size(rm, 4))
+    copyto!(reference_ws.layer_thickness, diffusion.layer_thickness)
+    dt = FT(60)
+    rate = fill(FT(1), size(m, 1), size(m, 2))
+    op = ImplicitVerticalDiffusion(; kz_field = ConstantField{FT, 3}(FT(10)))
+    emissions = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
+    strang_split_mt!(rm, m, am, bm, cm, UpwindScheme(), advection;
+        diffusion_op = op, diffusion_workspace = diffusion, emissions_op = emissions,
+        tracer_names = (:CO2,), dt)
+    apply_vertical_diffusion_vmr!(expected, m, op, reference_ws, dt / 2)
+    expected[:, :, end, 1] .+= rate .* dt
+    apply_vertical_diffusion_vmr!(expected, m, op, reference_ws, dt / 2)
+    @test rm == expected
 end

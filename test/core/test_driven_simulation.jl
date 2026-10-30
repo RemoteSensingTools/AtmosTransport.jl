@@ -383,8 +383,13 @@ end
             ps_for_dz = include_humidity ? fill(90_100.0, length(window.surface_pressure)) :
                                            window.surface_pressure
             expected = similar(sim.model.workspace.diffusion_ws.layer_thickness)
-            AtmosTransport.Operators.Diffusion.fill_dz_hydrostatic_constT!(
-                expected, ps_for_dz, grid.vertical.A, grid.vertical.B)
+            A, B = grid.vertical.A, grid.vertical.B
+            for k in axes(expected, 2), c in axes(expected, 1)
+                dp = (A[k+1] - A[k]) + (B[k+1] - B[k]) * ps_for_dz[c]
+                pc = ((A[k] + A[k+1]) + (B[k] + B[k+1]) * ps_for_dz[c]) / 2
+                expected[c, k] = AtmosTransport.Parameters.R_DRY_AIR * 260 /
+                                 AtmosTransport.Parameters.STANDARD_GRAVITY * dp / pc
+            end
             @test sim.model.workspace.diffusion_ws.layer_thickness ≈ expected
             @test all(isfinite, sim.model.workspace.diffusion_ws.layer_thickness)
             close(driver)

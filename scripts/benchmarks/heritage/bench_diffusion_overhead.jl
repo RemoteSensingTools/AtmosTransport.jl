@@ -7,34 +7,18 @@
 #
 #   1. NoDiffusion                                   — baseline (dead branch)
 #   2. ImplicitVerticalDiffusion{ConstantField}      — scalar Kz
-#   3. ImplicitVerticalDiffusion{ProfileKzField}     — per-level profile
+#   3. ImplicitVerticalDiffusion{PreComputedKzField}     — per-level profile
 #   4. ImplicitVerticalDiffusion{PreComputedKzField} — full 3D snapshot
 #
 # Plan 16 target: ≤30% overhead on GPU at Nt=10, cfl=0.4 vs. NoDiffusion.
-# This script also resolves the ProfileKzField GPU-dispatch question (plan
-# pitfall 11) — as of Commit 6, `ProfileKzField` is Adapt-compatible, so
-# its backing vector is moved to the device at kernel-launch time.
-#
-# Usage:
-#   julia --project=. scripts/benchmarks/heritage/bench_diffusion_overhead.jl [size] [backend]
-# where
-#   size    ∈ {small, medium, large}   (default: medium)
-#   backend ∈ {cpu, gpu}               (default: cpu)
-#
-# Measurement protocol:
-# - 3 warm-up steps (not timed)
-# - n_steps timed per configuration
-# - GPU: CUDA.synchronize before and after each step (wall-clock with sync);
-#   this matches the chemistry bench pattern and avoids CUDA.@elapsed pitfalls.
-# - Report median and median-absolute-deviation per configuration
-# ===========================================================================
+# Per-level profiles use the production PreComputedKzField storage.
 
 using AtmosTransport
 using AtmosTransport: LatLonMesh, AtmosGrid, HybridSigmaPressure, CPU,
     cell_areas_by_latitude, gravity, reference_pressure, level_thickness,
     CellState, StructuredFaceFluxState, DryBasis, AdvectionWorkspace,
     UpwindScheme, SlopesScheme, MonotoneLimiter, TransportModel,
-    ConstantField, ProfileKzField, PreComputedKzField,
+    ConstantField, PreComputedKzField,
     NoDiffusion, ImplicitVerticalDiffusion, with_diffusion
 using Statistics
 using Printf
@@ -104,7 +88,7 @@ function _make_diff_op(::Type{FT}, kind::Symbol, Nx, Ny, Nz, backend) where {FT}
             kz_field = ConstantField{FT, 3}(FT(1.0)))
     elseif kind === :profile
         prof = FT.(0.5 .+ 1.5 .* exp.(-(range(FT(0), FT(Nz-1); length=Nz) ./ FT(Nz/3)).^2))
-        pf = ProfileKzField(collect(prof))
+        pf = PreComputedKzField(repeat(reshape(collect(prof), 1, 1, Nz), Nx, Ny, 1))
         pf = backend === :gpu ? Adapt.adapt(CUDA.CuArray, pf) : pf
         return ImplicitVerticalDiffusion(; kz_field = pf)
     elseif kind === :precomputed

@@ -227,7 +227,7 @@ function strang_split!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxSt
                        meteo = nothing,
                        dt::Union{Nothing, Real} = nothing,
                        recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
-    _preflight_diffusion(diffusion_op, diffusion_workspace, dt,
+    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
                          state.air_mass, ntracers(state), state.halo_width)
     (!(diffusion_op isa NoDiffusion) || !(emissions_op isa NoSurfaceFlux)) &&
         dt === nothing && throw(ArgumentError(
