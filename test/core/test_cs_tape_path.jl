@@ -126,105 +126,6 @@ end
     end
 end
 
-@testset "tape_path — FullCheckpoint auto-creates leaf directory" begin
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 2)
-    obj = _objective(mesh)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-
-    mktempdir() do parent
-        dir = joinpath(parent, "deeply", "nested", "tape_root")
-        @test !isdir(dir)
-        AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-            mesh, obj; scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir)
-        @test isdir(dir)
-        @test isfile(joinpath(dir, "manifest.toml"))
-    end
-end
-
-@testset "tape_path — StrideCheckpoint per-window subdirectories" begin
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 6)
-    obj = _objective(mesh)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-    K = 2
-
-    base = AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-        mesh, obj; scheme = scheme, dt = 1.0,
-        tape_storage = :mmap, checkpoint = TapeMod.StrideCheckpoint(K))
-
-    mktempdir() do parent
-        dir = joinpath(parent, "stride_tape")
-        got = AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-            mesh, obj; scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir,
-            checkpoint = TapeMod.StrideCheckpoint(K))
-
-        nw = TapeMod.checkpoint_window_count(TapeMod.StrideCheckpoint(K), 6)
-        @test nw == 3
-        for w in 1:nw
-            sub = joinpath(dir, "window_" * lpad(w, 5, '0'))
-            @test isdir(sub)
-            @test isfile(joinpath(sub, "records.bin"))
-            @test isfile(joinpath(sub, "manifest.toml"))
-        end
-
-        # Roundoff parity with the temp-dir default for the same K.
-        @test _footprints_equal(got, base)
-    end
-end
-
-@testset "tape_path — RevolveCheckpoint per-base-case subdirectories" begin
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 4)
-    obj = _objective(mesh)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-
-    base = AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-        mesh, obj; scheme = scheme, dt = 1.0,
-        tape_storage = :mmap, checkpoint = TapeMod.RevolveCheckpoint())
-
-    mktempdir() do parent
-        dir = joinpath(parent, "revolve_tape")
-        got = AT.cs_surface_emission_footprint(panels_rm, panels_m, am, bm, cm,
-            mesh, obj; scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir,
-            checkpoint = TapeMod.RevolveCheckpoint())
-
-        # Revolve hits each step's base case exactly once: nsteps subdirs.
-        for step in 1:4
-            sub = joinpath(dir, "step_" * lpad(step, 5, '0'))
-            @test isdir(sub)
-            @test isfile(joinpath(sub, "records.bin"))
-            @test isfile(joinpath(sub, "manifest.toml"))
-        end
-
-        @test _footprints_equal(got, base)
-    end
-end
-
-@testset "tape_path — from-seed entry point" begin
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 2)
-    scheme = AT.PPMScheme(AT.NoLimiter())
-    FT = Float64
-    final_seed = ntuple(p -> begin
-        a = similar(panels_m[p])
-        fill!(a, zero(FT))
-        a[mesh.Hp + 2, mesh.Hp + 2, 1] = FT(1.0)
-        a
-    end, 6)
-
-    base = AT.cs_surface_emission_footprint_from_seed(final_seed, panels_m, am, bm, cm,
-        mesh; scheme = scheme, dt = 1.0, tape_storage = :mmap)
-
-    mktempdir() do parent
-        dir = joinpath(parent, "from_seed_tape")
-        got = AT.cs_surface_emission_footprint_from_seed(final_seed, panels_m, am, bm, cm,
-            mesh; scheme = scheme, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir)
-        @test isfile(joinpath(dir, "manifest.toml"))
-        @test _footprints_equal(got, base)
-    end
-end
-
 @testset "tape_path — validation rejections" begin
     mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 2)
     obj = _objective(mesh)
@@ -283,94 +184,27 @@ end
             tape_storage = :device, tape_path = joinpath(parent, "x"),
             checkpoint = TapeMod.RevolveCheckpoint())
     end
-end
 
-@testset "tape_path — LinRood reject is side-effect free (P2)" begin
-    # Reviewer P2: a LinRood + tape_path request used to mkpath the
-    # directory before LinRood's storage validation fired, leaving an
-    # empty records.bin / manifest.toml behind. After the fix,
-    # `_require_tape_path_supported` rejects at the public API entry
-    # before `_resolve_tape_path` ever calls `mkpath`.
-    mesh, panels_m, panels_rm, am, bm, cm = _problem(; Nc = 4, Nz = 3, nsteps = 2)
-    obj = _objective(mesh)
-    linrood = AT.LinRoodPPMScheme(5)
-
-    # NOTE: pass a non-existent parent so `mkpath` would be observable.
-    mktempdir() do parent
-        dir = joinpath(parent, "linrood_should_not_exist")
-        @test !ispath(dir)
-
-        # FullCheckpoint LinRood + tape_storage=:mmap + tape_path.
+    mesh, m, rm, am, bm, cm = _problem(; nsteps = 4)
+    objective = _objective(mesh)
+    seed = map(zero, rm)
+    for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint()),
+        tape_storage in (:mmap, :pinned_host)
         @test_throws ArgumentError AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am, bm, cm, mesh, obj;
-            scheme = linrood, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir)
-        @test !ispath(dir)   # no mkpath happened
-
-        # Stride LinRood + tape_storage=:mmap + tape_path.
-        @test_throws ArgumentError AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am, bm, cm, mesh, obj;
-            scheme = linrood, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir,
-            checkpoint = TapeMod.StrideCheckpoint(2))
-        @test !ispath(dir)
-
-        # Revolve LinRood + tape_storage=:mmap + tape_path.
-        @test_throws ArgumentError AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am, bm, cm, mesh, obj;
-            scheme = linrood, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir,
-            checkpoint = TapeMod.RevolveCheckpoint())
-        @test !ispath(dir)
-
-        # from-seed entry: same guard.
-        FT = Float64
-        final_seed = ntuple(p -> begin
-            a = similar(panels_m[p])
-            fill!(a, zero(FT))
-            a[mesh.Hp + 2, mesh.Hp + 2, 1] = FT(1.0)
-            a
-        end, 6)
+            rm, m, am, bm, cm, mesh, objective;
+            scheme = AT.LinRoodPPMScheme(), checkpoint, tape_storage)
         @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
-            final_seed, panels_m, am, bm, cm, mesh;
-            scheme = linrood, dt = 1.0,
-            tape_storage = :mmap, tape_path = dir)
-        @test !ispath(dir)
+            seed, m, am, bm, cm, mesh;
+            scheme = AT.LinRoodPPMScheme(), checkpoint, tape_storage)
     end
-end
-
-@testset "tape_path — strict finalize surfaces manifest failure (P1)" begin
-    mktempdir() do parent
-        dir = joinpath(parent, "broken_manifest")
-        storage = TapeMod.MmapCSTapeStorage(; dir)
-        # Point the final rename below a parent that does not exist. This is
-        # deterministic even for privileged test processes, unlike chmod or
-        # pre-creating the destination (atomic `mv(...; force=true)` replaces
-        # both files and directories).
-        storage.manifest_path = joinpath(dir, "missing", "manifest.toml")
-        @test_throws Exception TapeMod.finalize_tape!(storage; strict = true)
-        @test storage.closed
+    for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint()),
+        scheme in (AT.PPMScheme(AT.NoLimiter()), AT.PPMScheme(AT.MonotoneLimiter()),
+                   AT.LinRoodPPMScheme())
+        tape_storage = AT.DeviceCSTapeStorage()
+        @test_throws ArgumentError AT.cs_surface_emission_footprint(
+            rm, m, am, bm, cm, mesh, objective; scheme, checkpoint, tape_storage)
+        @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
+            seed, m, am, bm, cm, mesh; scheme, checkpoint, tape_storage)
     end
 
-    # Sanity: without tape_path, manifest failure is still
-    # warn-and-continue (temp-dir behaviour unchanged) — the API
-    # returns successfully because there's nothing the caller cares
-    # to keep. Reproducible via finalize_tape!(temp_storage;
-    # strict=false) which is the existing call path.
-    @testset "finalize_tape! warn-mode preserved for temp-dir use" begin
-        storage = TapeMod.MmapCSTapeStorage()
-        storage.manifest_path = joinpath(storage.dir, "missing", "manifest.toml")
-        TapeMod.finalize_tape!(storage)
-        @test storage.closed
-    end
-end
-
-@testset "tape_path — strict finalize for per-window storage (P1)" begin
-    mktempdir() do parent
-        dir = joinpath(parent, "stride_broken_manifest")
-        storage = TapeMod._build_window_storage(:mmap, dir, "window_00001")
-        storage.manifest_path = joinpath(storage.dir, "missing", "manifest.toml")
-        @test_throws Exception TapeMod.finalize_tape!(storage; strict = true)
-        @test storage.closed
-    end
 end

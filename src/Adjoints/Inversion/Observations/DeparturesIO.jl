@@ -245,19 +245,6 @@ struct CSDepartureRecord
     end
 end
 
-# A row without averaging-kernel column diagnostics, positionally.
-CSDepartureRecord(id::Int64, tracer::String, instrument_type::String, date_components::_CSObservationDate,
-                  lat::Float64, lon::Float64, kind::_ObservationKind, time_window_s::Float64, clamped::Bool,
-                  panel::Int8, i::Int32, j::Int32, vertical_placement::Int8, placement_height_agl_m::Float64,
-                  placement_pressure_pa::Float64, steps::Vector{Int64}, weights::Vector{Float64},
-                  levels::Vector{Int32}, observed_value::Float64, simulated_value::Float64,
-                  departure::Float64, value_sigma::Float64, model_sigma::Float64,
-                  normalized_departure::Float64) =
-    CSDepartureRecord(id, tracer, instrument_type, date_components, lat, lon, kind, time_window_s, clamped,
-                      panel, i, j, vertical_placement, placement_height_agl_m, placement_pressure_pa, steps,
-                      weights, levels, observed_value, simulated_value, departure, value_sigma, model_sigma,
-                      normalized_departure, NaN, Float64[], 0.0, true, Int8(0), Int64(0), NaN)
-
 function CSDepartureRecord(; id::Integer, tracer::AbstractString, instrument_type::AbstractString,
                            date_components, lat::Real, lon::Real, kind = PointObservationKind(),
                            time_window_s::Real = 0, clamped::Bool = false,
@@ -434,11 +421,6 @@ retrieval-level model profile and `assimilated` from their stencil.
 
 `t_start` is an ISO-8601 string (`Dates.format(t, "yyyy-mm-dd HH:MM:SS")`).
 """
-build_departure_set(set::CSObservationSet, result::CS4DVarResult, mesh::CubedSphereMesh,
-                    t_start::AbstractString, dt::Real, nsteps::Integer; kwargs...) =
-    build_departure_set(set, result.observations, result.simulated, result.stencils, mesh,
-                        t_start, dt, nsteps; kwargs...)
-
 function build_departure_set(set::CSObservationSet,
                              observations::AbstractVector{<:CSObservation},
                              simulated::AbstractVector{<:Real},
@@ -570,12 +552,8 @@ end
 # The time sampling a record maps to on the run grid and whether its time is
 # outside the run (it then reaches the 4D-Var only through ClampOutOfRange).
 function _expected_sampling(rec::CSObservationRecord, t_start::Dates.DateTime, dt::Float64, nsteps::Int)
-    t_rec = _seconds_after(rec.date_components, t_start)
-    k_rec = floor(Int, t_rec / dt) + 1
-    clamped = !(1 <= k_rec <= nsteps)
-    expected = clamped ? _clamped_sampling(t_rec, rec.time_window_s, k_rec, dt, nsteps) :
-                         _window_sampling(t_rec, rec.time_window_s, k_rec, dt, nsteps)
-    return expected, clamped
+    sampling, clamped, _ = _record_sampling(rec, t_start, dt, nsteps, nsteps, ClampOutOfRange())
+    return sampling, clamped
 end
 
 # Structural equality, field by field and arrays by value (NaN equals NaN):

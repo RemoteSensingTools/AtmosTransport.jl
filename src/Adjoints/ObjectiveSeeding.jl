@@ -12,7 +12,7 @@
 #     scalar value of the cost function,
 #   * seed `lambda_panels` from the objective at final time
 #     (`_seed_objective!`: zero, then add the objective's linear functional
-#     from `../Footprint/StepForcing.jl`), and
+#     from `StepForcing.jl`), and
 #   * accumulate the per-step surface footprint
 #     (`_accumulate_surface_footprint!`).
 # ---------------------------------------------------------------------------
@@ -334,7 +334,7 @@ evaluate_objective(::CSCellAverageObjective, panels_rm, panels_m, mesh::CubedSph
 
 # The final-time seed `∂J/∂rm_final` of a built-in objective: zero the adjoint
 # state, then add the objective's linear functional at the final air mass
-# (`_linear_functional`, `_inject_functional!` in `../Footprint/StepForcing.jl`).
+# (`_linear_functional`, `_inject_functional!` in `StepForcing.jl`).
 # The seed values are the ones the objectives have always used, and adding them
 # to zero reproduces them bit for bit.
 function _seed_objective!(lambda_panels, obj::AbstractCSFootprintObjective, final_m,

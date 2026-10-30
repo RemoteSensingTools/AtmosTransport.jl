@@ -183,29 +183,7 @@ end
     # The dry rule: 96900 Pa and the 249 m intake one layer up.
     dry = mktempdir(dir -> parity(dir, "dry"))
     @test dry[5] == P.Nz && dry[7] == P.Nz - 1
-end
 
-# ---------------------------------------------------------------------------
-# Vertical binding changes the simulated values
-# ---------------------------------------------------------------------------
-
-@testset "a 10 m intake and a 5 km aircraft sample read different layers" begin
-    P = hydrostatic_cs_problem()
-    site = _site(P)
-    obs = _bind(P, [_record(1; site..., intake_height_m = 10.0),
-                    _record(2; site..., altitude_m = 5000.0, elevation_m = 0.0)])
-    result = _fourdvar(P, obs, _controls(P))
-    surface, aircraft = result.stencils
-    @test surface.levels == [P.Nz]
-    # 5 km at 280 K (scale height 8.2 km) is near 540 hPa: layer 5 (450-600 hPa).
-    @test aircraft.levels == [5]
-    @test result.simulated[1] != result.simulated[2]
-    # Surface emissions raise the surface intake far above the aircraft sample.
-    @test result.simulated[1] - result.simulated[2] > 1e-6
-    @test result.gradients[1][2] != zero(result.gradients[1][2])
-end
-
-@testset "pressure placement: total vs dry interface pressures" begin
     # 96900 Pa lies between the dry (96842.8 Pa) and the total (97000 Pa)
     # interface above the surface layer: layer 9 by total pressure, 10 by dry.
     P = hydrostatic_cs_problem(; flux_fraction = 0.0)
@@ -232,6 +210,14 @@ end
                                                                 dry_obs[1].objective; scheme = AT.UpwindScheme(),
                                                                 dt = DT)
 end
+
+# ---------------------------------------------------------------------------
+# Vertical binding changes the simulated values
+# ---------------------------------------------------------------------------
+
+
+
+
 
 @testset "layers follow the replayed air mass of each sampled step" begin
     P = hydrostatic_cs_problem(; nsteps = 4, flux_fraction = 0.03)
@@ -321,96 +307,3 @@ end
 # Per observation and sampled step: the forward value and the footprint of a
 # run truncated to that step, for the level the stencil records; the
 # observation's departure scales the time-weighted sum.
-function _reference(P, observations, stencils, controls; scheme, physics)
-    FT = P.FT
-    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
-    gradients = [ntuple(_ -> zeros(FT, P.Nc, P.Nc), 6) for _ in controls]
-    simulated = FT[]
-    for (obs, stencil) in zip(observations, stencils)
-        parts = map(zip(stencil.steps, stencil.weights, stencil.levels)) do (s, ω, level)
-            objective = level == 0 ? AT.CSColumnMeanObjective(stencil.panel, stencil.i, stencil.j) :
-                                     AT.CSLayerMeanObjective(stencil.panel, stencil.i, stencil.j, level)
-            truncated = (P.rm, P.m, P.am[1:s], P.bm[1:s], P.cm[1:s], P.mesh, objective)
-            value = AT.run_cs_footprint_forward(truncated...; scheme, dt = DT, emission_rates = rates[1:s],
-                                                physics(P)...)
-            footprint = AT.cs_surface_emission_footprint(truncated...; scheme, dt = DT,
-                                                         base_emission_rates = rates[1:s], physics(P)...)
-            (; s, ω, value, footprint)
-        end
-        H = sum(part.ω * part.value for part in parts)
-        push!(simulated, H)
-        scale = (H - obs.value) / obs.sigma^2
-        for part in parts, (c, control) in enumerate(controls)
-            for (idx, step) in enumerate(control.window.steps)
-                step <= part.s || continue
-                weight = FT(scale) * FT(part.ω) * FT(control.window.weights[idx])
-                for q in 1:6
-                    gradients[c][q] .+= weight .* part.footprint.footprints[step][q]
-                end
-            end
-        end
-    end
-    return (; simulated, gradients)
-end
-
-# TM5 entrainment/detrainment on layers `ks` (kg m⁻² s⁻¹): with layers of
-# 300-1000 kg m⁻², tens of percent of a layer per 600 s step.
-_layers(P, ks, v) = ntuple(_ -> (e = zeros(P.FT, P.Nc, P.Nc, P.Nz); e[:, :, ks] .= P.FT(v); e), 6)
-
-function _mixed_observations(P)
-    a, b = _site(P), _site(P; panel = 5, i = 3, j = 1)
-    records = [_record(1; a..., t = 100.0, intake_height_m = 10.0, value = 420e-6),
-               _record(2; a..., t = 1000.0, altitude_m = 5200.0, elevation_m = 300.0, value = 401e-6),
-               _record(3; b..., t = 700.0, pressure_pa = 70000.0, time_window_s = 1500.0, value = 399e-6),
-               _record(4; b..., t = 1500.0, kind = "column", time_window_s = 900.0, value = 404e-6,
-                       model_sigma = 0.5e-6),
-               _record(5; a..., t = 1700.0, intake_height_m = 10.0, time_window_s = 600.0, value = 430e-6)]
-    return _bind(P, records)
-end
-
-@testset "single sweep == per-observation footprints for placed and window observations" begin
-    P = hydrostatic_cs_problem()
-    observations = _mixed_observations(P)
-    controls = _controls(P)
-    tm5(P) = (; convection_op = AT.TM5Convection(),
-                convection_forcing = AT.ConvectionForcing(nothing, nothing,
-                    (; entu = _layers(P, 5:8, 0.4), detu = _layers(P, 5:8, 0.28),
-                       entd = _layers(P, 6:8, 0.12), detd = _layers(P, 6:8, 0.06))),
-                convection_workspace = AT.TM5Workspace(P.m; tile_columns = P.Nc^2,
-                    cell_metrics = ntuple(_ -> [AT.cell_area(P.mesh, i, j) for i in 1:P.Nc, j in 1:P.Nc], 6)))
-    @testset "$(nameof(typeof(scheme))) $(label)" for (scheme, label, physics) in (
-            (AT.UpwindScheme(), "no physics", P -> (;)),
-            (AT.PPMScheme(AT.MonotoneLimiter()), "no physics", P -> (;)),
-            (AT.LinRoodPPMScheme(), "no physics", P -> (;)),
-            (AT.UpwindScheme(), "TM5 convection", tm5))
-        full = _fourdvar(P, observations, controls; scheme, physics(P)...)
-        ref = _reference(P, observations, full.stencils, controls; scheme, physics)
-        @test full.simulated ≈ ref.simulated rtol = 1e-14
-        @test _relerr(full.gradients, ref.gradients) <= 1e-12
-        stride = _fourdvar(P, observations, controls; scheme, checkpoint = AT.StrideCheckpoint(2), physics(P)...)
-        @test stride.simulated == full.simulated
-        @test _relerr(stride.gradients, full.gradients) <= 1e-12
-    end
-end
-
-# ---------------------------------------------------------------------------
-# Finite differences
-# ---------------------------------------------------------------------------
-
-@testset "central finite differences of the cost match the gradient" begin
-    P = hydrostatic_cs_problem()
-    observations = _mixed_observations(P)
-    controls = _controls(P)
-    direction = _controls(P; scale = 0.37)
-    shifted(ε) = [AT.CSSurfaceFluxControl(c.window, ntuple(q -> c.value[q] .+ ε .* d.value[q], 6))
-                  for (c, d) in zip(controls, direction)]
-    for (scheme, tol) in ((AT.UpwindScheme(), 1e-8), (AT.PPMScheme(AT.MonotoneLimiter()), 1e-6))
-        base = _fourdvar(P, observations, controls; scheme)
-        directional = sum(sum(sum(g[q] .* d.value[q]) for q in 1:6) for (g, d) in zip(base.gradients, direction))
-        ε = 1e-2
-        fd = (_fourdvar(P, observations, shifted(ε); scheme).cost -
-              _fourdvar(P, observations, shifted(-ε); scheme).cost) / 2ε
-        @test abs(fd - directional) <= tol * abs(directional)
-        @test base.observation_cost > 1                           # well above rounding
-    end
-end

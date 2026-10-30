@@ -520,7 +520,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     # adds each step's forcing at the step's end. Footprint `t` is then
     # ∂J_obs/∂E_t for every step up to the last sampled step. Without any
     # assimilated observation the observation gradient is zero.
-    physical_gradients = [_zero_surface_like(control.value) for control in physical_controls]
+    physical_gradients = [_zero_panel_tuple_like(control.value) for control in physical_controls]
     if !isempty(active)
         last_step = maximum(idx -> observation_vec[idx].step, active)
         forcing = _assemble_step_forcing(functionals[active], scales[active], mesh,
@@ -561,7 +561,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         end
         reported_controls = control_vec
     else
-        gradients = [_zero_surface_like(control.value) for control in control_vec]
+        gradients = [_zero_panel_tuple_like(control.value) for control in control_vec]
         @inbounds for idx in eachindex(control_vec)
             _physical_gradient_to_chi!(gradients[idx],
                                        preconditioner_vec[idx],

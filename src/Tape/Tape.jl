@@ -8,11 +8,10 @@ pipeline.
 `Tape` imports nothing from other AtmosTransport modules.
 `src/AtmosTransport.jl` loads it before `Adjoints`, which imports these names
 with `using ..Tape: ...`. The forward recorder, reverse loop and checkpoint
-drivers (`src/Footprint/`) and the 4D-Var code (`src/Inversion/`) are files
-included into the `Adjoints` module, not separate modules.
+drivers (`src/Adjoints/Footprint/`) and the 4D-Var code (`src/Adjoints/Inversion/`) are child modules of `Adjoints`.
 
 Module dependency order:
-    Tape  →  Adjoints (includes Footprint/ and Inversion/ files)
+    Tape  →  Adjoints core → Footprint → Inversion
 """
 module Tape
 
@@ -28,8 +27,6 @@ export AbstractCSTapeStorage,
        _resolve_tape_path, _validate_tape_path, _build_window_storage,
        _allocate_tape_slot, stage_panels!, _stage_panels,
        _after_tape_stage!, _after_tape_read!,
-       _sync_pinned_tape_storage!,
-       _sync_mmap_tape_storage!,
        _mmap_prepare_for_panels!,
        _register_tape_read_backend!, _tape_read_cache!,
        AbstractTapeReadRole, AirMassRead, TracerMassRead,
@@ -38,7 +35,6 @@ export AbstractCSTapeStorage,
        load_mmap_tape, get_record,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
        _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord,
-       _CSTapeOp,
        AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
        RevolveCheckpoint,
        checkpoint_window_count, checkpoint_window_range

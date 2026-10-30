@@ -64,7 +64,7 @@ transposition-tested (`test/core/test_linrood_kernel_adjoints.jl`) and
 finite-difference VJP-tested via single-panel and cross-panel halo
 compositions. The full LinRood footprint, including its two Upwind Z
 half-sweeps, matches central differences to about `1e-11` relative on a smooth
-base field. `test/core/test_cs_linrood_footprint_fd.jl` asserts `1e-9` with
+base field. `test/core/test_cs_linrood_fv3_adjoint.jl` asserts `1e-9` with
 upward vertical flux and a surface-layer objective, the case most sensitive to
 which air mass the Z records hold. Every tape records the air mass entering a
 Z sweep, because the upwind adjoint coefficient `F / m_donor` uses the
@@ -177,11 +177,11 @@ records currently require `:device` storage.
 
 ### Inversion scaffold
 
-`src/Inversion/` ships:
+`src/Adjoints/Inversion/` ships:
 
 | Module | Surface |
 | --- | --- |
-| `Covariance.jl` | `DiagonalCSCovariance`, `IsotropicGaussianCSCovariance`, `apply_B_half!`, `apply_B_half_adjoint!`, `apply_B_half_inverse!` |
+| `Covariance.jl` | `DiagonalCSCovariance`, `IsotropicGaussianCSCovariance`, `apply_B_half!`, `apply_B_half_adjoint!` |
 | `Preconditioning.jl` | `apply_preconditioner!`, `LinearOptimType`, `LogNormalOptimType` |
 | `Optimizer.jl` | `AbstractCSOptimizer`, `CSGradientDescent`, `CSLBFGS` (via multiple-dispatch surfaces) |
 | `Jacobian.jl` | Footprint-Jacobian assembly for batched observation operators |
@@ -191,7 +191,7 @@ records currently require `:device` storage.
 
 These are all on CI. Full inversion tests:
 `test_cs_4dvar_single_sweep.jl`, `test_cs_4dvar_placed_observations.jl`,
-`test_cs_4dvar_preconditioned.jl`, `test_cs_lbfgs.jl`,
+`test_cs_gradient_checks.jl`, `test_cs_lbfgs.jl`,
 `test_cs_inversion_driver.jl`, `test_cs_inversion_truth_recovery.jl`,
 `test_cs_iteration_log.jl`, `test_cs_observations_io.jl`,
 `test_cs_observation_binding.jl`, `test_cs_departures_io.jl`,

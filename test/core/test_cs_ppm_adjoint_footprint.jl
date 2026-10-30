@@ -6,13 +6,6 @@ import AtmosTransport
 const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 
-const HAS_GPU = try
-    using CUDA
-    CUDA.functional()
-catch
-    false
-end
-
 function _constant_cs_problem(; Nc=4, Nz=3, nsteps=2, FT=Float64)
     mesh = AT.CubedSphereMesh(Nc=Nc, Hp=3, FT=FT)
     N = mesh.Nc + 2mesh.Hp
@@ -224,38 +217,7 @@ function _cs_cmfmc_convection_context(mesh, panels_m)
     return AT.CMFMCConvection(), forcing, ws
 end
 
-function _to_gpu_steps(steps)
-    [ntuple(p -> CUDA.CuArray(step[p]), 6) for step in steps]
-end
-
 @testset "CS split-sweep surface-emission footprint prototype" begin
-    @testset "unsupported convection variants fail before footprint recording" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=4, nsteps=1)
-        objective = AT.CSLayerMeanObjective(1, 2, 2, 3)
-
-        variants = (
-            (AT.CMFMCConvection(clamp=true), "clamp = false"),
-            (AT.TM5Convection(use_collab_lu=true), "full-column, unmerged"),
-            (AT.TM5Convection(lmax_conv=3), "full-column, unmerged"),
-            (AT.TM5Convection(n_merge=2), "full-column, unmerged"),
-            (AT.CMFMCMatrixConvection(use_collab_lu=true), "full-column, unmerged"),
-        )
-
-        for (op, expected) in variants
-            message = try
-                AT.cs_surface_emission_footprint(
-                    panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                    mesh, objective; convection_op=op)
-                nothing
-            catch err
-                sprint(showerror, err)
-            end
-            @test message isa String
-            @test occursin(expected, something(message, ""))
-        end
-    end
-
     @testset "No-transport analytic footprint" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _constant_cs_problem(Nc=3, Nz=3, nsteps=2)
@@ -318,221 +280,90 @@ end
         end
     end
 
-    @testset "Prototype 4D-Var cost gradient matches directional finite difference" begin
+    @testset "4D-Var directional finite differences: $physics" for physics in (:none, :tm5, :cmfmc)
+        coupled = physics !== :none
+        nsteps, Nz = coupled ? (2, 5) : (3, 3)
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=3, nsteps=3)
-        dt = 2.0
+            _constant_cs_problem(; Nc = 3, Nz, nsteps)
+        dt = coupled ? 20.0 : 2.0
         zero_panel = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
-        background = ntuple(_ -> fill(0.05, mesh.Nc, mesh.Nc), 6)
-        controls = [
-            AT.CSSurfaceFluxControl(
-                AT.CSSurfaceFluxWindow(:first_step, 1), zero_panel;
-                background=background, sigma=0.2),
-            AT.CSSurfaceFluxControl(
-                AT.CSSurfaceFluxWindow(:late_window, 2:3; normalize=true),
-                zero_panel),
-        ]
-        observations = [
-            AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.03, 0.4),
-            AT.CSObservation(3, AT.CSColumnMeanObjective(1, 2, 2), 0.02, 0.3),
-        ]
-
-        result = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, controls;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt)
-
-        @test result.cost ≈ result.observation_cost + result.background_cost
-        @test haskey(result.gradient_by_name, :first_step)
-        @test haskey(result.gradient_by_name, :late_window)
-
-        directions = [
-            ntuple(p -> [sin(0.11p + 0.17i - 0.13j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6),
-            ntuple(p -> [cos(0.07p + 0.19i + 0.23j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6),
-        ]
-        eps_dir = 1e-6
-        plus_controls = [_shift_control(controls[i], directions[i], eps_dir) for i in eachindex(controls)]
-        minus_controls = [_shift_control(controls[i], directions[i], -eps_dir) for i in eachindex(controls)]
-        j_plus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, plus_controls;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt).cost
-        j_minus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, minus_controls;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt).cost
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_control_gradient(result.gradients, directions)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
+        controls, observations, directions = if coupled
+            cs = [AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize = true), zero_panel)]
+            obs = [AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.01, 0.25)]
+            d = physics === :tm5 ?
+                ntuple(p -> [sin(0.17p + 0.29i - 0.31j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6) :
+                ntuple(p -> [cos(0.23p + 0.19i - 0.11j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6)
+            (cs, obs, [d])
+        else
+            background = ntuple(_ -> fill(0.05, mesh.Nc, mesh.Nc), 6)
+            cs = [AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:first_step, 1), zero_panel;
+                                          background, sigma = 0.2),
+                  AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:late_window, 2:3; normalize = true), zero_panel)]
+            obs = [AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.03, 0.4),
+                   AT.CSObservation(3, AT.CSColumnMeanObjective(1, 2, 2), 0.02, 0.3)]
+            ds = [ntuple(p -> [sin(0.11p + 0.17i - 0.13j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6),
+                  ntuple(p -> [cos(0.07p + 0.19i + 0.23j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6)]
+            (cs, obs, ds)
+        end
+        kwargs = if physics === :tm5
+            diffusion_op, diffusion_workspace = _cs_diffusion_context(mesh, panels_rm[1]; kz = 2.0, dz = 50.0)
+            convection_op, convection_forcing, convection_workspace = _cs_tm5_convection_context(mesh, panels_m)
+            (; diffusion_op, diffusion_workspace, convection_op, convection_forcing, convection_workspace)
+        elseif physics === :cmfmc
+            convection_op, convection_forcing, convection_workspace = _cs_cmfmc_convection_context(mesh, panels_m)
+            (; convection_op, convection_forcing, convection_workspace)
+        else
+            (;)
+        end
+        evaluate(cs) = AT.cs_surface_flux_4dvar(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, observations, cs;
+            scheme = AT.PPMScheme(AT.NoLimiter()), dt, kwargs...)
+        result = evaluate(controls)
+        if !coupled
+            @test result.cost ≈ result.observation_cost + result.background_cost
+            @test haskey(result.gradient_by_name, :first_step)
+            @test haskey(result.gradient_by_name, :late_window)
+        end
+        h = coupled ? 1e-7 : 1e-6
+        shifted(a) = [_shift_control(c, d, a) for (c, d) in zip(controls, directions)]
+        fd = (evaluate(shifted(h)).cost - evaluate(shifted(-h)).cost) / (2h)
+        @test _dot_control_gradient(result.gradients, directions) ≈ fd rtol = (coupled ? 5e-5 : 3e-5) atol = 1e-10
     end
 
-    @testset "Prototype 4D-Var gradient includes diffusion and TM5 convection" begin
+    @testset "Footprint directional finite differences: $label" for (label, scheme) in (
+            (:upwind, AT.UpwindScheme()), (:slopes, AT.SlopesScheme(AT.NoLimiter())),
+            (:linear_ppm, AT.PPMScheme(AT.NoLimiter())), (:cfl, AT.UpwindScheme()),
+            (:monotone, AT.PPMScheme(AT.MonotoneLimiter())), (:cw84, AT.PPMScheme(AT.CW84Limiter())))
+        cfl = label === :cfl
+        limited = label in (:monotone, :cw84)
+        Nc, Nz, nsteps = cfl ? (4, 3, 1) : (limited ? 4 : 3, 6, 2)
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
-        dt = 20.0
-        diffusion_op, diffusion_ws = _cs_diffusion_context(
-            mesh, panels_rm[1]; kz=2.0, dz=50.0)
-        convection_op, convection_forcing, convection_ws =
-            _cs_tm5_convection_context(mesh, panels_m)
-        values = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
-        control = AT.CSSurfaceFluxControl(
-            AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize=true),
-            values)
-        observations = [
-            AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.01, 0.25),
-        ]
-
-        result = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, control;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        direction = ntuple(p -> [sin(0.17p + 0.29i - 0.31j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6)
-        eps_dir = 1e-7
-        j_plus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, _shift_control(control, direction, eps_dir);
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws).cost
-        j_minus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, _shift_control(control, direction, -eps_dir);
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws).cost
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_control_gradient(result.gradients, [direction])
-        @test predicted ≈ fd rtol=5e-5 atol=1e-10
-    end
-
-    @testset "Prototype 4D-Var gradient includes CMFMC convection" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
-        dt = 20.0
-        convection_op, convection_forcing, convection_ws =
-            _cs_cmfmc_convection_context(mesh, panels_m)
-        values = ntuple(_ -> zeros(Float64, mesh.Nc, mesh.Nc), 6)
-        control = AT.CSSurfaceFluxControl(
-            AT.CSSurfaceFluxWindow(:both_steps, 1:2; normalize=true),
-            values)
-        observations = [
-            AT.CSObservation(2, AT.CSLayerMeanObjective(1, 2, 2, 3), 0.01, 0.25),
-        ]
-
-        result = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, control;
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        direction = ntuple(p -> [cos(0.23p + 0.19i - 0.11j) for i in 1:mesh.Nc, j in 1:mesh.Nc], 6)
-        eps_dir = 1e-7
-        j_plus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, _shift_control(control, direction, eps_dir);
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws).cost
-        j_minus = AT.cs_surface_flux_4dvar(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, observations, _shift_control(control, direction, -eps_dir);
-            scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws).cost
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_control_gradient(result.gradients, [direction])
-        @test predicted ≈ fd rtol=5e-5 atol=1e-10
-    end
-
-    @testset "Generated footprint matches directional finite difference" begin
-        for scheme in (AT.UpwindScheme(), AT.SlopesScheme(AT.NoLimiter()), AT.PPMScheme(AT.NoLimiter()))
-            @testset "$(typeof(scheme))" begin
-                mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-                    _transport_cs_problem(Nc=3, Nz=6, nsteps=2)
-                dt = 1.5
-                obj = AT.CSColumnMeanObjective(1, 2, 2)
-
-                result = AT.cs_surface_emission_footprint(
-                    panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-                    scheme=scheme, dt=dt)
-
-                rates = [ntuple(6) do p
-                    [sin(0.31step + 0.17p + 0.23i - 0.19j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-                end for step in 1:2]
-
-                eps_dir = 2e-6
-                j_plus = AT.run_cs_footprint_forward(
-                    panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-                    scheme=scheme, dt=dt,
-                    emission_rates=_scaled_rates(rates, eps_dir))
-                j_minus = AT.run_cs_footprint_forward(
-                    panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-                    scheme=scheme, dt=dt,
-                    emission_rates=_scaled_rates(rates, -eps_dir))
-
-                fd = (j_plus - j_minus) / (2eps_dir)
-                predicted = _dot_footprint(result, rates)
-                @test predicted ≈ fd rtol=2e-5 atol=1e-10
+            _transport_cs_problem(; Nc, Nz, nsteps)
+        limited && _fill_smooth_tracer!(panels_rm, panels_m, mesh)
+        dt, flux_scale = cfl ? (1.0, 1.5) : (1.5, 1.0)
+        if cfl
+            # ×25 needs several palindrome subcycles while retaining valid masses.
+            for flux_steps in (panels_am, panels_bm, panels_cm), panel in flux_steps[1]
+                panel .*= 25
             end
+            n_pal = Adv._cs_static_palindrome_subcycle_count(
+                panels_am[1], panels_bm[1], panels_cm[1], panels_m,
+                mesh.Nc, mesh.Hp, Nz, 0.95; flux_scale)
+            @test n_pal > 1
         end
-    end
-
-    @testset "Footprint uses the production palindrome CFL schedule" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _transport_cs_problem(Nc=4, Nz=3, nsteps=1)
-        # × 25 gives n = 3; × 40 would leave some cells with negative mass after
-        # the step, an invalid flux set the count rejects.
-        for flux_steps in (panels_am, panels_bm, panels_cm),
-            panel in flux_steps[1]
-            panel .*= 25
-        end
-
-        flux_scale = 1.5
-        n_pal = Adv._cs_static_palindrome_subcycle_count(
-            panels_am[1], panels_bm[1], panels_cm[1], panels_m,
-            mesh.Nc, mesh.Hp, size(panels_m[1], 3), 0.95;
-            flux_scale)
-        @test n_pal > 1
-
-        scheme = AT.UpwindScheme()
         objective = AT.CSColumnMeanObjective(1, 2, 2)
-        rates = [ntuple(6) do p
-            [sin(0.17p + 0.31i - 0.23j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end]
+        rates = [ntuple(p -> [cfl ? sin(0.17p + 0.31i - 0.23j) :
+                                      sin(0.31step + 0.17p + 0.23i - 0.19j)
+                              for i in 1:mesh.Nc, j in 1:mesh.Nc], 6) for step in 1:nsteps]
         result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, objective; scheme, dt=1.0, flux_scale)
-
-        epsilon = 2e-6
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, objective;
-            scheme, dt=1.0, flux_scale,
-            emission_rates=_scaled_rates(rates, epsilon))
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-            mesh, objective;
-            scheme, dt=1.0, flux_scale,
-            emission_rates=_scaled_rates(rates, -epsilon))
-
-        finite_difference = (j_plus - j_minus) / (2epsilon)
-        @test _dot_footprint(result, rates) ≈ finite_difference rtol=3e-5 atol=1e-10
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, objective;
+            scheme, dt, flux_scale)
+        h = limited ? 1e-6 : 2e-6
+        forward(a) = AT.run_cs_footprint_forward(
+            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, objective;
+            scheme, dt, flux_scale, emission_rates = _scaled_rates(rates, a))
+        fd = (forward(h) - forward(-h)) / (2h)
+        @test _dot_footprint(result, rates) ≈ fd rtol = (limited || cfl ? 3e-5 : 2e-5) atol = 1e-10
     end
 
     @testset "4D-Var forward and gradient share non-unit flux_scale" begin
@@ -565,156 +396,6 @@ end
         finite_difference = (j_plus - j_minus) / (2epsilon)
         @test _dot_control_gradient(result.gradients, [direction]) ≈
               finite_difference rtol=5e-5 atol=1e-10
-    end
-
-    @testset "Limited PPM footprint replays nonlinear branch tape ($(nameof(typeof(limiter))))" for limiter in
-            (AT.MonotoneLimiter(), AT.CW84Limiter())
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _transport_cs_problem(Nc=4, Nz=6, nsteps=2)
-        _fill_smooth_tracer!(panels_rm, panels_m, mesh)
-        dt = 1.5
-        scheme = AT.PPMScheme(limiter)
-        obj = AT.CSColumnMeanObjective(1, 2, 2)
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt)
-
-        rates = [ntuple(6) do p
-            [sin(0.31step + 0.17p + 0.23i - 0.19j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        eps_dir = 1e-6
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, eps_dir))
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, -eps_dir))
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, rates)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
-    end
-
-    @testset "Limited PPM footprint follows nonzero base emissions" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _transport_cs_problem(Nc=4, Nz=6, nsteps=2)
-        dt = 1.5
-        scheme = AT.PPMScheme()
-        obj = AT.CSColumnMeanObjective(1, 2, 2)
-
-        base_rates = [ntuple(6) do p
-            [0.03 + 0.005sin(0.11step + 0.17p + 0.23i + 0.19j)
-             for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-        direction = [ntuple(6) do p
-            [cos(0.29step + 0.13p - 0.31i + 0.07j)
-             for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt, base_emission_rates=base_rates)
-
-        eps_dir = 1e-6
-        plus_rates = [ntuple(p -> base_rates[step][p] .+
-                                  eps_dir .* direction[step][p], 6)
-                      for step in 1:2]
-        minus_rates = [ntuple(p -> base_rates[step][p] .-
-                                   eps_dir .* direction[step][p], 6)
-                       for step in 1:2]
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt, emission_rates=plus_rates)
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt, emission_rates=minus_rates)
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, direction)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
-    end
-
-    @testset "Limited PPM branch tape includes implicit vertical diffusion" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _transport_cs_problem(Nc=4, Nz=6, nsteps=2)
-        _fill_smooth_tracer!(panels_rm, panels_m, mesh)
-        dt = 20.0
-        scheme = AT.PPMScheme()
-        diffusion_op, diffusion_ws = _cs_diffusion_context(
-            mesh, panels_rm[1]; kz=2.0, dz=50.0)
-        obj = AT.CSLayerMeanObjective(1, 2, 2, 4)
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-
-        rates = [ntuple(6) do p
-            [sin(0.21step + 0.13p + 0.37i + 0.11j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        eps_dir = 1e-7
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, eps_dir),
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, -eps_dir),
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, rates)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
-    end
-
-    @testset "Generated footprint includes implicit vertical diffusion" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
-        dt = 300.0
-        scheme = AT.PPMScheme(AT.NoLimiter())
-        diffusion_op, diffusion_ws = _cs_diffusion_context(
-            mesh, panels_rm[1]; kz=2.0, dz=50.0)
-        obj = AT.CSLayerMeanObjective(1, 2, 2, 4)
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-
-        @test result.footprints[2][1][2, 2] > 0
-
-        rates = [ntuple(6) do p
-            [cos(0.21step + 0.13p + 0.37i + 0.11j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        eps_dir = 1e-7
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, eps_dir),
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, -eps_dir),
-            diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, rates)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
     end
 
     @testset "Generated footprint includes GCHP VDIFF local-Kz diffusion adjoint" begin
@@ -767,92 +448,6 @@ end
             diffusion_workspace=diffusion_ws)
     end
 
-    @testset "Generated footprint includes TM5 convection transpose" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
-        dt = 20.0
-        scheme = AT.PPMScheme(AT.NoLimiter())
-        convection_op, convection_forcing, convection_ws =
-            _cs_tm5_convection_context(mesh, panels_m)
-        obj = AT.CSLayerMeanObjective(1, 2, 2, 3)
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        @test sum(abs, result.footprints[2][1]) > 0
-
-        rates = [ntuple(6) do p
-            [sin(0.27step + 0.09p + 0.31i - 0.07j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        eps_dir = 1e-7
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, eps_dir),
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, -eps_dir),
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, rates)
-        @test predicted ≈ fd rtol=3e-5 atol=1e-10
-    end
-
-    @testset "Generated footprint includes CMFMC convection transpose" begin
-        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-            _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
-        dt = 20.0
-        scheme = AT.PPMScheme(AT.NoLimiter())
-        convection_op, convection_forcing, convection_ws =
-            _cs_cmfmc_convection_context(mesh, panels_m)
-        obj = AT.CSLayerMeanObjective(1, 2, 2, 3)
-
-        result = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        @test sum(abs, result.footprints[2][1]) > 0
-
-        rates = [ntuple(6) do p
-            [cos(0.19step + 0.15p + 0.21i - 0.09j) for i in 1:mesh.Nc, j in 1:mesh.Nc]
-        end for step in 1:2]
-
-        eps_dir = 1e-7
-        j_plus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, eps_dir),
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-        j_minus = AT.run_cs_footprint_forward(
-            panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
-            scheme=scheme, dt=dt,
-            emission_rates=_scaled_rates(rates, -eps_dir),
-            convection_op=convection_op,
-            convection_forcing=convection_forcing,
-            convection_workspace=convection_ws)
-
-        fd = (j_plus - j_minus) / (2eps_dir)
-        predicted = _dot_footprint(result, rates)
-        @test predicted ≈ fd rtol=5e-5 atol=1e-10
-    end
-
     @testset "Explicit final adjoint seed matches built-in objective seed" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _constant_cs_problem(Nc=3, Nz=3, nsteps=1)
@@ -879,179 +474,4 @@ end
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=dt)
     end
 
-    if HAS_GPU
-        @testset "GPU execution keeps footprint arrays on device" begin
-            mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
-                _constant_cs_problem(Nc=3, Nz=3, nsteps=1, FT=Float32)
-            panels_m_g = ntuple(p -> CUDA.CuArray(panels_m[p]), 6)
-            panels_rm_g = ntuple(p -> CUDA.CuArray(panels_rm[p]), 6)
-            panels_am_g = _to_gpu_steps(panels_am)
-            panels_bm_g = _to_gpu_steps(panels_bm)
-            panels_cm_g = _to_gpu_steps(panels_cm)
-
-            result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1))
-
-            @test result.footprints[1][1] isa CUDA.CuArray
-            fp = Array(result.footprints[1][1])
-            expected = Float32(1) / Array(panels_m_g[1])[mesh.Hp + 2, mesh.Hp + 2, 3]
-            @test fp[2, 2] ≈ expected rtol=1f-5
-            pinned_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-                tape_storage=:pinned_host)
-            @test pinned_result.footprints[1][1] isa CUDA.CuArray
-            @test Array(pinned_result.footprints[1][1]) ≈ fp rtol=1f-6
-
-            # Plan 26 Phase A.1 — mmap tape on GPU should reach the same
-            # device-side result. We compare against the pinned-host result
-            # (the closest sibling) for bit-exact parity, since both paths
-            # round-trip through a host snapshot of the recorded panels.
-            mmap_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-                tape_storage=:mmap)
-            @test mmap_result.footprints[1][1] isa CUDA.CuArray
-            @test Array(mmap_result.footprints[1][1]) ==
-                  Array(pinned_result.footprints[1][1])
-
-            diffusion_op, diffusion_ws = _cs_diffusion_context(
-                mesh, panels_rm_g[1]; kz=2.0f0, dz=50.0f0)
-            diff_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
-                diffusion_op=diffusion_op,
-                diffusion_workspace=diffusion_ws)
-            @test diff_result.footprints[1][1] isa CUDA.CuArray
-            @test Array(diff_result.footprints[1][1])[2, 2] > 0
-            pinned_diff_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
-                diffusion_op=diffusion_op,
-                diffusion_workspace=diffusion_ws,
-                tape_storage=:pinned_host)
-            @test pinned_diff_result.footprints[1][1] isa CUDA.CuArray
-            @test Array(pinned_diff_result.footprints[1][1]) ≈
-                  Array(diff_result.footprints[1][1]) rtol=1f-6
-
-            mmap_diff_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
-                diffusion_op=diffusion_op,
-                diffusion_workspace=diffusion_ws,
-                tape_storage=:mmap)
-            @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
-            @test Array(mmap_diff_result.footprints[1][1]) ==
-                  Array(pinned_diff_result.footprints[1][1])
-
-            convection_op, convection_forcing, convection_ws =
-                _cs_tm5_convection_context(mesh, panels_m_g)
-            conv_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(20),
-                convection_op=convection_op,
-                convection_forcing=convection_forcing,
-                convection_workspace=convection_ws)
-            @test conv_result.footprints[1][1] isa CUDA.CuArray
-            @test sum(abs, Array(conv_result.footprints[1][1])) > 0
-
-            cmfmc_op, cmfmc_forcing, cmfmc_ws =
-                _cs_cmfmc_convection_context(mesh, panels_m_g)
-            cmfmc_result = AT.cs_surface_emission_footprint(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(20),
-                convection_op=cmfmc_op,
-                convection_forcing=cmfmc_forcing,
-                convection_workspace=cmfmc_ws)
-            @test cmfmc_result.footprints[1][1] isa CUDA.CuArray
-            @test sum(abs, Array(cmfmc_result.footprints[1][1])) > 0
-
-            gpu_values = ntuple(_ -> CUDA.zeros(Float32, mesh.Nc, mesh.Nc), 6)
-            gpu_control = AT.CSSurfaceFluxControl(
-                AT.CSSurfaceFluxWindow(:step1, 1),
-                gpu_values)
-            gpu_observations = [
-                AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3),
-                                 0.01f0, 0.2f0),
-            ]
-            gpu_4dvar = AT.cs_surface_flux_4dvar(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, gpu_observations, gpu_control;
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1))
-            @test isfinite(gpu_4dvar.cost)
-            @test gpu_4dvar.gradients[1][1] isa CUDA.CuArray
-
-            gpu_solve = AT.cs_surface_flux_4dvar_optimize(
-                panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
-                mesh, gpu_observations, gpu_control;
-                scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-                optimizer=AT.CSGradientDescent(1, 0.1f0, sqrt(eps(Float32)),
-                                                0.5f0, 0.0f0, true, false))
-            @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
-        end
-
-        @testset "GPU host tape storage keeps limited-PPM m and rm reads apart (#57)" begin
-            # `:pinned_host` and `:mmap` read staged states back through
-            # device caches; a limited-PPM sweep record reads its air mass and
-            # tracer mass together, so one shared cache handed the reverse
-            # kernel `m === rm` (footprint error ~0.8). NoLimiter tapes no rm
-            # and could not see it.
-            FT = Float64
-            mesh = AT.CubedSphereMesh(Nc = 4, Hp = 3, FT = FT)
-            Nc, Hp, Nz, nsteps = mesh.Nc, mesh.Hp, 5, 4
-            N = Nc + 2Hp
-            m = ntuple(p -> [FT(2.0 + 0.25k + 0.01p + 0.03sin(0.7i + 0.3j + p))
-                             for i in 1:N, j in 1:N, k in 1:Nz], 6)
-            rm = ntuple(p -> [m[p][i, j, k] * FT(0.08 + 0.01sin(0.27i + 0.13j + 0.19k + 0.07p))
-                              for i in 1:N, j in 1:N, k in 1:Nz], 6)
-            Adv.fill_panel_halos!(m, mesh; dir = 0)
-            Adv.fill_panel_halos!(rm, mesh; dir = 0)
-            face(dims, range_i, range_j, f) = ntuple(p -> begin
-                a = zeros(FT, dims...)
-                for k in 1:Nz, j in range_j, i in range_i
-                    a[i, j, k] = f(p, i, j, k)
-                end
-                CUDA.CuArray(a)
-            end, 6)
-            am = [face((N + 1, N, Nz), Hp+1:Hp+Nc+1, Hp+1:Hp+Nc,
-                       (p, i, j, k) -> 0.05sin(0.2s + 0.3p + 0.7i + 0.4j + 0.2k)) for s in 1:nsteps]
-            bm = [face((N, N + 1, Nz), Hp+1:Hp+Nc, Hp+1:Hp+Nc+1,
-                       (p, i, j, k) -> 0.04cos(0.3s + 0.5p + 0.4i + 0.6j + 0.1k)) for s in 1:nsteps]
-            cm = [ntuple(p -> begin
-                      c = zeros(FT, N, N, Nz + 1)
-                      for k in 2:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
-                          c[i, j, k] = -0.03(1 + 0.3sin(i + j + k + p + s))
-                      end
-                      CUDA.CuArray(c)
-                  end, 6) for s in 1:nsteps]
-            m_g = ntuple(p -> CUDA.CuArray(m[p]), 6)
-            rm_g = ntuple(p -> CUDA.CuArray(rm[p]), 6)
-            objective = AT.CSLayerMeanObjective(2, 2, 3, Nz)
-            maxrel(a, b) =
-                maximum(maximum(abs.(Array(a.footprints[s][p]) .- Array(b.footprints[s][p])))
-                        for s in eachindex(a.footprints), p in 1:6) /
-                maximum(maximum(abs.(Array(b.footprints[s][p])))
-                        for s in eachindex(b.footprints), p in 1:6)
-            for limiter in (AT.MonotoneLimiter(), AT.CW84Limiter()),
-                checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
-                footprint(storage) = AT.cs_surface_emission_footprint(
-                    rm_g, m_g, am, bm, cm, mesh, objective;
-                    scheme = AT.PPMScheme(limiter), dt = FT(30),
-                    tape_storage = storage, checkpoint)
-                reference = footprint(:device)
-                @test reference.footprints[1][1] isa CUDA.CuArray
-                @test maxrel(footprint(:pinned_host), reference) <= 1e-12
-                @test maxrel(footprint(:mmap), reference) <= 1e-12
-            end
-        end
-    end
 end

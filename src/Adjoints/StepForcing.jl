@@ -124,25 +124,6 @@ _linear_functional(::CSRetrievalColumnObjective, ::Integer, _panels_m, ::CubedSp
 _linear_functional(::CSCellAverageObjective, ::Integer, _panels_m, ::CubedSphereMesh) =
     _cell_average_needs_4dvar()
 
-# `h(rm)` on the host for a functional of one step, on the tracer mass of that
-# step: gathers the entries' tracer masses (one small copy per entry). For
-# tests and diagnostics; the 4D-Var simulated values come from
-# `evaluate_objective`.
-function _evaluate_functional(f::CSLinearFunctional{FT}, panels_rm,
-                              mesh::CubedSphereMesh) where {FT}
-    allequal(f.steps) || throw(ArgumentError(
-        "_evaluate_functional reads one tracer state; this functional spans steps $(unique(f.steps))"))
-    value = f.offset
-    Hp = mesh.Hp
-    @inbounds for e in eachindex(f.weight)
-        ii = Hp + f.i[e]
-        jj = Hp + f.j[e]
-        k = f.k[e]
-        value += f.weight[e] * _host_scalar(panels_rm[f.panel[e]][ii:ii, jj:jj, k:k])
-    end
-    return value
-end
-
 # ---------------------------------------------------------------------------
 # Step forcing of the reverse walk
 # ---------------------------------------------------------------------------

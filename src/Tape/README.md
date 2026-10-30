@@ -8,8 +8,8 @@ can replay them backwards. This module owns where staged panel snapshots
 live (device memory, host memory, or an mmap file on disk), the record
 structs that the reverse loop dispatches on, and the schedules that trade
 recomputation for tape size. It contains no transport physics and no
-reverse-loop logic; recording lives in `../Footprint/TapeRecording.jl` and
-the reverse walk lives in `../Footprint/ReverseLoop.jl`.
+reverse-loop logic; recording lives in `../Adjoints/Footprint/TapeRecording.jl` and
+the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 
 ## How It Is Loaded
 
@@ -49,13 +49,13 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the
   `AbstractHostCSTapeStorage` policies) keep one device read cache per role
   and panel shape, so two reads for one kernel never share a buffer.
-- Persistence: `finalize_tape!`, `load_mmap_tape(dir; readonly = true)`,
+- Persistence: `finalize_tape!`, `load_mmap_tape(dir)`,
   `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
   `_CSHaloRecord`, `_CSMidpointRecord` (step and emission interval),
   `_CSStepEndRecord`, `_CSDiffusionRecord`, `_CSConvectionRecord` (with the
   interval it integrated and the forward call's CFL sub-step count),
-  `_CSAirMassResetRecord`, and the union `_CSTapeOp`. The adjoint's tape
+  `_CSAirMassResetRecord`, handled by the reverse loop. The adjoint's tape
   recorder pushes them from the production step's recorder hooks.
 - Schedules in [`CheckpointSchedule.jl`](CheckpointSchedule.jl):
   `FullCheckpoint()`, `StrideCheckpoint(K)`, `RevolveCheckpoint()`, plus
@@ -72,7 +72,7 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   staging hooks, `_resolve_tape_path`, no-op `finalize_tape!` fallback,
   `_bytes_per_panel_tuple`
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
-  recorder and the `_CSTapeOp` union
+  recorder
 - [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — on-disk policy: cursor
   reservation, mmap reads (views on the CPU, the role- and shape-keyed device
   caches on a GPU), manifest writer and loader, `_build_window_storage`
@@ -87,14 +87,14 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   it holds resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})`
   method.
 - Adding a record type: define it in [`TapeRecords.jl`](TapeRecords.jl),
-  add it to `_CSTapeOp`, and add a branch in `_walk_window_reverse!`
-  (`../Footprint/ReverseLoop.jl`).
+  add a branch in `_walk_window_reverse!`
+  (`../Adjoints/Footprint/ReverseLoop.jl`).
 - Changing the on-disk format: bump `_MMAP_TAPE_FORMAT_VERSION`; the loader
   rejects any other version.
 - Changing GPU staging: edit `../../ext/AtmosTransportCUDAExt.jl`, which
   overrides the pinned-host and mmap hooks for `CuArray` panels.
 - The driver code that uses `StrideCheckpoint` / `RevolveCheckpoint` is in
-  `../Footprint/` (`StrideCheckpoint.jl`, `stride_checkpoint_*.jl`,
+  `../Adjoints/Footprint/` (`StrideCheckpoint.jl`, `stride_checkpoint_*.jl`,
   `revolve_checkpoint.jl`), not here.
 
 ## Invariants
@@ -103,7 +103,7 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   `Tape` -> `Adjoints` dependency. The supported-scheme check
   (`CSAdjointSupportedScheme`) happens where records are built and consumed.
 - `_CSLinRoodHorizRecord` is defined in `../Adjoints/LinRoodTape.jl` and is
-  not part of `_CSTapeOp`; the reverse loop handles it in its own branch.
+  handled directly by the reverse loop.
 - Every recorder ends each step with `_CSStepEndRecord(step)` (absolute
   step, after convection). It carries no payload; the reverse loop adds the
   4D-Var observation forcing of that step there and does nothing without a
@@ -148,3 +148,27 @@ the reverse walk lives in `../Footprint/ReverseLoop.jl`.
   a stale manifest cannot validate a re-recorded tape
 - [`../../test/core/test_public_api_surface.jl`](../../test/core/test_public_api_surface.jl):
   `CSTapeSlot` is reachable but not exported at top level
+
+## Depends on
+
+Standard libraries Mmap, TOML and Dates. Tape contains storage and records;
+it imports no adjoint or inversion implementation.
+
+## Used by
+
+Adjoints.Footprint, Inversion.Solver and the CUDA/AMDGPU extensions.
+
+## Shared helpers owned here
+
+Storage policies, read roles, staging/reading hooks, record types and
+checkpoint schedules are explicitly exported by Tape.jl. Extensions import
+these hooks directly from Tape.
+
+## Forward<->adjoint mirrors
+
+The forward recorder stores inputs; the reverse walk reads them in reverse
+order. Air-mass and tracer-mass read roles have separate caches so a staged
+read cannot overwrite the other operand of a limited-sweep transpose.
+
+Pinned-host and mmap policies share the host synchronization hooks in
+TapeStorage.jl. GPU extension methods retain their pinning and device-sync setup.

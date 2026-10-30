@@ -57,6 +57,7 @@ end
 const Adv = AT.Operators.Advection
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))
+include(joinpath(@__DIR__, "..", "helpers", "cs_inversion_reference.jl"))
 
 const T0 = DateTime(2024, 6, 15)
 const DT = 600.0
@@ -71,28 +72,7 @@ _dc(s) = (t = T0 + Second(round(Int, s)); (year(t), month(t), day(t), hour(t), m
 # indexing: the stretch (averaging_kernels.F90:213-219), the distribution matrix
 # of `inv_rebin` (103-142) and the column (233-235, 245). `h` defaults to the
 # routine's own pressure weights Δp/p_surface (233).
-function _tm5_oco2(model_profile, tm5_pres_levels, levels, ak, prior; h = nothing)
-    nmod = length(model_profile)
-    noco = length(ak)
-    m = (levels[1] - levels[noco + 1]) / (tm5_pres_levels[1] - tm5_pres_levels[nmod + 1])
-    c1 = levels[1] - m * tm5_pres_levels[1]
-    c2 = levels[noco + 1] - m * tm5_pres_levels[nmod + 1]
-    c = 0.5 * (c1 + c2)
-    in_x = m .* tm5_pres_levels .+ c
-    out_x = vcat(in_x[1], levels[2:noco], in_x[end])
-    R = zeros(noco, nmod)
-    for i in 1:noco, j in 1:nmod
-        ((in_x[j + 1] >= out_x[i]) || (out_x[i + 1] >= in_x[j])) && continue
-        ub = min(out_x[i], in_x[j])
-        lb = max(in_x[j + 1], out_x[i + 1])
-        R[i, j] = (ub - lb) / (out_x[i] - out_x[i + 1])
-    end
-    pres_weights = h === nothing ? (levels[1:noco] .- levels[2:(noco + 1)]) ./ levels[1] : h
-    W = pres_weights .* ak
-    squeezed = R * model_profile
-    model_tc = dot(W, squeezed) + dot(pres_weights .- W, prior)
-    return (; model_tc, H = vec(W' * R), R, squeezed, stretched = in_x)
-end
+
 
 # Reference values of TM5-4DVar's OCO-2 operator: `applyaveragingkernel` and
 # `inv_rebin` of deps/tm5-cy3-4dvar/base/f2py/src/averaging_kernels.F90 (file
@@ -602,90 +582,14 @@ end
 
 # The air mass and tracer mass after every step of the production step plan,
 # replayed with the emissions of `controls`.
-function _replayed_states(P, controls; scheme, physics)
-    rates = ADJ._surface_rates_from_controls(controls, P.nsteps, P.mesh, P.rm[1])
-    replay, _ = ADJ._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh; scheme, dt = DT,
-                                        emission_rates = rates, physics(P)...)
-    states = []
-    ADJ._replay_steps!(replay, 1:P.nsteps; on_step_end = (s, _) -> push!(states,
-        (m = map(copy, ADJ._replay_m(replay)), rm = map(copy, ADJ._replay_rm(replay)))))
-    return states, rates
-end
-
-# Per observation and sampled step: the weights w_k on the tracer mass of its
-# cell (an averaging-kernel column from the TM5 transcription on the replayed
-# total interfaces, a column mean 1/Σm, a layer 1/max(m, ε)), the value, and the
-# footprint of that seed on a run truncated to the step.
-function _reference(P, observations, stencils, controls; scheme, physics)
-    FT = P.FT
-    states, rates = _replayed_states(P, controls; scheme, physics)
-    Hp = P.mesh.Hp
-    floor = eps(FT)
-    gradients = [ntuple(_ -> zeros(FT, P.Nc, P.Nc), 6) for _ in controls]
-    simulated = FT[]
-    mismatch = Float64[]
-    profiles = Vector{Float64}[]
-    for (obs, stencil) in zip(observations, stencils)
-        o = obs.objective
-        parts = map(zip(stencil.steps, stencil.weights, stencil.levels)) do (s, ω, level)
-            m = states[s].m[o.panel][Hp + o.i, Hp + o.j, :]
-            rm = states[s].rm[o.panel][Hp + o.i, Hp + o.j, :]
-            dps, profile = NaN, Float64[]
-            w, offset = if o isa AT.CSRetrievalColumnObjective
-                p_half = O.total_interface_pressures!(zeros(P.Nz + 1), m, COLUMN_Q, o.area, COLUMN_GRAVITY, P.p_top)
-                rc = o.retrieval
-                t = _tm5_oco2(reverse(Float64.(rm) ./ max.(Float64.(m), Float64(floor))), reverse(p_half),
-                              rc.pressure_pa, rc.averaging_kernel, rc.prior_profile; h = rc.pressure_weight)
-                dps, profile = p_half[end] - rc.surface_pressure_pa, t.squeezed
-                (FT.(reverse(t.H) ./ max.(Float64.(m), Float64(floor))), FT(O.retrieval_prior_offset(rc)))
-            elseif o isa AT.CSColumnMeanObjective
-                (fill(one(FT) / sum(m), P.Nz), zero(FT))
-            else
-                ([k == level ? one(FT) / max(m[k], floor) : zero(FT) for k in 1:P.Nz], zero(FT))
-            end
-            seed = ntuple(q -> zeros(FT, size(P.rm[q])), 6)
-            seed[o.panel][Hp + o.i, Hp + o.j, :] .= w
-            footprint = AT.cs_surface_emission_footprint_from_seed(seed, P.m, P.am[1:s], P.bm[1:s], P.cm[1:s],
-                                                                   P.mesh; scheme, dt = DT, base_panels_rm0 = P.rm,
-                                                                   base_emission_rates = rates[1:s], physics(P)...)
-            (; s, ω, value = offset + sum(w .* rm), footprint, dps, profile)
-        end
-        H = sum(part.ω * part.value for part in parts)
-        push!(simulated, H)
-        push!(mismatch, sum(part.ω * part.dps for part in parts))
-        push!(profiles, o isa AT.CSRetrievalColumnObjective ? sum(part.ω .* part.profile for part in parts) : Float64[])
-        scale = (H - obs.value) / obs.sigma^2
-        for part in parts, (c, control) in enumerate(controls)
-            for (idx, step) in enumerate(control.window.steps)
-                step <= part.s || continue
-                weight = FT(scale) * FT(part.ω) * FT(control.window.weights[idx])
-                for q in 1:6
-                    gradients[c][q] .+= weight .* part.footprint.footprints[step][q]
-                end
-            end
-        end
-    end
-    return (; simulated, gradients, mismatch, profiles)
-end
-
 _layers(P, ks, v) = ntuple(_ -> (e = zeros(P.FT, P.Nc, P.Nc, P.Nz); e[:, :, ks] .= P.FT(v); e), 6)
 
 # Averaging-kernel columns (instantaneous and windowed, model surface above and
 # below the retrieval's, retrieval top above and below the model top, with a
 # profile uncertainty), a column mean and a placed point.
-function _mixed_observations(P; kwargs...)
-    a, b = _site(P), _site(P; panel = 5, i = 3, j = 1)
-    records = [_record(1; a..., t = 100.0, value = 402e-6, retrieval = _retrieval(97000.0)),
-               _record(2; a..., t = 1000.0, time_window_s = 1500.0, value = 399e-6,
-                       retrieval = _retrieval(101500.0; top = 2000.0, n = 8, sigma = fill(3e-6, 8))),
-               _record(3; b..., t = 700.0, time_window_s = 900.0, value = 404e-6,
-                       retrieval = _retrieval(99500.0; top = 50.0, n = 4, ak = [0.5, 0.9, 1.1, 1.3])),
-               _record(4; b..., t = 1500.0, value = 405e-6),
-               _record(5; a..., t = 1700.0, kind = "point", intake_height_m = 10.0, value = 430e-6)]
-    return _bind(P, records; kwargs...)
-end
 
-@testset "single sweep == per-observation reference for averaging-kernel columns" begin
+
+@testset "single sweep == per-observation reference for placed, window, layer and level columns" begin
     P = hydrostatic_cs_problem()
     observations = _mixed_observations(P)
     controls = _controls(P)
@@ -707,10 +611,14 @@ end
         @test full.simulated ≈ ref.simulated rtol = 1e-14
         @test _relerr(full.gradients, ref.gradients) <= 1e-12
         # The time-weighted diagnostics, with pressures that change from step to step.
-        for idx in 1:3
+        for idx in (1, 2, 3, 11, 12, 13, 14)
             @test full.stencils[idx].surface_pressure_mismatch_pa ≈ ref.mismatch[idx] rtol = 1e-12
             @test full.stencils[idx].retrieval_profile ≈ ref.profiles[idx] rtol = 1e-13
         end
+        @test observations[11].objective.retrieval.mapping isa O.HatLevelProjection
+        @test observations[14].objective.retrieval.mapping isa O.LayerRebin
+        @test length(full.stencils[11].retrieval_profile) == 20
+        @test length(full.stencils[14].retrieval_profile) == 19
         @test isnan(full.stencils[4].surface_pressure_mismatch_pa) && isempty(full.stencils[5].retrieval_profile)
         stride = _fourdvar(P, observations, controls; scheme, checkpoint = AT.StrideCheckpoint(2), physics(P)...)
         @test stride.simulated == full.simulated
@@ -754,7 +662,7 @@ end
     P = hydrostatic_cs_problem()
     observations = _mixed_observations(P)
     @test count(o -> o.objective isa AT.CSRetrievalColumnObjective && length(o.sampling.steps) > 1,
-                observations) == 2
+                observations) == 4
     controls = _controls(P)
     direction = _controls(P; scale = 0.37)
     shifted(ε) = [AT.CSSurfaceFluxControl(c.window, ntuple(q -> c.value[q] .+ ε .* d.value[q], 6))

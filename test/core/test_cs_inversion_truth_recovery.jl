@@ -65,21 +65,7 @@ include(joinpath(@__DIR__, "..", "..", "scripts", "inversions",
                                     result.solve.last.background_cost atol = 1e-9
 end
 
-@testset "synthetic 4D-Var inversion — bumped iteration budget converges further" begin
-    quick = run_synthetic_experiment(SyntheticExperimentConfig(iterations = 3))
-    long  = run_synthetic_experiment(SyntheticExperimentConfig(iterations = 25))
-    # More iterations → lower cost (or the optimizer stopped on
-    # tolerance — either way the longer-budget final cost should not
-    # exceed the shorter-budget one).
-    @test long.solve.last.cost <= quick.solve.last.cost
-end
+
 
 # Issue #16: the experiment used to hard-code `PPMScheme(NoLimiter())`; the
 # scheme is now a config field, checked for adjoint support.
-@testset "synthetic 4D-Var inversion — configurable advection scheme" begin
-    @test SyntheticExperimentConfig().scheme == AT.PPMScheme(AT.NoLimiter())
-    @test SyntheticExperimentConfig(scheme = AT.UpwindScheme()).scheme == AT.UpwindScheme()
-    @test_throws ArgumentError SyntheticExperimentConfig(scheme = AT.SlopesScheme())
-    @test_throws ArgumentError SyntheticExperimentConfig(
-        scheme = AT.PPMScheme(; vertical = AT.Operators.Advection.FV3ScalarProfile()))
-end

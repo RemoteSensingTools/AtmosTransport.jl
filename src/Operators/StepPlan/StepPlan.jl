@@ -49,6 +49,18 @@ export execute_stage!, execute_stages!, execute_window_advance!, execute_window_
        execute_step_stages!, execute_window_end!
 export plan_stages
 
+# Clock arithmetic shared by driven stepping and adjoint replay. Preserve the
+# conversion and operation order: window ends must agree bit for bit.
+"""Run clock at `fraction` of window `offset`, relative to `start_time`."""
+window_clock(start_time, window_dt, offset::Integer, fraction::Float64) =
+    start_time + Float64(window_dt) * (offset + fraction)
+
+"""Step duration in the precision of `window_dt`, with one division."""
+window_step_dt(window_dt::FT, steps_per_window::Integer) where FT =
+    window_dt / FT(steps_per_window)
+
+export window_clock, window_step_dt
+
 # ---------------------------------------------------------------------------
 # Configuration vocabulary (also used by the runner's config checks)
 # ---------------------------------------------------------------------------

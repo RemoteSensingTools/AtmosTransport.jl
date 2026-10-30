@@ -14,6 +14,184 @@ else
     CUDA.allowscalar(false)
     include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
 
+    function _to_gpu_steps(steps)
+        [ntuple(p -> CUDA.CuArray(step[p]), 6) for step in steps]
+    end
+
+    @testset "GPU execution keeps footprint arrays on device" begin
+        mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
+            _constant_cs_problem(Nc=3, Nz=3, nsteps=1, FT=Float32)
+        panels_m_g = ntuple(p -> CUDA.CuArray(panels_m[p]), 6)
+        panels_rm_g = ntuple(p -> CUDA.CuArray(panels_rm[p]), 6)
+        panels_am_g = _to_gpu_steps(panels_am)
+        panels_bm_g = _to_gpu_steps(panels_bm)
+        panels_cm_g = _to_gpu_steps(panels_cm)
+
+        result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1))
+
+        @test result.footprints[1][1] isa CUDA.CuArray
+        fp = Array(result.footprints[1][1])
+        expected = Float32(1) / Array(panels_m_g[1])[mesh.Hp + 2, mesh.Hp + 2, 3]
+        @test fp[2, 2] ≈ expected rtol=1f-5
+        pinned_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
+            tape_storage=:pinned_host)
+        @test pinned_result.footprints[1][1] isa CUDA.CuArray
+        @test Array(pinned_result.footprints[1][1]) ≈ fp rtol=1f-6
+
+        # Plan 26 Phase A.1 — mmap tape on GPU should reach the same
+        # device-side result. We compare against the pinned-host result
+        # (the closest sibling) for bit-exact parity, since both paths
+        # round-trip through a host snapshot of the recorded panels.
+        mmap_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
+            tape_storage=:mmap)
+        @test mmap_result.footprints[1][1] isa CUDA.CuArray
+        @test Array(mmap_result.footprints[1][1]) ==
+              Array(pinned_result.footprints[1][1])
+
+        diffusion_op, diffusion_ws = _cs_diffusion_context(
+            mesh, panels_rm_g[1]; kz=2.0f0, dz=50.0f0)
+        diff_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws)
+        @test diff_result.footprints[1][1] isa CUDA.CuArray
+        @test Array(diff_result.footprints[1][1])[2, 2] > 0
+        pinned_diff_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws,
+            tape_storage=:pinned_host)
+        @test pinned_diff_result.footprints[1][1] isa CUDA.CuArray
+        @test Array(pinned_diff_result.footprints[1][1]) ≈
+              Array(diff_result.footprints[1][1]) rtol=1f-6
+
+        mmap_diff_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
+            diffusion_op=diffusion_op,
+            diffusion_workspace=diffusion_ws,
+            tape_storage=:mmap)
+        @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
+        @test Array(mmap_diff_result.footprints[1][1]) ==
+              Array(pinned_diff_result.footprints[1][1])
+
+        convection_op, convection_forcing, convection_ws =
+            _cs_tm5_convection_context(mesh, panels_m_g)
+        conv_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(20),
+            convection_op=convection_op,
+            convection_forcing=convection_forcing,
+            convection_workspace=convection_ws)
+        @test conv_result.footprints[1][1] isa CUDA.CuArray
+        @test sum(abs, Array(conv_result.footprints[1][1])) > 0
+
+        cmfmc_op, cmfmc_forcing, cmfmc_ws =
+            _cs_cmfmc_convection_context(mesh, panels_m_g)
+        cmfmc_result = AT.cs_surface_emission_footprint(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(20),
+            convection_op=cmfmc_op,
+            convection_forcing=cmfmc_forcing,
+            convection_workspace=cmfmc_ws)
+        @test cmfmc_result.footprints[1][1] isa CUDA.CuArray
+        @test sum(abs, Array(cmfmc_result.footprints[1][1])) > 0
+
+        gpu_values = ntuple(_ -> CUDA.zeros(Float32, mesh.Nc, mesh.Nc), 6)
+        gpu_control = AT.CSSurfaceFluxControl(
+            AT.CSSurfaceFluxWindow(:step1, 1),
+            gpu_values)
+        gpu_observations = [
+            AT.CSObservation(1, AT.CSLayerMeanObjective(1, 2, 2, 3),
+                             0.01f0, 0.2f0),
+        ]
+        gpu_4dvar = AT.cs_surface_flux_4dvar(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, gpu_observations, gpu_control;
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1))
+        @test isfinite(gpu_4dvar.cost)
+        @test gpu_4dvar.gradients[1][1] isa CUDA.CuArray
+
+        gpu_solve = AT.cs_surface_flux_4dvar_optimize(
+            panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
+            mesh, gpu_observations, gpu_control;
+            scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
+            optimizer=AT.CSGradientDescent(1, 0.1f0, sqrt(eps(Float32)),
+                                            0.5f0, 0.0f0, true, false))
+        @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
+    end
+
+    @testset "GPU host tape storage keeps limited-PPM m and rm reads apart (#57)" begin
+        # `:pinned_host` and `:mmap` read staged states back through
+        # device caches; a limited-PPM sweep record reads its air mass and
+        # tracer mass together, so one shared cache handed the reverse
+        # kernel `m === rm` (footprint error ~0.8). NoLimiter tapes no rm
+        # and could not see it.
+        FT = Float64
+        mesh = AT.CubedSphereMesh(Nc = 4, Hp = 3, FT = FT)
+        Nc, Hp, Nz, nsteps = mesh.Nc, mesh.Hp, 5, 4
+        N = Nc + 2Hp
+        m = ntuple(p -> [FT(2.0 + 0.25k + 0.01p + 0.03sin(0.7i + 0.3j + p))
+                         for i in 1:N, j in 1:N, k in 1:Nz], 6)
+        rm = ntuple(p -> [m[p][i, j, k] * FT(0.08 + 0.01sin(0.27i + 0.13j + 0.19k + 0.07p))
+                          for i in 1:N, j in 1:N, k in 1:Nz], 6)
+        Adv.fill_panel_halos!(m, mesh; dir = 0)
+        Adv.fill_panel_halos!(rm, mesh; dir = 0)
+        face(dims, range_i, range_j, f) = ntuple(p -> begin
+            a = zeros(FT, dims...)
+            for k in 1:Nz, j in range_j, i in range_i
+                a[i, j, k] = f(p, i, j, k)
+            end
+            CUDA.CuArray(a)
+        end, 6)
+        am = [face((N + 1, N, Nz), Hp+1:Hp+Nc+1, Hp+1:Hp+Nc,
+                   (p, i, j, k) -> 0.05sin(0.2s + 0.3p + 0.7i + 0.4j + 0.2k)) for s in 1:nsteps]
+        bm = [face((N, N + 1, Nz), Hp+1:Hp+Nc, Hp+1:Hp+Nc+1,
+                   (p, i, j, k) -> 0.04cos(0.3s + 0.5p + 0.4i + 0.6j + 0.1k)) for s in 1:nsteps]
+        cm = [ntuple(p -> begin
+                  c = zeros(FT, N, N, Nz + 1)
+                  for k in 2:Nz, j in Hp+1:Hp+Nc, i in Hp+1:Hp+Nc
+                      c[i, j, k] = -0.03(1 + 0.3sin(i + j + k + p + s))
+                  end
+                  CUDA.CuArray(c)
+              end, 6) for s in 1:nsteps]
+        m_g = ntuple(p -> CUDA.CuArray(m[p]), 6)
+        rm_g = ntuple(p -> CUDA.CuArray(rm[p]), 6)
+        objective = AT.CSLayerMeanObjective(2, 2, 3, Nz)
+        maxrel(a, b) =
+            maximum(maximum(abs.(Array(a.footprints[s][p]) .- Array(b.footprints[s][p])))
+                    for s in eachindex(a.footprints), p in 1:6) /
+            maximum(maximum(abs.(Array(b.footprints[s][p])))
+                    for s in eachindex(b.footprints), p in 1:6)
+        for limiter in (AT.MonotoneLimiter(), AT.CW84Limiter()),
+            checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+            footprint(storage) = AT.cs_surface_emission_footprint(
+                rm_g, m_g, am, bm, cm, mesh, objective;
+                scheme = AT.PPMScheme(limiter), dt = FT(30),
+                tape_storage = storage, checkpoint)
+            reference = footprint(:device)
+            @test reference.footprints[1][1] isa CUDA.CuArray
+            @test maxrel(footprint(:pinned_host), reference) <= 1e-12
+            @test maxrel(footprint(:mmap), reference) <= 1e-12
+        end
+    end
+
     # A smooth nonzero base avoids limiter switches in centered finite
     # differences. The corner observation exercises panel-edge transport.
     # Float32 is compared with its CPU gradient; Float64 also checks the

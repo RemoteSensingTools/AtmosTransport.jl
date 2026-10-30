@@ -310,7 +310,13 @@ function resolve_imports(inv)
             for _ in 2:imp.dots
                 scope = parent_module(scope)
             end
-            target, member = reference_target(inv, bindings, (; mod = scope, chain = imp.names))
+            # An explicit relative module path resolves in its own scope before
+            # inherited aliases. Inversion.Observations shadows the package's
+            # Observations module; both are valid owners.
+            direct = imp.dots > 0 ? join([split(scope, '.'); imp.names], '.') : ""
+            direct in inv.order || (direct = "")
+            target, member = isempty(direct) ?
+                reference_target(inv, bindings, (; mod = scope, chain = imp.names)) : (direct, "")
             if isempty(target)
                 target = module_path(inv, imp.mod, imp.names, imp.dots)
                 member = !isempty(target) && last(imp.names) != last(split(target, '.')) ? last(imp.names) : ""
@@ -697,6 +703,58 @@ function relocate_a1_layers(before, file)
     return migrated
 end
 
+# T1 separates the existing Adjoints unit into core, replay, observation
+# and solver modules. Children inherit only the old lower dependency budget.
+# No clone/private-use/size identities migrate and no reverse exception is added.
+function relocate_t1_layers(before, file)
+    file == "src/LAYERS.toml" || return before
+    parent = "AtmosTransport.Adjoints"
+    modules = get(before, "modules", Dict())
+    haskey(modules, parent * ".Footprint") && return before
+    haskey(modules, parent) || return before
+    migrated = deepcopy(before)
+    mods = migrated["modules"]
+    fp, inv = parent * ".Footprint", parent * ".Inversion"
+    obs, sol = inv * ".Observations", inv * ".Solver"
+    prior = copy(mods[parent])
+    for deps in values(mods)
+        parent in deps && append!(deps, [fp, inv, obs, sol])
+    end
+    mods[parent] = [prior; fp; inv]
+    mods[fp] = [prior; parent]
+    mods[inv] = [obs, sol]
+    mods[obs] = [prior; parent; fp]
+    mods[sol] = [prior; parent; fp; obs]
+    folders = get(migrated, "folders", Dict())
+    core, oldfp, oldinv = "src/Adjoints", "src/Footprint", "src/Inversion"
+    haskey(folders, oldfp) && haskey(folders, oldinv) || return migrated
+    newfp, newinv = core * "/Footprint", core * "/Inversion"
+    newobs, newsol = newinv * "/Observations", newinv * "/Solver"
+    # Step forcing moved down from Footprint into core; Inversion split up.
+    expand(f) = f == oldfp ? [core, newfp] :
+                f == oldinv ? [newinv, newobs, newsol] : [f]
+    old = deepcopy(folders)
+    for (f, deps) in old
+        f in (core, oldfp, oldinv) && continue
+        folders[f] = unique(reduce(vcat, expand.(deps); init = String[]))
+    end
+    prior_core = filter(f -> f ∉ (oldfp, oldinv), old[core])
+    prior_fp = filter(f -> f != oldinv, old[oldfp])
+    prior_inv = filter(f -> f != oldfp, old[oldinv])
+    folders[core] = [prior_core; newfp; newinv]
+    folders[newfp] = prior_fp
+    folders[newinv] = [newobs, newsol]
+    folders[newobs] = [prior_inv; prior_core; newfp]
+    folders[newsol] = [prior_inv; prior_core; newfp; newobs]
+    delete!(folders, oldfp); delete!(folders, oldinv)
+    # These historical cycles are eliminated, not renamed.
+    exceptions = get(migrated, "folder_order_allow", Dict())
+    for id in ("$core|$oldfp", "$core|$oldinv", "$oldfp|$oldinv")
+        delete!(exceptions, id)
+    end
+    return migrated
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
@@ -705,6 +763,7 @@ function allowance_growth(before, after, file)
     before = relocate_m1_layers(before, file)
     before = relocate_c1_layers(before, file)
     before = relocate_a1_layers(before, file)
+    before = relocate_t1_layers(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")
