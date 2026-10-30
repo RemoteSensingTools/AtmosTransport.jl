@@ -6,7 +6,7 @@
 #
 # Performance model
 # -----------------
-# Current (single-tracer kernels): 6N launches, each reading mass + flux
+# Separate Nt=1 sweeps would make 6N launches, each reading mass + flux
 #   arrays redundantly.
 # Multi-tracer kernels: 6 launches, mass update computed ONCE, mass/flux
 #   arrays read ONCE per cell, tracer flux computed per-tracer.
@@ -74,7 +74,8 @@ Base.@propagate_inbounds Base.getindex(v::TracerView, i, j, k) = v.data[i, j, k,
 # 3. Updates each tracer's mass in the 4D output array
 #
 # The mass update is a telescoping sum that conserves total air mass
-# exactly (see structured_kernels.jl for the proof).  The tracer mass
+# to roundoff: summing each face divergence cancels interior faces;
+# periodic X faces match and Y/Z boundary fluxes are zero. The tracer mass
 # update conserves total tracer mass for each tracer independently.
 
 """

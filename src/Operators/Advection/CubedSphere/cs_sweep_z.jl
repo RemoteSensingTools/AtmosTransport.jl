@@ -1,61 +1,6 @@
 # Cubed-sphere Z sweeps (panel-local) and interior copies.
 # Split from CubedSphereStrang.jl (refactor phase 4); included by Advection.jl in this order.
 
-"""Higher-order Z-sweep via KA kernel dispatching on scheme (Slopes, PPM, etc.).
-
-Z boundary: `_zface_tracer_flux` handles k=1 (TOA) and k=Nz+1 (surface) boundaries
-by falling back to upwind at the domain edges.
-"""
-function _sweep_z_panel!(rm, m, cm, scheme::AbstractAdvectionScheme, rm_A, m_A, Nc, Hp, Nz;
-                         flux_scale = one(eltype(m)))
-    # Z-direction does not need halo validation (vertical boundaries are closed, not halo-exchanged)
-    FT = eltype(m)
-    backend = get_backend(rm)
-    kernel! = _cs_zsweep_kernel!(backend, 256)
-    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z, :cs_kernel_sync_z) do
-        kernel!(rm_A, rm, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), FT(flux_scale);
-                ndrange=(Nc, Nc, Nz))
-    end
-    _profiled_copy!(:cs_copyback_z) do
-        _copy_interior!(rm, rm_A, Nc, Hp, Nz)
-        _copy_interior!(m, m_A, Nc, Hp, Nz)
-    end
-    return nothing
-end
-
-function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::AbstractAdvectionScheme,
-                            rm_4d_A, m_A, Nc, Hp, Nz, Nt;
-                            flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    backend = get_backend(rm_4d)
-    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
-    kernel! = _cs_zsweep_mt_kernel!(backend, workgroupsize)
-    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
-        kernel!(rm_4d_A, rm_4d, m_A, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-                ndrange=(Nc, Nc, Nz))
-    end
-    _profiled_copy!(:cs_copyback_z_mt) do
-        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-        _copy_interior!(m, m_A, Nc, Hp, Nz)
-    end
-    return nothing
-end
-
-function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
-                                     scheme::AbstractAdvectionScheme,
-                                     Nc, Hp, Nz, Nt;
-                                     flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    backend = get_backend(rm_4d)
-    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
-    kernel! = _cs_zsweep_mt_kernel!(backend, workgroupsize)
-    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
-        kernel!(rm_4d_out, rm_4d, m_out, m, cm, scheme, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-                ndrange=(Nc, Nc, Nz))
-    end
-    return nothing
-end
-
 """Gamma-clamped upwind Z-sweep kernel.
 
 Closed boundary at k=1 (TOA) and k=Nz+1 (surface): both face fluxes
@@ -149,52 +94,12 @@ function _sweep_z_panel!(rm, m, cm, scheme::UpwindScheme, rm_A, m_A, Nc, Hp, Nz;
     return nothing
 end
 
-function _sweep_z_panel_mt!(rm_4d, m, cm, scheme::UpwindScheme,
-                            rm_4d_A, m_A, Nc, Hp, Nz, Nt;
-                            flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    backend = get_backend(rm_4d)
-    kernel! = _cs_zsweep_mt_upwind_kernel!(backend, 256)
-    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
-        kernel!(rm_4d_A, rm_4d, m_A, m, cm, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-                ndrange=(Nc, Nc, Nz))
-    end
-    _profiled_copy!(:cs_copyback_z_mt) do
-        _copy_interior!(rm_4d, rm_4d_A, Nc, Hp, Nz, Nt)
-        _copy_interior!(m, m_A, Nc, Hp, Nz)
-    end
-    return nothing
-end
-
-function _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm,
-                                     scheme::UpwindScheme,
-                                     Nc, Hp, Nz, Nt;
-                                     flux_scale = one(eltype(m)))
-    FT = eltype(m)
-    backend = get_backend(rm_4d)
-    kernel! = _cs_zsweep_mt_upwind_kernel!(backend, 256)
-    _profiled_launch_and_sync!(backend, :cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt) do
-        kernel!(rm_4d_out, rm_4d, m_out, m, cm, Int32(Nz), Int32(Hp), Int32(Nt), FT(flux_scale);
-                ndrange=(Nc, Nc, Nz))
-    end
-    return nothing
-end
-
 @kernel function _copy_interior_3d_kernel!(dst, @Const(src), Hp)
     ii, jj, kk = @index(Global, NTuple)
     @inbounds begin
         i = ii + Hp
         j = jj + Hp
         dst[i, j, kk] = src[i, j, kk]
-    end
-end
-
-@kernel function _copy_interior_4d_kernel!(dst, @Const(src), Hp)
-    ii, jj, kk, tt = @index(Global, NTuple)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        dst[i, j, kk, tt] = src[i, j, kk, tt]
     end
 end
 
@@ -221,11 +126,11 @@ function _copy_interior!(dst, src, Nc, Hp, Nz)
     return nothing
 end
 
-function _copy_interior!(dst::AbstractArray{<:Any, 4}, src::AbstractArray{<:Any, 4},
-                         Nc, Hp, Nz, Nt)
-    backend = get_backend(dst)
-    kernel! = _copy_interior_4d_kernel!(backend, 256)
-    kernel!(dst, src, Int32(Hp); ndrange = (Nc, Nc, Nz, Nt))
-    backend isa KA_CPU && synchronize(backend)
-    return nothing
+# Keep the directional entry point for callers and backend launch checks.
+function _sweep_z_panel_mt_pingpong!(rm_out, m_out, rm, m, flux,
+                                         scheme::AbstractAdvectionScheme,
+                                         Nc, Hp, Nz, Nt;
+                                         flux_scale = one(eltype(m)))
+    _sweep_cs_panel_mt_pingpong!(rm_out, m_out, rm, m, flux, scheme,
+                                 Nc, Hp, Nz, Nt, Val(3); flux_scale)
 end

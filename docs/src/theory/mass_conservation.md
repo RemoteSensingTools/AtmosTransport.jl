@@ -50,7 +50,7 @@ identically vanishes mathematically — and to floating-point in the
 implementation, provided both cells use the same face flux at the same
 update stage. Writing each panel's update in flux form is insufficient
 if neighboring panels reconstruct different tracer fluxes. The structured
-X / Y / Z kernels in `src/Operators/Advection/structured_kernels.jl` use
+X / Y / Z kernels in `src/Operators/Advection/Structured/multitracer_kernels.jl` use
 shared face values. The telescoping argument does NOT hold
 for schemes written in advective form (e.g. `χ ∂_t = -u ∂_x χ`),
 which is why every advection scheme in this repository is flux-form.
@@ -63,7 +63,7 @@ The same telescoping argument extends to:
   emergency flux scaling breaks conservation when activated.
 - Cubed-sphere Upwind, Slopes, and PPM via one cached physical seam transfer
   applied to both neighbors in the same directional group
-  (`src/Operators/Advection/CubedSphereSeams.jl`). This also pairs rotated X/Y
+  (`src/Operators/Advection/CubedSphere/CubedSphereSeams.jl`). This also pairs rotated X/Y
   contacts. Halo exchange alone is insufficient; see
   [Panel-edge halo treatment (cubed sphere)](@ref).
 - The reduced-Gaussian grid via the LCM-based ring-boundary face
@@ -281,8 +281,8 @@ well before any windows actually step.
 
 | Concept | File |
 |---|---|
-| X-sweep kernel (flux-form telescoping) | `src/Operators/Advection/structured_kernels.jl` |
-| Strang palindrome (X→Y→Z / V/S/V / Z→Y→X) | `src/Operators/Advection/StrangSplitting.jl` (`strang_split!`) and `CubedSphereStrang.jl` (`strang_split_cs!`) |
+| X-sweep kernel (flux-form telescoping) | `src/Operators/Advection/Structured/multitracer_kernels.jl` |
+| Strang palindrome (X→Y→Z / V/S/V / Z→Y→X) | `src/Operators/Advection/Structured/StrangSplitting.jl` (`strang_split!`) and `CubedSphereStrang.jl` (`strang_split_cs_mt!`) |
 | Diagnose `cm` from `dm` target (LL / RG) | `src/MetDrivers/ReplayContinuity.jl::recompute_cm_from_dm_target!` |
 | Diagnose `cm` from `dm` target (CS) | `src/Preprocessing/cs_poisson_balance.jl::diagnose_cs_cm!` |
 | Column balance against next-hour endpoint (GEOS-CS) | `src/Preprocessing/cs_poisson_balance.jl::balance_cs_column_mass_fluxes!` |

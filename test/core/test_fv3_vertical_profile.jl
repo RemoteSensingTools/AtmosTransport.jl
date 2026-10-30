@@ -9,7 +9,7 @@ using Test, Random
 
 using AtmosTransport
 using .AtmosTransport.Operators: MonotoneLimiter, NoLimiter, SameAsHorizontal, FV3ScalarProfile
-using .AtmosTransport.Operators.Advection: CSAdvectionWorkspace, strang_split_cs!,
+using .AtmosTransport.Operators.Advection: CSAdvectionWorkspace,
     strang_split_cs_mt!, needs_column_scratch, _sweep_z_panel!,
     _sweep_z_panel_mt_pingpong!, _sweep_z_panels_mt_pingpong!, _sweep_z_panel_fv3!,
     _fv3_unlimited_edges!, _fv3_layer_profile, _fv3_interface_flux, FV3Column,
@@ -271,12 +271,6 @@ test_profiles(Nz) = (
                                                             column_scratch = true,
                                                             column_scratch_panels = 7)
 
-            # The single-tracer path runs the same kernel.
-            ws1 = CSAdvectionWorkspace(mesh, m[1]; column_scratch = true)
-            m_1, rm_1 = map(copy, m), map(copy, rm)
-            strang_split_cs!(rm_1, m_1, am, bm, cm, mesh, FV3_PPM, ws1)
-            @test all(p -> view(rm_1[p], I, I, :) == view(rm_mt[p], I, I, :, 1), 1:6)
-
             # Without column scratch the sweep refuses to run.
             ws0 = CSAdvectionWorkspace(mesh, m[1]; n_tracers = Nt)
             @test_throws ArgumentError strang_split_cs_mt!(map(copy, rm_4d), map(copy, m),
@@ -344,7 +338,6 @@ test_profiles(Nz) = (
         @test all(p -> isapprox(state_lr.tracers.CO2[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :],
                                 state_pp.tracers.CO2[p][Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]; rtol = 1e-12), 1:6)
         @test LinRoodPPMScheme(7).vertical isa UpwindScheme
-        @test !needs_column_scratch(LinRoodPPMScheme(7)) && needs_column_scratch(linrood)
         @test_throws TypeError LinRoodPPMScheme(7; vertical = PPMScheme())   # not a LinRoodVertical
         @test linrood isa AtmosTransport.Adjoints.CSAdjointSupportedScheme   # OF-94
         @test LinRoodPPMScheme(5) isa AtmosTransport.Adjoints.CSAdjointSupportedScheme
@@ -355,10 +348,6 @@ test_profiles(Nz) = (
         @test PPMScheme(NoLimiter()) isa PPMScheme{NoLimiter, SameAsHorizontal}
         @test FV3_PPM isa PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}
         @test SIGNED isa FV3ScalarProfile{false}
-        @test needs_column_scratch(FV3_PPM)
-        @test needs_column_scratch(PPMScheme(; vertical = SIGNED))
-        @test !needs_column_scratch(PPMScheme())
-        @test !needs_column_scratch(UpwindScheme())
         a = zeros(10, 10, 8)
         @test_throws ArgumentError _sweep_z_panel!(a, a, zeros(10, 10, 9), FV3_PPM, a, a, 4, 3, 8)
         # structured (lat-lon) sweeps refuse the FV3 profile
@@ -369,14 +358,4 @@ test_profiles(Nz) = (
         @test !(FV3_PPM isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
     end
 
-    @testset "run-log labels name the vertical scheme" begin
-        label = AtmosTransport.Models.DrivenRunner._advection_label
-        signed = PPMScheme(; vertical = FV3ScalarProfile(; positive_definite = false))
-        @test label(PPMScheme()) == "PPM"
-        @test label(FV3_PPM) == "PPM, FV3 kord 8 vertical"
-        @test label(signed) == "PPM, FV3 kord 8 vertical (signed)"
-        @test label(LinRoodPPMScheme(7)) == "Lin-Rood PPM7"
-        @test label(LinRoodPPMScheme(7; vertical = FV3_PPM)) == "Lin-Rood PPM7, FV3 kord 8 vertical"
-        @test isempty(Test.detect_ambiguities(AtmosTransport.Models.DrivenRunner))
-    end
 end

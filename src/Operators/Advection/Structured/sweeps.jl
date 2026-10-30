@@ -1,64 +1,4 @@
-# Directional sweeps: structured x/y/z (generated with @eval) and face-indexed horizontal/vertical.
-# Split from StrangSplitting.jl (refactor phase 4); included by Advection.jl in this order.
-
-# =========================================================================
-# Generic directional sweeps — generated via @eval
-# =========================================================================
-#
-# Ping-pong contract:
-#   - The 7-arg form `sweep_x!(rm_in, rm_out, m_in, m_out, flux, scheme, ws)`
-#     is the KERNEL entry point. It reads from (rm_in, m_in), writes to
-#     (rm_out, m_out), synchronizes the backend, and returns. NO copyto!.
-#     `strang_split!` uses this form and tracks parity so the output of
-#     one sweep becomes the input of the next.
-#   - The 5-arg form `sweep_x!(rm, m, flux, scheme, ws)` is the in-place
-#     entry point. It kernels into `(ws.rm_B, ws.m_B)` and then copies back
-#     to `(rm, m)`.
-#   - The 6-arg / 8-arg `flux_scale` variants follow the same pattern.
-#
-# The three sweeps differ ONLY in:
-#   - Which kernel function to call (_xsweep_kernel!, etc.)
-#   - Which dimension to use for N (1=Nx, 2=Ny, 3=Nz)
-
-for (sweep_fn, kernel_fn, dim) in (
-    (:sweep_x!, :_xsweep_kernel!, 1),
-    (:sweep_y!, :_ysweep_kernel!, 2),
-    (:sweep_z!, :_zsweep_kernel!, 3),
-)
-    @eval begin
-        # Ping-pong entry point: writes (rm_out, m_out), reads (rm_in, m_in).
-        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                            flux::AbstractArray{FT,3},
-                            scheme::AbstractAdvectionScheme,
-                            ws::AdvectionWorkspace{FT}) where FT
-            backend = get_backend(m_in)
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(rm_out, rm_in, m_out, m_in, flux, scheme,
-                    Int32(size(m_in, $dim)), one(FT);
-                    ndrange=size(m_in))
-            synchronize(backend)
-            return nothing
-        end
-
-        """
-            $($sweep_fn)(rm, m, flux, scheme, ws)
-
-        In-place sweep. Writes into the workspace B pair, then copies the
-        result back to `rm` and `m`. Palindrome orchestration should use the
-        7-argument ping-pong form to avoid the copies.
-        """
-        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                           flux::AbstractArray{FT,3},
-                           scheme::AbstractAdvectionScheme,
-                           ws::AdvectionWorkspace{FT}) where FT
-            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws)
-            copyto!(rm, ws.rm_B)
-            copyto!(m,  ws.m_B)
-            return nothing
-        end
-    end
-end
+# Face-indexed horizontal and vertical sweeps (reduced Gaussian).
 
 """
     _horizontal_face_atomic_kernel!(rm_new, rm, m_new, m, horizontal_flux,
@@ -206,47 +146,6 @@ function _sweep_vertical_face_backend!(backend,
                                        ws::AdvectionWorkspace{FT},
                                        flux_scale::FT) where FT
     _sweep_vertical_face_gpu!(backend, rm, m, cm, scheme, ws, flux_scale)
-end
-
-# Additional structured sweep overloads with explicit flux scaling: apply a
-# fraction of the directional forcing, so a sweep can be split into smaller
-# conservative pieces. Same ping-pong
-# contract as the one(FT) variants above: the 8-arg form does the kernel
-# launch only (no `copyto!`); the 6-argument form is the in-place entry point.
-for (sweep_fn, kernel_fn, dim) in (
-    (:sweep_x!, :_xsweep_kernel!, 1),
-    (:sweep_y!, :_ysweep_kernel!, 2),
-    (:sweep_z!, :_zsweep_kernel!, 3),
-)
-    @eval begin
-        # Ping-pong entry point with explicit flux scale.
-        function $sweep_fn(rm_in::AbstractArray{FT,3},  rm_out::AbstractArray{FT,3},
-                            m_in::AbstractArray{FT,3},   m_out::AbstractArray{FT,3},
-                            flux::AbstractArray{FT,3},
-                            scheme::AbstractAdvectionScheme,
-                            ws::AdvectionWorkspace{FT},
-                            flux_scale::FT) where FT
-            backend = get_backend(m_in)
-            kernel! = $kernel_fn(backend, 256)
-            kernel!(rm_out, rm_in, m_out, m_in, flux, scheme,
-                    Int32(size(m_in, $dim)), flux_scale;
-                    ndrange=size(m_in))
-            synchronize(backend)
-            return nothing
-        end
-
-        # In-place entry point with explicit flux scaling.
-        function $sweep_fn(rm::AbstractArray{FT,3}, m::AbstractArray{FT,3},
-                           flux::AbstractArray{FT,3},
-                           scheme::AbstractAdvectionScheme,
-                           ws::AdvectionWorkspace{FT},
-                           flux_scale::FT) where FT
-            $sweep_fn(rm, ws.rm_B, m, ws.m_B, flux, scheme, ws, flux_scale)
-            copyto!(rm, ws.rm_B)
-            copyto!(m,  ws.m_B)
-            return nothing
-        end
-    end
 end
 
 function sweep_horizontal!(rm::AbstractArray{FT,2}, m::AbstractArray{FT,2},

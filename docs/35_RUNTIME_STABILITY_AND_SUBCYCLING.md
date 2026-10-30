@@ -68,7 +68,7 @@ Relevant source:
   [`spectral_synthesis.jl`](../src/Preprocessing/Spectral/spectral_synthesis.jl)
 - the runtime then applies these prepared sweep fluxes through the Strang
   sequence in
-  [`StrangSplitting.jl`](../src/Operators/Advection/StrangSplitting.jl)
+  [`StrangSplitting.jl`](../src/Operators/Advection/Structured/StrangSplitting.jl)
 
 So the right reading of the current ERA5 lat-lon contract is:
 

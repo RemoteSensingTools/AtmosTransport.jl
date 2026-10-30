@@ -702,6 +702,29 @@ function relocate_pp1_layers(before, file)
     return migrated
 end
 
+# A1 retains one module because the fenced root workspaces/Lin-Rood kernels
+# and the topology files share types. Split its existing folder budget only;
+# sibling dependencies remain Reconstruction <- Structured <- CubedSphere.
+const A1_HOME = "src/Operators/Advection"
+const A1_CHILDREN = A1_HOME .* ["/Reconstruction", "/Structured", "/CubedSphere"]
+function relocate_a1_layers(before, file)
+    file == "src/LAYERS.toml" || return before
+    folders = get(before, "folders", Dict())
+    haskey(folders, A1_HOME) || return before
+    haskey(folders, first(A1_CHILDREN)) && return before
+    migrated = deepcopy(before)
+    budgets = migrated["folders"]
+    prior = copy(budgets[A1_HOME])
+    for deps in values(budgets)
+        A1_HOME in deps && append!(deps, A1_CHILDREN)
+    end
+    budgets[A1_HOME] = [prior; A1_CHILDREN]
+    for (i, child) in enumerate(A1_CHILDREN)
+        budgets[child] = [prior; A1_HOME; A1_CHILDREN[1:i-1]]
+    end
+    return migrated
+end
+
 function allowance_growth(before, after, file)
     before == after && return String[]
     original_count = length(get(before, "allow", Dict()))
@@ -710,6 +733,7 @@ function allowance_growth(before, after, file)
     before = relocate_m1_layers(before, file)
     before = relocate_c1_layers(before, file)
     before = relocate_pp1_layers(before, file)
+    before = relocate_a1_layers(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
         for table in ("modules", "folders")
@@ -796,12 +820,17 @@ function check_folders!(errors, inv, found, layers; io = stdout)
     end
     for (a, b) in sort!(collect(found.folder_edges))
         b in get(allowed, a, String[]) || push!(errors, "T1 new folder dependency: $a -> $b")
-        # Match module wiring only for a real child submodule. A same-module
-        # helper folder still follows the ordinary folder-order ratchet.
+        # Module assembly may wire its children. A1 also permits its explicitly
+        # named shared-module folders: fenced root types are used by the child
+        # code, while root includes/Lin-Rood use child helpers. Sibling edges
+        # still obey the ordinary order; no reverse exception is introduced.
         child_wiring = startswith(b, "$a/") && any(
             startswith(inv.files[child], inv.files[parent] * ".")
             for parent in get(folders, a, String[]), child in get(folders, b, String[]))
-        if !child_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
+        shared_advection_wiring = a == A1_HOME && b in A1_CHILDREN &&
+            all(inv.files[f] == "AtmosTransport.Operators.Advection"
+                for f in get(folders, b, String[]))
+        if !child_wiring && !shared_advection_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
             push!(errors, "T1 reference to later folder: $a -> $b")
         end
     end

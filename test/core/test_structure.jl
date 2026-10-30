@@ -451,3 +451,51 @@ end
     debt = Dict("allow" => Dict("old" => "unchanged debt"))
     @test StructureCheck.relocate_pp1_layers(debt, "clone") == debt
 end
+
+@testset "A1 shared-module folder wiring preserves sibling order" begin
+    home = StructureCheck.A1_HOME
+    children = StructureCheck.A1_CHILDREN
+    before = Dict("folders" => Dict(home => ["src/Grids"], "src/Adjoints" => [home]))
+    after = StructureCheck.relocate_a1_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test StructureCheck.relocate_a1_layers(after, "src/LAYERS.toml") == after
+    for (from, to) in ((children[1], children[3]), (children[2], "src/Adjoints"))
+        expanded = deepcopy(after)
+        push!(expanded["folders"][from], to)
+        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+    end
+    debt = Dict("allow" => Dict("old" => "existing"))
+    @test StructureCheck.relocate_a1_layers(debt, StructureCheck.SNAPSHOTS["private_use"]) == debt
+
+    mktempdir() do root
+        files = Dict(
+            "src/AtmosTransport.jl" => "module AtmosTransport\ninclude(\"Operators/Operators.jl\")\nend\n",
+            "src/Operators/Operators.jl" => "module Operators\ninclude(\"Advection/Advection.jl\")\nend\n",
+            home * "/Advection.jl" => "module Advection\ninclude(\"Reconstruction/helpers.jl\")\ninclude(\"Structured/helpers.jl\")\ninclude(\"CubedSphere/helpers.jl\")\nend\n",
+            children[1] * "/helpers.jl" => "reconstruct(x) = x + 1\n",
+            children[2] * "/helpers.jl" => "structured(x) = reconstruct(x) * 2\n",
+            children[3] * "/helpers.jl" => "cube(x) = structured(x) - 1\n")
+        for (file, text) in files
+            path = joinpath(root, file)
+            mkpath(dirname(path)); write(path, text)
+        end
+        inv = StructureCheck.inventory(root)
+        found = StructureCheck.findings(inv)
+        order = ["src", "src/Operators", home, children...]
+        layers = Dict("order" => inv.order,
+            "modules" => Dict(m => [b for (a,b) in found.edges if a == m] for m in inv.order),
+            "folder_order" => order,
+            "folders" => Dict(f => [b for (a,b) in found.folder_edges if a == f] for f in order))
+        write_toml(joinpath(root, "src/LAYERS.toml"), layers)
+        write_toml(joinpath(root, StructureCheck.FOLDER_SIZES), Dict("allow" => Dict()))
+        write_toml(joinpath(root, StructureCheck.MIRRORS), Dict("pairs" => []))
+        for file in values(StructureCheck.SNAPSHOTS)
+            write_toml(joinpath(root, file), Dict("allow" => Dict()))
+        end
+        @test isempty(check_fixture(root).errors)
+        open(joinpath(root, children[1], "helpers.jl"), "a") do io
+            println(io, "reverse_dependency(x) = cube(x)")
+        end
+        @test any(occursin("reference to later folder", e) for e in check_fixture(root).errors)
+    end
+end

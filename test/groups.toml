@@ -153,8 +153,6 @@ files = [
 paths = [
     "src/Operators/Advection/**",
     "src/Operators/AbstractOperators.jl",
-    "src/Adjoints/CubedSphereSeams.jl",
-    "src/Adjoints/HaloAdjoint.jl",
     "src/Grids/PanelConnectivity.jl",
 ]
 
@@ -466,7 +464,10 @@ paths = [
     "src/Tape/**",
     "src/Operators/Advection/linrood_adjoint*.jl",
     # The production step composition the adjoint replays and records.
-    "src/Operators/Advection/{StrangSplitting,CubedSphereStrang,linrood_horizontal,strang_apply}.jl",
+    "src/Operators/Advection/Structured/{StrangSplitting,strang_apply}.jl",
+    "src/Operators/Advection/CubedSphere/CubedSphereStrang.jl",
+    "src/Operators/Advection/CubedSphere/{AdvectionAdjoint,CubedSphereSeamsAdjoint,HaloAdjoint,adjoint_workspace}.jl",
+    "src/Operators/Advection/{linrood_horizontal,cs_dispatch}.jl",
     "src/Operators/Diffusion/operators.jl",
     "src/Operators/StepPlan/**",
     "src/Operators/OperatorState.jl",

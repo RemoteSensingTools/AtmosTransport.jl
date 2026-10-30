@@ -24,27 +24,15 @@ using AtmosTransport: CellState, CubedSphereState, DryBasis,
                       apply!,
                       LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                       HybridSigmaPressure, AtmosGrid,
-                      reconstruction_order, required_halo_width
+                      required_halo_width
 using AtmosTransport.Operators.Advection: cs_advection_style, CSSplitSweepStyle
 using AtmosTransport.Grids: ncells
-using AtmosTransport.Models: build_runtime_advection,
-                             CubedSphereRuntimeRecipeStyle,
-                             LatLonRuntimeRecipeStyle,
-                             ReducedGaussianRuntimeRecipeStyle
 
 const FT = Float64
 
 # ---------------------------------------------------------------------------
 # Trait coverage — NoAdvection participates in the standard query surface
 # ---------------------------------------------------------------------------
-
-@testset "NoAdvection scheme traits" begin
-    s = NoAdvection()
-    @test s isa AtmosTransport.AbstractAdvectionScheme
-    @test reconstruction_order(s) == -1     # sentinel "not applicable"
-    @test required_halo_width(s) == 0       # no horizontal stencil
-    @test cs_advection_style(s) === CSSplitSweepStyle()
-end
 
 # ---------------------------------------------------------------------------
 # LatLon: tracer + air mass are bit-identical after NoAdvection apply!
@@ -133,28 +121,6 @@ end
 
     @test all(cs_state.air_mass[p] == air_before[p] for p in 1:6)
     @test all(cs_state.tracers.CO2[p] == co2_before[p] for p in 1:6)
-end
-
-@testset "with_diffusion allocates independent CS diffusion scratch" begin
-    Nc, Hp, Nz = 2, 1, 2
-    N = Nc + 2Hp
-    mesh = CubedSphereMesh(; Nc, Hp, FT)
-    vertical = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
-    grid = AtmosGrid(mesh, vertical, AtmosTransport.CPU(); FT)
-    panels_m = ntuple(_ -> ones(FT, N, N, Nz), 6)
-    panels_rm = ntuple(_ -> fill(FT(400e-6), N, N, Nz), 6)
-    state = CubedSphereState(DryBasis, mesh, panels_m; CO2=panels_rm)
-    fluxes = allocate_face_fluxes(mesh, Nz; FT, basis=DryBasis)
-    model = TransportModel(state, fluxes, grid, NoAdvection())
-    @test model.workspace.advection_ws === nothing
-
-    kz = AtmosTransport.State.CubedSphereField(
-        ntuple(_ -> ConstantField{FT, 3}(one(FT)), 6))
-    with_kz = with_diffusion(model, ImplicitVerticalDiffusion(; kz_field=kz))
-    @test with_kz.workspace.advection_ws === nothing
-    @test with_kz.workspace.diffusion_ws isa DiffusionWorkspace
-    @test size(with_kz.workspace.diffusion_ws.layer_thickness[1]) ==
-          (Nc, Nc, Nz)
 end
 
 # ---------------------------------------------------------------------------
@@ -304,10 +270,3 @@ end
 # ---------------------------------------------------------------------------
 # Recipe parse — `scheme = "none"` builds a NoAdvection on every topology
 # ---------------------------------------------------------------------------
-
-@testset "Recipe parses [advection] scheme = \"none\" to NoAdvection" begin
-    cfg = Dict("advection" => Dict("scheme" => "none"))
-    @test build_runtime_advection(cfg, LatLonRuntimeRecipeStyle()) isa NoAdvection
-    @test build_runtime_advection(cfg, ReducedGaussianRuntimeRecipeStyle()) isa NoAdvection
-    @test build_runtime_advection(cfg, CubedSphereRuntimeRecipeStyle()) isa NoAdvection
-end

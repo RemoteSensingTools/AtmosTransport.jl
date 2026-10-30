@@ -12,8 +12,10 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_seam_exchange.jl"))
             reference = [reference_cs_group(map(a -> a[:, :, :, t], original),
                 m, am, bm, mesh, scheme, direction, FT(1)) for t in 1:Nt]
             actual, air = map(copy, original), map(copy, m)
-            CSSeamAdv._sweep_cs_horizontal!(actual, air, direction == 1 ? am : bm,
-                mesh, scheme, ws, Val(direction))
+            out, mout = map(copy, actual), map(copy, air)
+            CSSeamAdv._sweep_cs_horizontal_pingpong!(out, mout, actual, air,
+                direction == 1 ? am : bm, mesh, scheme, Val(direction); seam_flux=ws.seam_flux)
+            actual, air = out, mout
             tol = FT == Float32 ? 5e-6 : 2e-14
             @test cs_seam_maxdiff(air, reference[1][2], mesh) < tol
             for t in 1:Nt
@@ -154,14 +156,17 @@ end
         end
         flux = axis == 1 ? am : bm
         symbol = axis == 1 ? :x : :y
-        ws = CSSeamAdv.CSAdvectionWorkspace(mesh, m[1])
+        ws = CSSeamAdv.CSAdvectionWorkspace(mesh, m[1]; n_tracers=1)
         aws = Adj.CSAdjointWorkspace(mesh, m[1])
         function objective(h)
             r = map((a, d) -> a .+ h .* d, rm, direction)
             mass = map(copy, m)
             CSSeamAdv.fill_panel_halos!(r, mesh)
-            CSSeamAdv._sweep_cs_horizontal!(r, mass, flux, mesh, scheme, ws, Val(axis))
-            return sum(dot(seed[p], r[p]) for p in 1:6)
+            packed_r = map(a -> reshape(a, size(a)..., 1), r)
+            out, mout = map(copy, packed_r), map(copy, mass)
+            CSSeamAdv._sweep_cs_horizontal_pingpong!(out, mout, packed_r, mass, flux,
+                mesh, scheme, Val(axis); seam_flux=ws.seam_flux)
+            return sum(dot(seed[p], view(out[p], :, :, :, 1)) for p in 1:6)
         end
         gradient = map(copy, seed)
         if scheme isa PPMScheme{MonotoneLimiter}
@@ -182,10 +187,12 @@ end
     lr = CSSeamAdv.CSLinRoodAdvectionWorkspace(mesh, m[1])
     @test isempty(lr.cs.seam_flux)
     original = map(copy, packed)
-    @test_throws DimensionMismatch CSSeamAdv._sweep_cs_horizontal!(
-        packed, m, am, mesh, PPMScheme(), lr.cs, Val(1))
+    @test_throws DimensionMismatch CSSeamAdv._sweep_cs_horizontal_pingpong!(
+        map(copy, packed), map(copy, m), packed, m, am, mesh, PPMScheme(), Val(1);
+        seam_flux=lr.cs.seam_flux)
     narrow = CSSeamAdv.CSAdvectionWorkspace(mesh, m[1])
-    @test_throws DimensionMismatch CSSeamAdv._sweep_cs_horizontal!(
-        packed, m, am, mesh, PPMScheme(), narrow, Val(1))
+    @test_throws DimensionMismatch CSSeamAdv._sweep_cs_horizontal_pingpong!(
+        map(copy, packed), map(copy, m), packed, m, am, mesh, PPMScheme(), Val(1);
+        seam_flux=narrow.seam_flux)
     @test packed == original
 end

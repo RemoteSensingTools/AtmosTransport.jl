@@ -1,10 +1,10 @@
 # Forward/adjoint comparison files seeded from cleanup units.md U09-U14 and helper_index.md section 0.3. Maintain pairs when files move; no review-unit enforcement.
 [[pairs]]
-adjoint = "src/Adjoints/CubedSphereSeams.jl"
-forward = "src/Operators/Advection/CubedSphereSeams.jl"
+adjoint = "src/Operators/Advection/CubedSphere/CubedSphereSeamsAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/CubedSphereSeams.jl"
 [[pairs]]
-adjoint = "src/Adjoints/HaloAdjoint.jl"
-forward = "src/Operators/Advection/HaloExchange.jl"
+adjoint = "src/Operators/Advection/CubedSphere/HaloAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/HaloExchange.jl"
 [[pairs]]
 adjoint = "src/Adjoints/LinRoodTape.jl"
 forward = "src/Operators/Advection/LinRood.jl"
@@ -18,20 +18,17 @@ forward = "src/Operators/Advection/linrood_horizontal.jl"
 adjoint = "src/Operators/Advection/linrood_adjoint_rm_faces.jl"
 forward = "src/Operators/Advection/linrood_horizontal.jl"
 [[pairs]]
-adjoint = "src/Adjoints/AdvectionAdjoint.jl"
-forward = "src/Operators/Advection/multitracer_kernels.jl"
+adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/cs_sweep_common.jl"
 [[pairs]]
-adjoint = "src/Adjoints/AdvectionAdjoint.jl"
-forward = "src/Operators/Advection/reconstruction.jl"
+adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/Reconstruction/reconstruction.jl"
 [[pairs]]
-adjoint = "src/Adjoints/AdvectionAdjoint.jl"
-forward = "src/Operators/Advection/structured_kernels.jl"
+adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/cs_sweep_x.jl"
 [[pairs]]
-adjoint = "src/Adjoints/AdvectionAdjoint.jl"
-forward = "src/Operators/Advection/sweeps.jl"
-[[pairs]]
-adjoint = "src/Operators/Advection/vertical_fv3_profile_adjoint.jl"
-forward = "src/Operators/Advection/vertical_fv3_profile.jl"
+adjoint = "src/Operators/Advection/CubedSphere/vertical_fv3_profile_adjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/vertical_fv3_profile.jl"
 [[pairs]]
 adjoint = "src/Operators/Convection/CMFMC/adjoint_kernels.jl"
 forward = "src/Operators/Convection/CMFMC/cmfmc_kernels.jl"
@@ -53,3 +50,9 @@ forward = "src/Operators/Diffusion/dz_helpers.jl"
 [[pairs]]
 adjoint = "src/Adjoints/DiffusionAdjoint.jl"
 forward = "src/Operators/Diffusion/operators.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/cs_sweep_y.jl"
+[[pairs]]
+adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
+forward = "src/Operators/Advection/CubedSphere/cs_sweep_z.jl"

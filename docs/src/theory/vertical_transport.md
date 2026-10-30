@@ -428,7 +428,7 @@ vertical motion agrees with an independent meteorological field.
 ## 4. Vertical advection
 
 **Splitting.** Each substep applies `X Y Z [diffusion, emissions] Z Y X`
-(`src/Operators/Advection/CubedSphereStrang.jl`). The C90 MERRA-2 runs of
+(`src/Operators/Advection/CubedSphere/CubedSphereStrang.jl`). The C90 MERRA-2 runs of
 December 2021 – March 2022 used 6–13 substeps per hourly window (mostly
 8–11), that is 12–26 vertical sweeps per hour.
 Convection and chemistry run once per window. Air mass is updated in every
@@ -450,7 +450,7 @@ the outflow side of the donor cell:
 - the limited edge sets a linear slope toward the outflow face, which is
   bounded by the cell content (`_limited_moment`), and the flux uses the
   Russell–Lerner form above (`_slopes_face_flux`,
-  `src/Operators/Advection/reconstruction.jl`).
+  `src/Operators/Advection/Reconstruction/reconstruction.jl`).
 
 The scheme is therefore second order, with a PPM-informed slope; the parabola
 is never integrated. The top two and bottom two layers fall back to upwind.
@@ -459,7 +459,7 @@ In 3-D tests it behaves almost like `scheme = "slopes"` (minmod slopes).
 **`scheme = "ppm"`, `vertical = "fv3_kord8"`** (cubed sphere) uses the profile
 GCHP uses for tracers, FV3's `scalar_profile` with `kord = 8` and `iv = 0`
 (`fv_mapz.F90`), in the same flux form
-(`src/Operators/Advection/vertical_fv3_profile.jl`).
+(`src/Operators/Advection/CubedSphere/vertical_fv3_profile.jl`).
 This is also the default vertical remap for configured
 `scheme = "linrood"` runs, following the runtime rule that the default should
 be the closest GCHP match. `vertical = "upwind"` remains available explicitly.
@@ -655,7 +655,7 @@ choices `β` the 3 × 7 matrix `P_k(β)` is constant and the sweep is linear,
 ```
 
 computed column by column (`_cs_zsweep_fv3_adjoint_kernel!`,
-`src/Operators/Advection/vertical_fv3_profile_adjoint.jl`): the interface
+`src/Operators/Advection/CubedSphere/vertical_fv3_profile_adjoint.jl`): the interface
 adjoints `λ'_e − λ'_{e−1}`, through each donor's parabola to its edge and mean
 adjoints, then the transposed Thomas solve (back substitution first, then the
 elimination rows from the surface up), then `S`.

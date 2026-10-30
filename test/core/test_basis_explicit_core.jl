@@ -142,7 +142,9 @@ end
     rm0 = sum(rm)
     flux_scale = inv(FT(nsub))
     for _ in 1:2
-        AtmosTransport.Operators.Advection.sweep_x!(rm, m, am, UpwindScheme(), ws, flux_scale)
+        AtmosTransport.Operators.Advection.sweep_x_mt!(reshape(rm, size(rm)..., 1),
+            reshape(ws.rm_B, size(rm)..., 1), m, ws.m_B, am, UpwindScheme(), ws, flux_scale)
+        copyto!(rm, ws.rm_B); copyto!(m, ws.m_B)
     end
 
     @test minimum(m) ≥ -eps(FT) * 10
@@ -150,24 +152,6 @@ end
     @test sum(rm) ≈ rm0 atol=eps(FT) * rm0 * 10
     @test all(isfinite, m)
     @test all(isfinite, rm)
-end
-
-@testset "Clustered x-sweeps accept Int32 cluster_sizes" begin
-    FT = Float64
-    m0 = ones(FT, 4, 1, 1)
-    rm0 = copy(m0) .* FT(400e-6)
-    am = zeros(FT, 5, 1, 1)
-
-    for scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()))
-        m = copy(m0)
-        rm = copy(rm0)
-        ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m; cluster_sizes_cpu=Int32[2])
-        AtmosTransport.Operators.Advection.sweep_x!(rm, m, am, scheme, ws)
-        @test m == m0
-        @test rm == rm0
-        @test all(isfinite, m)
-        @test all(isfinite, rm)
-    end
 end
 
 @testset "RussellLerner y-sweep stays finite with zero-mass donor" begin
@@ -180,7 +164,9 @@ end
     bm[1, 2, 1] = FT(0.1)
     ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
 
-    AtmosTransport.Operators.Advection.sweep_y!(rm, m, bm, SlopesScheme(MonotoneLimiter()), ws)
+    AtmosTransport.Operators.Advection.sweep_y_mt!(reshape(rm, size(rm)..., 1),
+        reshape(ws.rm_B, size(rm)..., 1), m, ws.m_B, bm, SlopesScheme(MonotoneLimiter()), ws)
+    copyto!(rm, ws.rm_B); copyto!(m, ws.m_B)
 
     @test all(isfinite, m)
     @test all(isfinite, rm)

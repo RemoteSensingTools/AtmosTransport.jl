@@ -101,10 +101,8 @@ the *unlimited* fourth-order edge values. It is exact for constant and linear
 fields and fourth-order accurate for smooth data.
 """
 @inline function _ppm_edge_values_ord5(q_imm::FT, q_im::FT, q_i::FT, q_ip::FT, q_ipp::FT) where FT
-    p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12)
-    p2 = -one_twelfth
-    q_L = p1 * (q_im + q_i) + p2 * (q_imm + q_ip)
-    q_R = p1 * (q_i + q_ip) + p2 * (q_im + q_ipp)
+    q_L = _ppm_edge_value(q_imm, q_im, q_i, q_ip, FT)
+    q_R = _ppm_edge_value(q_im, q_i, q_ip, q_ipp, FT)
     return (q_L, q_R)
 end
 
@@ -213,9 +211,7 @@ numbers.
     elseif face == 0 || face == Nc
         return c1 * q_mm + c2 * q_m + c3 * q_p
     end
-    p1, one_twelfth = _ppm_edge_weights(FT)    # (7/12, 1/12), as `_ppm_edge_values_ord5`
-    p2 = -one_twelfth
-    return p1 * (q_m + q_p) + p2 * (q_mm + q_pp)
+    return _ppm_edge_value(q_mm, q_m, q_p, q_pp, FT)
 end
 
 """

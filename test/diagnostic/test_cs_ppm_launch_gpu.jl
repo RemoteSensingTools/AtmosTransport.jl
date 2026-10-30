@@ -55,15 +55,7 @@ else
         @test reference_rm[interior...,:] ≈ cpu_rm[interior...,:] rtol=16eps(FT)
         @test reference_m[interior...] ≈ cpu_m[interior...] rtol=4eps(FT)
 
-        # The compatibility copy-back wrapper must use the same launch policy
-        # while preserving the original input halos.
-        copyback=getproperty(LaunchAdv,Symbol("_sweep_",direction,"_panel_mt!"))
-        copyback(drm,dm,df,scheme,actual_rm,actual_m,Nc,Hp,Nz,Nt;flux_scale=FT(0.75))
-        CUDA.synchronize()
-        rm[interior...,:].=reference_rm[interior...,:]
-        m[interior...].=reference_m[interior...]
-        @test Array(drm)==rm
-        @test Array(dm)==m
+
     end
 
     @testset "CS PPM launch layout preserves signed storage and halos" begin
