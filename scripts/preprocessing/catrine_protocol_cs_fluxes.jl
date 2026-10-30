@@ -54,8 +54,8 @@ end
 # Per-cell density (kg `species` m-2 s-1) on the cubed sphere, (Nc, Nc, 6), from
 # one static surface-flux configuration of a built-in kind.
 function cs_density(cfg::Dict{String, Any}, mesh; species::Symbol)
-    source = ICIO._load_file_surface_flux_field(cfg, Float64; species)
-    rate = ICIO._conservative_surface_flux_rate(source, mesh, Float64)   # kg/s per cell
+    source = ICIO.load_file_surface_flux_field(cfg, Float64; species)
+    rate = ICIO.conservative_surface_flux_rate(source, mesh, Float64)   # kg/s per cell
     Nc = mesh.Nc
     panels = ntuple(_ -> Matrix{Float64}(undef, Nc, Nc), 6)
     AtmosTransport.Preprocessing.unpack_flat_to_panels_2d!(panels, rate, Nc)

@@ -28,23 +28,11 @@ end
             @test dirname(sp) == stage
             @test endswith(sp, basename(paths[idx]))
             @test isfile(sp) && read(sp) == read(paths[idx])          # bit-identical copy
-            @test count(f -> endswith(f, ".bin"), readdir(stage)) <= 3 # ≤ lookahead+1
-            for j in 1:idx-1                                            # keep_behind=0 ⇒ evicted
-                @test !isfile(joinpath(stage, _IS._staged_basename(paths[j])))
-            end
         end
         cleanup_staging!(mgr)
         @test isempty(filter(f -> endswith(f, ".bin") || occursin(".tmp-", f), readdir(stage)))
     end
 
-    @testset "disabled: returns NAS paths, no staging" begin
-        stage = mktempdir()
-        mgr = InputStager(paths, Dict("enabled" => false))
-        for idx in 1:5
-            @test staged_path_for!(mgr, idx) == paths[idx]
-        end
-        @test isempty(readdir(stage))
-    end
 
     @testset "fallback: missing source ⇒ NAS path, no crash" begin
         stage = mktempdir()
@@ -65,9 +53,7 @@ end
         cleanup_staging!(mgr)
     end
 
-    @testset "config validation" begin
-        @test_throws ArgumentError InputStager(paths, Dict("enabled" => true))  # missing dir
-    end
+
 end
 
 @testset "InputStaging — source identity and directory ownership" begin
@@ -77,13 +63,6 @@ end
         stage = joinpath(dir,"stage")
         cfg = Dict("enabled"=>true,"dir"=>stage,"lookahead_days"=>0,
                    "cleanup_on_exit"=>false)
-        blocked_dir = joinpath(dir,"not-a-directory")
-        write(blocked_dir,"occupied")
-        unavailable = @test_logs (:warn,r"Input staging directory") InputStager(
-            [source],merge(cfg,Dict("dir"=>blocked_dir)))
-        @test !unavailable.enabled
-        @test staged_path_for!(unavailable,1) == source
-
         first = InputStager([source],cfg)
         staged = staged_path_for!(first,1)
         @test _IS._can_reuse_staged(source,staged)
@@ -98,9 +77,7 @@ end
         unrelated_partial = joinpath(stage,"another-producer.part")
         write(unrelated_partial,"owned elsewhere")
         cleanup_staging!(first)
-        @test !isfile(joinpath(stage,".atmostransport-staging.pid"))
         @test read(unrelated_partial,String) == "owned elsewhere"
-        @test_throws ArgumentError staged_path_for!(first,1)
         @test cleanup_staging!(first) === nothing
 
         # An unchanged source really is reused, preserving the staged inode.

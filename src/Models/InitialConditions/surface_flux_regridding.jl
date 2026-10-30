@@ -272,3 +272,6 @@ function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
     _report_regrid_conservation(source.native_total_mass_rate, sum(dst))
     return FT.(dst)
 end
+
+const conservative_surface_flux_rate = _conservative_surface_flux_rate
+export conservative_surface_flux_rate

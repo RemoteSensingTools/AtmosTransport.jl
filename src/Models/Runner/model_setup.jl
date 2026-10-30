@@ -49,8 +49,7 @@ end
 
 # Initial humidity is an endpoint field when the binary carries one. Native CS
 # physics binaries instead carry the same window-start qv in the VDIFF state.
-_initial_condition_qv(window) = window.qv_start !== nothing ? window.qv_start :
-                                window.vdiff === nothing ? nothing : window.vdiff.qv
+_initial_condition_qv(window) = _window_humidity(window, true)
 
 # Initialize one tracer at a time in its final packed slot. `tracer_init`
 # iterates `name => init_cfg` pairs, and the packed tracer order is that
@@ -182,7 +181,7 @@ end
 # hard-rejected up front so the failure mode is actionable at recipe-validation
 # time (not at the first window load several seconds later).
 function _validate_convection_capability(::CMFMCMatrixConvection, caps)
-    (caps.cmfmc_convection && :dtrain in caps.payload_sections) ||
+    (caps.cmfmc_convection && has_dtrain(caps)) ||
         throw(ArgumentError(
             "[convection] kind = \"cmfmc_matrix\" requires the binary " *
             "to carry both cmfmc AND dtrain payloads (no Tiedtke fallback); " *
@@ -198,6 +197,6 @@ end
 function _validate_convection_capability(op::AbstractConvection, _caps)
     throw(ArgumentError(
         "no _validate_convection_capability method for $(typeof(op)); " *
-        "add a method in src/Models/runner/model_setup.jl when introducing a new convection " *
+        "add a method in src/Models/Runner/model_setup.jl when introducing a new convection " *
         "operator type."))
 end

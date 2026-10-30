@@ -24,6 +24,11 @@ Float64 column sums and `Parameters.SURFACE_PRESSURE_BASIS_TOLERANCE`.
 `raw_window_staging`, `read_window_payload!`, `unpack_window_payload!` and
 `same_window_layout` provide device staging and host refill.
 
+`has_dtrain(reader_or_capabilities)` and `has_dkg(reader)` own the DTRAIN/Dkg
+payload-membership predicates shared by Models and the CS reader/driver. The
+predicates retain the exact section-membership checks; Models retains its
+existing topology fallback methods.
+
 ## Forward<->adjoint mirrors
 
 No adjoint kernels. Forward and adjoint runners load the same forcing windows.

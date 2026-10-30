@@ -252,7 +252,7 @@ effects can dominate the result.
 | Concern | Primary source |
 | --- | --- |
 | Backend selection and adaptation | `src/Architectures.jl` |
-| Runtime window copies and prefetch | `src/Models/driven_window_state.jl` |
+| Runtime window copies and prefetch | `src/Models/Runner/driven_window_state.jl` |
 | Section timing | `src/SectionTimer.jl` |
 | Structured packed sweeps | `src/Operators/Advection/Structured/multitracer_kernels.jl` |
 | Cubed-sphere packed sweeps | `src/Operators/Advection/CubedSphere/cs_sweep_{common,x,y,z}.jl` |

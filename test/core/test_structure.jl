@@ -539,3 +539,29 @@ end
               ("AtmosTransport.Upper.Lower", "local_value")
     end
 end
+
+@testset "MD1 moves preserve dependency and helper debt limits" begin
+    home = StructureCheck.MD1_HOME
+    old_ic, old_runner = home * "/initial_conditions", home * "/runner"
+    before = Dict("folders" => Dict(home => ["src/Grids", old_ic, old_runner],
+        old_ic => [home, "src/Grids"], old_runner => [home, old_ic],
+        "src/Diagnostics" => [home, old_runner]),
+        "folder_order_allow" => Dict("$old_ic|$home" => "old IC wiring",
+                                     "$old_runner|$home" => "old runner wiring"))
+    after = StructureCheck.relocate_md1_baseline(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test isempty(after["folder_order_allow"])
+    @test StructureCheck.relocate_md1_baseline(after, "src/LAYERS.toml") == after
+    expanded = deepcopy(after)
+    push!(expanded["folders"][home * "/Core"], "src/Diagnostics")
+    @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+
+    path = StructureCheck.SNAPSHOTS["private_use"]
+    old_key = "src/Models/DrivenRunner.jl|AtmosTransport.Models.DrivenRunner|AtmosTransport.Models|_spec_int"
+    new_key = replace(old_key, "src/Models/DrivenRunner.jl" => "src/Models/Runner/DrivenRunner.jl")
+    debt = Dict("allow" => Dict(old_key => "same historical site"))
+    moved = Dict("allow" => Dict(new_key => "same historical site"))
+    @test isempty(StructureCheck.allowance_growth(debt, moved, path))
+    moved["allow"][replace(new_key, "_spec_int" => "_new_private")] = "new debt"
+    @test !isempty(StructureCheck.allowance_growth(debt, moved, path))
+end

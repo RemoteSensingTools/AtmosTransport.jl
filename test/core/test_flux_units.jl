@@ -120,3 +120,64 @@ end
     end
     @test_throws ArgumentError canonical_units_string(:n2o)
 end
+
+const ICIO = AtmosTransport.Models.InitialConditionIO
+
+@testset "surface-flux units (GriddedIO grammar)" begin
+    # The loaders parse the units attribute with GriddedIO.parse_flux_units and
+    # convert a slice to kg species m⁻² s⁻¹ by kg_per_unit and period_seconds.
+    units(u, species = :co2) = ICIO._flux_units((; attrib = Dict("units" => u)), "F", "f.nc", species)
+    density(u, species; iv = nothing, area = nothing, v = 2.0) =
+        only(ICIO._to_flux_density!(fill(v, 1, 1), units(u, species), species, iv, area))
+    # kg of the species (or unnamed kg) per m² per second: unchanged, bit for bit.
+    for u in ("kg m-2 s-1", "kg/m2/s", "kgCO2/m2/s", "kg(CO2) m^-2 s^-1", "kg/m²/s", "kg CO2 m-2 s-1")
+        @test density(u, :co2) === 2.0
+    end
+    @test density("kg m-2 s-1", :rn222) === 2.0
+    @test density("kg SF6 m-2 s-1", :sf6) === 2.0
+    # kg of carbon → CO2 conserves carbon atoms: M(CO2)/M(C).
+    K = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 / AtmosTransport.Parameters.CARBON_MOLAR_MASS
+    @test density("kgC m-2 s-1", :co2; v = 1.0) === K
+    # Grams and days convert (the former per-second-only parser refused them).
+    @test density("g m-2 s-1", :co2; v = 1.0) === 1e-3
+    @test density("gC m-2 d-1", :co2; v = 86400.0) ≈ 1e-3 * K
+    # Per-month values need their calendar month (GridFED); February 2024 has 29 days.
+    @test density("kgCO2/month/m2", :co2; v = 29 * 86400.0,
+                  iv = AtmosTransport.GriddedIO.interval(AtmosTransport.GriddedIO.MonthKey(2024, 2))) === 1.0
+    @test_throws ArgumentError density("kgCO2/month/m2", :co2)
+    # Per-cell amounts need the cell areas (time-varying loaders read densities).
+    @test density("Tonnes", :sf6; v = 1.0, area = fill(2.0, 1, 1)) ===
+          1000.0 / (2.0 * AtmosTransport.Parameters.DAYS_PER_JULIAN_YEAR * 86400)
+    @test_throws ArgumentError density("kg/s", :co2)
+    # Missing per-cell areas come from the same snapped source mesh used by
+    # conservative regridding, including half-width polar caps. Preserve the
+    # caller's latitude row order when the file stores north to south.
+    lon = collect(45.0:90.0:315.0)
+    lat = [-90.0, 0.0, 90.0]
+    mesh = AtmosTransport.GriddedIO.source_latlon_mesh(
+        lon, lat; radius = AtmosTransport.Parameters.EARTH_RADIUS)
+    expected_area = [cell_area(mesh, i, j) for i in 1:4, j in 1:3]
+    @test ICIO._lonlat_cell_areas_m2(lon, lat) == expected_area
+    @test ICIO._lonlat_cell_areas_m2(lon, reverse(lat)) == expected_area[:, end:-1:1]
+    # A molar flux that names no substance is of the tracer's species
+    # (ECCO-Darwin writes mmol m-2 s-1 of CO2).
+    M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS
+    @test density("mmol m-2 s-1", :co2; v = 1.0) ≈ 1e-3 * M.co2 rtol = 1e-15
+    @test density("mol m-2 s-1", :sf6; v = 1.0) ≈ M.sf6 rtol = 1e-15
+    @test density("umol/m2/s", :co2; v = 1.0) ≈ 1e-6 * M.co2 rtol = 1e-15
+    # A substance named in the string wins over the tracer's species, with or
+    # without a space or parentheses.
+    K = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2 / AtmosTransport.Parameters.CARBON_MOLAR_MASS
+    for u in ("mol C m-2 s-1", "molC m-2 s-1", "mol (C) m-2 s-1")
+        @test density(u, :co2; v = 1.0) ≈ AtmosTransport.Parameters.CARBON_MOLAR_MASS * K rtol = 1e-15
+    end
+    # Units of another species than the tracer's, missing and unknown units
+    # are errors that name the variable and file.
+    @test_throws ArgumentError density("kgCO2/m2/s", :sf6)
+    @test_throws ArgumentError density("kgC m-2 s-1", :rn222)
+    for u in ("", "kg m-2", "Tg/yr")
+        err = try units(u); nothing catch e; e end
+        @test err isa ArgumentError && occursin("'F' in f.nc", err.msg)
+    end
+    @test_throws ArgumentError ICIO._require_reference_time(nothing)
+end

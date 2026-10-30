@@ -55,12 +55,16 @@ const _INIT_KEYS = Tuple(unique(vcat(["kind", "background"],
                                      collect(Iterators.flatten(values(_INIT_KIND_KEYS))))))
 
 # Every `init.kind` the builders accept (on some topology), with its key group.
-const _INIT_KINDS = Dict("uniform" => :uniform, "latitude_step" => :latitude_step,
-                         "lat_step" => :latitude_step, "hemisphere_step" => :latitude_step,
-                         "gaussian_blob" => :gaussian_blob, "bl_enhanced" => :bl_enhanced,
-                         "file" => :file, "netcdf" => :file, "file_field" => :file,
-                         "catrine_co2" => :file, "cs_native" => :cs_native,
-                         "pressure_layer" => :pressure_layer)
+_init_spec_group(::Type{UniformInitialConditionSpec}) = :uniform
+_init_spec_group(::Type{LatitudeStepInitialConditionSpec}) = :latitude_step
+_init_spec_group(::Type{BoundaryLayerEnhancedInitialConditionSpec}) = :bl_enhanced
+_init_spec_group(::Type{GaussianBlobInitialConditionSpec}) = :gaussian_blob
+_init_spec_group(::Type{FileInitialConditionSpec}) = :file
+_init_spec_group(::Type{CatrineCO2InitialConditionSpec}) = :file
+_init_spec_group(::Type{CSNativeInitialConditionSpec}) = :cs_native
+_init_spec_group(::Type{PressureLayerInitialConditionSpec}) = :pressure_layer
+const _INIT_KINDS = Dict(alias => _init_spec_group(spec)
+                         for (alias, spec) in INITIAL_CONDITION_KINDS)
 
 # An unknown kind (`nothing`) is reported by the initial-condition builder.
 _init_kind_group(kind::AbstractString) = get(_INIT_KINDS, lowercase(kind), nothing)

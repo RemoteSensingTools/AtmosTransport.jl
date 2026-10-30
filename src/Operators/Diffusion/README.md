@@ -144,13 +144,13 @@ halos, against that serial kernel.
   embed diffusion at the transport midpoint
 - The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) orders its
   replayed and recorded midpoint with `surface_flux_center!`
-- [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
+- [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl)
   determines whether diffusion is active in a given run
 
 ## Related Docs And Tests
 
 - Runtime/block ordering:
-  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
+  [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl) and
   [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
 - Topology status:
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)

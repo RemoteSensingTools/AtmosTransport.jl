@@ -22,9 +22,7 @@
 # `label` is the TOML table name (e.g. "[convection]") for the error message.
 
 function _spec_bool(section, key::AbstractString, default::Bool, label::AbstractString)
-    v = get(section, key, default)
-    v isa Bool || throw(ArgumentError("$(label).$(key) must be true or false; got $(repr(v))"))
-    return v
+    return _config_bool(get(section, key, default), "$(label).$(key)")
 end
 function _spec_int(section, key::AbstractString, default::Int, label::AbstractString)
     v = get(section, key, default)
@@ -596,6 +594,11 @@ materialize(s::ConstantDiffusionSpec, style::AbstractRuntimeRecipeStyle, ::Type{
         kz_field = _constant_runtime_kz_field(style, FT(s.value)),
         surface_flux_coupling = _diffusion_surface_coupling(s.surface_flux_boundary, style))
 
+function _cs_host_kz_cache(::Type{FT}, context) where {FT}
+    Nc1, Nc2, Nz = _pbl_cache_shape(context)
+    return ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+end
+
 function materialize(s::WindowPBLKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
                      ::Type{FT}, context) where {FT}
     _runtime_has_surface(context) ||
@@ -603,8 +606,7 @@ function materialize(s::WindowPBLKzDiffusionSpec, ::CubedSphereRuntimeRecipeStyl
             "[diffusion] kind = \"tm5_beljaars_viterbo_local_kz\" requires pblh/ustar/pbl_hflux/t2m sections " *
             "in the cubed-sphere transport binary. Regenerate the binary with " *
             "include_surface=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    host_cache = _cs_host_kz_cache(FT, context)
     return ImplicitVerticalDiffusion(;
         kz_field = WindowPBLKzField(host_cache),
         surface_flux_coupling = _diffusion_surface_coupling(
@@ -624,8 +626,7 @@ function materialize(s::HoltslagBovilleVdiffDiffusionSpec, ::CubedSphereRuntimeR
             "pblh/ustar/pbl_hflux/t2m and vdiff_u/vdiff_v/vdiff_t/vdiff_qv " *
             "sections in the cubed-sphere transport binary. Regenerate with " *
             "include_surface=true and include_gchp_vdiff=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    host_cache = _cs_host_kz_cache(FT, context)
     return ImplicitVerticalDiffusion(;
         kz_field = LocalHoltslagBovilleKzField(host_cache),
         surface_flux_coupling = _diffusion_surface_coupling(
@@ -643,8 +644,7 @@ function materialize(s::TM5DkgDiffusionSpec, ::CubedSphereRuntimeRecipeStyle,
         throw(ArgumentError(
             "[diffusion] kind = \"tm5_dkg\" requires an exact `:dkg` section in the cubed-sphere " *
             "transport binary. Regenerate with include_tm5_diffusion=true."))
-    Nc1, Nc2, Nz = _pbl_cache_shape(context)
-    host_cache = ntuple(_ -> zeros(FT, Nc1, Nc2, Nz), 6)
+    host_cache = _cs_host_kz_cache(FT, context)
     field = PrecomputedCSDkgField(host_cache)
     return ImplicitVerticalDiffusion(;
         kz_field = field,

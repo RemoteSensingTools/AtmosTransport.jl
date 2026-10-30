@@ -66,7 +66,7 @@ operators, and sequential `CompositeChemistry` composition that
   inspect `tracer_index` resolution in [`Chemistry.jl`](Chemistry.jl)
   before changing kernel code
 - Tracing runtime behavior:
-  start at [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
+  start at [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl)
   and then follow `apply!`
 
 ## Cross-Dependencies
@@ -75,7 +75,7 @@ operators, and sequential `CompositeChemistry` composition that
   time-varying field interface
 - [`../../MetDrivers/`](../../MetDrivers/) provides `current_time` for
   time-varying rate fields
-- [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
+- [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl)
   composes the configured chemistry operator with transport, including the
   symmetric exponential-decay split
 - [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)

@@ -66,8 +66,8 @@ struct MockMetalArray end
 
     architecture_source = read(joinpath(@__DIR__, "..", "..", "src", "Architectures.jl"), String)
     driven_source = join((read(joinpath(@__DIR__, "..", "..", "src", "Models", f), String)
-                          for f in ("DrivenSimulation.jl", "driven_window_state.jl",
-                                    "driven_physics_refresh.jl", "driven_stepping.jl")))
+                          for f in ("Runner/DrivenSimulation.jl", "Runner/driven_window_state.jl",
+                                    "Physics/driven_physics_refresh.jl", "Core/driven_stepping.jl")))
     @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", architecture_source)
     @test !occursin(r"\bisdefined\(Main|\bgetproperty\(Main|Core\.eval\(Main", driven_source)
 end
@@ -101,7 +101,7 @@ end
     @test Arch.synchronize_architecture!(arch) === nothing
 
     runner_source = read(joinpath(@__DIR__, "..", "..", "src", "Models",
-                                  "DrivenRunner.jl"), String)
+                                  "Runner", "DrivenRunner.jl"), String)
     @test occursin("Base.invokelatest(_run_driven_simulation, cfg, arch)",
                    runner_source)
 end

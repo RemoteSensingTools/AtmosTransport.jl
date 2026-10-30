@@ -154,3 +154,13 @@ wiring; it removes the old folder-cycle exceptions. Clone, private-use and
 size identities receive no new allowances. Explicit relative imports resolve
 local child modules before inherited aliases, so Inversion.Observations and
 the package's Observations module remain distinct owners.
+
+MD1 preserves Models' module identities while moving files into Core, Physics,
+InitialConditions and Runner. Historical allowance file keys follow the exact
+move map; names, signatures and digests cannot grow. Only the existing Models
+folder dependency budget is divided among those folders. Shared Models files
+use the plain-folder fallback because Core stepping/adjoint and Physics refresh
+dispatch on Runner's DrivenSimulation, which contains Core.TransportModel.
+The checker permits that internal shared-module wiring; child modules and all
+external dependencies retain normal ordering. The two old Models folder-order
+exceptions and the oversized Models allowance are removed.

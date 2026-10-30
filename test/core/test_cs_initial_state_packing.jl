@@ -170,3 +170,19 @@ end
         end
     end
 end
+
+@testset "Moist CS packing requires panel humidity" begin
+    FT, Nc, Hp, Nz = Float64, 4, 1, 3
+    grid = AtmosGrid(CubedSphereMesh(; FT, Nc, Hp),
+                     HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0]), CPU(); FT)
+    air_mass = ntuple(_ -> fill(1.2e10, Nc + 2Hp, Nc + 2Hp, Nz), 6)
+    vmr_interior = ntuple(_ -> fill(4.11e-4, Nc, Nc, Nz), 6)
+    # MoistBasis without qv errors
+    @test_throws ArgumentError pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                                        mass_basis = MoistBasis())
+    # MoistBasis with wrong qv type errors
+    qv_flat = fill(FT(0.02), Nc + 2 * Hp, Nc + 2 * Hp, Nz)   # not an NTuple{6}
+    @test_throws ArgumentError pack_initial_tracer_mass(grid, air_mass, vmr_interior;
+                                                        mass_basis = MoistBasis(),
+                                                        qv = qv_flat)
+end

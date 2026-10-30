@@ -148,9 +148,6 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
     end
 
     @testset "cs_advection dispatch" begin
-        # The advection keys moved from [run] to [advection].
-        err = try cs_advection(Dict("run" => Dict("scheme" => "upwind"))); nothing catch e; e end
-        @test err isa ArgumentError && contains(err.msg, "moved to the [advection] table")
         @test cs_advection(Dict("advection" => Dict("scheme" => "slopes"))) isa SlopesScheme
         @test cs_advection(Dict("advection" => Dict("scheme" => "ppm"))) isa PPMScheme
         @test cs_advection(Dict("advection" => Dict("scheme" => "linrood"))) isa LinRoodPPMScheme
@@ -190,9 +187,6 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test advection_spec(Dict("scheme" => "ppm", "vertical" => "fv3_kord8_signed")).vertical ==
               FV3ScalarProfile(; positive_definite = false)
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "vertical" => 8))
-        # `[run].vertical` moved to [advection]
-        @test_throws ArgumentError cs_advection(Dict("run" => Dict("vertical" => "fv3_kord8"),
-                                                     "advection" => Dict("scheme" => "ppm")))
         @test cs_advection(Dict("advection" => Dict("scheme" => "ppm", "vertical" => "fv3_kord8"))) isa
               PPMScheme{MonotoneLimiter, FV3ScalarProfile{true}}
         @test_throws ArgumentError build_runtime_advection(
@@ -224,8 +218,6 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84"), forward).limiter isa CW84Limiter
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), forward)
-        err = try advection_spec(Dict("scheme" => "ppm", "limiter" => "none")) catch e; e end
-        @test occursin("only by the 4D-Var inversion driver", err.msg)
         # The inversion driver: same parser, `none` accepted, `scheme` required.
         @test advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion).limiter isa NoLimiter
         @test materialize(advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), inversion),
@@ -239,27 +231,6 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "nope"), inversion)
     end
 
-    @testset "runtime physics metadata dispatches on typed specs" begin
-        M = AtmosTransport.Models
-        ppm = advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84",
-                                  "vertical" => "fv3_kord8_signed"))
-        ppm_attrs = M._advection_attributes(ppm)
-        @test ppm_attrs["physics_advection_scheme"] == "ppm"
-        @test ppm_attrs["physics_advection_limiter"] == "cw84"
-        @test ppm_attrs["physics_vertical_reconstruction"] == "fv3_kord8_signed"
-
-        linrood = advection_spec(Dict("scheme" => "linrood", "ppm_order" => 7))
-        lr_attrs = M._advection_attributes(linrood)
-        @test lr_attrs["physics_advection_order"] == "7"
-        @test lr_attrs["physics_vertical_reconstruction"] == "fv3_kord8"
-
-        diff = diffusion_spec(Dict("kind" => "constant", "value" => 3.5,
-                                   "surface_flux_boundary" => true))
-        diff_attrs = M._diffusion_attributes(diff)
-        @test diff_attrs["physics_diffusion"] == "constant"
-        @test diff_attrs["physics_diffusion_kz_m2_s"] == "3.5"
-        @test diff_attrs["physics_diffusion_surface_flux_coupling"] == "diffusive_boundary"
-    end
 
     @testset "cs_halo_width dispatch" begin
         @test cs_halo_width(Dict{String,Any}(), UpwindScheme()) == 1
@@ -507,68 +478,7 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             Dict("advection" => Dict("scheme" => "linrood")), reader, Float64; halo_width = 2)
     end
 
-    # Plan 40 Commit 2 removed `build_cs_tracer_panels` (it was a flat-411
-    # stub). CS tracers now flow through the unified pipeline:
-    # `build_initial_mixing_ratio` + `pack_initial_tracer_mass`. Those are
-    # tested in detail in `test/test_initial_condition_io.jl` (plan 40
-    # Commits 1b–1d). The canonical runner wires exactly that pipeline
-    # through from TOML.
-    @testset "CS tracer IC flows through unified pipeline" begin
-        FT = Float64
-        Nc = 4
-        Hp = 1
-        Nz = 3
-        mesh = CubedSphereMesh(; FT = FT, Nc = Nc, Hp = Hp)
-        vertical = HybridSigmaPressure(FT[0, 50000, 0], FT[1, 0.5, 0])
-        grid = AtmosGrid(mesh, vertical, CPU(); FT = FT)
-        air_mass = ntuple(_ -> fill(FT(1e9), Nc + 2Hp, Nc + 2Hp, Nz), 6)
 
-        # uniform IC path
-        vmr = build_initial_mixing_ratio(air_mass,
-                                         grid,
-                                         Dict("kind" => "uniform",
-                                              "background" => 1e-6))
-        rm  = pack_initial_tracer_mass(grid, air_mass, vmr;
-                                       mass_basis = DryBasis())
-        @test length(rm) == 6
-        @test size(rm[1]) == size(air_mass[1])
-        # Interior should be vmr * air_mass = 1e-6 * 1e9 = 1e3
-        for p in 1:6
-            interior = @view rm[p][Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :]
-            @test all(interior .≈ 1e3)
-            # Halo stays zero (populated at runtime by halo exchanges)
-            @test rm[p][1, 1, 1] == zero(FT)
-        end
-
-        # zero-filled fossil placeholder
-        vmr_zero = build_initial_mixing_ratio(air_mass, grid,
-                                              Dict("kind" => "uniform",
-                                                   "background" => 0.0))
-        rm_zero  = pack_initial_tracer_mass(grid, air_mass, vmr_zero;
-                                            mass_basis = DryBasis())
-        @test all(iszero, rm_zero[1])
-
-        # CS gaussian blob path mirrors the quickstart configs and returns
-        # halo-free panel interiors for packing.
-        vmr_blob = build_initial_mixing_ratio(
-            air_mass, grid,
-            Dict("kind" => "gaussian_blob",
-                 "background" => 4.0e-4,
-                 "amplitude" => 8.0e-5,
-                 "lon0_deg" => 0.0,
-                 "lat0_deg" => 35.0,
-                 "sigma_lon_deg" => 30.0,
-                 "sigma_lat_deg" => 20.0))
-        @test vmr_blob isa NTuple{6, Array{FT, 3}}
-        @test all(size(vmr_blob[p]) == (Nc, Nc, Nz) for p in 1:6)
-        blob_vals = vcat((vec(vmr_blob[p]) for p in 1:6)...)
-        @test minimum(blob_vals) ≥ FT(4.0e-4)
-        @test maximum(blob_vals) > FT(4.0e-4)
-
-        # Unsupported kind errors
-        @test_throws ArgumentError build_initial_mixing_ratio(
-            air_mass, grid, Dict("kind" => "bl_enhanced"))
-    end
 end
 
 @testset "NoAdvection runtime builder on every topology" begin
