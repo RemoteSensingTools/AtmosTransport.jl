@@ -30,7 +30,7 @@ end
 # `StepPlan` (physics cadence, window contract, air-mass reset), the met
 # window structure and the reset targets. `_CSReplay` executes that plan with
 # the production operators on a single-tracer `CubedSphereState`: the packed
-# cubed-sphere palindrome, the production surface-flux, diffusion and
+# cubed-sphere palindrome with StepPlan’s typed midpoint, surface-flux, diffusion and
 # convection operators with their persistent state (Kahan compensation,
 # ledger carries, the CMFMC CFL cache). The forward replays (finite-difference
 # reference, 4D-Var simulated values) run it with `NoStepRecorder()`, the

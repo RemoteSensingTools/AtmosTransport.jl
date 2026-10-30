@@ -32,8 +32,28 @@ it differentiates is the production step by construction.
   compensation, convection and Dkg ledger carries, the CMFMC CFL cache), for
   the adjoint's checkpoints. Production never calls them.
 
+## Transport midpoint contract
+
+`transport_step!` composes the transport block and validates diffusion storage
+with Diffusion's public `preflight_diffusion` / `check_diffusion_workspace`
+before any sweep. `TransportMidpoint <: Advection.AbstractMidpointHook` applies
+`V(dt)` without sources, or delegates to Diffusion's coupling policy for
+`V(dt/2) → S(dt) → V(dt/2)` / `S(dt) → V(dt)`. Concrete callable objects bind
+the active buffers; no reassigned sweep variable is captured. RG and Lin–Rood
+select the original tracer's ledger carry and source name. CS records the
+center air mass, then each diffusion/emission call before it runs. Production
+and adjoint replay use this same composition and reverse records in order.
+
+`NoAdvection` skips sweeps and applies a single `V(dt)` here. Its emission
+rejection and the CS recorder guard remain. Direct Advection `apply!` is the
+advection-only API; callers composing physics use `transport_step!` or supply
+a typed `midpoint` hook. To add a midpoint operator, extend the composition
+here with its recorder/transpose; keep Advection independent of that physics.
+
 ## File Map
 
+- [`midpoint.jl`](midpoint.jl) — typed transport midpoint, physics preflight,
+  `transport_step!` and diffusion-only composition.
 - [`StepPlan.jl`](StepPlan.jl) — module `Operators.StepPlans`: the cadence and
   reset vocabulary (`_resolve_physics_cadence`, `_normalize_air_mass_reset_mode`),
   stage types and `StepPlan`, `StepOperators`, the stage executors, the
@@ -74,7 +94,9 @@ Convection owns its workspace snapshot methods in `../Convection/workspace_state
 
 ## Depends on
 
-Architectures, Grids, State, SectionTimer and the earlier Operators modules.
+Architectures, Grids, State, SectionTimer and earlier Operators modules:
+Advection supplies the hook interface and sweeps; Diffusion and SurfaceFlux
+supply the concrete midpoint operators.
 
 ## Used by
 
@@ -83,7 +105,7 @@ Models executes the plan; Adjoints.Footprint replays it with a tape recorder.
 ## Shared helpers owned here
 
 `StepPlan`, `StepOperators`, `StepTiming`, stage executors, operator-state
-snapshot/restore/reset, `window_clock` and `window_step_dt`. The workspace
+snapshot/restore/reset, `TransportMidpoint`, `transport_step!`, `window_clock` and `window_step_dt`. The workspace
 factory listed above is shared by production and replay.
 
 ## Forward<->adjoint mirrors

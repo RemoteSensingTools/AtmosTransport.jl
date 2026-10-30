@@ -40,6 +40,7 @@ const README_DIRS = [
     "src/Operators/Advection/Structured",
     "src/Operators/Advection/CubedSphere",
     "src/Operators/Diffusion",
+    "src/Operators/StepPlan",
     "src/Operators/SurfaceFlux",
     "src/Operators/Convection",
     "src/Operators/Convection/CMFMC",

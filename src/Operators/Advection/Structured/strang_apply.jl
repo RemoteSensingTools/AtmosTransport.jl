@@ -17,66 +17,29 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                 grid::AtmosGrid{<:LatLonMesh},
                 scheme::AbstractAdvectionScheme, dt;
                 workspace::AdvectionWorkspace,
-                diffusion_workspace = nothing,
                 cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                diffusion_op::AbstractDiffusion = NoDiffusion(),
-                emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                midpoint::AbstractMidpointHook = NoMidpoint(),
                 meteo = nothing) where {B <: AbstractMassBasis}
     strang_split!(state, fluxes, grid, scheme;
                   workspace = workspace, cfl_limit = cfl_limit,
-                  diffusion_workspace = diffusion_workspace,
-                  diffusion_op = diffusion_op,
-                  emissions_op = emissions_op,
-                  meteo = meteo, dt = dt)
+                  midpoint = midpoint)
     return nothing
 end
 
-# NoAdvection no-op apply! — LatLon. The workspace, cfl_limit, and
-# meteo arguments are accepted but ignored when diffusion is also
-# disabled, so the step plan can dispatch without branching on the
-# scheme. NoAdvection + non-trivial diffusion is supported: a single
-# V(dt) step is applied via the mass-flux VMR wrapper, which is
-# mass-conserving on its own and needs no Strang palindrome. Surface
-# emissions remain rejected because they are Strang half-steps
-# wrapping the advection block.
+# Advection alone is the identity; StepPlans owns diffusion-only composition.
 @inline function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
-                         grid::AtmosGrid{<:LatLonMesh},
-                         ::NoAdvection, dt;
+                         grid::AtmosGrid{<:LatLonMesh}, ::NoAdvection, dt;
                          workspace = nothing,
-                         diffusion_workspace = nothing,
                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         diffusion_op::AbstractDiffusion = NoDiffusion(),
-                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
                          meteo = nothing) where {B <: AbstractMassBasis}
-    _noadvection_reject_emissions_op(emissions_op)
-    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
-                         state.air_mass, ntracers(state))
-    if !(diffusion_op isa NoDiffusion)
-        # NoAdvection + diffusion: skip the Strang half-step structure
-        # entirely and apply a single V(dt) step on the LL state. The
-        # mass-flux VMR wrapper preserves Σ tracer_mass per column to
-        # roundoff, so this is the natural "diffusion-only"
-        # experimental setup.
-        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, diffusion_workspace, dt, meteo)
-    end
     return nothing
 end
 
-# Emission rejection still stands when NoAdvection is selected — surface
-# fluxes require the Strang half-step wrap around the advection step to
-# preserve 2nd-order accuracy. Diffusion alone is fine (it's mass-
-# conserving on its own via the VMR wrapper, no symmetric-splitting
-# requirement).
-@inline function _noadvection_reject_emissions_op(emissions_op::AbstractSurfaceFluxOperator)
-    if !(emissions_op isa NoSurfaceFlux)
-        throw(ArgumentError(
-            "NoAdvection is incompatible with non-NoSurfaceFlux: surface " *
-            "emissions are applied as Strang half-steps wrapping the " *
-            "advection palindrome, so running them without advection " *
-            "drops the symmetric splitting. Remove `[tracers.*.surface_flux]` " *
-            "blocks for a convection-only or diffusion-only run."))
-    end
+@inline function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
+                         grid::AtmosGrid{<:AbstractHorizontalMesh}, ::NoAdvection, dt;
+                         workspace = nothing,
+                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
+                         meteo = nothing) where {B <: AbstractMassBasis}
     return nothing
 end
 
@@ -102,45 +65,8 @@ function _preflight_advection_workspace(workspace::AdvectionWorkspace,
     return nothing
 end
 
-# NoAdvection no-op apply! — face-indexed (ReducedGaussian).  Same
-# contract as the LL / CS variants above.  Defined OUTSIDE the
-# `@eval` loop below because that loop only generates methods
-# dispatched on `AbstractConstantScheme` (the only face-indexed
-# advection scheme that has kernels); `NoAdvection` is a sibling
-# subtype and needs its own method.
-@inline function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
-                         grid::AtmosGrid{<:AbstractHorizontalMesh},
-                         ::NoAdvection, dt;
-                         workspace = nothing,
-                         diffusion_workspace = nothing,
-                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         diffusion_op::AbstractDiffusion = NoDiffusion(),
-                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                         meteo = nothing) where {B <: AbstractMassBasis}
-    _noadvection_reject_emissions_op(emissions_op)
-    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
-                         state.air_mass, ntracers(state))
-    if !(diffusion_op isa NoDiffusion)
-        # NoAdvection + diffusion on face-indexed RG: single V(dt) step.
-        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, diffusion_workspace, dt, meteo)
-    end
-    return nothing
-end
-
-# Face-indexed apply! — shared tracer loop, generated for each topology.
-#
-# Accepts the same kwarg surface as the structured path
-# (`diffusion_op`, `emissions_op`, `meteo`) because `TransportModel.step!`
-# forwards them unconditionally.
-#
-# Reduced-Gaussian now supports both column-local center operators at the
-# H → V → (D or D/2 → S → D/2) → V → H palindrome center. The advection
-# sweeps remain per-tracer on face-indexed meshes, so the surface-flux
-# hook uses the single-tracer `(ncells, Nz)` array-level entry point.
-# One subcycle count `n` from the palindrome outflow budget
-# (`_face_indexed_palindrome_subcycle_count`) gives the composition
-# (H → V)^n → center → (V → H)^n with every flux divided by `n`.
+# Face-indexed transport retains its per-tracer H/V palindrome. The composer
+# supplies one hook; each tracer's current arrays and index are passed to it.
 for (scheme_type, h_sweep, v_sweep) in (
     (:AbstractConstantScheme,    :sweep_horizontal!, :sweep_vertical!),
 )
@@ -148,17 +74,9 @@ for (scheme_type, h_sweep, v_sweep) in (
                           grid::AtmosGrid{<:AbstractHorizontalMesh},
                           scheme::$scheme_type, dt;
                           workspace::AdvectionWorkspace,
-                          diffusion_workspace = nothing,
                           cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                          diffusion_op::AbstractDiffusion = NoDiffusion(),
-                          emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
+                          midpoint::AbstractMidpointHook = NoMidpoint(),
                           meteo = nothing) where {B <: AbstractMassBasis}
-        preflight_diffusion(diffusion_op, diffusion_workspace, dt,
-                             state.air_mass, ntracers(state))
-        # The palindrome below couples emissions as V(dt/2) → S(dt) → V(dt/2) only.
-        uses_diffusive_surface_flux_boundary(diffusion_op) && throw(ArgumentError(
-            "DiffusiveSurfaceFluxBoundary is not implemented for reduced-Gaussian runs; " *
-            "use SplitSurfaceFluxCoupling."))
         m = state.air_mass
         hflux, cm = fluxes.horizontal_flux, fluxes.cm
         cfl_limit_ft = convert(eltype(m), cfl_limit)
@@ -182,29 +100,18 @@ for (scheme_type, h_sweep, v_sweep) in (
         # the data source changed.
         raw = state.tracers_raw
         last_dim = ndims(raw)
-        tracer_names = state.tracer_names
         for idx in 1:n_tr
             if idx > 1
                 copyto!(m, m_save)
             end
 
             rm_tracer = selectdim(raw, last_dim, idx)
-            tracer_name = tracer_names[idx]
 
             for _ in 1:n_sub
                 $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)
                 $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
             end
-            # Per-tracer diffusion on tracer mass: `m` is the current air-mass
-            # slice `(ncells, Nz)`, `rm_tracer` the tracer's mass slice
-            # `(ncells, Nz)`; the flux-form update conserves each column, and
-            # `tracer = idx` selects the tracer's column-ledger carry.
-            palindrome_center!(
-                τ -> SectionTimer.@section(:diffusion, apply_vertical_diffusion_vmr!(
-                    rm_tracer, m, diffusion_op, diffusion_workspace, τ, meteo; tracer = idx)),
-                τ -> apply_surface_flux!(rm_tracer, emissions_op, workspace, τ, meteo, grid;
-                                         tracer_names = (tracer_name,)),
-                diffusion_op, emissions_op, dt)
+            apply_midpoint!(midpoint, rm_tracer, m, idx)
             for _ in 1:n_sub
                 $v_sweep(rm_tracer, m, cm, scheme, workspace, fs)
                 $h_sweep(rm_tracer, m, hflux, grid.horizontal, scheme, workspace, fs)
@@ -216,9 +123,7 @@ for (scheme_type, h_sweep, v_sweep) in (
 end
 
 # Error stubs for unsupported face-indexed scheme families.
-# `kwargs...` also swallows the `diffusion_op` / `emissions_op`
-# / `meteo` forwarding; the stubs still throw `ArgumentError` so no
-# additional work is needed.
+# Additional midpoint/meteorology keywords preserve the same error.
 for (scheme_type, label) in (
     (:AbstractLinearScheme,            "linear-reconstruction"),
     (:AbstractQuadraticScheme,         "quadratic-reconstruction"),

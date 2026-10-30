@@ -24,7 +24,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   definition of the transport-palindrome center order:
   `V(dt/2) → S(dt) → V(dt/2)` (`SplitSurfaceFluxCoupling`, the default) or
   `S(dt) → V(dt)` (`DiffusiveSurfaceFluxBoundary`). Production palindromes
-  call it through `palindrome_center!` (`../Advection/Structured/StrangSplitting.jl`);
+  call it through `TransportMidpoint` (`../StepPlan/midpoint.jl`);
   the cubed-sphere adjoint replays and records the same composition
 - Kernel implementations:
   [`diffusion_kernels.jl`](diffusion_kernels.jl) and
@@ -129,8 +129,7 @@ halos, against that serial kernel.
   (`test/core/test_diffusion_flux_form.jl`): conservation alone does not
   show that a solve did anything
 - Tracing runtime integration:
-  follow calls from `TransportModel.step!` into advection midpoint hooks
-  in `../Advection/Structured/StrangSplitting.jl` (RG: `../Advection/Structured/strang_apply.jl`)
+  follow `TransportModel.step!` into `../StepPlan/midpoint.jl`
 
 ## Cross-Dependencies
 
@@ -138,11 +137,9 @@ halos, against that serial kernel.
   and time-varying field contracts
 - [`../../MetDrivers/`](../../MetDrivers/) provides `current_time`,
   which time-varying Kz fields consume
-- [`../Advection/Structured/StrangSplitting.jl`](../Advection/Structured/StrangSplitting.jl),
-  [`../Advection/Structured/multitracer_strang.jl`](../Advection/Structured/multitracer_strang.jl) and
-  [`../Advection/Structured/strang_apply.jl`](../Advection/Structured/strang_apply.jl)
-  embed diffusion at the transport midpoint
-- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) orders its
+- [`../StepPlan/midpoint.jl`](../StepPlan/midpoint.jl) supplies diffusion at
+  the abstract Advection midpoint and owns physics preflight
+- The cubed-sphere adjoint (`../../Adjoints/`, `../../Adjoints/Footprint/`) orders its
   replayed and recorded midpoint with `surface_flux_center!`
 - [`../../Models/Core/TransportModel.jl`](../../Models/Core/TransportModel.jl)
   determines whether diffusion is active in a given run
@@ -173,12 +170,12 @@ Diffusion loads before Tape and Adjoints and imports neither.
 
 ## Used by
 
-Advection (transport midpoint), SurfaceFlux (coupling and emission profile),
+StepPlan (transport midpoint), SurfaceFlux (coupling and emission profile),
 Models (runtime recipes and window refresh), and Adjoints (transpose kernels).
 
 ## Shared helpers owned here
 
-- `check_diffusion_workspace`, `preflight_diffusion`: storage ownership,
+- `check_diffusion_workspace`, `preflight_diffusion`: public storage ownership,
   tracer-count, precision, backend and shape validation before advection.
 - `HybridCoefficientWorkspace`, `stage_hybrid_coefficients!`: reusable
   coefficient storage; `recover_total_surface_pressure_staged!`,

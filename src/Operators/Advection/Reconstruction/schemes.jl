@@ -236,7 +236,7 @@ experiment or a synthetic-state regression.
 When `NoAdvection` is selected:
 - The advection sweeps are skipped on all three topologies
   (`LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh`).
-- Diffusion is *allowed*: with no advection to wrap, the V(dt)
+- StepPlan composes diffusion separately: with no advection to wrap, the V(dt)
   diffusion step is applied directly through the mass-flux VMR
   kernels, which are mass-conserving on their own and need no
   Strang palindrome. This is the natural "diffusion-only"
@@ -246,9 +246,8 @@ When `NoAdvection` is selected:
   wrapping the advection block, so running them without advection
   silently drops 2nd-order accuracy. To run a convection-only
   configuration omit `[tracers.*.surface_flux]` blocks.
-- The CS workspace is auto-allocated by the `TransportModel`
-  constructor when diffusion is active (and is `nothing` when
-  diffusion is also off).
+- The advection workspace is `nothing` on CS. `TransportModel` allocates
+  the independent diffusion workspace when diffusion is active.
 
 # Example
 ```julia

@@ -51,3 +51,9 @@ Lin–Rood accepts device tape storage only. Level Nz is the surface.
 # shared: CSFootprintResult, _ZeroStart, _cs_objective_footprints, _cs_replay_for_call, _cs_surface_footprints, _replay_m, _replay_rm, _replay_steps!, _require_tape_path_supported, _require_tape_storage_supported, _validate_step_sequences
 
 # shared: _validate_step_sequences
+
+The replay's transport stage uses StepPlans `transport_step!` and its concrete
+`TransportMidpoint`. Advection sees only the abstract hook and current buffers.
+Center/diffusion/emission records retain their order; ReverseLoop visits them
+backwards, including both half solves for split coupling. Numerical transposes
+beside the forward sweeps and the fenced Lin–Rood tape code are unchanged.

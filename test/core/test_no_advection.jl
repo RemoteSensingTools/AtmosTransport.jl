@@ -8,11 +8,12 @@ Why this exists:
   Strang-half-stepping.
 - NoAdvection must therefore be a *typed* no-op (so dispatch picks it up at
   compile time and bypasses the sweep kernels entirely) and must hard-reject
-  non-NoDiffusion / non-NoSurfaceFlux companion operators (because both are
-  integrated at the palindrome center of the advection block).
+  non-NoSurfaceFlux companion operators. StepPlan composes standalone diffusion
+  when advection is disabled.
 """
 
 using Test
+using AtmosTransport.Operators.StepPlans: transport_step!
 using AtmosTransport
 using AtmosTransport: CellState, CubedSphereState, DryBasis,
                       NoAdvection, UpwindScheme,
@@ -146,7 +147,7 @@ end
     ws = AdvectionWorkspace(state.air_mass)
 
     # NoDiffusion + NoSurfaceFlux: still a no-op, no throw.
-    @test (apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+    @test (transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
                   workspace=ws,
                   diffusion_op=NoDiffusion(),
                   emissions_op=NoSurfaceFlux()); true)
@@ -162,7 +163,7 @@ end
     fill!(diffusion_ws.layer_thickness, one(FT))
     air_pre = copy(state.air_mass)
     co2_mass_pre = sum(state.tracers_raw[:, :, :, 1])
-    apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+    transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
            workspace=ws, diffusion_workspace=diffusion_ws,
            diffusion_op=diff_op)
     @test state.air_mass == air_pre              # NoAdvection is air-inert
@@ -172,17 +173,17 @@ end
     # Direct-API guard: missing workspace + non-trivial diffusion must
     # surface a clear ArgumentError rather than a cryptic FieldError
     # from the kernel-internal `w_scratch` access.
-    @test_throws ArgumentError apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+    @test_throws ArgumentError transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
                                       workspace=nothing,
                                       diffusion_workspace=nothing,
                                       diffusion_op=diff_op)
 
     # Non-NoSurfaceFlux → ArgumentError pointing at the TOML knob.
     em_op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), Nx, Ny)))
-    @test_throws ArgumentError apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+    @test_throws ArgumentError transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
                                       workspace=ws, emissions_op=em_op)
     try
-        apply!(state, fluxes, grid, NoAdvection(), FT(1800);
+        transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
                workspace=ws, emissions_op=em_op)
         @test false
     catch err
@@ -210,7 +211,7 @@ end
 
     # Without a workspace, the apply! API surfaces a clear ArgumentError
     # rather than a kernel-internal FieldError on `w_scratch`.
-    @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
+    @test_throws ArgumentError transport_step!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); diffusion_op=rg_diff)
 
     # With a workspace + populated `layer_thickness`, RG NoAdvection +
@@ -219,14 +220,14 @@ end
     rg_diffusion_ws = DiffusionWorkspace(rg_state)
     fill!(rg_diffusion_ws.layer_thickness, one(FT))
     rg_co2_pre = sum(rg_state.tracers_raw[:, :, 1])
-    apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(), FT(1800);
+    transport_step!(rg_state, rg_fluxes, rg_grid, NoAdvection(), FT(1800);
            workspace=rg_ws, diffusion_workspace=rg_diffusion_ws,
            diffusion_op=rg_diff)
     @test isapprox(sum(rg_state.tracers_raw[:, :, 1]), rg_co2_pre;
                    rtol = 1e-12, atol = 0)
 
     rg_em = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), ncells(rg_mesh))))
-    @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
+    @test_throws ArgumentError transport_step!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); emissions_op=rg_em)
 
     # The reduced-Gaussian palindrome has no diffusive surface-flux boundary:
@@ -237,7 +238,7 @@ end
     rg_fluxes.horizontal_flux .= FT(1e-3) .* (1:size(rg_fluxes.horizontal_flux, 1))
     rg_state.tracers_raw[:, :, 1] .*= (1:ncells(rg_mesh)) .+ FT(1)
     tracers_before, mass_before = copy(rg_state.tracers_raw), copy(rg_state.air_mass)
-    @test_throws ArgumentError apply!(rg_state, rg_fluxes, rg_grid, UpwindScheme(), FT(1800);
+    @test_throws ArgumentError transport_step!(rg_state, rg_fluxes, rg_grid, UpwindScheme(), FT(1800);
                                       workspace=rg_ws, diffusion_workspace=rg_diffusion_ws,
                                       diffusion_op=rg_diff_boundary, emissions_op=rg_em)
     @test rg_state.tracers_raw == tracers_before
@@ -258,12 +259,12 @@ end
     cs_diff   = ImplicitVerticalDiffusion(; kz_field=cs_kz)
 
     # CS workspace guard: same actionable ArgumentError as LL/RG.
-    @test_throws ArgumentError apply!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
+    @test_throws ArgumentError transport_step!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
                                       FT(1800); diffusion_op=cs_diff)
 
     cs_em = SurfaceFluxOperator(SurfaceFluxSource(:CO2,
                                                   ntuple(_ -> fill(FT(1.0), cs_N, cs_N), 6)))
-    @test_throws ArgumentError apply!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
+    @test_throws ArgumentError transport_step!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
                                       FT(1800); emissions_op=cs_em)
 end
 

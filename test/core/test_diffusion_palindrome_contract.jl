@@ -1,4 +1,5 @@
 using Test
+using AtmosTransport.Operators.StepPlans: TransportMidpoint
 
 import AtmosTransport
 const AT = AtmosTransport
@@ -34,7 +35,8 @@ end
     op = ImplicitVerticalDiffusion(; kz_field=ConstantField{FT, 3}(FT(1.5)))
 
     strang_split_mt!(rm, m, am, bm, cm, UpwindScheme(), advection;
-                     diffusion_op=op, diffusion_workspace=diffusion, dt=FT(5))
+                     midpoint=TransportMidpoint(; workspace=advection,
+                         diffusion_op=op, diffusion_workspace=diffusion, dt=FT(5)))
     apply_vertical_diffusion_vmr!(expected, expected_m, op, diffusion, FT(5))
 
     @test rm ≈ expected rtol=1e-13 atol=0
@@ -71,10 +73,10 @@ end
         surface_flux_coupling=DiffusiveSurfaceFluxBoundary())
 
     strang_split_mt!(rm, m, am, bm, cm, UpwindScheme(), advection;
-                     diffusion_op=boundary_op,
+                     midpoint=TransportMidpoint(; workspace=advection, diffusion_op=boundary_op,
                      diffusion_workspace=diffusion,
                      emissions_op=emissions,
-                     tracer_names=(:CO2,), dt)
+                     tracer_names=(:CO2,), dt))
 
     expected = zeros(FT, size(rm))
     expected[:, :, end, 1] .= rate .* dt
@@ -97,8 +99,9 @@ end
     op = ImplicitVerticalDiffusion(; kz_field = ConstantField{FT, 3}(FT(10)))
     emissions = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
     strang_split_mt!(rm, m, am, bm, cm, UpwindScheme(), advection;
+        midpoint = TransportMidpoint(; workspace=advection,
         diffusion_op = op, diffusion_workspace = diffusion, emissions_op = emissions,
-        tracer_names = (:CO2,), dt)
+        tracer_names = (:CO2,), dt))
     apply_vertical_diffusion_vmr!(expected, m, op, reference_ws, dt / 2)
     expected[:, :, end, 1] .+= rate .* dt
     apply_vertical_diffusion_vmr!(expected, m, op, reference_ws, dt / 2)

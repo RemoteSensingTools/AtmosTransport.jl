@@ -167,7 +167,7 @@ At a high level, each meteorological window follows this sequence:
    fields.
 2. The model applies the configured number of transport substeps.
 3. Advection follows its symmetric directional palindrome; diffusion and
-   surface fluxes occupy their declared placement; convection and chemistry
+   surface fluxes run through StepPlan’s typed midpoint hook; convection and chemistry
    run at their configured cadence.
 4. Requested output times are captured without changing model state.
 5. The next forcing window is loaded and checked against the same binary and

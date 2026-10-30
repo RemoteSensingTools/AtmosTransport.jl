@@ -131,12 +131,13 @@ The transport block dispatches on state/flux/mesh types:
 
 - lat-lon uses packed rank-4 tracer storage and an
   `X → Y → Z → midpoint → Z → Y → X` split;
-- reduced Gaussian uses face-indexed storage and an `H → midpoint → H`
+- reduced Gaussian uses face-indexed storage and an `H → Z → midpoint → Z → H`
   split; and
 - cubed sphere uses six halo-padded panels with either packed split sweeps or
   the Lin-Rood path.
 
-The midpoint composes vertical diffusion and surface flux according to the
+StepPlan supplies `TransportMidpoint` through Advection’s abstract hook on the
+active sweep buffers. It composes vertical diffusion and surface flux according to the
 diffusion operator's `AbstractSurfaceFluxCoupling` policy. Convection is a
 separate block and consumes a `ConvectionForcing` whose populated fields are
 validated for `CMFMCConvection`, `TM5Convection`, or
