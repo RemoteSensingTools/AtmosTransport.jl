@@ -115,7 +115,7 @@ mutable struct BLDiffDiag{FT <: AbstractFloat}
     max_kz        :: FT    # max diffusivity written (range sanity check)
 end
 BLDiffDiag{FT}() where {FT} = BLDiffDiag{FT}(0, 0, zero(FT))
-@inline _reset!(d::BLDiffDiag{FT}) where {FT} =
+@inline reset_bldiff_diag!(d::BLDiffDiag{FT}) where {FT} =
     (d.entr_fallback = 0; d.kvh_floored = 0; d.max_kz = zero(FT); d)
 
 # TM5's branchless step function `jqif`: 1 if a ≥ b, else 0. Kept as integer

@@ -5,25 +5,28 @@
 # ---------------------------------------------------------------------------
 
 # Accepted values of the `[preprocessing]` flux-construction keys.
+const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
+                             cubic  = (order = 4, along_face_filter = false),
+                             fv3    = (order = 4, along_face_filter = true))
 const FACE_LENGTH_KINDS        = (:cell_centerline, :edge)
 const FACE_FLUX_KINDS          = (:panel_average, :vector, :line_integral)
-const FACE_INTERPOLATION_KINDS = (:linear, :cubic, :fv3)
+const FACE_INTERPOLATION_KINDS = keys(_FACE_INTERPOLATION)
 const WIND_REGRID_KINDS        = (:scalar, :cartesian)
-const FLUX_THICKNESS_KINDS     = (:moist, :dry_mass)
 
 struct MoistFluxThickness end
 struct DryMassFluxThickness end
-_flux_thickness(kind::Symbol) =
-    (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())[kind]
+const _FLUX_THICKNESS = (moist = MoistFluxThickness(), dry_mass = DryMassFluxThickness())
+const FLUX_THICKNESS_KINDS = keys(_FLUX_THICKNESS)
+flux_thickness_method(kind::Symbol) = _FLUX_THICKNESS[kind]
 
-function _validate_flux_thickness(kind::Symbol, source::AbstractString)
+function validate_flux_thickness(kind::Symbol, source::AbstractString)
     kind in FLUX_THICKNESS_KINDS || throw(ArgumentError(
         "$source flux_thickness must be one of $(join(FLUX_THICKNESS_KINDS, ", ")); got :$kind"))
     return kind
 end
 
 # Reject unknown flux-construction options; `source` names the met source in errors.
-function _validate_flux_construction(s, source::AbstractString)
+function validate_flux_construction(s, source::AbstractString)
     for (name, value, kinds) in (("face_lengths", s.face_lengths, FACE_LENGTH_KINDS),
                                  ("face_fluxes", s.face_fluxes, FACE_FLUX_KINDS),
                                  ("face_interpolation", s.face_interpolation, FACE_INTERPOLATION_KINDS),
@@ -33,16 +36,16 @@ function _validate_flux_construction(s, source::AbstractString)
     end
     s.face_fluxes === :vector || s.face_interpolation === :linear ||
         throw(ArgumentError("$source face_interpolation applies to face_fluxes = :vector only"))
-    s.face_fluxes !== :line_integral || _has_source_line_integrals(s) ||
+    s.face_fluxes !== :line_integral || has_source_line_integrals(s) ||
         throw(ArgumentError("$source does not implement face_fluxes = :line_integral (ERA5 only)"))
     validate_column_balance_weights(s.column_balance_weights, source)
-    _validate_flux_time_sampling(s, source)
+    validate_flux_time_sampling(s, source)
     return s
 end
-_validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 paths have one)
-_has_source_line_integrals(s) = false                  # true for ERA5 native and spectral paths
-_has_source_line_integrals(::ERA5SpectralSettings) = true
-function _validate_flux_time_sampling(s::ERA5SpectralSettings, source)
+validate_flux_time_sampling(s, source) = nothing      # sources without the option (ERA5 paths have one)
+has_source_line_integrals(s) = false                  # true for ERA5 native and spectral paths
+has_source_line_integrals(::ERA5SpectralSettings) = true
+function validate_flux_time_sampling(s::ERA5SpectralSettings, source)
     s.flux_time_sampling in (:window_start, :window_mean) || throw(ArgumentError(
         "$source flux_time_sampling must be one of window_start, window_mean; " *
         "got :$(s.flux_time_sampling)"))
@@ -58,11 +61,8 @@ struct VectorFaceFluxes{G <: CSVectorFaceGeometry}     # vectors projected on th
     face_table :: CSGlobalFaceTable
 end
 # `face_interpolation` → stencil order across the face and FV3's filter along it.
-const _FACE_INTERPOLATION = (linear = (order = 2, along_face_filter = false),
-                             cubic  = (order = 4, along_face_filter = false),
-                             fv3    = (order = 4, along_face_filter = true))
 # `source` is the source mesh, needed by `:line_integral`.
-function _face_flux_method(settings, grid; source = nothing)
+function face_flux_method(settings, grid; source = nothing)
     if settings.face_fluxes === :line_integral
         source isa Union{LatLonMesh, ReducedGaussianMesh} || throw(ArgumentError(
             "face_fluxes = :line_integral needs a LatLonMesh or ReducedGaussianMesh source"))
@@ -78,16 +78,16 @@ end
 
 # Cell-centre winds the method needs: panel-local face-normal components, or
 # the east/north components themselves.
-_prepare_cell_winds!(::PanelAverageFluxes, x, u_east, v_north, mesh, Nz) =
+prepare_cell_winds!(::PanelAverageFluxes, x, u_east, v_north, mesh, Nz) =
     rotate_winds_to_panel_local!(x.u_local, x.v_local, u_east, v_north, mesh, Nz)
-function _prepare_cell_winds!(::VectorFaceFluxes, x, u_east, v_north, mesh, Nz)
+function prepare_cell_winds!(::VectorFaceFluxes, x, u_east, v_north, mesh, Nz)
     foreach(copyto!, x.u_local, u_east)
     foreach(copyto!, x.v_local, v_north)
     return nothing
 end
 # The line integrals use the source winds, not the cube-centre ones; they are
 # applied through `_endpoint_face_fluxes!` (era5_n320_regrid.jl), which has them.
-_prepare_cell_winds!(::LineIntegralFaceFluxes, x, u_east, v_north, mesh, Nz) = nothing
+prepare_cell_winds!(::LineIntegralFaceFluxes, x, u_east, v_north, mesh, Nz) = nothing
 
 # Header record of the face-interpolation and wind-regrid choices a face-flux
 # method actually uses: only vector fluxes interpolate across faces, and line
@@ -99,9 +99,9 @@ flux_header_wind_regrid(::Union{PanelAverageFluxes, VectorFaceFluxes}, settings)
     String(settings.wind_regrid)
 flux_header_wind_regrid(::LineIntegralFaceFluxes, _settings) = "source_line_integral"
 
-_face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
+face_fluxes!(m::PanelAverageFluxes, x, g, dt, Nc, Nz) =
     cs_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.lengths, g, dt, Nc, Nz)
-_face_fluxes!(m::VectorFaceFluxes, x, g, dt, Nc, Nz) =
+face_fluxes!(m::VectorFaceFluxes, x, g, dt, Nc, Nz) =
     cs_vector_face_fluxes!(x.am, x.bm, x.u_local, x.v_local, x.dp, m.geom, m.face_table, g, dt, Nc, Nz)
 
 """
@@ -144,7 +144,7 @@ N320); the source cells are taken in the regridder's order (longitude fastest,
 or ring by ring). Owns the three source component buffers (per source cell and
 level; 3 × 60 MB for MERRA-2 L72 and 3 × 300 MB for N320 L137 in Float32), the
 remapped `Z` panels, and the basis trigonometry of both grids. The buffers are
-only used inside one `_regrid_winds!` call, so one instance can serve several
+only used inside one `regrid_winds!` call, so one instance can serve several
 pipelines.
 """
 struct CartesianWindRegrid{FT} <: AbstractWindRegrid
@@ -154,35 +154,35 @@ struct CartesianWindRegrid{FT} <: AbstractWindRegrid
     dst_trig :: NTuple{6, NamedTuple{(:sinλ, :cosλ, :sinφ, :cosφ), NTuple{4, Matrix{Float64}}}}
 end
 
-_trig(λ, φ) = (sinλ = sin.(λ), cosλ = cos.(λ), sinφ = sin.(φ), cosφ = cos.(φ))
+wind_basis_trig(λ, φ) = (sinλ = sin.(λ), cosλ = cos.(λ), sinφ = sin.(φ), cosφ = cos.(φ))
 
 # Source cell centres (degrees) in the regridder's cell order.
-_source_cell_centers(m::LatLonMesh) = (repeat(m.λᶜ; outer = m.Ny), repeat(m.φᶜ; inner = m.Nx))
-_source_cell_centers(m::ReducedGaussianMesh) = cell_centers(m)
+source_cell_centers(m::LatLonMesh) = (repeat(m.λᶜ; outer = m.Ny), repeat(m.φᶜ; inner = m.Nx))
+source_cell_centers(m::ReducedGaussianMesh) = cell_centers(m)
 
 function CartesianWindRegrid(source, target::CubedSphereMesh, Nz::Integer, ::Type{FT}) where FT
-    lon, lat = _source_cell_centers(source)
+    lon, lat = source_cell_centers(source)
     dst_trig = ntuple(6) do p
         lonp, latp = panel_cell_center_lonlat(target, p)
-        _trig(deg2rad.(Float64.(lonp)), deg2rad.(Float64.(latp)))
+        wind_basis_trig(deg2rad.(Float64.(lonp)), deg2rad.(Float64.(latp)))
     end
     Nc = target.Nc
     return CartesianWindRegrid{FT}(ntuple(_ -> zeros(FT, length(lon), Nz), 3),
                                    ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6),
-                                   _trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))), dst_trig)
+                                   wind_basis_trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))), dst_trig)
 end
 
-_wind_regrid(kind::Symbol, source, target, Nz, FT) =
+build_wind_regrid(kind::Symbol, source, target, Nz, FT) =
     kind === :cartesian ? CartesianWindRegrid(source, target, Nz, FT) : ScalarWindRegrid()
-_wind_regrid(method::ScalarWindRegrid, source, target, Nz, FT) = method
-function _wind_regrid(method::CartesianWindRegrid, source, target, Nz, FT)    # shared instance
+build_wind_regrid(method::ScalarWindRegrid, source, target, Nz, FT) = method
+function build_wind_regrid(method::CartesianWindRegrid, source, target, Nz, FT)    # shared instance
     size(method.src_xyz[1], 2) == Nz || throw(DimensionMismatch(
         "shared CartesianWindRegrid has $(size(method.src_xyz[1], 2)) levels, not $Nz"))
     return method
 end
 
 """
-    _regrid_winds!(method, u_cs, v_cs, regrid!, u, v)
+    regrid_winds!(method, u_cs, v_cs, regrid!, u, v)
 
 Regrid the source east/north winds `u`, `v` to the east/north cube panels `u_cs`,
 `v_cs` with `method`, an [`AbstractWindRegrid`](@ref). `regrid!(panels, field)`
@@ -190,13 +190,13 @@ remaps one source field, in the layout of `u` (lon × lat × level, or cell ×
 level, level last), to cube panels; it must not keep `field`, which may be a
 reshaped internal buffer.
 """
-function _regrid_winds!(::ScalarWindRegrid, u_cs, v_cs, regrid!, u, v)
+function regrid_winds!(::ScalarWindRegrid, u_cs, v_cs, regrid!, u, v)
     regrid!(u_cs, u)
     regrid!(v_cs, v)
     return nothing
 end
 
-function _regrid_winds!(w::CartesianWindRegrid{FT}, u_cs, v_cs, regrid!, u, v) where FT
+function regrid_winds!(w::CartesianWindRegrid{FT}, u_cs, v_cs, regrid!, u, v) where FT
     X, Y, Z = w.src_xyz
     (size(u) == size(v) && length(u) == length(X) && size(u, ndims(u)) == size(X, 2)) ||
         throw(DimensionMismatch("winds $(size(u)), $(size(v)) do not match the Cartesian buffers $(size(X))"))
@@ -204,9 +204,10 @@ function _regrid_winds!(w::CartesianWindRegrid{FT}, u_cs, v_cs, regrid!, u, v) w
     (; sinλ, cosλ, sinφ, cosφ) = w.src_trig
     @inbounds for k in axes(X, 2), c in axes(X, 1)
         uu, vv = Float64(uc[c, k]), Float64(vc[c, k])
-        X[c, k] = FT(-sinλ[c] * uu - sinφ[c] * cosλ[c] * vv)
-        Y[c, k] = FT( cosλ[c] * uu - sinφ[c] * sinλ[c] * vv)
-        Z[c, k] = FT( cosφ[c] * vv)
+        x, y, z = east_north_to_cartesian(uu, vv, w.src_trig, c)
+        X[c, k] = FT(x)
+        Y[c, k] = FT(y)
+        Z[c, k] = FT(z)
     end
     regrid!(u_cs, reshape(X, size(u)))      # holds X until projected
     regrid!(v_cs, reshape(Y, size(u)))      # holds Y until projected

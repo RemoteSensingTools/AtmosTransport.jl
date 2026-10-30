@@ -52,11 +52,11 @@ function CSPoissonScratch(nc::Int)
 end
 
 """
-    _cs_graph_laplacian_mul!(out, psi, ft, degree)
+    cs_graph_laplacian_mul!(out, psi, ft, degree)
 
 Compute `out = L · psi` for the global CS graph Laplacian.
 """
-function _cs_graph_laplacian_mul!(out::AbstractVector{Float64},
+function cs_graph_laplacian_mul!(out::AbstractVector{Float64},
                                   psi::AbstractVector{Float64},
                                   ft::CSGlobalFaceTable,
                                   degree::Vector{Int})
@@ -72,12 +72,6 @@ function _cs_graph_laplacian_mul!(out::AbstractVector{Float64},
     return out
 end
 
-@inline function _cs_project_mean_zero!(v::AbstractVector{Float64})
-    s = sum(v) / length(v)
-    @. v -= s
-    return v
-end
-
 @inline function _cs_dot(a::AbstractVector{Float64}, b::AbstractVector{Float64})
     s = 0.0
     @inbounds @simd for i in eachindex(a, b)
@@ -86,7 +80,7 @@ end
     return s
 end
 
-@inline function _cs_linf(a::AbstractVector{Float64})
+@inline function cs_linf(a::AbstractVector{Float64})
     m = 0.0
     @inbounds @simd for i in eachindex(a)
         v = abs(a[i])
@@ -172,7 +166,7 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
     Ap = scratch.Ap
     z  = scratch.z
 
-    _cs_project_mean_zero!(rhs)
+    project_mean_zero!(rhs)
     fill!(psi, 0.0)
     copyto!(r, rhs)
 
@@ -181,12 +175,12 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
     copyto!(p, z)
 
     rz_old = _cs_dot(r, z)
-    rhs_linf = _cs_linf(rhs) + eps()
+    rhs_linf = cs_linf(rhs) + eps()
 
     iter = 0
     r_linf = rhs_linf
     while iter < max_iter
-        _cs_graph_laplacian_mul!(Ap, p, ft, degree)
+        cs_graph_laplacian_mul!(Ap, p, ft, degree)
         pAp = _cs_dot(p, Ap)
         pAp <= 0 && break
         alpha = rz_old / pAp
@@ -198,7 +192,7 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
         r_linf / rhs_linf < tol && break
 
         _cs_precondition!(z, r, degree)
-        do_project && _cs_project_mean_zero!(z)
+        do_project && project_mean_zero!(z)
         rz_new = _cs_dot(r, z)
         rz_old == 0.0 && break
         beta = rz_new / rz_old
@@ -207,7 +201,7 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
         iter += 1
     end
 
-    _cs_project_mean_zero!(psi)
+    project_mean_zero!(psi)
     return r_linf, iter
 end
 
@@ -269,12 +263,12 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
+    sync_cs_mirrors!(panels_am, panels_bm, ft, Nz)
 
 Copy canonical boundary flux values to their cross-panel mirror entries
 for all levels.
 """
-function _sync_cs_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
+function sync_cs_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                             panels_bm::NTuple{6, Array{FT, 3}},
                             ft::CSGlobalFaceTable,
                             Nz::Int) where FT
@@ -310,15 +304,15 @@ end
 Comprehensive boundary flux mirror sync using panel connectivity directly.
 
 Iterates all 12 physical edges of the cubed sphere (all 4 directions per panel,
-de-duplicated by p < q). For each edge, syncs both directions: canonical panel's
-boundary → neighbor's mirror, AND neighbor's boundary → canonical panel's mirror.
+de-duplicated by p < q). For each edge, copy the lower-numbered canonical
+panel's boundary flux to its neighbor's mirror slot.
 
 Sign convention: when canonical and mirror are both at inflow positions (i=1 or
 j=1) or both at outflow positions (i=Nc+1 or j=Nc+1), negate so that per-panel
 flux telescoping conserves mass.
 
-Must be called after horizontal flux balancing to propagate balanced canonical
-values to all mirror positions.
+Call after modifying canonical boundary fluxes to propagate them to all mirror
+positions. Column balance already synchronizes through its face table.
 """
 function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                                         panels_bm::NTuple{6, Array{FT, 3}},
@@ -326,8 +320,7 @@ function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                                         Nc::Int, Nz::Int) where FT
     # Iterate all 4 edges of each panel with p < q dedup — same canonical
     # ordering as the face table.  For each canonical edge (p, e) → (q, eq),
-    # sync both directions: p's boundary → q's mirror AND q's boundary → p's
-    # mirror.
+    # copy p's canonical boundary to q's mirror.
     for p in 1:6
         for e in (EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST)
             q   = conn.neighbors[p][e].panel
@@ -357,26 +350,6 @@ function sync_all_cs_boundary_mirrors!(panels_am::NTuple{6, Array{FT, 3}},
                 end
             end
 
-            # --- Reverse: q's boundary → p's mirror ---
-            for s in 1:Nc
-                t = ori == 0 ? s : Nc + 1 - s
-
-                can_dir, can_i, can_j = cs_edge_face_location(eq, t, Nc)
-                mir_dir, mir_i, mir_j = cs_edge_face_location(e, s, Nc)
-
-                msign = seam_mirror_sign(e, eq, FT)
-
-                @inbounds for k in 1:Nz
-                    canonical = can_dir == 1 ? panels_am[q][can_i, can_j, k] :
-                                               panels_bm[q][can_i, can_j, k]
-                    mirror_val = msign * canonical
-                    if mir_dir == 1
-                        panels_am[p][mir_i, mir_j, k] = mirror_val
-                    else
-                        panels_bm[p][mir_i, mir_j, k] = mirror_val
-                    end
-                end
-            end
         end
     end
     return nothing

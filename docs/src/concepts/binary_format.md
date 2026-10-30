@@ -434,7 +434,7 @@ Independence has limits that the certificate cannot remove:
 
 - the panel-average and line-integral evaluators are independent of the
   production constructors; the vector evaluator re-evaluates the face formula
-  but reuses the production face geometry and FV3 filter (`_vector_face_value`,
+  but reuses the production face geometry and FV3 filter (`vector_face_value`,
   face lengths), so it catches assembly, scatter and time-scaling errors, not
   geometry errors;
 - reference and candidate read the same input arrays (winds, pressure

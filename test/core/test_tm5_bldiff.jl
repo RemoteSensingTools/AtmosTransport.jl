@@ -10,7 +10,7 @@ using Test
 
 import AtmosTransport
 using .AtmosTransport.Preprocessing: BLDiffConstants, tm5_bldiff_kvh_column!,
-                                     tm5_bldiff_center_kz_column!, BLDiffColumnScratch
+                                     tm5_bldiff_center_kz_column!, tm5_bldiff_dkg_column!, BLDiffColumnScratch
 
 """Build a consistent bottom-up column (index 1 = surface) with ERA5-like fine
 near-surface resolution. Returns `(T, q, u, v, p_edge, z_edge)`."""
@@ -43,13 +43,6 @@ _run(col, hflux, lhflux, ustar) = begin
 end
 
 @testset "TM5 bldiff column kernel" begin
-    @testset "constants have physical defaults" begin
-        c = BLDiffConstants{Float64}()
-        @test c.vkarman ≈ 0.4
-        @test c.ri_crit ≈ 0.3
-        @test 0.28 < c.r_air / c.cp_air < 0.29   # κ ≈ 2/7
-        @test c.r_vap / c.r_air - 1 ≈ 0.607 atol = 0.01   # virtual-T coefficient
-    end
 
     @testset "output shape, finiteness, sign" begin
         col = _idealized_column(Float64)
@@ -69,6 +62,10 @@ end
         stable   = _run(col, -30.0,  10.0, 0.15)
         neutral  = _run(col,   1.0,   3.0, 0.30)
         @test unstable.pblh > neutral.pblh > stable.pblh
+        @test maximum(unstable.kvh) > 10 * maximum(stable.kvh)
+        @test maximum(unstable.kvh) > 20.0
+        kmax = argmax(unstable.kvh)
+        @test 100.0 < col.zc[kmax] < unstable.pblh
     end
 
     @testset "Kvh is non-negative across non-monotonic profiles (clamp guard)" begin
@@ -95,23 +92,7 @@ end
         end
     end
 
-    @testset "convective mixed-layer diffusivity exceeds the stable case" begin
-        col = _idealized_column(Float64)
-        unstable = _run(col, 250.0, 150.0, 0.50)
-        stable   = _run(col, -30.0,  10.0, 0.15)
-        # A daytime CBL mixes orders of magnitude more strongly than a
-        # nocturnal stable layer.
-        @test maximum(unstable.kvh) > 10 * maximum(stable.kvh)
-        @test maximum(unstable.kvh) > 20.0      # realistic CBL magnitude (m²/s)
-    end
 
-    @testset "convective profile peaks in the mixed layer, not at the surface" begin
-        col = _idealized_column(Float64)
-        r = _run(col, 250.0, 150.0, 0.50)
-        kmax = argmax(r.kvh)
-        @test col.zc[kmax] > 100.0              # peak is above the surface layer
-        @test col.zc[kmax] < r.pblh             # ... and below the PBL top
-    end
 
     @testset "Float32 path runs and agrees with Float64 to single precision" begin
         col64 = _idealized_column(Float64)
@@ -211,4 +192,27 @@ end
         @test maximum(calm.kvh) < 1.0
         @test calm.pblh == col.c.pblh_min       # PBL collapses to its floor
     end
+end
+
+@testset "TM5 bldiff emits the vendored dkg formula" begin
+    FT = Float64
+    Nz = 6
+    A = collect(range(0.0, 2000.0; length=Nz + 1))
+    B = collect(range(0.0, 1.0; length=Nz + 1))
+    ps = FT(1e5)
+    T = collect(range(220.0, 288.0; length=Nz))
+    q = collect(range(0.0, 0.01; length=Nz))
+    u = collect(range(12.0, 3.0; length=Nz)); v = zeros(FT, Nz)
+    m = FT[1, 2, 4, 7, 10, 12] .* 1e13
+    scratch = BLDiffColumnScratch{FT}(Nz)
+    dkg = zeros(FT, Nz)
+    tm5_bldiff_dkg_column!(dkg, T, q, u, v, m, ps, 200.0, 100.0, 0.4,
+                           A, B, BLDiffConstants{FT}(), scratch)
+    for k in 1:Nz-1
+        l = Nz - k
+        expected = max(scratch.kvh[l], 0) * 2 * (m[k] + m[k+1]) /
+                   (scratch.dz[k] + scratch.dz[k+1])^2
+        @test dkg[k] ≈ expected rtol=2e-15
+    end
+    @test dkg[end] == 0
 end

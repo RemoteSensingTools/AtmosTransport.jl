@@ -140,6 +140,13 @@ Vertical may call Core and Spectral may call Core and Vertical. Existing facade
 consumers may follow the moved bindings. No child may import the parent or a
 later stage, and no reverse exception or clone/private/docstring allowance is
 added. The migration does not apply when the base already contains Core.
+
+PP2 continues that LAYERS-only migration for MassClosure and PhysicsInputs.
+Both can call Core/Vertical/Spectral and the former lower package dependencies;
+neither imports the facade or deferred stages, and PhysicsInputs has no
+MassClosure edge. Existing consumers follow the moved bindings. No debt
+allowance or reverse folder-order exception is added; the root size allowance
+is removed now that its immediate source is within budget.
 T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
 Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
 inherits the existing lower dependency budgets and permits facade child

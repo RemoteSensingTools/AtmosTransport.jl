@@ -216,13 +216,13 @@ function _solve_implicit_smooth!(x::Vector{Float64}, b::Vector{Float64},
     # quadratic form vᵀL^order v >= 0 holds for all order>=1 (L PSD ⇒ L^n PSD).
     applyA! = (out, v) -> begin
         if order == 1
-            P._cs_graph_laplacian_mul!(out, v, ft, degree)
+            P.cs_graph_laplacian_mul!(out, v, ft, degree)
         else
             # apply L `order` times, projecting mean-zero between applies
-            P._cs_graph_laplacian_mul!(t, v, ft, degree)
+            P.cs_graph_laplacian_mul!(t, v, ft, degree)
             μ = sum(t)/nc; @inbounds @simd for c in 1:nc; t[c] -= μ; end
             for _ in 2:order
-                P._cs_graph_laplacian_mul!(t2, t, ft, degree)
+                P.cs_graph_laplacian_mul!(t2, t, ft, degree)
                 μ2 = sum(t2)/nc; @inbounds @simd for c in 1:nc; t2[c] = t2[c] - μ2; end
                 copyto!(t, t2)
             end
@@ -398,7 +398,7 @@ function apply_cm_smoothing!(am, bm, s, dm, nu::Float64; order::Int=1,
         maxres = max(maxres, res)
         P.apply_cs_flux_correction!(am, bm, lambda, ft, k)
     end
-    P._sync_cs_mirrors!(am, bm, ft, s.Nz)
+    P.sync_cs_mirrors!(am, bm, ft, s.Nz)
     return maxres, nus
 end
 

@@ -1,63 +1,6 @@
-# CS preprocessing: east/north ↔ panel-local wind rotation and face fluxes → cell-center winds.
-# Split from cs_transport_helpers.jl (refactor phase 4); included by Preprocessing.jl in this order.
-
-# ---------------------------------------------------------------------------
-# East/north → panel-local wind rotation
-# ---------------------------------------------------------------------------
-
-"""
-    rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north,
-                                  mesh, Nz)
-
-Rotate geographic `(east, north)` wind components to cubed-sphere face-normal
-components for all 6 panels.
-
-`u_panel` is the wind normal to local-x faces, scaled with `Δy` when
-reconstructing `am`; `v_panel` is the wind normal to local-y faces, scaled with
-`Δx` when reconstructing `bm`.  The panel tangent directions on the gnomonic
-cubed sphere are not generally orthogonal, so these are not simple dot products
-onto the local x/y tangents.  The routine derives the two face normals from the
-convention-aware tangent basis and projects onto those normals.
-"""
-function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       tangent_basis::NTuple{CS_PANEL_COUNT, <:Any},
-                                       Nc::Int, Nz::Int) where FT
-    for p in 1:CS_PANEL_COUNT
-        x_east, x_north, y_east, y_north = tangent_basis[p]
-        for j in 1:Nc, i in 1:Nc
-            xe = x_east[i, j]
-            xn = x_north[i, j]
-            ye = y_east[i, j]
-            yn = y_north[i, j]
-            c = clamp(xe * ye + xn * yn, -one(FT), one(FT))
-            s = sqrt(max(one(FT) - c * c, FT(eps(Float64))))
-            nx_east = (xe - c * ye) / s
-            nx_north = (xn - c * yn) / s
-            ny_east = (ye - c * xe) / s
-            ny_north = (yn - c * xn) / s
-            @inbounds for k in 1:Nz
-                ue = u_east[p][i, j, k]
-                vn = v_north[p][i, j, k]
-                u_panel[p][i, j, k] = ue * nx_east + vn * nx_north
-                v_panel[p][i, j, k] = ue * ny_east + vn * ny_north
-            end
-        end
-    end
-    return nothing
-end
-
-function rotate_winds_to_panel_local!(u_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_panel::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       u_east::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       v_north::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
-                                       mesh::CubedSphereMesh{FT}, Nz::Int) where FT
-    tangent_basis = ntuple(p -> panel_cell_local_tangent_basis(mesh, p), CS_PANEL_COUNT)
-    return rotate_winds_to_panel_local!(u_panel, v_panel, u_east, v_north,
-                                        tangent_basis, mesh.Nc, Nz)
-end
+# Wind recovery used only by the two completed GEOS comparison studies.
+using .AtmosTransport.Grids: CS_PANEL_COUNT, CubedSphereMesh, panel_cell_local_tangent_basis
+using .AtmosTransport.Preprocessing: rotate_winds_to_panel_local!
 
 # ---------------------------------------------------------------------------
 # Panel-local → east/north wind rotation
@@ -129,8 +72,7 @@ end
 
 Recover panel-local cell-center `(u, v)` wind components from v4
 face-staggered mass fluxes. This is the CS peer of
-[`recover_ll_cell_center_winds!`](@ref), used in the cross-topology
-preprocessor (CS source → LL/RG target) right after
+[`recover_ll_cell_center_winds!`](@ref), used by the heritage comparison scripts after
 [`geos_native_to_face_flux!`](@ref) lays MFXC/MFYC into v4 layout.
 
 For each cell `(i, j)` on each panel, average the two adjacent face

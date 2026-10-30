@@ -165,7 +165,7 @@ function validate_merra2_settings(s::MERRA2Settings)
     s.winds_collection === :inst3 && !_has_inst3_winds(s.archive) &&
         throw(ArgumentError("the GEOS-Chem MERRA-2 archive has no instantaneous winds " *
                             "(I3 holds PS, QV, T); use winds_collection=:tavg3 (A3dyn)"))
-    _validate_flux_construction(s, "MERRA-2")
+    validate_flux_construction(s, "MERRA-2")
     s.flux_thickness in MERRA2_FLUX_THICKNESS || throw(ArgumentError(
         "MERRA-2 flux_thickness must be one of $(join(MERRA2_FLUX_THICKNESS, ", ")); got :$(s.flux_thickness)"))
     has_cmfmc_cloud_base(s) && !has_convection(s) &&

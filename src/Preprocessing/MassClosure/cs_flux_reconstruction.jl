@@ -30,10 +30,10 @@ EdgeLengths(mesh::CubedSphereMesh) = EdgeLengths(cs_face_edge_lengths(mesh)...)
 # Length of the x-face `i` (between cells i − 1 and i) of row `j`, and of the
 # y-face `j` of column `i`. Interior faces take the cell on the high side,
 # panel-edge faces the adjacent cell.
-@inline _xface_length(l::CellCenterlineLengths, i, j, Nc) = l.Δy[min(i, Nc), j]
-@inline _yface_length(l::CellCenterlineLengths, i, j, Nc) = l.Δx[i, min(j, Nc)]
-@inline _xface_length(l::EdgeLengths, i, j, Nc) = l.Lx[i, j]
-@inline _yface_length(l::EdgeLengths, i, j, Nc) = l.Ly[i, j]
+@inline xface_length(l::CellCenterlineLengths, i, j, Nc) = l.Δy[min(i, Nc), j]
+@inline yface_length(l::CellCenterlineLengths, i, j, Nc) = l.Δx[i, min(j, Nc)]
+@inline xface_length(l::EdgeLengths, i, j, Nc) = l.Lx[i, j]
+@inline yface_length(l::EdgeLengths, i, j, Nc) = l.Ly[i, j]
 
 """
     reconstruct_cs_fluxes!(am_panels, bm_panels, u_cs, v_cs, dp_panels,
@@ -100,24 +100,24 @@ function cs_face_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     for p in 1:CS_PANEL_COUNT
         u, v, dp = u_cs[p], v_cs[p], dp_panels[p]
         @inbounds for k in 1:Nz, j in 1:Nc
-            am_panels[p][1, j, k] = u[1, j, k] * dp[1, j, k] * _xface_length(L, 1, j, Nc) / gravity * dt_factor
+            am_panels[p][1, j, k] = u[1, j, k] * dp[1, j, k] * xface_length(L, 1, j, Nc) / gravity * dt_factor
             for i in 2:Nc
                 u_face  = FT(0.5) * (u[i - 1, j, k] + u[i, j, k])
                 dp_face = FT(0.5) * (dp[i - 1, j, k] + dp[i, j, k])
-                am_panels[p][i, j, k] = u_face * dp_face * _xface_length(L, i, j, Nc) / gravity * dt_factor
+                am_panels[p][i, j, k] = u_face * dp_face * xface_length(L, i, j, Nc) / gravity * dt_factor
             end
             am_panels[p][Nc + 1, j, k] = u[Nc, j, k] * dp[Nc, j, k] *
-                                         _xface_length(L, Nc + 1, j, Nc) / gravity * dt_factor
+                                         xface_length(L, Nc + 1, j, Nc) / gravity * dt_factor
         end
         @inbounds for k in 1:Nz, i in 1:Nc
-            bm_panels[p][i, 1, k] = v[i, 1, k] * dp[i, 1, k] * _yface_length(L, i, 1, Nc) / gravity * dt_factor
+            bm_panels[p][i, 1, k] = v[i, 1, k] * dp[i, 1, k] * yface_length(L, i, 1, Nc) / gravity * dt_factor
             for j in 2:Nc
                 v_face  = FT(0.5) * (v[i, j - 1, k] + v[i, j, k])
                 dp_face = FT(0.5) * (dp[i, j - 1, k] + dp[i, j, k])
-                bm_panels[p][i, j, k] = v_face * dp_face * _yface_length(L, i, j, Nc) / gravity * dt_factor
+                bm_panels[p][i, j, k] = v_face * dp_face * yface_length(L, i, j, Nc) / gravity * dt_factor
             end
             bm_panels[p][i, Nc + 1, k] = v[i, Nc, k] * dp[i, Nc, k] *
-                                         _yface_length(L, i, Nc + 1, Nc) / gravity * dt_factor
+                                         yface_length(L, i, Nc + 1, Nc) / gravity * dt_factor
         end
     end
     return nothing
@@ -212,7 +212,7 @@ end
 
 
 # Cell centres and local east/north unit vectors, by global cell index.
-function _cs_cell_bases(mesh::CubedSphereMesh)
+function cs_cell_bases(mesh::CubedSphereMesh)
     Nc = mesh.Nc
     centre, east, north = (Vector{NTuple{3, Float64}}(undef, 6Nc^2) for _ in 1:3)
     for p in 1:6
@@ -229,7 +229,7 @@ function _cs_cell_bases(mesh::CubedSphereMesh)
 end
 
 # The two corners of face `f` in its canonical panel.
-function _cs_face_corners(mesh, ft, f)
+function cs_face_corners(mesh, ft, f)
     p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
     b = ft.face_dir[f] == 1 ? cs_corner_xyz(mesh, i, j + 1, p) : cs_corner_xyz(mesh, i + 1, j, p)
     return cs_corner_xyz(mesh, i, j, p), b
@@ -239,8 +239,8 @@ function CSVectorFaceGeometry(mesh::CubedSphereMesh, ft::CSGlobalFaceTable; orde
                               along_face_filter::Bool = false)
     order in (2, 4) || throw(ArgumentError("CSVectorFaceGeometry: order must be 2 or 4, got $order"))
     Nc, R = mesh.Nc, Float64(mesh.radius)
-    centre, east, north = _cs_cell_bases(mesh)
-    corners = [_cs_face_corners(mesh, ft, f) for f in 1:ft.nf]
+    centre, east, north = cs_cell_bases(mesh)
+    corners = [cs_face_corners(mesh, ft, f) for f in 1:ft.nf]
     mid = [unit3(a .+ b) for (a, b) in corners]
     normal = map(1:ft.nf) do f
         n = unit3(cross3(corners[f]...))
@@ -370,7 +370,7 @@ thickness and the face's great-circle length,
     F = u_n × dp × L / g × dt_factor,
 
 with the along-edge interpolation at panel seams. Mirror entries of the seam
-faces are written from the canonical ones with their signs (`_sync_cs_mirrors!`).
+faces are written from the canonical ones with their signs (`sync_cs_mirrors!`).
 """
 function cs_vector_face_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                 bm_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -383,7 +383,7 @@ function cs_vector_face_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     un, dp = zeros(ft.nf), zeros(ft.nf)              # one level of face values
     @inbounds for k in 1:Nz
         for f in 1:ft.nf
-            un[f], dp[f] = _vector_face_value(geom, f, u_east, v_north, dp_panels, k)
+            un[f], dp[f] = vector_face_value(geom, f, u_east, v_north, dp_panels, k)
         end
         for f in 1:ft.nf
             p, i, j = Int(ft.face_panel[f]), Int(ft.face_idx_i[f]), Int(ft.face_idx_j[f])
@@ -391,7 +391,7 @@ function cs_vector_face_fluxes!(am_panels::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
             target[i, j, k] = FT(_filtered_wind(geom.filter, un, f) * dp[f] * geom.len[f] * scale)
         end
     end
-    _sync_cs_mirrors!(am_panels, bm_panels, ft, Nz)
+    sync_cs_mirrors!(am_panels, bm_panels, ft, Nz)
     return nothing
 end
 
@@ -407,7 +407,7 @@ end
 end
 
 # Face-normal wind and layer thickness at the midpoint of face `f`, level `k`.
-@inline function _vector_face_value(geom::CSVectorFaceGeometry, f, u_east, v_north, dp_panels, k)
+@inline function vector_face_value(geom::CSVectorFaceGeometry, f, u_east, v_north, dp_panels, k)
     un, dp = _face_value(geom.cell[f], geom.coef[f], geom.dpw[f], u_east, v_north, dp_panels, k)
     un = _with_outer(geom.outer, un, f, u_east, v_north, k)
     s = geom.slot[f]

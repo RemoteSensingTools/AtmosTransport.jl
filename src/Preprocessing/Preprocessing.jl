@@ -280,41 +280,121 @@ import .Spectral: LLPoissonWorkspace, ReducedSpectralSynthesis, SPECTRAL_DAY_CAC
 
 using Statistics: mean
 
-# Deferred mass closure and native GRIB geometry register Core interfaces.
-include("cs_poisson_solver.jl")
-target_balance_geometry(ft::CSGlobalFaceTable) =
-    (cs_cell_face_degree(ft), CSPoissonScratch(ft.nc))
-include("cs_poisson_balance.jl")
+include("MassClosure/MassClosure.jl")
+import .MassClosure: AbstractFaceLengths,
+    AbstractWindRegrid,
+    AlongFaceFilter,
+    COLUMN_WEIGHT_KINDS,
+    CSPoissonScratch,
+    CSVectorFaceGeometry,
+    CartesianWindRegrid,
+    CellCenterlineLengths,
+    ColumnResidualWeight,
+    CompressedLaplacian,
+    DryMassFluxThickness,
+    EdgeLengths,
+    FACE_FLUX_KINDS,
+    FACE_INTERPOLATION_KINDS,
+    FACE_LENGTH_KINDS,
+    FLUX_THICKNESS_KINDS,
+    HybridBWeightedColumn,
+    HybridMassWeightedColumn,
+    LineIntegralFaceFluxes,
+    MoistFluxThickness,
+    OuterCellPair,
+    PanelAverageFluxes,
+    ScalarWindRegrid,
+    VectorFaceFluxes,
+    WIND_REGRID_KINDS,
+    vector_face_value,
+    xface_length,
+    yface_length,
+    apply_cs_flux_correction!,
+    balance_compressed_column_fluxes!,
+    balance_cs_column_mass_fluxes!,
+    balance_cs_global_mass_fluxes!,
+    build_compressed_laplacian,
+    check_column_weight_levels,
+    column_weights,
+    compute_cs_cm_pressure_fixer!,
+    cs_cell_bases,
+    cs_cell_face_degree,
+    cs_column_balance_projected_linf,
+    cs_column_roundoff_tolerance!,
+    cs_face_corners,
+    cs_face_divergence!,
+    cs_face_fluxes!,
+    cs_graph_laplacian_mul!,
+    cs_linf,
+    cs_vector_face_fluxes!,
+    diagnose_balanced_cs_cm!,
+    diagnose_cs_cm!,
+    east_north_to_cartesian,
+    face_flux_method,
+    face_fluxes!,
+    fill_cs_layer_thickness!,
+    flux_header_face_interpolation,
+    flux_header_wind_regrid,
+    flux_thickness_method,
+    geos_native_to_face_flux!,
+    has_source_line_integrals,
+    line_integral_face_fluxes!,
+    point_weights,
+    prepare_cell_winds!,
+    project_mean_zero!,
+    require_cs_column_balance,
+    recheck_cs_column_closure,
+    recompute_faceindexed_cm_from_divergence!,
+    reconstruct_cs_fluxes!,
+    recover_ll_cell_center_winds!,
+    regrid_winds!,
+    rotate_winds_to_panel_local!,
+    solve_compressed_poisson_pcg!,
+    solve_cs_poisson_pcg!,
+    source_cell_centers,
+    spread_column_correction!,
+    sync_all_cs_boundary_mirrors!,
+    sync_cs_mirrors!,
+    validate_flux_construction,
+    validate_flux_thickness,
+    validate_flux_time_sampling,
+    wind_basis_trig,
+    build_wind_regrid
+include("PhysicsInputs/PhysicsInputs.jl")
+import .PhysicsInputs: BLDiffColumnScratch,
+    BLDiffConstants,
+    BLDiffDiag,
+    ERA5SurfaceReader,
+    ERA5_SURFACE_MAX_MASKED_FRACTION,
+    ERA5_SURFACE_TIME_DIMS,
+    ERA5_SURFACE_VAR_CANDIDATES,
+    ERA5_USTAR_DRAG_COEFFICIENT,
+    TM5CleanupStats,
+    fill_masked_surface,
+    resolve_era5_surface_path,
+    cbrt_pos,
+    close_era5_surface_reader,
+    dz_hydrostatic_virtual!,
+    ec2tm_from_rates!,
+    ecmwf_convection_to_basis!,
+    era5_surface_source_mesh,
+    era5_tm5_convection_header,
+    interface_specific_humidity,
+    load_era5_surface_window,
+    mix2_at,
+    open_era5_surface_reader,
+    reset_bldiff_diag!,
+    tm5_bldiff_center_kz_column!,
+    tm5_bldiff_dkg_column!,
+    tm5_bldiff_kvh_column!,
+    tm5_convection_to_basis!
+
+# Deferred target and source implementations remain in the facade until PP3/PP4.
 include("sources/era5_grib_geometry.jl")
-
-# Compressed-Laplacian Poisson balance for RG (replaces slow CG on LCM faces)
-include("ring_poisson_balance.jl")
-
-# Reduced Gaussian helpers (RG synthesis, RG balance, RG cm diagnosis)
 include("reduced_transport_helpers.jl")
 include("reduced_window_buffer.jl")
 include("reduced_spectral_day.jl")
-
-# Cubed-sphere transport helpers (regrid, wind recovery, flux reconstruction)
 include("cs_transport_helpers.jl")
-include("cs_flux_reconstruction.jl")
-include("cs_wind_rotation.jl")
-include("cs_native_fluxes.jl")
-# Flux construction options shared by the wind-derived paths (MERRA-2, ERA5 N320).
-include("face_line_integrals.jl")
-include("flux_construction.jl")
-
-# Convective mass fluxes on the binary's air-mass basis (shared with GEOS).
-include("convection_mass_basis.jl")
-
-# TM5 convection ec2tm conversion (used by the ERA5 N320 → CS pipeline).
-include("tm5_convection_conversion.jl")
-
-# ERA5 single-level surface reader for raw PBL diffusion fields.
-include("era5_surface_reader.jl")
-
-# TM5 boundary-layer diffusion (Holtslag-Boville non-local PBL) column kernel.
-include("tm5_bldiff.jl")
 
 # Transport-binary workflows and shared preprocessing contracts.
 include("transport_binary/core.jl")

@@ -563,7 +563,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
         for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-        cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+        cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                             cur_m, Nc, Nz, bal_diag,
                                             "LL-to-CS window $(win - 1)", balance_weights)
         out_schedule[win - 1] = _select_regrid_output_steps!(
@@ -664,7 +664,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
 
     fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
     for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    cm_diag = _diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
+    cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                         cur_m, Nc, Nz, bal_diag,
                                         "LL-to-CS window $Nt", balance_weights)
     out_schedule[Nt] = _select_regrid_output_steps!(
