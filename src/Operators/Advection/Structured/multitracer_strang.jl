@@ -32,23 +32,7 @@ for (sweep_fn, kernel_fn, dim) in (
             return nothing
         end
 
-        """
-            $($sweep_fn)(rm_4d, m, flux, scheme, ws[, flux_scale])
 
-        In-place multi-tracer sweep. Writes into workspace B buffers, then
-        copies back. Palindrome orchestration should use the 7- or 8-argument
-        ping-pong form to avoid the copies.
-        """
-        function $sweep_fn(rm_4d::AbstractArray{FT,4}, m::AbstractArray{FT,3},
-                           flux::AbstractArray{FT,3},
-                           scheme::AbstractAdvectionScheme,
-                           ws::AdvectionWorkspace{FT},
-                           flux_scale::FT = one(FT)) where FT
-            $sweep_fn(rm_4d, ws.rm_4d_B, m, ws.m_B, flux, scheme, ws, flux_scale)
-            copyto!(rm_4d, ws.rm_4d_B)
-            copyto!(m,     ws.m_B)
-            return nothing
-        end
     end
 end
 

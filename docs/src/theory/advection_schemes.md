@@ -2,7 +2,7 @@
 
 The runtime ships **four** flux-form advection schemes, each behind the
 abstract type `AbstractAdvectionScheme` declared in
-`src/Operators/Advection/schemes.jl`. Upwind, slopes, and standard PPM use
+`src/Operators/Advection/Reconstruction/schemes.jl`. Upwind, slopes, and standard PPM use
 directional sweeps. Lin–Rood couples the two horizontal directions; configured
 runs default its vertical sweep to FV3's `kord = 8` tracer profile, while the
 low-level Julia constructor retains upwind. On the cubed sphere, PPM can also
@@ -78,7 +78,7 @@ re-diagnosed from the neighbouring cell means at every sweep (van Leer 1977;
 `MonotoneLimiter` takes the minmod of the centred and twice the one-sided
 differences), so the scheme carries no slope state between sweeps. The
 production kernel is `_slopes_face_flux` in
-`src/Operators/Advection/reconstruction.jl`, with the canonical formula
+`src/Operators/Advection/Reconstruction/reconstruction.jl`, with the canonical formula
 derivation in that function's docstring.
 
 **Properties:**
@@ -298,7 +298,7 @@ small numerical noise that survives at the panel boundaries.
 ## Limiters
 
 Four selectable limiter types are declared in `schemes.jl`; their formulas
-live in `src/Operators/Advection/limiters.jl` and, for the PPM edges and
+live in `src/Operators/Advection/Reconstruction/limiters.jl` and, for the PPM edges and
 moments, `reconstruction.jl`:
 
 | Limiter | What it enforces | Use case |
@@ -397,8 +397,8 @@ the mass loss within a leg, and exactly non-divergent flows drove air mass
 negative (issue #61).
 
 `_palindrome_subcycle_count` and the per-cell `_palindrome_outflow_ratio` in
-`src/Operators/Advection/cs_subcycling.jl` are shared by all split-sweep
-topologies; `_cs_static_palindrome_subcycle_count` (same file),
+`src/Operators/Advection/Structured/subcycling.jl` are shared by all split-sweep
+topologies; `_cs_static_palindrome_subcycle_count` (`CubedSphere/cs_subcycling.jl`),
 `_structured_palindrome_subcycle_count` and
 `_face_indexed_palindrome_subcycle_count` (`subcycling.jl`) evaluate them on
 each flux layout. See
@@ -415,7 +415,7 @@ of a cell's current mass and every cell keeps at least 52.5% of
 | --- | --- | --- |
 | Lat-lon (structured-grid Strang, `strang_split!`) | `0.95` | Palindrome budget (was a per-direction `1.0` up to 0.5.0). |
 | Reduced Gaussian (face-indexed Strang) | `0.95` | Palindrome budget over `H` and `V`; only `UpwindScheme` reachable today. |
-| Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs!`) | `0.95` | Palindrome budget. |
+| Cubed-sphere (`SlopesScheme` / `PPMScheme`, `strang_split_cs_mt!`) | `0.95` | Palindrome budget. |
 | Cubed-sphere (`LinRoodPPMScheme`) | not used | The LinRood path relies on the binary's adaptive substep schedule. Its in-kernel 0.9 × cell-mass clipping limits carrier outflow; it does **not** guarantee tracer positivity. |
 
 If you're running `LinRoodPPMScheme` on a flow with locally large
@@ -522,19 +522,20 @@ between them. Performance-tuning notes live beside the implementation.
 
 | Concept | File / function |
 | --- | --- |
-| Scheme abstract root | `src/Operators/Advection/schemes.jl::AbstractAdvectionScheme` |
-| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD,Z}` | `src/Operators/Advection/schemes.jl` |
-| FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/vertical_fv3_profile.jl` |
-| FV3 vertical-profile adjoint (frozen-limiter transpose) | `src/Operators/Advection/vertical_fv3_profile_adjoint.jl::_sweep_z_panels_fv3_adjoint!` |
-| Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/limiters.jl` |
-| Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/reconstruction.jl::_slopes_face_flux` |
-| Structured-grid Strang palindrome | `src/Operators/Advection/StrangSplitting.jl::strang_split!` |
-| Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphereStrang.jl::strang_split_cs!` |
+| Scheme abstract root | `src/Operators/Advection/Reconstruction/schemes.jl::AbstractAdvectionScheme` |
+| `UpwindScheme`, `SlopesScheme{L}`, `PPMScheme{L,V}`, `LinRoodPPMScheme{ORD,Z}` | `src/Operators/Advection/Reconstruction/schemes.jl` |
+| FV3 vertical profile (`FV3ScalarProfile`) | `src/Operators/Advection/CubedSphere/vertical_fv3_profile.jl` |
+| FV3 vertical-profile adjoint (frozen-limiter transpose) | `src/Operators/Advection/CubedSphere/vertical_fv3_profile_adjoint.jl::_sweep_z_panels_fv3_adjoint!` |
+| Limiter primitives (branchless, GPU-safe) | `src/Operators/Advection/Reconstruction/limiters.jl` |
+| Slopes face flux (Russell-Lerner formula) | `src/Operators/Advection/Reconstruction/reconstruction.jl::_slopes_face_flux` |
+| Structured-grid Strang palindrome | `src/Operators/Advection/Structured/StrangSplitting.jl::strang_split!` |
+| Cubed-sphere Strang palindrome | `src/Operators/Advection/CubedSphere/CubedSphereStrang.jl::strang_split_cs_mt!` |
 | CFL subcycle counts (lat-lon, reduced Gaussian) | `subcycling.jl::_structured_palindrome_subcycle_count`, `_face_indexed_palindrome_subcycle_count` |
-| CFL subcycle count (CS) and the shared palindrome budget | `cs_subcycling.jl::_cs_static_palindrome_subcycle_count`, `_palindrome_subcycle_count` |
-| CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/multitracer_kernels.jl` |
-| CS paired split seam exchange | `src/Operators/Advection/CubedSphereSeams.jl` |
-| CS paired split seam adjoint | `src/Adjoints/CubedSphereSeams.jl` |
+| CFL subcycle count (CS) | `CubedSphere/cs_subcycling.jl::_cs_static_palindrome_subcycle_count` |
+| Shared palindrome budget | `Structured/subcycling.jl::_palindrome_subcycle_count` |
+| CS multi-tracer fused kernels (X / Y / Z) | `src/Operators/Advection/CubedSphere/cs_sweep_common.jl` |
+| CS paired split seam exchange | `src/Operators/Advection/CubedSphere/CubedSphereSeams.jl` |
+| CS paired split seam adjoint | `src/Operators/Advection/CubedSphere/CubedSphereSeamsAdjoint.jl` |
 | CS panel-edge halo sync | `src/Grids/PanelConnectivity.jl` + `cs_native_fluxes.jl::_propagate_cs_outflow_to_halo!` |
 | Lin-Rood cross-term + del-2 damping | `src/Operators/Advection/linrood_horizontal.jl` (driver), `LinRood.jl` (kernels, damping) |
 

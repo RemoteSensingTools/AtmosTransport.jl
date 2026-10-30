@@ -102,7 +102,7 @@ end
 @inline function _ppm_edge_value_ad(c_ll, d_ll, c_l, d_l, c_r, d_r, c_rr, d_rr)
     FT = typeof(c_ll)
     seven_twelfths, one_twelfth = _ppm_edge_weights(FT)    # forward `_ppm_edge_value` weights
-    value = seven_twelfths * (c_l + c_r) - one_twelfth * (c_ll + c_rr)
+    value = _ppm_edge_value(c_ll, c_l, c_r, c_rr, FT)
     deriv = _d6_sub(_d6_scale(_d6_add(d_l, d_r), seven_twelfths),
                     _d6_scale(_d6_add(d_ll, d_rr), one_twelfth))
     return value, deriv

@@ -23,7 +23,7 @@ Provides:
 """
 module Advection
 
-using ...Grids: cs_panel_edge_seam
+using ...Grids: cs_panel_edge_seam, canonical_seams
 
 using ...Grids: face_connectivity
 
@@ -66,27 +66,27 @@ using ...Architectures: _kahan_add
 using ...Parameters: DEFAULT_CFL_LIMIT, DEFAULT_MAX_SUBCYCLES, DEFAULT_LINROOD_PPM_ORDER
 
 # New scheme hierarchy (include before anything that references these types)
-include("schemes.jl")
-include("limiters.jl")
-include("reconstruction.jl")
-include("structured_kernels.jl")
-include("multitracer_kernels.jl")
+include("Reconstruction/schemes.jl")
+include("Reconstruction/limiters.jl")
+include("Reconstruction/reconstruction.jl")
+include("Structured/multitracer_kernels.jl")
 
 # Cubed-sphere halo exchange and Strang splitting
-include("HaloExchange.jl")
-include("cs_sweep_common.jl")
-include("cs_sweep_x.jl")
-include("cs_sweep_y.jl")
-include("cs_sweep_z.jl")
+include("CubedSphere/HaloExchange.jl")
+include("CubedSphere/cs_sweep_common.jl")
+include("CubedSphere/cs_sweep_x.jl")
+include("CubedSphere/cs_sweep_y.jl")
+include("CubedSphere/cs_sweep_z.jl")
 include("cs_workspace.jl")
-include("cs_subcycling.jl")
-include("CubedSphereStrang.jl")
-include("CubedSphereSeams.jl")
-include("vertical_fv3_profile.jl")
-include("vertical_fv3_profile_adjoint.jl")
+include("Structured/subcycling.jl")
+include("CubedSphere/cs_subcycling.jl")
+include("CubedSphere/CubedSphereStrang.jl")
+include("CubedSphere/CubedSphereSeams.jl")
+include("CubedSphere/vertical_fv3_profile.jl")
+include("CubedSphere/vertical_fv3_profile_adjoint.jl")
 
 # PPM subgrid distributions (shared by CS PPM kernels and LinRood)
-include("ppm_subgrid_distributions.jl")
+include("Reconstruction/ppm_subgrid_distributions.jl")
 
 # Lin-Rood cross-term advection for cubed-sphere grids (FV3 fv_tp_2d)
 include("LinRoodSeams.jl")
@@ -96,11 +96,16 @@ include("linrood_adjoint_kernels.jl")
 include("linrood_adjoint_rm_faces.jl")
 include("linrood_adjoint_panel.jl")
 
-include("workspace.jl")
-include("sweeps.jl")
-include("subcycling.jl")
-include("StrangSplitting.jl")
-include("strang_apply.jl")
-include("multitracer_strang.jl")
+include("Structured/workspace.jl")
+include("Structured/sweeps.jl")
+include("Structured/StrangSplitting.jl")
+include("Structured/strang_apply.jl")
+include("cs_dispatch.jl")
+include("Structured/multitracer_strang.jl")
+
+include("CubedSphere/adjoint_workspace.jl")
+include("CubedSphere/AdvectionAdjoint.jl")
+include("CubedSphere/CubedSphereSeamsAdjoint.jl")
+include("CubedSphere/HaloAdjoint.jl")
 
 end # module Advection

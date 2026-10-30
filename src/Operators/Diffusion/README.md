@@ -24,7 +24,7 @@ run on structured, face-indexed, and panel-native cubed-sphere state.
   definition of the transport-palindrome center order:
   `V(dt/2) → S(dt) → V(dt/2)` (`SplitSurfaceFluxCoupling`, the default) or
   `S(dt) → V(dt)` (`DiffusiveSurfaceFluxBoundary`). Production palindromes
-  call it through `palindrome_center!` (`../Advection/StrangSplitting.jl`);
+  call it through `palindrome_center!` (`../Advection/Structured/StrangSplitting.jl`);
   the cubed-sphere adjoint replays and records the same composition
 - Kernel implementations:
   [`diffusion_kernels.jl`](diffusion_kernels.jl) and
@@ -130,7 +130,7 @@ halos, against that serial kernel.
   show that a solve did anything
 - Tracing runtime integration:
   follow calls from `TransportModel.step!` into advection midpoint hooks
-  in `../Advection/StrangSplitting.jl` (RG: `../Advection/strang_apply.jl`)
+  in `../Advection/Structured/StrangSplitting.jl` (RG: `../Advection/Structured/strang_apply.jl`)
 
 ## Cross-Dependencies
 
@@ -138,9 +138,9 @@ halos, against that serial kernel.
   and time-varying field contracts
 - [`../../MetDrivers/`](../../MetDrivers/) provides `current_time`,
   which time-varying Kz fields consume
-- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl),
-  [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
-  [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
+- [`../Advection/Structured/StrangSplitting.jl`](../Advection/Structured/StrangSplitting.jl),
+  [`../Advection/Structured/multitracer_strang.jl`](../Advection/Structured/multitracer_strang.jl) and
+  [`../Advection/Structured/strang_apply.jl`](../Advection/Structured/strang_apply.jl)
   embed diffusion at the transport midpoint
 - The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) orders its
   replayed and recorded midpoint with `surface_flux_center!`

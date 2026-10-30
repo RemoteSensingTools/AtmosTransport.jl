@@ -498,20 +498,12 @@ function _sweep_z_panels!(panels_rm::NTuple{6}, panels_m::NTuple{6}, panels_cm::
     return nothing
 end
 
-# The structured (lat-lon) vertical sweep has no FV3 profile; refuse rather
-# than silently use the horizontal face flux.
-_require_structured_vertical(::AbstractAdvectionScheme) = nothing
-_require_structured_vertical(::_FV3VerticalPPM) = throw(ArgumentError(
-    "PPMScheme with FV3ScalarProfile is implemented for cubed-sphere grids only."))
-
 # The per-panel sweeps have no column scratch; reaching them with the FV3
 # profile would silently fall back to the horizontal face flux.
 _fv3_needs_panel_set(f) = throw(ArgumentError(
-    "PPMScheme with FV3ScalarProfile runs through `strang_split_cs!` or " *
+    "PPMScheme with FV3ScalarProfile runs through " *
     "`strang_split_cs_mt!`; the per-panel `$f` has no column scratch."))
 _sweep_z_panel!(rm, m, cm, ::_FV3VerticalPPM, args...; kwargs...) =
     _fv3_needs_panel_set(:_sweep_z_panel!)
-_sweep_z_panel_mt!(rm_4d, m, cm, ::_FV3VerticalPPM, args...; kwargs...) =
-    _fv3_needs_panel_set(:_sweep_z_panel_mt!)
 _sweep_z_panel_mt_pingpong!(rm_4d_out, m_out, rm_4d, m, cm, ::_FV3VerticalPPM, args...; kwargs...) =
     _fv3_needs_panel_set(:_sweep_z_panel_mt_pingpong!)

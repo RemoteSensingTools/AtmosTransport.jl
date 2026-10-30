@@ -33,7 +33,7 @@ using AtmosTransport: CubedSphereMesh, GEOSNativePanelConvention,
     DryBasis, CubedSphereFaceFluxState,
     CSAdvectionWorkspace, CSLinRoodAdvectionWorkspace,
     CubedSphereState, PPMScheme, SlopesScheme, UpwindScheme,
-    LinRoodPPMScheme, MonotoneLimiter, fill_panel_halos!, strang_split_cs!,
+    LinRoodPPMScheme, MonotoneLimiter, fill_panel_halos!,
     strang_split_cs_mt!
 using Adapt
 using Statistics
@@ -304,8 +304,9 @@ function run_window!(panels_m, m_save, tracers, tracers_raw, fluxes, mesh,
     for (idx, rm) in enumerate(tracers)
         idx > 1 && _copy_panels!(panels_m, m_save)
         fill_panel_halos!(rm, mesh; dir = 1)
-        strang_split_cs!(rm, panels_m, fluxes.am, fluxes.bm, fluxes.cm,
-                         mesh, scheme, ws; subcycle_count = n_sub)
+        Adv = AtmosTransport.Operators.Advection
+        Adv._cs_transport_step!(Adv.CSLinRoodStyle(), rm, panels_m, fluxes,
+                                 mesh, scheme, ws; subcycle_count=n_sub)
     end
     return nothing
 end

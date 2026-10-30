@@ -79,7 +79,7 @@ specialized kernels via Julia's multiple dispatch on the grid type.
 ## Advection
 
 `AbstractAdvectionScheme` is the root; the concrete schemes live in
-`src/Operators/Advection/schemes.jl`:
+`src/Operators/Advection/Reconstruction/schemes.jl`:
 
 | Subtype | Smooth-region reconstruction | Notes |
 | --- | --- | --- |

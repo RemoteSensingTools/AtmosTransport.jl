@@ -69,7 +69,7 @@ export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
-export reconstruction_order, required_halo_width
+export required_halo_width
 
 # Chemistry
 export AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
@@ -107,7 +107,7 @@ export StepPlan, StepOperators, StepTiming
 export AbstractStepRecorder, NoStepRecorder
 
 # Cubed-sphere advection
-export fill_panel_halos!, copy_corners!, strang_split_cs!, strang_split_cs_mt!,
+export fill_panel_halos!, copy_corners!, strang_split_cs_mt!,
        CSAdvectionWorkspace
 export AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck
 

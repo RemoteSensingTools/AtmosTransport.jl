@@ -570,3 +570,12 @@ AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
             air_mass, grid, Dict("kind" => "bl_enhanced"))
     end
 end
+
+@testset "NoAdvection runtime builder on every topology" begin
+    M = AtmosTransport.Models
+    cfg = Dict("advection" => Dict("scheme" => "none"))
+    for style in (M.LatLonRuntimeRecipeStyle(), M.ReducedGaussianRuntimeRecipeStyle(),
+                  M.CubedSphereRuntimeRecipeStyle())
+        @test M.build_runtime_advection(cfg, style) isa NoAdvection
+    end
+end

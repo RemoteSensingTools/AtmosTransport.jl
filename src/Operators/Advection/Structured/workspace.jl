@@ -28,8 +28,6 @@ stencil's read-before-write assumption and break mass conservation by
 # Fields
 - `rm_A::A`, `rm_B::A` — 3D tracer-mass ping-pong pair (same size as `rm`)
 - `m_A::A`, `m_B::A`   — 3D air-mass ping-pong pair (same size as `m`)
-- `cluster_sizes::V1` — per-latitude clustering factors for reduced grids
-  (`Int32[Ny]`; all ones for uniform grids; empty for face-indexed meshes)
 - `face_left::V1`, `face_right::V1` — face connectivity for face-indexed meshes
 - `rm_4d_A::A4`, `rm_4d_B::A4` — 4D tracer-mass ping-pong pair for the
   multi-tracer fused path (`(Nx, Ny, Nz, Nt)`). Both are allocated to
@@ -37,13 +35,12 @@ stencil's read-before-write assumption and break mass conservation by
 
 # Constructors
 
-    AdvectionWorkspace(m::AbstractArray{FT,3}; cluster_sizes_cpu=nothing, n_tracers=0)
+    AdvectionWorkspace(m::AbstractArray{FT,3}; n_tracers=0)
 
 Create workspace for a 3D structured grid, allocating both buffer pairs
-matching the size of `m`.  If `cluster_sizes_cpu` is nothing, defaults to
-uniform (all ones).
+matching the size of `m`.
 
-    AdvectionWorkspace(m::AbstractArray{FT,2}; cluster_sizes_cpu=nothing, mesh=nothing)
+    AdvectionWorkspace(m::AbstractArray{FT,2}; mesh=nothing)
 
 Create workspace for a 2D face-indexed grid (cell × level layout).
 """
@@ -52,7 +49,6 @@ struct AdvectionWorkspace{FT, A <: AbstractArray{FT}, V1 <: AbstractVector{Int32
     m_A            :: A
     rm_B           :: A
     m_B            :: A
-    cluster_sizes  :: V1
     face_left      :: V1
     face_right     :: V1
     rm_4d_A        :: A4
@@ -62,28 +58,22 @@ end
 
 
 function AdvectionWorkspace(m::AbstractArray{FT,3};
-                            cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
                             n_tracers::Int = 0) where FT
     Nx, Ny, Nz = size(m)
-    cs_cpu = cluster_sizes_cpu !== nothing ? cluster_sizes_cpu : ones(Int32, Ny)
-    cs_dev = similar(m, Int32, Ny)
-    copyto!(cs_dev, cs_cpu)
     face_left = similar(m, Int32, 0)
     face_right = similar(m, Int32, 0)
     rm_4d_A = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
     rm_4d_B = n_tracers > 0 ? similar(m, Nx, Ny, Nz, n_tracers) : similar(m, 0, 0, 0, 0)
-    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
+    AdvectionWorkspace{FT, typeof(m), typeof(face_left), typeof(rm_4d_A)}(
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
-        cs_dev, face_left, face_right,
+        face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
 
 function AdvectionWorkspace(m::AbstractArray{FT,2};
-                            cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
                             mesh::Union{Nothing, AbstractHorizontalMesh} = nothing,
                             n_tracers::Int = 0) where FT
-    cs_dev = similar(m, Int32, 0)
     if mesh === nothing
         face_left = similar(m, Int32, 0)
         face_right = similar(m, Int32, 0)
@@ -98,15 +88,15 @@ function AdvectionWorkspace(m::AbstractArray{FT,2};
     # tracer slices via selectdim. 4D ping-pong buffers stay 0-sized.
     rm_4d_A = similar(m, 0, 0)
     rm_4d_B = similar(m, 0, 0)
-    AdvectionWorkspace{FT, typeof(m), typeof(cs_dev), typeof(rm_4d_A)}(
+    AdvectionWorkspace{FT, typeof(m), typeof(face_left), typeof(rm_4d_A)}(
         similar(m), similar(m),                       # rm_A, m_A
         similar(m), similar(m),                       # rm_B, m_B
-        cs_dev, face_left, face_right,
+        face_left, face_right,
         rm_4d_A, rm_4d_B)
 end
 
 """
-    AdvectionWorkspace(state::CellState; cluster_sizes_cpu=nothing, mesh=nothing)
+    AdvectionWorkspace(state::CellState; mesh=nothing)
 
 Construct a workspace sized for `state`: infers `n_tracers` from
 `ntracers(state)` so the 4D ping-pong buffers match the packed tracer
@@ -114,16 +104,13 @@ storage. This is the preferred form; the raw `AdvectionWorkspace(m;
 n_tracers=…)` is kept for low-level callers.
 """
 function AdvectionWorkspace(state::CellState;
-                            cluster_sizes_cpu::Union{Nothing, Vector{Int32}} = nothing,
                             mesh::Union{Nothing, AbstractHorizontalMesh} = nothing)
     nt = ntracers(state)
     m = state.air_mass
     if ndims(m) == 3
-        return AdvectionWorkspace(m; cluster_sizes_cpu = cluster_sizes_cpu,
-                                  n_tracers = nt)
+        return AdvectionWorkspace(m; n_tracers = nt)
     elseif ndims(m) == 2
-        return AdvectionWorkspace(m; cluster_sizes_cpu = cluster_sizes_cpu,
-                                  mesh = mesh, n_tracers = nt)
+        return AdvectionWorkspace(m; mesh = mesh, n_tracers = nt)
     else
         throw(ArgumentError("unsupported air_mass rank $(ndims(m))"))
     end
@@ -134,13 +121,12 @@ function Adapt.adapt_structure(to, ws::AdvectionWorkspace{FT}) where {FT}
     m_A            = Adapt.adapt(to, getfield(ws, :m_A))
     rm_B           = Adapt.adapt(to, getfield(ws, :rm_B))
     m_B            = Adapt.adapt(to, getfield(ws, :m_B))
-    cluster_sizes  = Adapt.adapt(to, getfield(ws, :cluster_sizes))
     face_left      = Adapt.adapt(to, getfield(ws, :face_left))
     face_right     = Adapt.adapt(to, getfield(ws, :face_right))
     rm_4d_A        = Adapt.adapt(to, getfield(ws, :rm_4d_A))
     rm_4d_B        = Adapt.adapt(to, getfield(ws, :rm_4d_B))
-    return AdvectionWorkspace{FT, typeof(rm_A), typeof(cluster_sizes), typeof(rm_4d_A)}(
+    return AdvectionWorkspace{FT, typeof(rm_A), typeof(face_left), typeof(rm_4d_A)}(
         rm_A, m_A, rm_B, m_B,
-        cluster_sizes, face_left, face_right,
+        face_left, face_right,
         rm_4d_A, rm_4d_B)
 end

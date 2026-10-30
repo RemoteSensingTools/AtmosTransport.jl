@@ -36,6 +36,9 @@ const README_DIRS = [
     "src/Operators",
     # Operator submodules
     "src/Operators/Advection",
+    "src/Operators/Advection/Reconstruction",
+    "src/Operators/Advection/Structured",
+    "src/Operators/Advection/CubedSphere",
     "src/Operators/Diffusion",
     "src/Operators/SurfaceFlux",
     "src/Operators/Convection",

@@ -46,7 +46,7 @@ This hierarchy enables orthogonal dispatch:
 - **Reconstruction order** selects the face-flux `@inline` function
 - **Limiter type** (carried as a type parameter) selects the slope/moment limiter
 - **Grid topology** is handled by the kernel shell (structured vs face-indexed)
-- **CS execution style** is handled separately (`strang_split_cs!` sweep shell vs
+- **CS execution style** is handled separately (`strang_split_cs_mt!` sweep shell vs
   Lin-Rood / FV3 horizontal update)
 - **Backend** (CPU/GPU) is handled by KernelAbstractions.jl
 
@@ -56,7 +56,7 @@ This hierarchy enables orthogonal dispatch:
 2. Implement `_xface_tracer_flux`, `_yface_tracer_flux`, `_zface_tracer_flux`
    (see `reconstruction.jl`); the x face flux must use `Nx` only through
    `_wrap_periodic`, since cubed-sphere sweeps pass `_HaloPaddedAxis()`
-3. The universal kernel shells in `structured_kernels.jl` will automatically
+3. The universal kernel shells in `multitracer_kernels.jl` will automatically
    dispatch to your face-flux functions at compile time
 
 # Example
@@ -421,7 +421,7 @@ Cubed-sphere Lin-Rood / FV3-style cross-term PPM advection with compile-time
 edge-value family `ORD` (not a global spatial or temporal accuracy order).
 
 This is distinct from [`PPMScheme`](@ref): `PPMScheme` participates in the
-standard Strang split implemented by `strang_split_cs!`, while
+standard Strang split implemented by `strang_split_cs_mt!`, while
 `LinRoodPPMScheme` selects the FV3-style horizontal Lin-Rood update
 (`fv_tp_2d_cs!`). Its vertical sweeps use `vertical`: first-order
 `UpwindScheme()` (default) or `PPMScheme(; vertical = FV3ScalarProfile())`,
@@ -480,30 +480,15 @@ paths.
 # allocating CS halo scratch beyond what convection/diffusion need.
 @inline required_halo_width(::NoAdvection)             = 0
 
-# ---- Reconstruction order query -----------------------------------------
-
-"""
-    reconstruction_order(scheme) → Int
-
-Return the polynomial order of the subcell reconstruction:
-- 0 for constant (upwind)
-- 1 for linear (slopes)
-- 2 for quadratic (PPM)
-
-Useful for diagnostics and for selecting stencil widths in
-multi-tracer kernel fusion.
-"""
-@inline reconstruction_order(::AbstractConstantScheme)  = 0
-@inline reconstruction_order(::AbstractLinearScheme)    = 1
-@inline reconstruction_order(::AbstractQuadraticScheme) = 2
-@inline reconstruction_order(::LinRoodPPMScheme)        = 2
-# `NoAdvection` has no reconstruction; report -1 as a clear
-# "not applicable" sentinel.
-@inline reconstruction_order(::NoAdvection)             = -1
-
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
-export reconstruction_order, required_halo_width
+export required_halo_width
+
+# The structured (lat-lon) vertical sweep has no FV3 profile; refuse rather
+# than silently use the horizontal face flux.
+_require_structured_vertical(::AbstractAdvectionScheme) = nothing
+_require_structured_vertical(::PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}) = throw(ArgumentError(
+    "PPMScheme with FV3ScalarProfile is implemented for cubed-sphere grids only."))

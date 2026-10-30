@@ -142,9 +142,9 @@ tracers takes 0.77 ms instead of 1.14 ms (12 launches), C24 with 12 tracers
 ## Cross-Dependencies
 
 - [`../../State/`](../../State/) provides tracer access and `eachtracer`
-- [`../Advection/StrangSplitting.jl`](../Advection/StrangSplitting.jl),
-  [`../Advection/multitracer_strang.jl`](../Advection/multitracer_strang.jl) and
-  [`../Advection/strang_apply.jl`](../Advection/strang_apply.jl)
+- [`../Advection/Structured/StrangSplitting.jl`](../Advection/Structured/StrangSplitting.jl),
+  [`../Advection/Structured/multitracer_strang.jl`](../Advection/Structured/multitracer_strang.jl) and
+  [`../Advection/Structured/strang_apply.jl`](../Advection/Structured/strang_apply.jl)
   embed surface flux at the transport midpoint
 - [`../../Models/driven_stepping.jl`](../../Models/driven_stepping.jl) (the
   `DrivenSimulation` constructor) validates and installs sim-level surface sources
