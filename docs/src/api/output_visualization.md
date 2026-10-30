@@ -1,6 +1,6 @@
 # Output and visualization API
 
-`Output` defines snapshot capture and persistence, and observation sampling
+`Output` defines snapshot capture and persistence. `Observations` owns observation sampling
 (`[output.observations]`: point events and station series sampled at
 met-window ends). `Visualization` provides
 topology-aware field views and optional Makie rendering for those snapshots.
@@ -9,6 +9,20 @@ topology-aware field views and optional Makie rendering for those snapshots.
 
 ```@autodocs
 Modules = [AtmosTransport.Output]
+Order   = [:module, :constant, :type, :function, :macro]
+Private = false
+```
+
+## Observations
+
+Import sampling and retrieval APIs from `AtmosTransport.Observations`.
+Its `Retrievals`, `Sources` and `Sampling` submodules separate the column
+operator, input records and runtime sampling. Their public names are
+re-exported by Observations.
+
+```@autodocs
+Modules = [AtmosTransport.Observations, AtmosTransport.Observations.Retrievals,
+           AtmosTransport.Observations.Sources, AtmosTransport.Observations.Sampling]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

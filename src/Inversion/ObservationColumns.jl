@@ -13,7 +13,7 @@
 #     once per sampled step of every observation.
 #
 # A placed point objective's layer comes from the shared rule of the forward
-# observation sampler (`Output.sample_column_layer!`): interface pressures from
+# observation sampler (`Observations.sample_column_layer!`): interface pressures from
 # the replayed air mass of the sampled state, hypsometric heights above the
 # model surface on the pressure basis (total pressures and the virtual
 # temperature by default), then the record's height or pressure. The layer is fixed for
@@ -29,7 +29,6 @@ const _INVERSION_PLACEMENT_LABEL = "[observations.placement]"
 # Near-surface layer temperature of the hypsometric heights when no
 # temperature field is given, the default of the forward sampler's
 # `layer_height_temperature_kelvin`.
-const _DEFAULT_LAYER_HEIGHT_TEMPERATURE_KELVIN = 280.0
 
 """
     CSObservationColumnMet(; p_top, gravity = STANDARD_GRAVITY,
@@ -48,7 +47,7 @@ cell, k = 1 at the top) of the sampled state and the cell area ``A``:
   ``z_{k-1/2} = z_{k+1/2} + (R_d T_{v,k}/g)\\ln(p_{k+1/2}/p_{k-1/2})``, with the
   layer `temperature` ``T_k``: a number (K, every layer; the forward sampler's
   `layer_height_temperature_kelvin`, 280 K by default), an
-  `Output.AbstractLayerTemperature`, per-layer panels (an `NTuple{6}` of
+  `Observations.AbstractLayerTemperature`, per-layer panels (an `NTuple{6}` of
   arrays laid out like the air mass, with or without the halo, K, for every
   step), or a vector of such panels with one entry per model step (the state
   after that step). With the pressure basis `TotalFromHumidity` (the default)
@@ -73,7 +72,7 @@ struct CSObservationColumnMet{T, Q, B <: AbstractMassBasis}
 end
 
 function CSObservationColumnMet(; p_top::Real, gravity::Real = STANDARD_GRAVITY,
-                                temperature = _DEFAULT_LAYER_HEIGHT_TEMPERATURE_KELVIN,
+                                temperature = DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN,
                                 humidity = nothing, mass_basis::AbstractMassBasis = DryBasis())
     isfinite(p_top) && p_top >= 0 || throw(ArgumentError(
         "CSObservationColumnMet p_top must be a finite pressure >= 0 Pa, got $p_top"))
@@ -97,7 +96,7 @@ const _ColumnPanels = Union{NTuple{6, AbstractArray{<:Real, 3}},
                             AbstractVector{<:NTuple{6, AbstractArray{<:Real, 3}}}}
 _check_temperature_source(::Union{AbstractLayerTemperature, _ColumnPanels}) = nothing
 _check_temperature_source(x) = throw(ArgumentError(
-    "CSObservationColumnMet temperature must be a number of kelvin, an Output.AbstractLayerTemperature, " *
+    "CSObservationColumnMet temperature must be a number of kelvin, an Observations.AbstractLayerTemperature, " *
     "an NTuple{6} of per-layer panel arrays, or a vector of them (one per model step); got $(typeof(x))"))
 _check_humidity_source(::Union{Nothing, _ColumnPanels}) = nothing
 _check_humidity_source(x) = throw(ArgumentError(
@@ -209,7 +208,7 @@ _column_temperature(t, step::Int, obj, mesh) =
 
 Layer (k = 1 at the top) of a placed point observation on the state after
 `step`: the replayed air-mass column of its cell and the column meteorology
-of that step through `Output.sample_column_layer!`, the forward sampler's
+of that step through `Observations.sample_column_layer!`, the forward sampler's
 rule.
 """
 function _placed_level(obj::CSPlacedPointObjective, step::Int, panels_m, mesh::CubedSphereMesh,
@@ -250,9 +249,9 @@ end
 
 An averaging-kernel column on the state after `step`. The interface pressures
 of the objective's pressure basis come from the replayed air-mass column
-``m_k`` of its cell and the column meteorology (`Output.placement_pressures!`:
+``m_k`` of its cell and the column meteorology (`Observations.placement_pressures!`:
 total pressures from ``m_k`` and the specific humidity, or the dry
-interfaces); `Output.retrieval_column_weights!` gives the weights ``H_k`` on
+interfaces); `Observations.retrieval_column_weights!` gives the weights ``H_k`` on
 the dry mixing ratios ``x_k = r_k/\\max(m_k, ε)``, with the projection of the
 column's mapping (the rebin of a layer column, or the hat projection of a
 level column, which weights each layer by its replayed air mass ``m_k``). The
@@ -260,7 +259,7 @@ value is
 
 ``X = c + \\sum_k w_k\\, r_k``, ``w_k = H_k / \\max(m_k, ε)``,
 
-with ``c`` the prior term (`Output.retrieval_prior_offset`): linear in the
+with ``c`` the prior term (`Observations.retrieval_prior_offset`): linear in the
 tracer mass with the weights ``w_k`` of its functional (the pressures depend
 only on the meteorology), so the functional is the exact derivative of the
 value. Also returns the model minus retrieval surface pressure and the

@@ -31,7 +31,7 @@ using Logging: NullLogger, with_logger
 import AtmosTransport
 const AT = AtmosTransport
 const ADJ = AT.Adjoints
-const O = AT.Output
+const O = AT.Observations
 const Adv = AT.Operators.Advection
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_observation_columns.jl"))
@@ -100,7 +100,9 @@ function _column_weights(o::AT.CSRetrievalColumnObjective, m, P)
     p_half = O.total_interface_pressures!(zeros(P.Nz + 1), m, COLUMN_Q, o.area, COLUMN_GRAVITY, P.p_top)
     rc = o.retrieval
     proj = rc.mapping isa O.HatLevelProjection ? hat_projection_reference(p_half, Float64.(m), rc.pressure_pa).P :
-                                                  O.retrieval_rebin_matrix(p_half, rc.pressure_pa)
+                                                  hcat([O.retrieval_profile!(zeros(O.retrieval_layer_count(rc)), zeros(length(p_half)),
+                                                      p_half, nothing, rc, Float64.(eachindex(m) .== k))
+                                                        for k in eachindex(m)]...)
     H = vec((rc.pressure_weight .* rc.averaging_kernel)' * proj)
     return H ./ max.(Float64.(m), eps(P.FT)), O.retrieval_prior_offset(rc), proj
 end

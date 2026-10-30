@@ -74,7 +74,7 @@ is a type the caller names, and the methods dispatch on it:
   the per-grid model surface height,
   [`write_model_surface_height`](@ref AtmosTransport.GriddedIO.write_model_surface_height)
   and [`read_model_surface_height`](@ref AtmosTransport.GriddedIO.read_model_surface_height)
-  (grid-checked, into `Output.ModelSurfaceHeight`), and a lat-lon DEM for
+  (grid-checked, into `Observations.ModelSurfaceHeight`), and a lat-lon DEM for
   point lookups, [`read_point_elevation`](@ref AtmosTransport.GriddedIO.read_point_elevation)
   → [`LatLonPointElevation`](@ref AtmosTransport.GriddedIO.LatLonPointElevation).
 

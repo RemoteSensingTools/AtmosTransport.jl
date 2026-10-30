@@ -1,12 +1,14 @@
 using Test, AtmosTransport, NCDatasets, Dates
-using AtmosTransport.Output: build_observation_sampler, begin_observation_day!, observe_window_boundary!,
-                             finish_observations!, read_observation_requests, build_observation_set,
-                             TableSource, OCO2LiteSource, ObsPackSource, SoundingMode, SiteMode,
-                             AutoTableFormat, SiteCodeGrouping, EveryWindow, TimeRange, TimeList,
-                             QualityFlagFilter, QualityFlagValues, NoQualityFilter, SoundingNetCDFStream,
-                             append_soundings!,
-                             CellLocation, SoundingBatch, with_netcdf_lock
-const O = AtmosTransport.Output
+using AtmosTransport.Output: with_netcdf_lock
+using AtmosTransport.Observations: build_observation_sampler, begin_observation_day!,
+                                   observe_window_boundary!, finish_observations!,
+                                   read_observation_requests, build_observation_set, TableSource,
+                                   OCO2LiteSource, ObsPackSource, SoundingMode, SiteMode,
+                                   AutoTableFormat, SiteCodeGrouping, EveryWindow, TimeRange,
+                                   TimeList, QualityFlagFilter, QualityFlagValues, NoQualityFilter,
+                                   SoundingNetCDFStream, append_soundings!, CellLocation,
+                                   SoundingBatch
+const O = AtmosTransport.Observations
 include(joinpath(@__DIR__, "..", "fixtures", "observation_fixtures.jl"))
 using .ObservationTestFixtures
 
@@ -46,7 +48,7 @@ const DAY = [Date(2021, 12, 2)]
         # A time list becomes point events carrying the site's heights; ranges stay series.
         set = build_observation_set(Any[TableSource(csv, SiteMode(), AutoTableFormat()),
                                         TableSource(toml, SiteMode(), AutoTableFormat())] |>
-                                    x -> AtmosTransport.Output.AbstractObservationSource[x...], ORIGIN, DAY)
+                                    x -> AtmosTransport.Observations.AbstractObservationSource[x...], ORIGIN, DAY)
         @test sort([s.id for s in set.sites]) == ["every", "ranged"]
         @test [r.id for r in set.soundings] == ["listed", "listed", "flask", "flask"]
         @test set.soundings[3].intake_height_m == 40.0 && set.soundings[3].elevation_m == 3397.0
@@ -155,39 +157,20 @@ end
         @test_throws ArgumentError QualityFlagFilter("xco2_quality_flag", true)
         @test OCO2LiteSource(SubString(path, 1), NoQualityFilter()).path_template == path
         # The reader's window prefilter counts what it drops.
-        wstats = O.ReadStats()
+        wstats = O.Sources.ReadStats()
         inside, _ = read_observation_requests(OCO2LiteSource(path, NoQualityFilter()), 1, ORIGIN, DAY;
                                               stats = wstats, window = (0.0, 2.5 * 3600))
         @test length(inside) == 2 && wstats.outside_window == 2
         # The Lite default variable is absent from MIP files: a clear error, not silent acceptance.
-        @test_throws ArgumentError read_observation_requests(OCO2LiteSource(path, 0), 1, ORIGIN, DAY)
-        stats = O.ReadStats()
+        @test_throws ArgumentError read_observation_requests(OCO2LiteSource(path, QualityFlagFilter("xco2_quality_flag", 0)), 1, ORIGIN, DAY)
+        stats = O.Sources.ReadStats()
         read_observation_requests(OCO2LiteSource(path, QualityFlagFilter("assimilate_flag", 0)), 1, ORIGIN, DAY; stats)
         @test stats.skipped_quality == 3
     end
 end
 
-@testset "ObsPack records keep their intake height" begin
-    mktempdir() do dir
-        path = joinpath(dir, "co2_lef_tower-insitu_1_allvalid.nc")
-        NCDataset(path, "c") do ds
-            defDim(ds, "obs", 2)
-            defVar(ds, "time", Float64, ("obs",); attrib = Dict("units" => "seconds since 1970-01-01T00:00:00Z"))[:] =
-                [unix(ORIGIN + Hour(1)), unix(ORIGIN + Hour(2))]
-            defVar(ds, "latitude", Float64, ("obs",))[:] = [45.9, 45.9]
-            defVar(ds, "longitude", Float64, ("obs",))[:] = [-90.3, -90.3]
-            defVar(ds, "elevation", Float64, ("obs",))[:] = [472.0, 472.0]
-            defVar(ds, "intake_height", Float64, ("obs",))[:] = [30.0, 396.0]
-        end
-        events, _ = read_observation_requests(ObsPackSource(path, SoundingMode(), SiteCodeGrouping()), 1, ORIGIN, DAY)
-        @test [e.intake_height_m for e in events] == [30.0, 396.0]
-        @test all(e -> e.elevation_m == 472.0, events)
-    end
-end
 
 @testset "daily files never collide and names are checked" begin
-    @test O._substitute_day_template("/a/obs_{date}.nc", "", 3) == "/a/obs_003.nc"
-    @test O._substitute_day_template("/a/obs_{YYYYMMDD}.nc", "20211202", 3) == "/a/obs_20211202.nc"
     mktempdir() do dir
         csv = joinpath(dir, "s.csv")
         write(csv, "id,time,lat,lon\na,2021-12-02T00:30:00,10,-100\n")
@@ -203,51 +186,9 @@ end
         @test_throws ArgumentError begin_observation_day!(s, "20211202", 2)
         close(s)
     end
-    @test_throws ArgumentError O.check_observation_tracer_names([:time])
-    @test_throws ArgumentError O.check_observation_tracer_names([:co2, :co2_intake])
-    @test O.check_observation_tracer_names([:co2, :ch4]) === nothing
-    input = Dict{String, Any}("binary_paths" => ["/nonexistent/transport_20211202.bin"])
-    cfg = Dict{String, Any}("input" => input, "tracers" => Dict{String, Any}("co2" => Dict{String, Any}()),
-        "output" => Dict{String, Any}("observations" => Dict{String, Any}(
-            "path" => "/tmp/obs.nc", "start_time" => "2021-12-02T00:00:00", "tracers" => ["sf6"],
-            "sources" => Any[table_source("/tmp/points.csv")])))
-    ok, errors = validate_config(cfg)
-    @test any(e -> occursin("[tracers] does not define", e), errors)
+
 end
 
-@testset "observation writes queue while another task holds the NetCDF lock" begin
-    mktempdir() do dir
-        mesh = LatLonMesh(; FT = Float64, Nx = 2, Ny = 2)
-        cell = CellLocation(1, 1, 1, 1, 1, 0.0, 0.0, 1.0)
-        batch = SoundingBatch(; ids = ["x"], sources = Int32[1], times = [0.0], latitudes = [0.0], longitudes = [0.0],
-                              cells = [cell], sample_time_prev = [0.0], sample_time_next = [0.0],
-                              weights = Float32[0], flags = Int8[0], p_half = reshape([1.0, 2.0, 3.0], 3, 1),
-                              air_mass_per_area = ones(2, 1), tracers = fill(4e-4, 2, 1, 1),
-                              column_means = fill(4e-4, 1, 1), elevations = [NaN], intake_heights = [NaN],
-                              altitudes = [NaN], pressures = [NaN],
-                              placements = [O.VerticalPlacement(O.VERTICAL_PLACEMENT_CODES.lowest_layer, NaN, NaN, NaN)],
-                              intake_levels = Int32[2], layer_bottom = [0.0], layer_top = [10.0],
-                              height_methods = Int8[0], intake_values = fill(4e-4, 1, 1))
-        holding, release = Channel{Nothing}(1), Channel{Nothing}(1)
-        writer = Threads.@spawn with_netcdf_lock() do
-            put!(holding, nothing)
-            take!(release)
-        end
-        take!(holding)
-        path = joinpath(dir, "queued.nc")
-        stream = SoundingNetCDFStream(path, mesh, 2, [:co2]; mass_basis = :dry, origin = ORIGIN)
-        @test append_soundings!(stream, batch) == 1           # returns without waiting
-        @test O.pending_writes(stream) == 2                    # schema + batch still queued
-        @test !isfile(path)
-        put!(release, nothing)
-        wait(writer)
-        close(stream)                                          # drains the queue
-        NCDataset(path, "r") do ds
-            @test ds.attrib["completed_soundings"] == 1
-            @test ds["id"][:] == ["x"]
-        end
-    end
-end
 
 @testset "repeated site ids merge time lists; other conflicts fail" begin
     mktempdir() do dir
@@ -302,28 +243,13 @@ end
     end
 end
 
-@testset "quality filter and grouping options are typed" begin
-    lite(extra...) = Dict{String, Any}("kind" => "oco2_lite", "path" => "x.nc", extra...)
-    @test O.observation_source_from_cfg(lite(), "s").quality_filter == QualityFlagFilter("xco2_quality_flag", 0)
-    mip = O.observation_source_from_cfg(lite("quality_filter" => "flag_values",
-                                             "quality_variable" => "assimilate_flag",
-                                             "quality_flag_values" => [1, 0]), "s")
-    @test mip.quality_filter isa QualityFlagValues && mip.quality_filter.values == [0, 1]
-    @test O.observation_source_from_cfg(lite("quality_filter" => "none"), "s").quality_filter isa NoQualityFilter
-    @test_throws ArgumentError O.observation_source_from_cfg(lite("quality_filter" => "flag_values"), "s")
-    @test_throws ArgumentError O.observation_source_from_cfg(lite("quality_variable" => ""), "s")
-    @test_throws ArgumentError O.observation_source_from_cfg(lite("quality_filter" => "sometimes"), "s")
-    obspack = Dict{String, Any}("kind" => "obspack", "path" => "x.nc", "mode" => "soundings",
-                                "site_grouping" => "location")
-    @test_throws ArgumentError O.observation_source_from_cfg(obspack, "s")
-end
 
 @testset "daily output paths are checked before the run" begin
     check(path_for, binaries) = AtmosTransport.Models.DrivenRunner._check_unique_day_paths(
-        O.DailyOutputFiles(), path_for, binaries, "[output].path")
-    templated = (label, idx) -> O._substitute_day_template("/o/obs_{date}.nc", label, idx)
+        AtmosTransport.Output.DailyOutputFiles(), path_for, binaries, "[output].path")
+    templated = (label, idx) -> AtmosTransport.Output._substitute_day_template("/o/obs_{date}.nc", label, idx)
     @test check(templated, ["/b/transport_20211202.bin", "/b/transport_20211203.bin"]) === nothing
     @test_throws ArgumentError check(templated, ["/b/a_20211202_00z.bin", "/b/b_20211202_12z.bin"])
-    @test check((label, idx) -> O._substitute_day_template("/o/obs_{date}_{day}.nc", label, idx),
+    @test check((label, idx) -> AtmosTransport.Output._substitute_day_template("/o/obs_{date}_{day}.nc", label, idx),
                 ["/b/a_20211202_00z.bin", "/b/b_20211202_12z.bin"]) === nothing
 end

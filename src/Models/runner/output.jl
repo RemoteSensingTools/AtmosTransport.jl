@@ -12,29 +12,6 @@ function _binary_date_label(path::AbstractString)
 end
 
 """
-    _check_output_targets(spec, output_cfg)
-
-Reject snapshot settings that would silently write nothing while
-`[output].enabled` is true: a path without any snapshot-schedule key, or
-snapshot times without a path. An explicitly empty list (`hours = []`) is a
-deliberate "no snapshots" (the path then only names the timing CSV of
-`ATMOSTR_TIMERS` runs).
-"""
-function _check_output_targets(spec::RuntimeOutputSpec, output_cfg::AbstractDict)
-    spec.enabled || return nothing
-    has_path = !isempty(output_path(spec))
-    has_times = _schedule_has_times(spec.schedule)
-    has_path && !any(k -> haskey(output_cfg, k), _SNAPSHOT_SCHEDULE_KEYS) && throw(ArgumentError(
-        "[output] sets a path but no snapshot times, so no snapshot would be written; " *
-        "add `hours = [...]` or `cadence_hours`, set `hours = []` for none, or set " *
-        "`enabled = false`"))
-    has_times && !has_path && throw(ArgumentError(
-        "[output] sets snapshot times but no `path`, so no snapshot would be written; " *
-        "add `path` or set `enabled = false`"))
-    return nothing
-end
-
-"""
     _snapshot_due(elapsed_hours, hour, window_hours) -> Bool
 
 Whether the snapshot requested at `hour` is taken at the window end reached

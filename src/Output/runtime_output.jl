@@ -98,21 +98,16 @@ function snapshot_hours(schedule::IntervalSnapshotSchedule)
 end
 
 snapshot_hours(spec::RuntimeOutputSpec) = snapshot_hours(spec.schedule)
-_schedule_has_times(schedule::ExplicitSnapshotSchedule) = !isempty(schedule.hours)
-_schedule_has_times(schedule::IntervalSnapshotSchedule) = schedule.stop_hour >= schedule.start_hour
+schedule_has_times(schedule::ExplicitSnapshotSchedule) = !isempty(schedule.hours)
+schedule_has_times(schedule::IntervalSnapshotSchedule) = schedule.stop_hour >= schedule.start_hour
 output_enabled(spec::RuntimeOutputSpec) =
-    spec.enabled && !isempty(spec.path) && _schedule_has_times(spec.schedule)
+    spec.enabled && !isempty(spec.path) && schedule_has_times(spec.schedule)
 output_path(spec::RuntimeOutputSpec) = spec.path
 output_fields(spec::RuntimeOutputSpec) = spec.fields
 
 layer_selection_label(::FullLayerSelection) = :full
 layer_selection_label(::SelectedLayerSelection) = :selected
 layer_selection_label(::NoLayerSelection) = :none
-layer_selection(fields::TracerOutputFields) = layer_selection_label(fields.layers)
-air_mass_layer_selection(fields::OutputFieldSpec) = layer_selection_label(fields.air_mass_layers)
-layer_selection(s::FullLayerSelection) = layer_selection_label(s)
-layer_selection(s::SelectedLayerSelection) = layer_selection_label(s)
-layer_selection(s::NoLayerSelection) = layer_selection_label(s)
 
 function _parse_layer_selection(value, key::AbstractString)
     s = lowercase(String(value))
@@ -262,9 +257,9 @@ end
 # Snapshot-schedule keys in precedence order: an explicit hour list wins over an
 # interval, and within each group the first key present wins.
 const _SNAPSHOT_HOURS_KEYS = ("snapshot_hours", "hours")
-const _SNAPSHOT_INTERVAL_KEYS = ("snapshot_interval_hours", "cadence_hours", "interval_hours",
+const SNAPSHOT_INTERVAL_KEYS = ("snapshot_interval_hours", "cadence_hours", "interval_hours",
                                  "cadence_seconds", "interval_seconds")
-const _SNAPSHOT_SCHEDULE_KEYS = (_SNAPSHOT_HOURS_KEYS..., _SNAPSHOT_INTERVAL_KEYS...)
+const SNAPSHOT_SCHEDULE_KEYS = (_SNAPSHOT_HOURS_KEYS..., SNAPSHOT_INTERVAL_KEYS...)
 
 function _output_schedule(output_cfg::AbstractDict;
                           default_cap_hours::Real,

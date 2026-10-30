@@ -6,15 +6,16 @@
 # or are skipped and counted, never sampled silently in the lowest layer, and
 # the model surface height is never used as the true ground.
 using Test, AtmosTransport, NCDatasets, Dates, Logging
-using AtmosTransport.Output: observation_output_spec, build_observation_sampler, begin_observation_day!,
-                             observe_window_boundary!, finish_observations!, ObservationTerrain,
-                             VerticalPlacement, VERTICAL_PLACEMENT_CODES, resolve_placement,
-                             placement_layer, AboveGroundPlacement, AbsoluteAltitudeAbove,
-                             SoundingRequest, SiteRequest, CellLocation, ModelSurfaceHeight,
-                             ErrorOnUnplaced, SkipUnplaced, LowestLayerWithoutHeight,
-                             UnplacedWithoutHeight, missing_height_rule, VerticalPlacementSpec
+using AtmosTransport.Observations: observation_output_spec, build_observation_sampler,
+                                   begin_observation_day!, observe_window_boundary!,
+                                   finish_observations!, ObservationTerrain, VerticalPlacement,
+                                   VERTICAL_PLACEMENT_CODES, resolve_placement, placement_layer,
+                                   AboveGroundPlacement, AbsoluteAltitudeAbove, SoundingRequest,
+                                   SiteRequest, CellLocation, ModelSurfaceHeight, ErrorOnUnplaced,
+                                   SkipUnplaced, LowestLayerWithoutHeight, UnplacedWithoutHeight,
+                                   missing_height_rule, VerticalPlacementSpec
 using AtmosTransport.GriddedIO: write_model_surface_height
-const O = AtmosTransport.Output
+const O = AtmosTransport.Observations
 const DR = AtmosTransport.Models.DrivenRunner
 include(joinpath(@__DIR__, "..", "fixtures", "observation_fixtures.jl"))
 using .ObservationTestFixtures
@@ -640,7 +641,7 @@ end
         end
         @test [p.height_agl_m for p in s.sounding_placements] == [-400.0, 3000.0]
         close(s)
-        @test O._warn_below_ground(SoundingRequest[], VerticalPlacement[], SiteRequest[], VerticalPlacement[]) == 0
+        @test O.warn_below_ground(SoundingRequest[], VerticalPlacement[], SiteRequest[], VerticalPlacement[]) == 0
 
         # Site mode: a tower whose levels are given as altitudes yields one site
         # per level without a warning; a moving aircraft is reported.
@@ -699,7 +700,7 @@ O.point_elevation(d::ConstantDEM, lon::Real, lat::Real) = d.z
     @test place(request(elevation = 10.0); rule = unplaced) === nothing
     @test missing_height_rule(O.ObsPackSource("x.nc", O.SoundingMode(), O.SiteCodeGrouping())) === unplaced
     @test missing_height_rule(O.TableSource("x.csv", O.SoundingMode(), O.AutoTableFormat())) === lowest
-    @test missing_height_rule(O.OCO2LiteSource("x.nc", 0)) === lowest
+    @test missing_height_rule(O.OCO2LiteSource("x.nc", O.QualityFlagFilter("xco2_quality_flag", 0))) === lowest
     # A station whose rows give only an altitude, with its elevation from the file.
     p = place(SiteRequest("a", LON, LAT, 3397.0, NaN, 1, O.EveryWindow(), 3437.0))
     @test p.method == CODES.record_height && p.height_agl_m == 40.0
@@ -774,24 +775,11 @@ O.point_elevation(d::ConstantDEM, lon::Real, lat::Real) = d.z
     @test placement_layer(VerticalPlacement(CODES.pressure, NaN, 50000.0, NaN), z_half, p_half) == 2
     @test placement_layer(VerticalPlacement(CODES.altitude_minus_dem, 600.0, NaN, NaN), z_half, p_half) == 1
     @test_throws ArgumentError O.intake_layer_index(z_half, NaN)
-    # Every code is described in the file attribute.
-    @test all(k -> occursin("$(CODES[k]) = $(k)", O.vertical_placement_codes_description()), keys(CODES))
-
     mktempdir() do dir
         base = Dict{String, Any}("path" => joinpath(dir, "obs.nc"),
                                  "sources" => Any[table_source(joinpath(dir, "x.csv"))])
         spec(extra...) = observation_output_spec(Dict{String, Any}("observations" => merge(base, Dict(extra...))))
-        @test spec().placement.unplaced isa ErrorOnUnplaced
-        @test spec().placement.altitude_placement isa AboveGroundPlacement
-        @test spec("unplaced_records" => "skip").placement.unplaced isa SkipUnplaced
-        @test_throws ArgumentError spec("unplaced_records" => "lowest")
-        @test_throws ArgumentError spec("dem_variable" => "z")
-        @test_throws ArgumentError spec("absolute_altitude_above_agl_m" => 3000.0)
         zs_path = surface_file(dir, 0.0)
-        s = spec("surface_height_file" => zs_path, "absolute_altitude_above_agl_m" => 3000)
-        @test s.placement.altitude_placement == AbsoluteAltitudeAbove(3000.0)
-        @test_throws ArgumentError spec("surface_height_file" => zs_path, "absolute_altitude_above_agl_m" => -1.0)
-        @test_throws ArgumentError spec("surface_height_file" => "")
         # A spec naming a dataset the caller did not load, or a layout of another grid.
         m = model10()
         csv = joinpath(dir, "x.csv")

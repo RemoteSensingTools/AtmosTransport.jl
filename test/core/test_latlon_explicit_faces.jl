@@ -121,10 +121,10 @@ end
         @test mod.(m.λᶜ, 360) == mod.(file_centres, 360)
         @test global_area(m) ≈ FULL_SPHERE rtol = 1e-13
         # The observation locator wraps points into the stored face range.
-        loc = AtmosTransport.Output.cell_locator(m)
-        @test AtmosTransport.Output.locate(loc, -2.0, 0.0).i == 144     # centre -2.5
-        @test AtmosTransport.Output.locate(loc, 1.0, 0.0).i == 1        # centre 0
-        @test AtmosTransport.Output.locate(loc, -179.0, 0.0).i == 73    # centre -180
+        loc = AtmosTransport.Observations.cell_locator(m)
+        @test AtmosTransport.Observations.locate(loc, -2.0, 0.0).i == 144     # centre -2.5
+        @test AtmosTransport.Observations.locate(loc, 1.0, 0.0).i == 1        # centre 0
+        @test AtmosTransport.Observations.locate(loc, -179.0, 0.0).i == 73    # centre -180
     end
 
     @testset "descending latitude (VISIT) is stored ascending" begin

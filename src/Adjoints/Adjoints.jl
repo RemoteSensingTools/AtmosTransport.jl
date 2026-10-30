@@ -20,7 +20,8 @@ module Adjoints
 
 using ..Grids: canonical_seams
 
-using ..Grids: edge_interior_ij, edge_halo_ij, corner_source_ij, cs_seam_axis, cs_seam_sign, cs_seam_face_index, cs_seam
+using ..Grids: edge_interior_ij, edge_halo_ij, corner_source_ij, cs_seam_axis, cs_seam_sign,
+               cs_seam_face_index, cs_seam
 
 using KernelAbstractions: @Const, @atomic, @index, @kernel, get_backend, synchronize
 # NCDatasets is loaded here (not inside ObservationsIO.jl) so the
@@ -88,26 +89,27 @@ using ..Operators: AbstractStepRecorder, NoStepRecorder
 import ..Operators: record_halo!, record_sweep!, record_center!, record_diffusion!,
     record_emission!, record_linrood_horizontal!, record_convection!,
     record_air_mass_reset!, record_chemistry!
-using ..Parameters: DEFAULT_CFL_LIMIT, DEFAULT_LINROOD_PPM_ORDER, STANDARD_GRAVITY
+using ..Parameters: DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN, DEFAULT_CFL_LIMIT,
+                    DEFAULT_LINROOD_PPM_ORDER, STANDARD_GRAVITY
 using ..State: AbstractMassBasis, DryBasis
 # Observation binding and vertical placement (Inversion/): the cell locator and
 # the placement rules of the forward observation sampler.
-using ..Output: cell_locator, locate, CellLocation,
-    VerticalPlacementSpec, VerticalPlacement, VERTICAL_PLACEMENT_CODES, ObservationTerrain,
-    SoundingRequest, SiteRequest, UnplacedWithoutHeight, resolve_placement, check_terrain,
-    check_surface_height_layout, check_pressure_basis,
-    AbstractPressureBasis, PlacementColumn, sample_column_layer!, needs_column_humidity,
-    AbstractLayerTemperature, ConstantLayerTemperature, ProfileLayerTemperature,
-    ObservationCounters, _handle_unplaced, _count_unplaced!, _unplaced_example, _warn_below_ground,
-    vertical_placement_codes_description,
-    AbstractUnplacedPolicy, ErrorOnUnplaced, SkipUnplaced, placement_pressures!,
-    RetrievalColumn, retrieval_layer_count, retrieval_column_weights!, retrieval_prior_offset,
-    retrieval_profile!, retrieval_model_error_variance, mole_fraction_unit_scale, _mole_fraction_scale,
-    AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column, retrieval_mapping_label,
-    _parse_retrieval_mapping, retrieval_pressure_count, read_oco2_retrieval_columns, oco2_level_form,
-    _nc_variable, _raw_block,
-    _PRESSURE_UNITS_PA,
-    _pressure_unit_key
+using ..Observations: write_observation_variable!, ObservationCounters, cell_locator, locate,
+                      CellLocation, VerticalPlacementSpec, VerticalPlacement,
+                      VERTICAL_PLACEMENT_CODES, ObservationTerrain, SoundingRequest, SiteRequest,
+                      UnplacedWithoutHeight, resolve_placement, check_terrain,
+                      check_surface_height_layout, check_pressure_basis, AbstractPressureBasis,
+                      PlacementColumn, sample_column_layer!, needs_column_humidity,
+                      AbstractLayerTemperature, ConstantLayerTemperature, ProfileLayerTemperature,
+                      handle_unplaced, count_unplaced!, unplaced_example, warn_below_ground,
+                      vertical_placement_codes_description, AbstractUnplacedPolicy, ErrorOnUnplaced,
+                      SkipUnplaced, placement_pressures!, RetrievalColumn, retrieval_layer_count,
+                      retrieval_column_weights!, retrieval_prior_offset, retrieval_profile!,
+                      retrieval_model_error_variance, mole_fraction_unit_scale, mole_fraction_scale,
+                      AbstractRetrievalMapping, LayerRebin, HatLevelProjection, tm5_layer_column,
+                      retrieval_mapping_label, parse_retrieval_mapping, retrieval_pressure_count,
+                      read_oco2_retrieval_columns, oco2_level_form, nc_variable,
+                      raw_observation_block, pressure_unit_scale
 
 # Tape storage policies + record types live in src/Tape/
 # (loaded before Adjoints in src/AtmosTransport.jl). Re-imported here so

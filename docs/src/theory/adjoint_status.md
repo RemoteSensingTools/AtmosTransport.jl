@@ -291,7 +291,7 @@ v1) could put a point within rounding of a cell edge into the neighbouring
 cell; v1 files are rejected.
 
 **Vertical placement.** A point record becomes a `CSPlacedPointObjective`,
-placed once by the forward sampler's rule (`Output.resolve_placement`) with
+placed once by the forward sampler's rule (`Observations.resolve_placement`) with
 the `vertical_coordinates` of the placement settings, in preference order
 (default height above ground, then pressure):
 
@@ -314,7 +314,7 @@ dry air mass ``m_k`` (kg per cell, ``k = 1`` at the top) and the column
 meteorology (`CSObservationColumnMet`: model-top pressure
 ``p_\mathrm{top}``, gravity ``g``, layer temperature ``T_k``, specific
 humidity ``q_k``), with the forward sampler's function
-`Output.sample_column_layer!`. With the cell area ``A``, the total interface
+`Observations.sample_column_layer!`. With the cell area ``A``, the total interface
 pressures (from the dry air mass and the humidity) and the hypsometric
 interface heights above the model surface are
 
@@ -441,7 +441,7 @@ are built as for pressure placement: total pressures from the replayed dry air
 mass and the specific humidity, ``p_{k+1/2} = p_{k-1/2} + g\,m_k/(A(1-q_k))``
 (`pressure_basis = "total"`, the default; retrieval pressures are total
 pressures), or the dry interfaces (`"dry"`). Model surface and top are
-``p_s = p_{N_z+1/2}`` and ``p_t = p_{1/2}``. Then (`Output.retrieval_column_weights!`):
+``p_s = p_{N_z+1/2}`` and ``p_t = p_{1/2}``. Then (`Observations.retrieval_column_weights!`):
 
 1. **Stretch.** The model interfaces are mapped linearly onto the
    retrieval's pressure range, the model surface onto the retrieval surface
@@ -522,7 +522,7 @@ records are left out in every iteration.
 **Model-error term.** When the record gives a model-profile uncertainty
 ``\sigma_i`` (`retrieval_profile_sigma`), the observation error is
 ``\sigma^2 = \sigma^2_\mathrm{obs} + \sigma^2_\mathrm{mod} + \sum_i (h_i a_i \sigma_i)^2``
-(`Output.retrieval_model_error_variance`): the operator's weights on the
+(`Observations.retrieval_model_error_variance`): the operator's weights on the
 retrieval layers, squared, times the profile variance, the layers taken
 independent. It depends on the record only, not on the state or the
 meteorology, so it is fixed when the record is bound and the cost stays
@@ -589,7 +589,7 @@ the profile is linear in pressure between them. Their pressure weights are
 the integrals of the levels' hat functions ``\varphi_j`` (``\varphi_j(p_j) =
 1``, falling linearly to 0 at the neighbouring levels): the trapezoid rule,
 half-thickness end levels, with a dry-air correction. A record whose block
-has `retrieval_mapping = "hat_levels"` (`Output.HatLevelProjection`) stores
+has `retrieval_mapping = "hat_levels"` (`Observations.HatLevelProjection`) stores
 the 20 level pressures, weights ``h_j``, kernel ``a_j`` and prior ``x_{a,j}``
 surface first, and the model column is projected onto the hats.
 
@@ -666,14 +666,14 @@ falls under the top half-hat (``h \approx 0.026``) and the model's air above
 10 Pa (``10^{-4}`` of the column) is squeezed into it. The weights sum to 1
 over the levels.
 
-**TM5-4DVAR's 19 layers.** `Output.tm5_layer_column` builds TM5-4DVAR's layer
+**TM5-4DVAR's 19 layers.** `Observations.tm5_layer_column` builds TM5-4DVAR's layer
 form of the same record (`proj/tracer/CO2/py/Observations.py`, 7016–7052;
 `Satellite.py`, 707–717): the 20 levels as the interfaces of 19 layers, the
 kernel and prior interpolated to the layer midpoints, the weights
 ``\Delta p_i``, then the layer operator (rebin ``R``). TM5 divides the
 thicknesses by ``p_s``, so its weights sum to ``1 - 10^{-4}``; this mode
 normalizes them to 1 (TM5's column is 0.9999 times this one). It is for
-comparisons with TM5-4DVAR co-samples (converter `mapping = Output.LayerRebin()`
+comparisons with TM5-4DVAR co-samples (converter `mapping = Observations.LayerRebin()`
 or `--mapping tm5`, forward
 sampler `averaging_kernel_mapping = "tm5"`). For a +10 ppm boundary layer
 below ``\sigma = 0.95`` on the prior, the mode is 0.009 ppm above the hat
@@ -784,7 +784,7 @@ term of an averaging-kernel column is not inflated.
 
 **Forward sampler.** An `oco2_lite` source of `[output.observations]` with
 `averaging_kernel_tracers = ["co2"]` (opt-in) also reads each sounding's
-retrieval (`Output.read_oco2_retrieval_columns`) and writes
+retrieval (`Observations.read_oco2_retrieval_columns`) and writes
 `co2_ak_column`, the same operator (`averaging_kernel_mapping = "hat"` or
 `"tm5"`) on the sampled profile and the interface pressures of
 `pressure_basis`. Without the key the output is unchanged. The test checks

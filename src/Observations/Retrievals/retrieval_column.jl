@@ -54,9 +54,9 @@ const _MOLE_FRACTION_UNITS = Dict("mol/mol" => 1.0, "molmol-1" => 1.0, "molmol^-
                                   "ppb" => 1e-9, "ppbv" => 1e-9, "nmol/mol" => 1e-9, "nmolmol-1" => 1e-9)
 
 # The mol/mol factor of a mole-fraction unit, `nothing` for anything else.
-_mole_fraction_scale(units::AbstractString) = get(_MOLE_FRACTION_UNITS, replace(lowercase(units), r"\s" => ""),
+mole_fraction_scale(units::AbstractString) = get(_MOLE_FRACTION_UNITS, replace(lowercase(units), r"\s" => ""),
                                                   nothing)
-_mole_fraction_scale(units) = nothing
+mole_fraction_scale(units) = nothing
 
 """
     mole_fraction_unit_scale(units, label) -> Float64
@@ -66,7 +66,7 @@ The factor that converts a dry mole fraction stated in `units` (`"mol mol-1"`,
 missing or unknown unit, naming `label`.
 """
 function mole_fraction_unit_scale(units, label::AbstractString)
-    scale = _mole_fraction_scale(units)
+    scale = mole_fraction_scale(units)
     scale === nothing && throw(ArgumentError(
         "$(label) has units $(repr(units)); a dry mole fraction must state its unit, one of " *
         "$(join(sort!(collect(keys(_MOLE_FRACTION_UNITS))), ", "))"))
@@ -92,7 +92,7 @@ Retrieval values are means over `N` layers between `N + 1` interfaces (a
 TCCON or GOSAT layer grid, TM5-4DVar's 19-layer form of OCO-2,
 [`tm5_layer_column`](@ref)). The model column, stretched onto the retrieval
 column, is rebinned by pressure overlap: ``P = R``, TM5-4DVar's
-mass-conserving `inv_rebin` ([`retrieval_rebin_matrix`](@ref)). Stored as
+mass-conserving `inv_rebin` (pressure-overlap rebin). Stored as
 `retrieval_mapping = "layer_rebin"`.
 """
 struct LayerRebin <: AbstractRetrievalMapping end
@@ -138,7 +138,7 @@ retrieval_mapping_label(::HatLevelProjection) = "hat_levels"
 const _RETRIEVAL_MAPPINGS = (layer_rebin = LayerRebin(), hat_levels = HatLevelProjection())
 
 # The mapping named by a file or config label.
-function _parse_retrieval_mapping(label::AbstractString, context::AbstractString)
+function parse_retrieval_mapping(label::AbstractString, context::AbstractString)
     key = Symbol(label)
     haskey(_RETRIEVAL_MAPPINGS, key) || throw(ArgumentError(
         "$(context): retrieval mapping $(repr(label)) is not one of " *
@@ -385,26 +385,6 @@ function _foreach_rebin_overlap(f, s::AbstractVector{Float64}, r::AbstractVector
     return nothing
 end
 
-function _check_operator_lengths(nz::Int, s, r, h, a)
-    length(s) == nz + 1 || throw(DimensionMismatch(
-        "the stretched-interface scratch needs $(nz + 1) entries; got $(length(s))"))
-    n = length(r) - 1
-    n >= 1 && length(h) == n && length(a) == n || throw(DimensionMismatch(
-        "a retrieval column of $(length(r)) interfaces needs $(length(r) - 1) weights and kernel values; " *
-        "got $(length(h)) and $(length(a))"))
-    _check_retrieval_interfaces(r)
-    return nothing
-end
-
-# Retrieval interfaces of the raw forms: at least two, finite, surface first
-# (strictly decreasing), top >= 0 (`RetrievalColumn` checks the same).
-function _check_retrieval_interfaces(r::AbstractVector)
-    length(r) >= 2 && all(isfinite, r) && all(<(0), diff(r)) && last(r) >= 0 || throw(ArgumentError(
-        "retrieval interface pressures must be finite, ordered from the surface up (strictly decreasing) " *
-        "and end at a top >= 0 Pa; got $(r)"))
-    return nothing
-end
-
 # The pieces of the hat projection on the stretched model column `s` (top
 # first), the model air masses `air` and the retrieval levels `r` (surface
 # first): `B[j, k]` = ∫ φ_j dp_dry over stretched layer k, and the tridiagonal
@@ -493,8 +473,6 @@ end
 
 """
     retrieval_column_weights!(H, s, p_half, air, column::RetrievalColumn) -> H
-    retrieval_column_weights!(H, s, p_half, column::RetrievalColumn{LayerRebin}) -> H
-    retrieval_column_weights!(H, s, p_half, r, h, a) -> H
 
 Weights of the averaging-kernel column on the model layers: with the model
 profile ``x_k`` (dry mole fraction, `k = 1` at the top),
@@ -510,19 +488,15 @@ c = X_a - \\sum_i h_i\\, a_i\\, x_{a,i}
 ``c = \\sum_i h_i (1 - a_i) x_{a,i}``) when not. ``P`` maps the model column, stretched
 onto the retrieval column ([`stretch_model_interfaces!`](@ref)), onto the
 retrieval's values as its `mapping` says: the rebin ``R`` of
-[`LayerRebin`](@ref) ([`retrieval_rebin_matrix`](@ref); the column of
+[`LayerRebin`](@ref) (the column of
 TM5-4DVar's OCO-2 operator, `averaging_kernels.F90`, lines 228-235 and 245),
 or the hat projection of [`HatLevelProjection`](@ref), which weights each
 model layer by its air mass `air` (kg per cell, top first; the run's dry air
 mass on a dry basis). Every row of ``P`` sums to 1
-([`retrieval_projection_matrix`](@ref)). `p_half` are the model interface
+(dry-air projection). `p_half` are the model interface
 pressures (Pa, top first; total pressures, so that they compare with the
 retrieval's), `s` a scratch vector of the same length that receives the
-stretched interfaces. A layer column ignores `air`; the form without it
-takes layer columns only. The last form takes the retrieval interfaces `r`
-(surface first), pressure weights `h` and kernel `a` of a layer column as
-they are, without the checks of [`RetrievalColumn`](@ref) (weights that do
-not sum to 1, as TM5's ``h_i = Δp_i/p_s`` with a retrieval top above 0 Pa).
+stretched interfaces. A layer column ignores `air`; pass `nothing` for it.
 """
 function retrieval_column_weights!(H::AbstractVector{Float64}, s::AbstractVector{Float64}, p_half::AbstractVector,
                                    air, column::RetrievalColumn)
@@ -535,26 +509,6 @@ function retrieval_column_weights!(H::AbstractVector{Float64}, s::AbstractVector
     # W = h·a, then H = W P (TM5: W = pres_weights * avg_ker; H = matmul(W, R)).
     _foreach_projection_entry(column.mapping, s, air, column.pressure_pa) do i, k, P
         @inbounds H[k] += h[i] * a[i] * P
-    end
-    return H
-end
-
-retrieval_column_weights!(H::AbstractVector{Float64}, s::AbstractVector{Float64}, p_half::AbstractVector,
-                          column::RetrievalColumn) =
-    retrieval_column_weights!(H, s, p_half, nothing, column)
-
-function retrieval_column_weights!(H::AbstractVector{Float64}, s::AbstractVector{Float64}, p_half::AbstractVector,
-                                   r::AbstractVector, h::AbstractVector, a::AbstractVector)
-    nz = length(p_half) - 1
-    length(H) == nz || throw(DimensionMismatch("H needs $(nz) entries; got $(length(H))"))
-    _check_operator_lengths(nz, s, r, h, a)
-    _check_model_interfaces(p_half)
-    stretch_model_interfaces!(s, p_half, first(r), last(r))
-    _check_rebin(s, r)
-    fill!(H, 0.0)
-    # W = h·a, then H = W R (TM5: W = pres_weights * avg_ker; H = matmul(W, R)).
-    _foreach_rebin_overlap(s, r) do i, k, R
-        @inbounds H[k] += Float64(h[i]) * Float64(a[i]) * R
     end
     return H
 end
@@ -588,65 +542,14 @@ function retrieval_prior_offset(h::AbstractVector, a::AbstractVector, prior::Abs
 end
 
 """
-    retrieval_rebin_matrix(p_half, column::RetrievalColumn{LayerRebin}) -> Matrix{Float64}
-    retrieval_rebin_matrix(p_half, r) -> Matrix{Float64}
-
-The redistribution matrix ``R`` (`N × Nz`, retrieval layers surface first,
-model layers top first) of TM5-4DVar's `inv_rebin`
-(`averaging_kernels.F90`, lines 60-146) on the model column stretched onto the
-retrieval column: ``R_{ik}`` is the pressure overlap of stretched model layer
-``k`` with retrieval layer ``i`` divided by the thickness of layer ``i``,
-so ``(R x)_i`` is the pressure-weighted mean of ``x`` over retrieval layer
-``i``. The outermost retrieval interfaces are those of the stretched model
-column (TM5's choice; they equal the retrieval surface and top to rounding).
-Every row sums to 1 and every column ``k`` distributes all of the stretched
-layer: ``\\sum_i R_{ik}\\,Δp^r_i = Δs_k`` (the rebin conserves the column
-integral of ``x``). The projection matrix of [`LayerRebin`](@ref).
-"""
-retrieval_rebin_matrix(p_half::AbstractVector, column::RetrievalColumn{LayerRebin}) =
-    retrieval_rebin_matrix(p_half, column.pressure_pa)
-
-function retrieval_rebin_matrix(p_half::AbstractVector, r::AbstractVector)
-    nz = length(p_half) - 1
-    _check_retrieval_interfaces(r)
-    _check_model_interfaces(p_half)
-    s = stretch_model_interfaces!(Vector{Float64}(undef, nz + 1), p_half, first(r), last(r))
-    _check_rebin(s, r)
-    R = zeros(length(r) - 1, nz)
-    _foreach_rebin_overlap((i, k, w) -> (@inbounds R[i, k] = w), s, r)
-    return R
-end
-
-"""
-    retrieval_projection_matrix(p_half, air, column::RetrievalColumn) -> Matrix{Float64}
-
-The projection matrix ``P`` (`N × Nz`, retrieval values surface first, model
-layers top first) of the column's mapping on the model column (interface
-pressures `p_half`, Pa, top first; air masses `air`, kg per cell, read by the
-hat projection only) stretched onto the retrieval column: the rebin ``R``
-for [`LayerRebin`](@ref), the dry-air L2 projection onto the levels' hats for
-[`HatLevelProjection`](@ref). ``(P x)_i`` is the model profile at retrieval
-value ``i`` and every row sums to 1.
-"""
-function retrieval_projection_matrix(p_half::AbstractVector, air, column::RetrievalColumn)
-    nz = length(p_half) - 1
-    s = _stretch_onto!(Vector{Float64}(undef, nz + 1), p_half, air, column)
-    P = zeros(retrieval_layer_count(column), nz)
-    _foreach_projection_entry(column.mapping, s, air, column.pressure_pa) do i, k, w
-        @inbounds P[i, k] += w
-    end
-    return P
-end
-
-"""
     retrieval_profile!(xr, s, p_half, air, column::RetrievalColumn, x) -> xr
-    retrieval_profile!(xr, s, p_half, column::RetrievalColumn{LayerRebin}, x) -> xr
 
 The model profile `x` (top first) on the retrieval layers or levels (surface
 first), ``(P x)_i``: for a layer column the pressure-weighted mean over each
 retrieval layer, for a level column the hat projection, of the model column
 stretched onto the retrieval column (`air` as in
-[`retrieval_column_weights!`](@ref)). `s` is scratch for the stretched
+[`retrieval_column_weights!`](@ref); pass `nothing` for a `LayerRebin`
+column, which does not read it). `s` is scratch for the stretched
 interfaces. A diagnostic: the column itself is
 ``\\sum_i h_i a_i (P x)_i + c``.
 """
@@ -664,18 +567,14 @@ function retrieval_profile!(xr::AbstractVector{Float64}, s::AbstractVector{Float
     return xr
 end
 
-retrieval_profile!(xr::AbstractVector{Float64}, s::AbstractVector{Float64}, p_half::AbstractVector,
-                   column::RetrievalColumn, x::AbstractVector) =
-    retrieval_profile!(xr, s, p_half, nothing, column, x)
 
 """
     retrieval_column_value(p_half, air, column::RetrievalColumn, x) -> Float64
-    retrieval_column_value(p_half, column::RetrievalColumn{LayerRebin}, x) -> Float64
 
 The simulated column ``X = \\sum_k H_k x_k + c`` of the model profile `x`
 (dry mole fraction, top first) on the model interface pressures `p_half`
 (Pa, top first, total pressures) and air masses `air` (read by the hat
-projection only): [`retrieval_column_weights!`](@ref) and
+projection only; pass `nothing` for a `LayerRebin` column): [`retrieval_column_weights!`](@ref) and
 [`retrieval_prior_offset`](@ref) in one call.
 """
 function retrieval_column_value(p_half::AbstractVector, air, column::RetrievalColumn, x::AbstractVector)
@@ -689,8 +588,6 @@ function retrieval_column_value(p_half::AbstractVector, air, column::RetrievalCo
     return value
 end
 
-retrieval_column_value(p_half::AbstractVector, column::RetrievalColumn, x::AbstractVector) =
-    retrieval_column_value(p_half, nothing, column, x)
 
 """
     tm5_layer_column(column::RetrievalColumn{HatLevelProjection}) -> RetrievalColumn{LayerRebin}

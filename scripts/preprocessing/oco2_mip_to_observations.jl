@@ -70,7 +70,7 @@ function main(args = ARGS)
         data_types = _list(get(options, "--data-types", "LN,LG,OG")),
         assimilate_flags = parse.(Int, _list(get(options, "--assimilate-flags", "1"))),
         model_sigma = model_sigma == "file" ? :file : parse(Float64, model_sigma),
-        mapping = AT.Output.oco2_level_form_from_label(get(options, "--mapping", "hat"), "--mapping"),
+        mapping = AT.Observations.oco2_level_form_from_label(get(options, "--mapping", "hat"), "--mapping"),
         tracer = get(options, "--tracer", "CO2"),
         instrument = get(options, "--instrument", nothing))
     println("wrote $(length(paths)) observation files", isempty(paths) ? "" : ": $(first(paths)) … $(last(paths))")

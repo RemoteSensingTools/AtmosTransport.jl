@@ -210,3 +210,22 @@ other AtmosTransport modules; every later module may import from it.
 - [`../../test/core/test_binary_planet_radius.jl`](../../test/core/test_binary_planet_radius.jl):
   radius round-trip through binaries and runtime meshes
 - API page: [`../../docs/src/api/parameters.md`](../../docs/src/api/parameters.md)
+
+`DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN` in `NumericalDefaults.jl`
+is the shared 280 K near-surface fallback for Observations and Inversion.
+
+## Depends on
+
+No other AtmosTransport module.
+
+## Used by
+
+All later modules that require physical constants or numerical defaults.
+
+## Shared helpers owned here
+
+The exported constants and planet parameters documented above.
+
+## Forward<->adjoint mirrors
+
+Forward and adjoint callers import the same constants.

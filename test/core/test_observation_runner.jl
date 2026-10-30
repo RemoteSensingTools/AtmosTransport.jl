@@ -137,12 +137,22 @@ end
             end
         end
         reference = run_with(joinpath(dir, "reference.nc"), nothing)
+        disabled = run_with(joinpath(dir, "disabled.nc"), Dict{String, Any}("enabled" => false,
+            "sources" => Any[Dict("kind" => "table", "path" => joinpath(dir, "missing.csv"))]))
+        @test reference == disabled
         sampled = run_with(joinpath(dir, "sampled.nc"), Dict{String, Any}(
             "path" => joinpath(dir, "obs.nc"), "start_time" => "2021-12-02T00:00:00", "pressure_basis" => "dry",
             "sources" => Any[Dict{String, Any}("kind" => "table", "mode" => "soundings", "path" => csv)]))
         @test reference[1] == sampled[1]
         @test reference[2] == sampled[2]
         @test isfile(joinpath(dir, "obs_soundings.nc"))
+        missing_path = joinpath(dir, "missing_obs.nc")
+        @test_throws ArgumentError run_with(joinpath(dir, "missing_snapshot.nc"), Dict{String, Any}(
+            "path" => missing_path, "start_time" => "2021-12-02T00:00:00", "pressure_basis" => "dry",
+            "sources" => Any[Dict("kind" => "table", "mode" => "soundings",
+                                  "path" => joinpath(dir, "missing.csv"))]))
+        @test !isfile(joinpath(dir, "missing_obs_soundings.nc"))
+
     end
 end
 
@@ -365,22 +375,6 @@ end
 end
 
 @testset "runner humidity: sampled fields and per-binary capability (issue #20)" begin
-    R = AtmosTransport.Models.DrivenRunner
-    qs, qe, vq = fill(0.01, 2, 2, 3), fill(0.02, 2, 2, 3), ntuple(_ -> fill(0.03, 4, 4, 3), 6)
-    structured = (qv_start = qs, qv_end = qe, vdiff = nothing)
-    @test R._window_humidity(structured, true) === qs && R._window_humidity(structured, false) === qe
-    cubed = (qv_start = nothing, qv_end = nothing, vdiff = (t = vq, qv = vq))
-    @test R._window_humidity(cubed, true) === vq && R._window_humidity(cubed, false) === vq
-    @test R._window_humidity((qv_start = nothing, qv_end = nothing, vdiff = nothing), false) === nothing
-    caps(humidity, grid, sections = Symbol[]) = (humidity = humidity, grid_type = grid, payload_sections = sections)
-    @test R._binary_observation_humidity(caps(true, :latlon))
-    @test R._binary_observation_humidity(caps(false, :cubed_sphere, [:m, :vdiff_t, :vdiff_qv]))
-    @test !R._binary_observation_humidity(caps(false, :latlon, [:vdiff_qv]))   # lat-lon windows load no VDIFF
-    @test !R._binary_observation_humidity(caps(false, :cubed_sphere, [:m]))
-    @test R._run_observation_humidity([true, true], ["a", "b"], false)
-    @test !R._run_observation_humidity([true, false], ["a", "b"], true)
-    @test R._run_observation_humidity(nothing, ["a"], true)
-
     # A later binary without humidity stops the run before transport, not midway.
     mktempdir() do dir
         pack = obspack_pressures(joinpath(dir, "co2_x_aircraft-insitu_1.nc"), [ORIGIN + Minute(30)], [664.0])

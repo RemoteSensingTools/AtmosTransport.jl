@@ -39,10 +39,9 @@ using ..MetDrivers: same_window_layout, AbstractRawWindowStaging, raw_window_sta
                     read_window_payload!, unpack_window_payload!
 # Regridding is available to the nested InitialConditionIO module.
 using ..Regridding
-# Output writers (SnapshotFrame / capture_snapshot / write_snapshot_netcdf)
-# loaded by AtmosTransport.jl before Models — pull into Models' namespace
-# so the nested DrivenRunner submodule can `using ..Output: …`.
+# Snapshot and observation APIs used by DrivenRunner.
 using ..Output
+using ..Observations
 
 using ..ConfigChecks: config_bool as _config_bool
 using ..ConfigChecks: config_int

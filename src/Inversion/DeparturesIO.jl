@@ -71,7 +71,7 @@ One audit row of the CS departure file (schema v2): the observation record's
 provenance (`id`, `tracer`, `instrument_type`, `date_components`, Float64
 `lat`/`lon`, `kind`, `time_window_s`; `clamped` when its time lies outside
 the run and `ClampOutOfRange` kept it), where it was sampled (the cell
-`panel, i, j`; the `vertical_placement` code — `Output.VERTICAL_PLACEMENT_CODES`
+`panel, i, j`; the `vertical_placement` code — `Observations.VERTICAL_PLACEMENT_CODES`
 for point records, [`COLUMN_MEAN_PLACEMENT_CODE`](@ref) for column records —
 with the height above the model surface or the pressure that placed it, NaN
 when unused; the sampled `steps`, their time-sampling `weights` and the
@@ -756,23 +756,23 @@ function write_departures(path::AbstractString, set::CSDepartureSet)
         @inbounds for (k, r) in enumerate(set.records), c in 1:6
             dates[c, k] = r.date_components[c]
         end
-        _write_dep_var(ds, "date_components", Int16, ("date_component", "obs"), dates,
+        write_observation_variable!(ds, "date_components", Int16, ("date_component", "obs"), dates,
                        ("description" => "(year, month, day, hour, minute, second) UTC per observation",))
-        _write_dep_var(ds, "kind", String, ("obs",),
+        write_observation_variable!(ds, "kind", String, ("obs",),
                        String[observation_kind_label(r.kind) for r in set.records],
                        ("description" => "\"point\" or \"column\"",))
         for (name, T, field, attrs) in _DEPARTURE_VARIABLES
-            _write_dep_var(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
+            write_observation_variable!(ds, name, T, ("obs",), T[getfield(r, field) for r in set.records], attrs)
         end
-        _write_dep_var(ds, "sample_count", Int32, ("obs",), Int32[length(r.steps) for r in set.records],
+        write_observation_variable!(ds, "sample_count", Int32, ("obs",), Int32[length(r.steps) for r in set.records],
                        ("description" => "number of sampled model steps; observation n owns the next sample_count[n] entries of the sample dimension",))
-        _write_dep_var(ds, "sample_step", Int64, ("sample",),
+        write_observation_variable!(ds, "sample_step", Int64, ("sample",),
                        reduce(vcat, (r.steps for r in set.records); init = Int64[]),
                        ("description" => "sampled model step (the state after it)",))
-        _write_dep_var(ds, "sample_weight", Float64, ("sample",),
+        write_observation_variable!(ds, "sample_weight", Float64, ("sample",),
                        reduce(vcat, (r.weights for r in set.records); init = Float64[]),
                        ("description" => "time-sampling weight of the step (an observation's weights sum to 1)",))
-        _write_dep_var(ds, "sample_level", Int32, ("sample",),
+        write_observation_variable!(ds, "sample_level", Int32, ("sample",),
                        reduce(vcat, (r.levels for r in set.records); init = Int32[]),
                        ("description" => "model level read at the step (k = 1 at the top); 0 = every level (column mean)",))
         _write_departure_retrieval_block(ds, set.records)
@@ -785,23 +785,23 @@ end
 # each written when any row needs it (absent: assimilated, flag 0, no average).
 function _write_departure_assimilation!(ds, records)
     if any(r -> r.vertical_placement == RETRIEVAL_COLUMN_PLACEMENT_CODE || !r.assimilated, records)
-        _write_dep_var(ds, "assimilated", Int8, ("obs",), Int8[r.assimilated for r in records],
+        write_observation_variable!(ds, "assimilated", Int8, ("obs",), Int8[r.assimilated for r in records],
                        ("description" => "1 when the row is a term of the 4D-Var cost; 0 for a co-sampled record " *
                         "(flag != 0), a record of a cell average (cell_average_id != 0, in the cost through the " *
                         "average), or an averaging-kernel column left out by max_surface_pressure_mismatch_pa " *
                         "(unplaced_records = skip)",))
     end
     any(r -> r.flag != 0, records) &&
-        _write_dep_var(ds, "flag", Int8, ("obs",), Int8[r.flag for r in records],
+        write_observation_variable!(ds, "flag", Int8, ("obs",), Int8[r.flag for r in records],
                        ("description" => "the observation record's flag: 0 = assimilate, any other value = " *
                         "co-sampled only (simulated and reported, not assimilated)",))
     any(r -> r.cell_average_id != 0, records) &&
-        _write_dep_var(ds, "cell_average_id", Int64, ("obs",), Int64[r.cell_average_id for r in records],
+        write_observation_variable!(ds, "cell_average_id", Int64, ("obs",), Int64[r.cell_average_id for r in records],
                        ("description" => "number (1, 2, ...) of the cell average the row belongs to: its member " *
                         "records (not assimilated themselves) and the average's own row (vertical_placement -4, " *
                         "a row id above every record id, in the cost); 0 = none",))
     any(r -> r.vertical_placement == CELL_AVERAGE_PLACEMENT_CODE, records) &&
-        _write_dep_var(ds, "cell_average_correlation", Float64, ("obs",),
+        write_observation_variable!(ds, "cell_average_correlation", Float64, ("obs",),
                        Float64[r.cell_average_correlation for r in records],
                        ("description" => "cell-average rows: the correlation between the errors of distinct records " *
                         "of the average, in value_sigma (the measurement error of the average); NaN for other rows",))
@@ -824,17 +824,17 @@ function _write_departure_retrieval_block(ds, records)
     for (k, r) in enumerate(records)
         profiles[1:length(r.retrieval_profile), k] .= r.retrieval_profile
     end
-    _write_dep_var(ds, "surface_pressure_mismatch_pa", Float64, ("obs",),
+    write_observation_variable!(ds, "surface_pressure_mismatch_pa", Float64, ("obs",),
                    Float64[r.surface_pressure_mismatch_pa for r in records],
                    ("units" => "Pa", "description" =>
                     "averaging-kernel columns: model minus retrieval surface pressure (time-weighted), absorbed " *
                     "by the stretch of the model column onto the retrieval column; NaN for other rows"))
-    _write_dep_var(ds, "retrieval_model_profile", Float64, ("retrieval_level", "obs"), profiles,
+    write_observation_variable!(ds, "retrieval_model_profile", Float64, ("retrieval_level", "obs"), profiles,
                    ("units" => "mol mol-1", "ordering" => "surface_to_top", "description" =>
                     "averaging-kernel columns: the model's dry mole fraction on the retrieval layers or levels " *
                     "(the stretched model column rebinned by pressure overlap, or projected onto the levels' hat " *
                     "functions, time-weighted), from the surface up; NaN-padded, NaN for other rows"))
-    _write_dep_var(ds, "profile_model_sigma", Float64, ("obs",), Float64[r.profile_model_sigma for r in records],
+    write_observation_variable!(ds, "profile_model_sigma", Float64, ("obs",), Float64[r.profile_model_sigma for r in records],
                    ("description" => "1-sigma model error of an averaging-kernel column, sqrt(sum_i (h_i a_i " *
                     "sigma_i)^2) from its profile uncertainty, added in quadrature; 0 for other rows",))
     return nothing
@@ -879,11 +879,8 @@ function _read_departure_retrieval_block(ds, n::Int, path)
                                              "departures NetCDF $(repr(path)) variable \"retrieval_model_profile\"")
     mismatch_var = ds["surface_pressure_mismatch_pa"]
     mismatch_units = get(mismatch_var.attrib, "units", nothing)
-    mismatch_key = _pressure_unit_key(mismatch_units)
-    mismatch_scale = mismatch_key === nothing ? nothing : get(_PRESSURE_UNITS_PA, mismatch_key, nothing)
-    mismatch_scale === nothing && throw(ArgumentError(
-        "departures NetCDF $(repr(path)) variable \"surface_pressure_mismatch_pa\" has units " *
-        "$(repr(mismatch_units)); expected a pressure unit, one of $(join(sort!(collect(keys(_PRESSURE_UNITS_PA))), ", "))"))
+    mismatch_scale = pressure_unit_scale(mismatch_units,
+        "departures NetCDF $(repr(path)) variable \"surface_pressure_mismatch_pa\"")
     mismatch = Float64[ismissing(x) ? NaN : Float64(x) * mismatch_scale for x in Array(mismatch_var)]
     sigma = Float64[Float64(nomissing("profile_model_sigma", x)) for x in Array(ds["profile_model_sigma"])]
     raw = map(x -> ismissing(x) ? NaN : Float64(x) * profile_scale, Array(profile_var))
@@ -899,14 +896,7 @@ function _read_departure_retrieval_block(ds, n::Int, path)
     return (mismatch, profiles, sigma, assimilated, flags, averages)
 end
 
-function _write_dep_var(ds, name, T, dims, data, attrs)
-    v = NCDatasets.defVar(ds, name, T, dims)
-    for (k, val) in attrs
-        v.attrib[k] = val
-    end
-    v[:] = data
-    return v
-end
+
 
 # ---------------------------------------------------------------------------
 # Reader

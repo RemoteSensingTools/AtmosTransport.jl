@@ -431,11 +431,10 @@ files = [
     "core/test_observation_runner.jl",
     "core/test_observation_sampler.jl",
     "core/test_observation_schedules.jl",
-    "core/test_observation_schema.jl",
     "core/test_observation_sources.jl",
 ]
 paths = [
-    "src/Output/observations/**",
+    "src/{Output,Observations}/**",
     "src/Models/runner/observations.jl",
     "schemas/observation_sites.schema.json",
 ]
@@ -515,10 +514,7 @@ paths = [
     "schemas/cs_*.toml",
     # The placement rule and column helpers placed point observations share
     # with the forward observation sampler.
-    "src/Output/observations/observation_{placement,gather,requests,sampler}.jl",
-    "src/Output/observations/cell_locator.jl",
-    # The averaging-kernel column operator of the 4D-Var's retrieval columns.
-    "src/Output/observations/retrieval_column.jl",
+    "src/Observations/**",
     "test/helpers/cs_observation_columns.jl",
 ]
 

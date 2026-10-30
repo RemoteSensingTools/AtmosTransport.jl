@@ -109,21 +109,21 @@ using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing
 using ...GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
-using ..Output: AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!, SnapshotFrame,
-                AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
-                AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput,
-                RuntimeOutputSpec, runtime_output_spec, snapshot_hours,
-                set_physics_attributes!, set_time_origin!,
-                output_enabled, output_path, output_path_for_day,
-                capture_snapshot, write_snapshot_netcdf, write_snapshot_binary,
-                NoObservationOutput, ObservationOutputSpec, observation_output_spec,
-                AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
-                samples_observations, begin_observation_day!, observe_window_boundary!,
-                finish_observations!, check_observation_tracer_names, observation_needs_humidity,
-                averaging_kernel_tracers,
-                observation_output_path, SoundingMode, SiteMode,
-                VerticalPlacementSpec, ObservationTerrain, NoModelSurfaceHeight, NoPointElevation,
-                _SNAPSHOT_SCHEDULE_KEYS, _SNAPSHOT_INTERVAL_KEYS, _schedule_has_times
+using ..Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
+                check_output_targets, AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!,
+                SnapshotFrame, AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
+                AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, RuntimeOutputSpec,
+                runtime_output_spec, snapshot_hours, set_physics_attributes!, set_time_origin!,
+                output_enabled, output_path, output_path_for_day, capture_snapshot,
+                write_snapshot_netcdf, write_snapshot_binary, SNAPSHOT_SCHEDULE_KEYS,
+                SNAPSHOT_INTERVAL_KEYS, schedule_has_times
+using ..Observations: NoObservationOutput, ObservationOutputSpec, observation_output_spec,
+                      AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
+                      samples_observations, begin_observation_day!, observe_window_boundary!,
+                      finish_observations!, check_observation_tracer_names,
+                      observation_needs_humidity, averaging_kernel_tracers, observation_output_path,
+                      SoundingMode, SiteMode, VerticalPlacementSpec, ObservationTerrain,
+                      NoModelSurfaceHeight, NoPointElevation
 # TransportModel + DrivenSimulation live alongside us in the Models module;
 # reach up to the parent and pull them in.
 using ..Models: TransportModel
@@ -537,7 +537,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     do_snapshots && set_time_origin!(output_spec,
         _runtime_output_origin(run_origin, first_driver; start_window))
     _check_snapshot_day_paths(output_spec, binary_paths)
-    _check_output_targets(output_spec, output_cfg)
+    check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec,
                              _window_end_hours(layout; start_window, stop_window_override))
     do_snapshots && _validate_structured_output_format(output_spec.format)
@@ -859,7 +859,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     do_snapshots = output_enabled(output_spec)
     do_snapshots && set_time_origin!(output_spec, _runtime_output_origin(run_origin, driver1))
     _check_snapshot_day_paths(output_spec, binary_paths)
-    _check_output_targets(output_spec, output_cfg)
+    check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)

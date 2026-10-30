@@ -150,8 +150,6 @@ struct OCO2LiteSource{Q <: AbstractQualityFilter, A <: AbstractAveragingKernelOu
                                                                        A <: AbstractAveragingKernelOutput} =
         new{Q, A}(String(path_template), quality_filter, averaging_kernel)
 end
-OCO2LiteSource(path_template::AbstractString, quality_flag_max::Integer) =
-    OCO2LiteSource(path_template, QualityFlagFilter("xco2_quality_flag", quality_flag_max))
 
 "The tracers whose averaging-kernel columns a source asks for (none by default)."
 averaging_kernel_tracers(source::OCO2LiteSource) = averaging_kernel_tracers(source.averaging_kernel)
@@ -177,7 +175,7 @@ end
 Generic point list as CSV, TOML, or NetCDF. Point events need `id`, `time`
 (ISO-8601 UTC), `lat`, `lon`; sites need `id`, `lat`, `lon`. Both accept
 `elevation` (m asl) and `intake_height` (m above ground) or `altitude`
-(m asl, converted with `elevation`, else placed by [`resolve_placement`](@ref)).
+(m asl, converted with `elevation`, else placed by [`resolve_placement`](@ref AtmosTransport.Observations.Sampling.resolve_placement)).
 Sites may add `start_time`/`end_time`
 ([`TimeRange`](@ref)) or `times` ([`TimeList`](@ref)).
 """

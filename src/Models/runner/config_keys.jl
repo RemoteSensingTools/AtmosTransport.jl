@@ -75,18 +75,6 @@ const _SURFACE_FLUX_MONTH_KINDS = ("gridfed_fossil_co2", "zhang_rn222")
 const _SURFACE_FLUX_SERIES_KEYS = ("files", "file_pattern", "temporal_scheme",
                                    "hold_outside_coverage")
 
-# `[output]` (`runtime_output_spec`), in precedence order within each alias group.
-const _OUTPUT_PATH_KEYS = ("path", "snapshot_file", "filename")
-const _OUTPUT_KEYS = (_OUTPUT_PATH_KEYS..., _SNAPSHOT_SCHEDULE_KEYS..., "start_hour",
-                      "stop_hour", "split", "format", "deflate_level", "shuffle", "enabled",
-                      "fields", "observations")
-const _OUTPUT_FIELDS_KEYS = ("tracers", "layers", "levels", "column_mean",
-                             "column_mass_per_area", "column_mass", "air_mass_layers",
-                             "air_mass", "air_mass_per_area", "column_air_mass_per_area",
-                             "per_tracer", "tracer_fields")
-const _TRACER_OUTPUT_FIELDS_KEYS = ("layers", "column_mean", "column_mass_per_area",
-                                    "column_mass")
-
 _lower(value) = value isa AbstractString ? lowercase(value) : nothing
 _kind_string(section, default) = _lower(get(section, "kind", default))
 
@@ -320,19 +308,19 @@ end
 # `carried`: the run's tracer names, or `nothing` when they cannot be known.
 function _output_key_findings!(w, output, carried)
     output isa AbstractDict || return w
-    _report_unknown!(w, output, _OUTPUT_KEYS, "[output]")
-    _report_shadowed!(w, output, _OUTPUT_PATH_KEYS, "[output]")
-    _report_shadowed!(w, output, _SNAPSHOT_SCHEDULE_KEYS, "[output]")
-    any(k -> haskey(output, k), _SNAPSHOT_INTERVAL_KEYS) ||
+    _report_unknown!(w, output, OUTPUT_KEYS, "[output]")
+    _report_shadowed!(w, output, OUTPUT_PATH_KEYS, "[output]")
+    _report_shadowed!(w, output, SNAPSHOT_SCHEDULE_KEYS, "[output]")
+    any(k -> haskey(output, k), SNAPSHOT_INTERVAL_KEYS) ||
         _report_unread!(w, output, ("start_hour", "stop_hour"), "[output]",
-                      "without an interval key ($(join(_SNAPSHOT_INTERVAL_KEYS, ", ")))")
+                      "without an interval key ($(join(SNAPSHOT_INTERVAL_KEYS, ", ")))")
     format = get(output, "format", "netcdf")
     format isa AbstractString && lowercase(format) in ("binary_mmap", "binary", "mmap", "atmsnap") &&
         _report_unread!(w, output, ("fields", "deflate_level", "shuffle"), "[output]",
                       "with format = \"binary_mmap\" (snapshots carry every field, uncompressed)")
     fields = get(output, "fields", nothing)
     fields isa AbstractDict || return w
-    _report_unknown!(w, fields, _OUTPUT_FIELDS_KEYS, "[output.fields]")
+    _report_unknown!(w, fields, OUTPUT_FIELDS_KEYS, "[output.fields]")
     _report_shadowed!(w, fields, ("per_tracer", "tracer_fields"), "[output.fields]")
     _report_shadowed!(w, fields, ("column_mass_per_area", "column_mass"), "[output.fields]")
     per_tracer = get(fields, "per_tracer", get(fields, "tracer_fields", nothing))
@@ -342,7 +330,7 @@ function _output_key_findings!(w, output, carried)
         carried === nothing || String(name) in carried ||
             push!(w.errors, "$(label): `$(name)` is not a tracer of the run.")
         entry isa AbstractDict || continue
-        _report_unknown!(w, entry, _TRACER_OUTPUT_FIELDS_KEYS, label)
+        _report_unknown!(w, entry, TRACER_OUTPUT_FIELDS_KEYS, label)
         _report_shadowed!(w, entry, ("column_mass_per_area", "column_mass"), label)
     end
     return w

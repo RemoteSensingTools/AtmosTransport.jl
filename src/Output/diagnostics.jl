@@ -19,10 +19,7 @@ function column_mean_mixing_ratio(air_mass::AbstractArray, tracer_mass::Abstract
     # level. Each column still accumulates levels in the original order.
     num = _column_sum(tracer_mass)
     den = _column_sum(air_mass)
-    @inbounds for i in eachindex(num, den)
-        num[i] = den[i] > 0 ? num[i] / den[i] : NaN
-    end
-    return num
+    return _column_ratio(num, den)
 end
 
 function column_mean_mixing_ratio(air_mass::NTuple{6, <:AbstractArray},
@@ -85,15 +82,6 @@ function layer_mass_per_area(field::NTuple{6, <:AbstractArray}, mesh::CubedSpher
         end
         out
     end, 6)
-end
-
-"""
-    column_mass_per_area(field, mesh)
-
-Vertically integrate per-cell mass and divide by horizontal cell area.
-"""
-function column_mass_per_area(field, mesh)
-    return _horizontal_per_area(_column_sum(field), mesh)
 end
 
 function _column_sum(values::AbstractArray)

@@ -185,6 +185,10 @@ using .State
 include("Output/Output.jl")
 using .Output
 
+# ---- Observation columns and runtime sampling ----
+include("Observations/Observations.jl")
+using .Observations
+
 # ---- Met-data adapters ----
 include("MetDrivers/MetDrivers.jl")
 using .MetDrivers: AbstractMetDriver,

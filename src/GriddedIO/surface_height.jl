@@ -14,7 +14,7 @@
 #   sampled at points by bilinear interpolation.
 #
 # Both are read into the `Output` placement interfaces
-# (`Output.ModelSurfaceHeight`, `Output.AbstractPointElevation`).
+# (`Observations.ModelSurfaceHeight`, `Observations.AbstractPointElevation`).
 # ---------------------------------------------------------------------------
 
 const _SURFACE_HEIGHT_VARIABLE = "surface_height"
@@ -208,7 +208,7 @@ function _read_surface_height(ds, path::String, mesh::ReducedGaussianMesh)
 end
 
 """
-    read_model_surface_height(path, mesh) -> Output.ModelSurfaceHeight
+    read_model_surface_height(path, mesh) -> Observations.ModelSurfaceHeight
 
 Read the per-grid model surface height dataset written by
 [`write_model_surface_height`](@ref) for `mesh` (`LatLonMesh`,
@@ -219,7 +219,7 @@ within 8 eps of a Float32 lat-lon or reduced-Gaussian mesh), a stored
 cubed-sphere `cell_area` must pass
 [`check_cell_area`](@ref), and every value must be finite. Returns the field
 in the mesh's native layout (a matrix, a vector of cells, or six panels) as
-`Output.ModelSurfaceHeight`, which the observation sampler queries per cell.
+`Observations.ModelSurfaceHeight`, which the observation sampler queries per cell.
 """
 function read_model_surface_height(path::AbstractString, mesh)
     file = String(path)
@@ -238,7 +238,7 @@ A latitude-longitude digital elevation model read by
 convention, spanning less than 360°) and latitudes `lat`, the ground
 elevation `values[i, j]` (m above sea level, Float32, `NaN` where the file has
 fill), whether the longitudes wrap around the globe (`periodic`), and the
-file `path`. `Output.point_elevation(dem, lon, lat)` interpolates it
+file `path`. `Observations.point_elevation(dem, lon, lat)` interpolates it
 bilinearly between the four surrounding centres.
 """
 struct LatLonPointElevation <: AbstractPointElevation
@@ -249,7 +249,7 @@ struct LatLonPointElevation <: AbstractPointElevation
     path::String
 end
 
-Output.terrain_source(dem::LatLonPointElevation) = dem.path
+Observations.terrain_source(dem::LatLonPointElevation) = dem.path
 
 _strictly_increasing(x) = all(k -> x[k + 1] > x[k], 1:(length(x) - 1))
 
@@ -340,7 +340,7 @@ end
 # which would put ocean and coastal records kilometres above the ground. The
 # highest is Mount Everest, 8849 m; a DEM going higher holds an undeclared fill
 # value (32767, 9999), which would put records kilometres below the ground.
-const _LOWEST_LAND_SURFACE_M = Output.LOWEST_GROUND_ELEVATION_M
+const _LOWEST_LAND_SURFACE_M = Observations.LOWEST_GROUND_ELEVATION_M
 const _HIGHEST_LAND_SURFACE_M = 9000.0
 
 function _check_land_surface(values, name::AbstractString, path::AbstractString)
@@ -394,7 +394,7 @@ with `NaN` corners left out and the weights of the others renormalised; `NaN`
 when all four are `NaN` or the point is more than half a spacing outside the
 DEM.
 """
-function Output.point_elevation(dem::LatLonPointElevation, lon::Real, lat::Real)
+function Observations.point_elevation(dem::LatLonPointElevation, lon::Real, lat::Real)
     bx = _lon_bracket(dem, Float64(lon))
     by = _lat_bracket(dem.lat, Float64(lat))
     (bx === nothing || by === nothing) && return NaN

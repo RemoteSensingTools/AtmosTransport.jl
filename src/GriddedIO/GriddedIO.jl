@@ -53,9 +53,9 @@ methods dispatch on it.
 - Static ground fields for observation placement (`surface_height.jl`): the
   per-grid model surface height dataset, written by
   [`write_model_surface_height`](@ref) and read by
-  [`read_model_surface_height`](@ref) into `Output.ModelSurfaceHeight`, and a
+  [`read_model_surface_height`](@ref) into `Observations.ModelSurfaceHeight`, and a
   lat-lon DEM for point lookups, [`read_point_elevation`](@ref) →
-  [`LatLonPointElevation`](@ref) (bilinear `Output.point_elevation`).
+  [`LatLonPointElevation`](@ref) (bilinear `Observations.point_elevation`).
 
 Molar masses and the year length come from `Parameters`
 (`SPECIES_MOLAR_MASS`, `CARBON_MOLAR_MASS`, `DAYS_PER_JULIAN_YEAR`).
@@ -82,8 +82,9 @@ using ..Parameters: SPECIES_MOLAR_MASS, CARBON_MOLAR_MASS, DAYS_PER_JULIAN_YEAR
 using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh, cell_area, ncells, nrings,
                ring_longitudes, cell_index, panel_cell_center_lonlat, cs_definition
 import ..Output
-using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!,
-                ModelSurfaceHeight, AbstractPointElevation
+import ..Observations
+using ..Output: define_cs_horizontal_geometry!, define_provenance_attributes!
+using ..Observations: ModelSurfaceHeight, AbstractPointElevation
 using ..AtomicFiles: atomic_publish, open_atomic_staging, commit_atomic_staging,
                      abandon_atomic_staging
 

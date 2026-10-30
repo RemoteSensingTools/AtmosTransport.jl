@@ -64,42 +64,19 @@ function ObservationOutputSpec(; path::AbstractString,
                                  start_time, Int(deflate_level), sources, placement)
 end
 
-"Whether a parsed `[output.observations]` table asks for sampling."
-observations_enabled(::NoObservationOutput) = false
-observations_enabled(::ObservationOutputSpec) = true
-
-# The vertical-placement keys (`_parse_vertical_placement`), shared with any
+# The vertical-placement keys (`parse_vertical_placement`), shared with any
 # config table that places observation records in the model column.
-const _VERTICAL_PLACEMENT_KEYS = ("surface_height_file", "dem_file", "dem_variable", "unplaced_records",
+const VERTICAL_PLACEMENT_KEYS = ("surface_height_file", "dem_file", "dem_variable", "unplaced_records",
                                   "absolute_altitude_above_agl_m", "vertical_coordinates", "pressure_basis")
 const _OBSERVATION_OUTPUT_KEYS = ("enabled", "path", "time_interpolation", "tracers",
                                   "write_profile_for_sites", "layer_height_temperature_kelvin",
-                                  "start_time", "deflate_level", "sources", _VERTICAL_PLACEMENT_KEYS...)
+                                  "start_time", "deflate_level", "sources", VERTICAL_PLACEMENT_KEYS...)
 # Near-surface fallback for hypsometric layer heights when the binary carries
 # no temperature. The diffusion helpers' 260 K is a mid-troposphere value and
 # would bias intake-height placement in the lowest layers.
-const _OBSERVATION_DEFAULT_LAYER_HEIGHT_TEMPERATURE_KELVIN = 280.0
 const _TIME_INTERPOLATIONS = (linear = LinearWindowInterpolation(),
                               nearest_window = NearestWindowSampling())
-# Strict ISO-8601 shape. Julia's `yyyy` directive is variable width, so an
-# unguarded `tryparse` would accept "20211202" as the year 20,211,202.
-const _ISO_UTC_RE = r"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?)?$"
-
-# Shared strict UTC parser for config values and table columns.
-_parse_iso_utc(::Nothing, ::AbstractString) = nothing
-_parse_iso_utc(value::DateTime, ::AbstractString) = value
-_parse_iso_utc(value::Date, ::AbstractString) = DateTime(value)
-function _parse_iso_utc(value::AbstractString, label::AbstractString)
-    s = chopsuffix(String(strip(value)), "Z")
-    parsed = occursin(_ISO_UTC_RE, s) ? tryparse(DateTime, replace(s, ' ' => 'T')) : nothing
-    parsed === nothing && throw(ArgumentError(
-        "$(label) must be an ISO-8601 UTC time such as \"2021-12-02T00:00:00\"; got $(repr(value))"))
-    return parsed
-end
-_parse_iso_utc(value, label::AbstractString) = throw(ArgumentError(
-    "$(label) must be a date-time or string; got $(repr(value))"))
-
-_parse_start_time(value) = _parse_iso_utc(value, "[output.observations].start_time")
+_parse_start_time(value) = parse_iso_utc(value, "[output.observations].start_time")
 
 function _parse_observation_tracers(value)
     tracers = _parse_tracer_names(value; label = "[output.observations].tracers")
@@ -165,9 +142,9 @@ function _parse_vertical_coordinates(cfg::AbstractDict, label::AbstractString)
 end
 
 """
-    _parse_vertical_placement(cfg, label) -> VerticalPlacementSpec
+    parse_vertical_placement(cfg, label) -> VerticalPlacementSpec
 
-Parse the vertical-placement keys (`_VERTICAL_PLACEMENT_KEYS`) of the config
+Parse the vertical-placement keys (`VERTICAL_PLACEMENT_KEYS`) of the config
 table `cfg`, named `label` in error messages (`"[output.observations]"`):
 `surface_height_file`, `dem_file`/`dem_variable`, `unplaced_records`,
 `absolute_altitude_above_agl_m`, `vertical_coordinates` and
@@ -177,7 +154,7 @@ no effect are errors: `dem_variable` without `dem_file`, and `dem_file` or
 `vertical_coordinates` leaves out `"height_above_ground"`. `pressure_basis`
 applies to every coordinate (the layer heights are built on it too).
 """
-function _parse_vertical_placement(cfg::AbstractDict, label::AbstractString)
+function parse_vertical_placement(cfg::AbstractDict, label::AbstractString)
     surface_height_file = _parse_optional_path(cfg, "surface_height_file", label)
     dem_file = _parse_optional_path(cfg, "dem_file", label)
     dem_variable = get(cfg, "dem_variable", "z")
@@ -253,11 +230,11 @@ function observation_output_spec(output_cfg::AbstractDict;
                                                "[output.observations].write_profile_for_sites"),
         layer_height_temperature_kelvin = _parse_layer_height_temperature(
             get(obs_cfg, "layer_height_temperature_kelvin",
-                _OBSERVATION_DEFAULT_LAYER_HEIGHT_TEMPERATURE_KELVIN)),
+                DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN)),
         start_time = _parse_start_time(get(obs_cfg, "start_time", nothing)),
         deflate_level = _parse_observation_deflate_level(get(obs_cfg, "deflate_level", 0)),
         sources = _parse_observation_sources(obs_cfg),
-        placement = _parse_vertical_placement(obs_cfg, "[output.observations]"))
+        placement = parse_vertical_placement(obs_cfg, "[output.observations]"))
 end
 
 """

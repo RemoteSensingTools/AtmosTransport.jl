@@ -92,7 +92,7 @@ end
 function hat_projection_reference(p_half, air, levels)
     nz = length(p_half) - 1
     n = length(levels)
-    s = AtmosTransport.Output.stretch_model_interfaces!(zeros(nz + 1), p_half, levels[1], levels[end])
+    s = AtmosTransport.Observations.stretch_model_interfaces!(zeros(nz + 1), p_half, levels[1], levels[end])
     nodes = vcat(s[end], levels[2:(n - 1)], s[1])                  # surface first
     φ(j, p) = begin
         hi = j == 1 ? Inf : nodes[j - 1]

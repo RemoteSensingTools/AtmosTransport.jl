@@ -29,17 +29,17 @@ from the `Adjoints.jl` export block. The files load in two groups:
 `NCDatasets` is imported in `Adjoints.jl`. `FFTW` (Covariance), `Optim`
 (Optimizer), and `Dates` (ObservationBinding) are imported in the files that
 use them. `bind_to_mesh` uses the forward observation sampler's cell lookup
-(`Output.cell_locator` / `locate`) and placement rule
-(`Output.resolve_placement`, `VerticalPlacementSpec`, `ObservationTerrain`,
+(`Observations.cell_locator` / `locate`) and placement rule
+(`Observations.resolve_placement`, `VerticalPlacementSpec`, `ObservationTerrain`,
 the unplaced policy), and placed point observations choose their layer with
-`Output.sample_column_layer!`. Averaging-kernel columns use the shared
-operator of `Output` (`RetrievalColumn` with its mapping `LayerRebin` or
+`Observations.sample_column_layer!`. Averaging-kernel columns use the shared
+operator of `Observations` (`RetrievalColumn` with its mapping `LayerRebin` or
 `HatLevelProjection`, `retrieval_column_weights!`, `retrieval_prior_offset`,
 `retrieval_profile!`, `retrieval_model_error_variance`, in
-`../Output/observations/retrieval_column.jl`) on the interface pressures of
-`Output.placement_pressures!`, as the forward sampler does for OCO-2
+`../Observations/Retrievals/retrieval_column.jl`) on the interface pressures of
+`Observations.placement_pressures!`, as the forward sampler does for OCO-2
 soundings; the OCO-2 MIP converter reads the retrieval fields with
-`Output.read_oco2_retrieval_columns`. Terrain files are read by the caller
+`Observations.read_oco2_retrieval_columns`. Terrain files are read by the caller
 (`GriddedIO`, loaded after `Adjoints`) and passed in as an
 `ObservationTerrain`.
 
@@ -102,7 +102,7 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   are never screened)
 - [`ObservationsIO.jl`](ObservationsIO.jl) — `CSObservationRecord` (with
   `PointObservationKind` / `ColumnObservationKind` and an optional
-  `retrieval::Output.RetrievalColumn`), `CSObservationSet`, and the NetCDF
+  `retrieval::Observations.RetrievalColumn`), `CSObservationSet`, and the NetCDF
   reader/writer for `schemas/cs_observations_v2.toml`, including the optional
   NaN-padded retrieval block with each record's `retrieval_mapping` and
   optional prior column `retrieval_prior_column` (units, ordering and padding
@@ -160,12 +160,12 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
   a `_sample_objective` method (or `evaluate_objective` and
   `_linear_functional` methods, `../Footprint/StepForcing.jl`) and a
   `_stencil_placement` method.
-- Changing the vertical placement rule: edit `Output.resolve_placement` /
-  `Output.sample_column_layer!`; the forward sampler and the inversion change
+- Changing the vertical placement rule: edit `Observations.resolve_placement` /
+  `Observations.sample_column_layer!`; the forward sampler and the inversion change
   together, and the parity test in `test_cs_4dvar_placed_observations.jl`
   guards them.
 - Changing the averaging-kernel operator: edit
-  `../Output/observations/retrieval_column.jl`; the TM5 reference values and
+  `../Observations/Retrievals/retrieval_column.jl`; the TM5 reference values and
   the transcription in `test_cs_4dvar_retrieval_columns.jl` guard it.
 - Running an end-to-end inversion: `scripts/inversions/cs_4dvar.jl` with
   `config/inversions/*.toml`.
@@ -295,3 +295,24 @@ soundings; the OCO-2 MIP converter reads the retrieval fields with
     one footprint per observation (every scheme family, diffusion, TM5,
     CMFMC, Full/Stride/Revolve), counts one recording and one reverse pass
     per gradient, and checks the reused-tape Jacobian.
+
+## Depends on
+
+Grids, Parameters, Observations (retrievals, placement and reader helpers),
+Tape, Operators, Footprint and Adjoints (the including module).
+
+## Used by
+
+Inversion scripts and the footprint/objective APIs in Adjoints.
+
+## Shared helpers owned here
+
+Observation records, binding and departure IO, covariance, control/gradient
+and optimizer interfaces. Pressure units and the fallback layer temperature
+are shared through Observations and Parameters rather than private imports.
+
+## Forward<->adjoint mirrors
+
+`sample_column_layer!` and the retrieval operator are shared with the forward
+sampler. Control-to-source rates mirror gradient accumulation;
+`apply_B_half!` mirrors `apply_B_half_adjoint!`.

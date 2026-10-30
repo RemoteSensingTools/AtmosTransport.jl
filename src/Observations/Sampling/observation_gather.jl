@@ -307,9 +307,6 @@ layer_temperature(t::ConstantLayerTemperature, k, z_bottom) = t.kelvin
 layer_temperature(t::SurfaceLapseTemperature, k, z_bottom) =
     max(t.surface_kelvin - t.lapse_rate * z_bottom, STANDARD_TROPOPAUSE_TEMPERATURE)
 layer_temperature(t::ProfileLayerTemperature, k, z_bottom) = Float64(t.kelvin[k])
-height_method_label(::ConstantLayerTemperature) = :constant
-height_method_label(::SurfaceLapseTemperature) = :surface_lapse
-height_method_label(::ProfileLayerTemperature) = :profile
 # Integer codes stored in the site files; `HEIGHT_METHOD_CODES` is the single table.
 const HEIGHT_METHOD_CODES = (
     (ConstantLayerTemperature, Int8(0), "constant temperature"),

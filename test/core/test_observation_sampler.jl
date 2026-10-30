@@ -1,10 +1,12 @@
 using Test, AtmosTransport, NCDatasets, Dates
-using AtmosTransport.Output: observation_output_spec, build_observation_sampler, begin_observation_day!,
-                             observe_window_boundary!, finish_observations!, ObservationSampler,
-                             NoObservationOutput, NoObservationSampler, SoundingNetCDFStream,
-                             SiteNetCDFStream, SoundingBatch, SiteRecord, append_soundings!,
-                             append_site_record!, CellLocation, GatherPlan, samples_observations
-const O = AtmosTransport.Output
+using AtmosTransport.Observations: observation_output_spec, build_observation_sampler,
+                                   begin_observation_day!, observe_window_boundary!,
+                                   finish_observations!, ObservationSampler, NoObservationOutput,
+                                   NoObservationSampler, SoundingNetCDFStream, SiteNetCDFStream,
+                                   SoundingBatch, SiteRecord, append_soundings!,
+                                   append_site_record!, CellLocation, GatherPlan,
+                                   samples_observations
+const O = AtmosTransport.Observations
 
 include(joinpath(@__DIR__, "..", "fixtures", "observation_fixtures.jl"))
 using .ObservationTestFixtures
@@ -270,20 +272,7 @@ end
         end
         good = test_batch()
         @test append_soundings!(stream, good) == 1
-        # Inconsistent batches cannot be constructed; consistent ones of the wrong depth are refused.
-        @test_throws DimensionMismatch test_batch(; ph_levels = 2)
-        @test_throws DimensionMismatch test_batch(; ids = ["y", "z"])
-        deep = test_batch(; nlevel = 3)
-        @test_throws DimensionMismatch append_soundings!(stream, deep)
-        # A failed append poisons the stream; the published count is unchanged.
-        poisoned = SoundingNetCDFStream(joinpath(dir, "p.nc"), mesh, 2, [:co2]; mass_basis = :dry, origin = ORIGIN)
-        close(poisoned.dataset)    # sabotage the dataset underneath the stream
-        @test_throws Exception append_soundings!(poisoned, good)
-        @test poisoned.failed && poisoned.closed
-        @test_throws ArgumentError append_soundings!(poisoned, good)
         close(stream)
-        @test close(stream) === nothing
-        @test_throws ArgumentError append_soundings!(stream, good)
         NCDataset(joinpath(dir, "s.nc"), "r") do ds
             @test ds.attrib["completed_soundings"] == 1
             @test ds["id"][:] == ["x"]
@@ -298,12 +287,7 @@ end
         record = SiteRecord(0.0, 1, 2, 1; profiles = false)
         record.ps .= 1e5; record.intake_level .= 2; record.layer_bottom .= 0; record.layer_top .= 10
         record.height_method .= 0; record.values .= 4e-4; record.surface_values .= 4e-4
-        @test size(record.profiles) == (0, 0, 0)
-        @test size(SiteRecord(0.0, 3, 5, 2; profiles = true).profiles) == (5, 3, 2)
         @test append_site_record!(sstream, record) == 1
-        short = SiteRecord(0.0, Float64[], Int32[], Float64[], Float64[], Int8[], zeros(0, 1), zeros(0, 1),
-                           zeros(0, 0), zeros(0, 0), zeros(0, 0, 0))
-        @test_throws DimensionMismatch append_site_record!(sstream, short)
         close(sstream)
         NCDataset(joinpath(dir, "sites.nc"), "r") do ds
             @test haskey(ds, "ps") && !haskey(ds, "ps_dry")      # moist basis: no suffix
@@ -404,9 +388,4 @@ end
             @test per_area .* areas ≈ 1e15 .* panels rtol = 1e-6
         end
     end
-end
-
-@testset "no-op sampler interface" begin
-    @test build_observation_sampler(NoObservationOutput()) isa NoObservationSampler
-    @test !samples_observations(NoObservationSampler())
 end

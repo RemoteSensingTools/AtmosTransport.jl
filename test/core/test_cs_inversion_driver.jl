@@ -477,7 +477,7 @@ end
     mktempdir() do dir
         mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
         lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
-        retrieval(ps) = AT.Output.RetrievalColumn(; pressure_pa = collect(range(ps, 0.0; length = 6)),
+        retrieval(ps) = AT.Observations.RetrievalColumn(; pressure_pa = collect(range(ps, 0.0; length = 6)),
                                                   pressure_weight = fill(0.2, 5),
                                                   averaging_kernel = [0.6, 0.8, 1.0, 1.1, 1.2],
                                                   prior_profile = fill(1.2e-7, 5))
@@ -509,10 +509,10 @@ end
                                                                                     observations_extra = height_only)))
         dry = _run_config_text(_hydrostatic_config(path; meteo = dry_meteo,
                                                    observations_extra = height_only * "pressure_basis = \"dry\"\n"))
-        @test all(o -> o.objective.pressure_basis isa AT.Output.DryInterfaces, dry.last.observations)
+        @test all(o -> o.objective.pressure_basis isa AT.Observations.DryInterfaces, dry.last.observations)
         keys = Dict{String, Any}("vertical_coordinates" => ["height_above_ground"], "pressure_basis" => "dry")
         for label in ("[output.observations]", "[observations.placement]")
-            @test AT.Output._parse_vertical_placement(keys, label).pressure_basis isa AT.Output.DryInterfaces
+            @test AT.Observations.parse_vertical_placement(keys, label).pressure_basis isa AT.Observations.DryInterfaces
         end
     end
 end
@@ -524,9 +524,9 @@ end
         mesh = AT.CubedSphereMesh(Nc = 3, Hp = 3, FT = Float64)
         lons, lats = AT.panel_cell_center_lonlat(mesh, 2)
         σ = vcat(1e-4, collect(1:19) ./ 19)
-        level(ps) = AT.Output.RetrievalColumn(; pressure_pa = reverse(σ .* ps), pressure_weight = fill(0.05, 20),
+        level(ps) = AT.Observations.RetrievalColumn(; pressure_pa = reverse(σ .* ps), pressure_weight = fill(0.05, 20),
                                               averaging_kernel = collect(range(1.0, 0.4; length = 20)),
-                                              prior_profile = fill(1.2e-7, 20), mapping = AT.Output.HatLevelProjection())
+                                              prior_profile = fill(1.2e-7, 20), mapping = AT.Observations.HatLevelProjection())
         record(id, sec, flag) = AT.CSObservationRecord(; id, date_components = (2024, 6, 15, 0, 15, sec), flag,
                                                        lat = lats[2, 2], lon = lons[2, 2], kind = "column",
                                                        value = 1e-7, value_sigma = 1e-8, model_sigma = 0.5e-8,
@@ -537,7 +537,7 @@ end
         quiet(f) = with_logger(f, NullLogger())
         base = quiet(() -> _run_config_text(_hydrostatic_config(path)))
         @test [o.id for o in base.last.observations] == [1, 2]
-        @test all(o -> o.objective.retrieval.mapping isa AT.Output.HatLevelProjection, base.last.observations)
+        @test all(o -> o.objective.retrieval.mapping isa AT.Observations.HatLevelProjection, base.last.observations)
         cosampled = quiet(() -> _run_config_text(_hydrostatic_config(path;
             observations_extra = "flagged_records = \"cosample\"\n")))
         @test [o.assimilate for o in cosampled.last.observations] == [true, true, false]

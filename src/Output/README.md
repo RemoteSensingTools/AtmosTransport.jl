@@ -13,6 +13,7 @@ writing topology-specific NetCDF files directly.
 - `runtime_output.jl` defines the `[output]` schedule, partition and
   layer-selection types, runtime output specification, and the resolved
   `physics_*`/time-origin metadata carried to every sink.
+- `binary_reader.jl` defines `read_snapshot_binary` for the conversion script.
 - `binary_writer.jl` writes the ATMSNAP snapshot binary (header with
   the mesh definition and radius, Float32 payload).
 - `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and
@@ -25,8 +26,8 @@ writing topology-specific NetCDF files directly.
   snapshots. Its owner must close the stream on every exit.
 - `diagnostics.jl` derives VMR, column means, and mass-per-area fields.
 - `netcdf_schema.jl` defines topology-specific dimensions, coordinates, and metadata.
-  Two pieces are public so that other NetCDF writers (generated `cs_native`
-  input files) share them instead of copying them:
+  Geometry and provenance are public so that other NetCDF writers (generated
+  `cs_native` input files) share them instead of copying them:
   `define_cs_horizontal_geometry!(ds, mesh)` writes the cubed-sphere horizontal
   block (`Xdim`/`Ydim`/`Xcorner`/`Ycorner`/`nf`, `lons`, `lats`, corners,
   `cell_area`, the `cubed_sphere` mapping with `semi_major_axis = mesh.radius`,
@@ -37,104 +38,10 @@ writing topology-specific NetCDF files directly.
   snapshot writer builds its CS layout from the former and then adds `lev` and
   `time`; snapshot and observation files take their provenance from the latter.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
-- `observations/observation_sources.jl` defines the typed `[[output.observations.sources]]`
-  descriptors (`OCO2LiteSource`, `ObsPackSource`, `TableSource`), the singleton
-  mode / grouping / table-format types and quality filters they dispatch on, and
-  their validation. The `_SOURCE_TYPES`, `_OBSERVATION_MODES`, `_SITE_GROUPINGS`
-  and `_TABLE_FORMATS` tables are the parser's choices; the editor schema must
-  match them (`test/core/test_observation_schema.jl`).
-- `observations/observation_requests.jl` defines point events (`SoundingRequest`),
-  station series (`SiteRequest`), site schedules (`EveryWindow`, `TimeRange`,
-  `TimeList`), and the per-run `ObservationSet`. Requests carry what the
-  record says about its height (`intake_height_m` above ground, `altitude_m`,
-  `elevation_m`, `pressure_pa`; NaN when absent).
-- `observations/observation_readers.jl` turns sources into requests:
-  `expand_observation_paths` (date tokens + file-name wildcards),
-  `read_observation_requests` per source type and mode (OCO-2 Lite and MIP 10-s
-  files, ObsPack records or stations, CSV/TOML/NetCDF tables with schedules),
-  and `build_observation_set` (time lists to point events, transported-span
-  filter, sites merged by id, skip counts). The height above ground of a row
-  is resolved row by row (`record_height_above_ground`: `intake_height`, else
-  `altitude − elevation`); an altitude without elevation is kept for
-  placement.
-- `observations/observation_output_spec.jl` parses `[output.observations]` into
-  `ObservationOutputSpec` (or `NoObservationOutput`), rejecting unknown keys, and
-  resolves `_soundings` / `_sites` file paths with the snapshot day template.
-  The placement keys (`_VERTICAL_PLACEMENT_KEYS`) go through the shared
-  `_parse_vertical_placement(cfg, label)`, which any table that places records
-  in the column can reuse.
-- `observations/observation_placement.jl` places requests in the column: the
-  static ground interfaces `AbstractModelSurfaceHeight` (`ModelSurfaceHeight`,
-  per-cell model surface height) and `AbstractPointElevation` (DEM; the
-  concrete lat-lon type and both readers live in `GriddedIO`), bundled as
-  `ObservationTerrain`; the `[output.observations]` placement settings
-  (`VerticalPlacementSpec`, `ErrorOnUnplaced`/`SkipUnplaced`,
-  `AboveGroundPlacement`/`AbsoluteAltitudeAbove`, the ordered
-  `HeightAboveGroundCoordinate`/`PressureCoordinate` of `vertical_coordinates`,
-  and the pressure basis `TotalFromHumidity`/`DryInterfaces`); the per-source
-  rule for records without any vertical coordinate (`missing_height_rule`:
-  `LowestLayerWithoutHeight` for OCO-2 and tables, `UnplacedWithoutHeight` for
-  ObsPack); `resolve_placement` (the first configured coordinate that places
-  the record: height above ground = record height, else altitude − DEM; or
-  pressure; else the missing-height rule; `nothing` when a record cannot be
-  placed; the model surface height is never a stand-in for the true ground)
-  into a `VerticalPlacement` with a `VERTICAL_PLACEMENT_CODES` code;
-  `placement_layer` / `pressure_layer_index`, the layer of a placement in one
-  sampled column; and `placement_pressures!` / `check_pressure_basis`, the
-  total (from the specific humidity) or dry interfaces pressure placement uses
-  (the same basis sets the layer heights, `placement_heights!`).
-- `observations/cell_locator.jl` maps an observation (lon, lat) to its containing
-  cell per topology (`cell_locator`, `locate` → `CellLocation` with native cell
-  index, halo-aware device column, centre and area). Lat-lon and reduced
-  Gaussian use the face arrays; the cubed sphere uses `lonlat_to_panel_xy`.
-- `observations/observation_gather.jl` is the only device work of observation
-  sampling: a pure gather kernel (`gather_columns!`, `gather_field!`) that copies
-  air mass and selected tracer storage for a batch of columns into compact
-  `(level, observation)` buffers, plus the host Float64 reconstruction of
-  interface pressures (air-mass interfaces, and total interfaces from the dry
-  air mass and specific humidity), hypsometric layer heights on the pressure
-  basis (`placement_heights!`: total interfaces with the virtual temperature
-  `VirtualLayerTemperature` by default, dry interfaces with `T` for
-  `pressure_basis = "dry"`; `AbstractLayerTemperature` sources), intake layer index (a `NaN` height is an error, never the lowest
-  layer), mixing-ratio profiles, and column means.
-- `observations/retrieval_column.jl` is the averaging-kernel (retrieval)
-  column operator, as pure host Float64 functions of one column:
-  `RetrievalColumn{M}` (a retrieval's pressures from the surface up, pressure
-  weights summing to 1, column averaging kernel, prior in mol/mol, optional
-  model-profile uncertainty `profile_sigma`, the mapping `M`, and an optional
-  prior column ``X_a``, e.g. OCO-2's `xco2_apriori`, for ``X = X_a + Σ h a (P x
-  − x_a)``; validated),
-  `stretch_model_interfaces!` (the model column mapped linearly onto the
-  retrieval's surface and top), the projection ``P`` of the mapping
-  (`LayerRebin`: TM5-4DVAR's mass-conserving overlap rebin R,
-  `retrieval_rebin_matrix`; `HatLevelProjection`: the dry-air L2 (Galerkin)
-  projection onto the hat functions of levels, OCO-2/OCO-3;
-  `retrieval_projection_matrix`), `retrieval_column_weights!`
-  (``H_k = Σᵢ hᵢ aᵢ Pᵢₖ``), `retrieval_prior_offset`
-  (``Σᵢ hᵢ(1 − aᵢ) x_a,ᵢ``), `retrieval_profile!` (``P x``),
-  `retrieval_column_value`, `retrieval_model_error_variance`
-  (``Σᵢ (hᵢ aᵢ σᵢ)²``), `tm5_layer_column` (TM5's 19 layers of a level
-  retrieval), plus `mole_fraction_unit_scale` for files that state ppm or
-  ppb. Model interfaces are top first (total pressures, e.g. from
-  `placement_pressures!`); the hat projection also takes the layers' air
-  masses. The 4D-Var's `CSRetrievalColumnObjective` and the forward sampler
-  (OCO-2 sources with `averaging_kernel_tracers`, whose reader then reads the
-  kernel fields with `read_oco2_retrieval_columns`) both use it.
-- `observations/observation_netcdf.jl` holds the append-only point-event and
-  station NetCDF sinks (`SoundingNetCDFStream`, `SiteNetCDFStream`). Writes are
-  queued and flushed whenever the shared NetCDF lock (`with_netcdf_lock`) is
-  free, so the run never waits for a background daily snapshot write; every
-  flush is synced before its `completed_*` attribute, and `close` drains.
-- `observations/observation_sampler.jl` is the runtime sampler. When it is
-  built it locates and places every request (requests that cannot be placed
-  fail the build or are skipped and counted, per `unplaced_records`) and keeps
-  only the terrain's provenance, not the DEM; at every
-  met-window end it gathers the bracketing point events plus all sites in one
-  launch, blends masses linearly between the two window ends (or takes the
-  nearest end), reconstructs pressures, heights, intake layers, and mixing
-  ratios on the host, and appends to the streams; daily files rotate without
-  blocking. `NoObservationSampler` is the default that keeps runs without
-  observation output unchanged.
+- `output_config.jl` owns the `[output]` key tables and `check_output_targets`.
+
+Observation sources, retrievals and sampling live in
+[`../Observations/`](../Observations/README.md).
 
 All runtime NetCDF writes, including `write_snapshot_netcdf` and the snapshot
 stream, take the shared lock because netcdf-c is not thread-safe and daily
@@ -175,3 +82,25 @@ Explicit snapshot schedules sort a copy of the supplied hours, including
 Geometry convention tags come from Grids and mass-basis tags from State.
 Observation placement uses `AbstractPlacementCoordinate`; Grids owns
 `AbstractVerticalCoordinate` for model vertical grids.
+
+## Depends on
+
+Grids (geometry), State (mass basis and tracer storage), Architectures
+(compensated totals), ConfigChecks and the package source-revision helpers.
+
+## Used by
+
+Models, Observations, GriddedIO, Diagnostics and post-processing scripts.
+
+## Shared helpers owned here
+
+`with_netcdf_lock`, `define_cs_horizontal_geometry!`,
+`define_provenance_attributes!`, `define_product_attributes!`, `check_output_targets` and the exported
+output-key tables. Observations shares the existing lock, path and NetCDF
+schema primitives so lock nesting and written metadata stay unchanged.
+
+# shared: _NETCDF_IO_LOCK _parse_tracer_names _output_partition _substitute_day_template _insert_suffix_before_extension _has_day_token _ensure_parent_dir _create_netcdf_dataset _tracer_units _payload_fill_value _grid_type_string
+
+## Forward<->adjoint mirrors
+
+None. Snapshot reductions preserve their existing accumulation order.
