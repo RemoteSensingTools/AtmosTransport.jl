@@ -33,25 +33,15 @@ using ..Grids: CubedSphereMesh, reciprocal_edge,
     EDGE_NORTH, EDGE_SOUTH, EDGE_EAST, EDGE_WEST,
     panel_cell_center_lonlat,
     panel_convention, cs_definition, cs_definition_tag
-using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter,
-    CSSplitSweepStyle, CSLinRoodStyle, cs_advection_style, fill_cs_step_start_halos!,
-    MonotoneLimiter, CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
+using ..Operators.Advection: CSAdvectionWorkspace, NoLimiter, MonotoneLimiter,
+    CW84Limiter, PPMScheme, SameAsHorizontal, SlopesScheme, UpwindScheme,
     LinRoodPPMScheme, NoAdvection, FV3ScalarProfile, AbstractLimiter,
-    fill_panel_halos!, strang_split_cs!, copy_corners!,
-    _cs_static_palindrome_subcycle_count,
-    _sweep_z_panel!, _sweep_cs_horizontal!,
-    _CSInteriorFlux,
-    apply_linrood_horizontal_adjoint_single_panel!,
+    fill_panel_halos!, apply_linrood_horizontal_adjoint_single_panel!,
     apply_linrood_update_adjoint!, _share_lr_seam_faces!,
-    _init_q_buf_kernel!, _ppm_y_face_kernel!, _ppm_x_face_kernel!,
-    _ppm_y_face_from_q_kernel!, _ppm_x_face_from_q_kernel!,
-    _pre_advect_y_kernel!, _pre_advect_x_kernel!, _linrood_update_kernel!,
-    _copy_interior!, _accumulate_linrood_halo_adjoint!,
-    strang_split_linrood_ppm!, CSLinRoodAdvectionWorkspace, LinRoodWorkspace,
-    fv_tp_2d_cs!, _sweep_z_panels!, _cs_flux_x_interior, _cs_flux_y_interior,
-    _advection_mass_floor, _ppm_edge_weights,  # shared with the forward fluxes (AdvectionAdjoint.jl)
-    _wrap_periodic, _HaloPaddedAxis, _validate_halo_for_scheme,
-    needs_column_scratch, _fv3_adjoint_column_scratch, _sweep_z_panels_fv3_adjoint!
+    _accumulate_linrood_halo_adjoint!, needs_column_scratch,
+    CSAdjointWorkspace, CSAdjointLinearScheme, CSAdjointNonlinearScheme,
+    CSAdjointFV3Vertical,
+    _adjoint_scheme_sweep!, _adjoint_fill_panel_halos!
 using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
     apply_vertical_diffusion_vmr!, check_diffusion_workspace,
     _vertical_diffusion_cs_single_adjoint_kernel!,
@@ -134,19 +124,6 @@ using ..Tape: AbstractCSTapeStorage,
               RevolveCheckpoint,
               checkpoint_window_count, checkpoint_window_range
 
-# Split-sweep PPM adjoints exist for the default vertical reconstruction only;
-# the FV3 vertical profile has an adjoint as Lin–Rood's vertical sweep (below).
-const CSAdjointLinearScheme = Union{UpwindScheme, SlopesScheme{NoLimiter},
-                                    PPMScheme{NoLimiter, SameAsHorizontal}}
-# Limiters whose PPM adjoint replays the forward branches from taped tracer masses.
-const _PPMTapedLimiter = Union{MonotoneLimiter, CW84Limiter}
-const CSAdjointNonlinearScheme = PPMScheme{<:_PPMTapedLimiter, SameAsHorizontal}
-# The FV3 `kord = 8` vertical sweep (`vertical = "fv3_kord8"` or
-# `"fv3_kord8_signed"`). Its records stage the tracer mass entering the sweep;
-# the reverse replays the forward profile there and applies the transpose at the
-# forward's limiter branches (`vertical_fv3_profile_adjoint.jl`). Only Lin–Rood's
-# vertical sweeps record it.
-const CSAdjointFV3Vertical = PPMScheme{<:AbstractLimiter, <:FV3ScalarProfile}
 # Sweeps whose record stages the tracer mass as well as the air mass.
 const _RmTapedSweepScheme = Union{CSAdjointNonlinearScheme, CSAdjointFV3Vertical}
 # LinRoodPPMScheme (ORD 5 and 7) is supported via its own horizontal
@@ -252,34 +229,6 @@ include("../Inversion/Covariance.jl")
 include("../Inversion/Preconditioning.jl")
 
 
-"""
-    CSAdjointWorkspace(mesh, prototype; column_scratch = false)
-
-Scratch storage for CS adjoint sweeps. `lambda_A` is one halo-padded panel
-used as the per-panel transpose output. `seam_seeds` caches both neighbors'
-output-seed difference before any panel transpose overwrites those values.
-`column_scratch` is the per-column working storage of the FV3 vertical sweep's
-reverse pass (`Nc × Nc × (Nz+1) × 5`); it is empty unless built with
-`column_scratch = true`, which a tape with FV3-profile vertical sweeps needs
-(`needs_column_scratch(scheme)`).
-"""
-struct CSAdjointWorkspace{FT, A <: AbstractArray{FT, 3}, A4 <: AbstractArray{FT, 4}}
-    lambda_A::A
-    seam_seeds::A
-    column_scratch::A4
-end
-
-function CSAdjointWorkspace(mesh::CubedSphereMesh,
-                            prototype::AbstractArray{FT, 3};
-                            column_scratch::Bool = false) where {FT <: AbstractFloat}
-    N = mesh.Nc + 2 * mesh.Hp
-    Nz = size(prototype, 3)
-    lambda_A = similar(prototype, FT, N, N, Nz)
-    seam_seeds = similar(prototype, FT, mesh.Nc, Nz, 12)
-    scratch = _fv3_adjoint_column_scratch(lambda_A, mesh.Nc, Nz, column_scratch)
-    return CSAdjointWorkspace{FT, typeof(lambda_A), typeof(scratch)}(lambda_A, seam_seeds, scratch)
-end
-
 _copy_panel_tuple(panels) = ntuple(p -> copy(panels[p]), 6)
 
 function _zero_panel_tuple_like(panels)
@@ -322,16 +271,7 @@ function _validate_emission_rates(rates, nsteps::Int, mesh::CubedSphereMesh,
 end
 
 
-# Split-sweep advection adjoint kernels.
-include("AdvectionAdjoint.jl")
-include("CubedSphereSeams.jl")
-
-# CS halo-exchange adjoint kernels.
-include("HaloAdjoint.jl")
-
-
-
-
+# Advection numerical transposes are imported from their forward owner above.
 
 # Vertical-diffusion adjoint kernels.
 include("DiffusionAdjoint.jl")

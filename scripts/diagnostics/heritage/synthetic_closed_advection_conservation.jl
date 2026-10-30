@@ -6,7 +6,7 @@ include(joinpath(@__DIR__, "..", "..", "..", "src", "AtmosTransport.jl"))
 using .AtmosTransport
 using .AtmosTransport.Operators: AdvectionWorkspace, CSAdvectionWorkspace,
     CSLinRoodAdvectionWorkspace, strang_split!
-using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!
+using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs_mt!
 using .AtmosTransport.State: CubedSphereFaceFluxState, DryBasis,
     StructuredFaceFluxState, total_air_mass, total_mass
 
@@ -178,12 +178,14 @@ function run_cs_closed(; FT=Float64, scheme=UpwindScheme(), cross_panel::Bool,
         return relerr(total_air_mass(state), m0), relerr(total_mass(state, :tracer), rm0)
     end
 
-    ws = CSAdvectionWorkspace(mesh, Nz)
+    ws = CSAdvectionWorkspace(mesh, Nz; FT, n_tracers=1)
     m0 = total_cs(panels_m, mesh, Nz)
     rm0 = total_cs(panels_rm, mesh, Nz)
+    packed = map(a -> reshape(a, size(a)..., 1), panels_rm)
     for _ in 1:steps
-        strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                         mesh, scheme, ws)
+        AtmosTransport.Operators.Advection.fill_cs_step_start_halos!(packed, panels_m, mesh)
+        strang_split_cs_mt!(packed, panels_m, panels_am, panels_bm, panels_cm,
+                             mesh, scheme, ws)
     end
     return relerr(total_cs(panels_m, mesh, Nz), m0),
            relerr(total_cs(panels_rm, mesh, Nz), rm0)

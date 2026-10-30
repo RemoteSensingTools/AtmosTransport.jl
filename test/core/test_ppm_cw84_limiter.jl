@@ -12,7 +12,7 @@ using AtmosTransport
 using .AtmosTransport.Operators: PPMScheme, SlopesScheme, MonotoneLimiter, CW84Limiter
 using .AtmosTransport.Operators.Advection: _xface_tracer_flux, _yface_tracer_flux,
     _zface_tracer_flux, _ppm_edge_value
-using .AtmosTransport.Adjoints: _add_x_face_adjoint!, _add_y_face_adjoint!,
+using .AtmosTransport.Operators.Advection: _add_x_face_adjoint!, _add_y_face_adjoint!,
     _add_z_face_adjoint!
 using .AtmosTransport.Models: advection_spec, materialize, LatLonRuntimeRecipeStyle,
     CubedSphereRuntimeRecipeStyle, PPMAdvectionSpec

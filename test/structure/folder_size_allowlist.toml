@@ -8,10 +8,6 @@ reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and r
 bytes = 293427
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
 
-[allow."src/Operators/Advection"]
-bytes = 423373
-reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
-
 [allow."src/Preprocessing"]
 bytes = 513863
 reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."

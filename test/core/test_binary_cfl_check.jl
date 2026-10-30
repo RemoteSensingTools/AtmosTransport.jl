@@ -6,8 +6,8 @@
 using Test
 using Adapt
 using AtmosTransport
-using .AtmosTransport.Operators.Advection: fill_panel_halos!, strang_split_cs!,
-    strang_split_cs_mt!, _strang_split_cs_mt_copyback!, CSAdvectionWorkspace,
+using .AtmosTransport.Operators.Advection: fill_panel_halos!,
+    strang_split_cs_mt!, CSAdvectionWorkspace,
     _cs_static_palindrome_subcycle_count
 using .AtmosTransport.State: DryBasis
 using .AtmosTransport.Operators: NoBinaryCFLCheck, BinaryCFLCheck
@@ -36,53 +36,12 @@ function steep_cm_fixture(; Nc = 4, Hp = 1, Nz = 3)
     return (; mesh, Nz, panels_m, panels_rm, panels_am, panels_bm, panels_cm)
 end
 
-@testset "configuration" begin
-    adv(d...) = Dict{String, Any}("advection" => Dict{String, Any}(d...))
-    @test M.binary_cfl_check(Dict{String, Any}()) === NoBinaryCFLCheck()
-    @test M.binary_cfl_check(adv("check_binary_cfl" => false)) === NoBinaryCFLCheck()
-    for scheme in ("upwind", "slopes", "ppm")
-        cfg = adv("scheme" => scheme, "check_binary_cfl" => true)
-        @test M.binary_cfl_check(cfg) === BinaryCFLCheck()
-        @test M.binary_cfl_check(cfg, CS_STYLE) === BinaryCFLCheck()
-    end
-    for scheme in ("linrood", "none")
-        @test_throws ArgumentError M.binary_cfl_check(adv("scheme" => scheme, "check_binary_cfl" => true))
-        @test M.binary_cfl_check(adv("scheme" => scheme, "check_binary_cfl" => false)) ===
-              NoBinaryCFLCheck()
-    end
-    err = try M.binary_cfl_check(adv("check_binary_cfl" => "yes")); nothing catch e; e end
-    @test err isa ArgumentError && contains(err.msg, "[advection].check_binary_cfl")
-    # No legacy `[run]` form, with or without `[advection]`.
-    for cfg in (Dict{String, Any}("run" => Dict{String, Any}("check_binary_cfl" => true)),
-                Dict{String, Any}("run" => Dict{String, Any}("check_binary_cfl" => false),
-                                  "advection" => Dict{String, Any}("scheme" => "ppm")))
-        err = try M.binary_cfl_check(cfg); nothing catch e; e end
-        @test err isa ArgumentError && contains(err.msg, "belongs in [advection]")
-    end
-    # Lat-lon and reduced-Gaussian advection compute their own subcycles.
-    err = try M.binary_cfl_check(adv("check_binary_cfl" => true), LL_STYLE); nothing catch e; e end
-    @test err isa ArgumentError && contains(err.msg, "cubed-sphere runs only")
-    @test M.binary_cfl_check(Dict{String, Any}(), LL_STYLE) === NoBinaryCFLCheck()
-    # The removed environment variable no longer enables the check.
-    withenv("ATMOSTR_ASSERT_CS_BINARY_CFL" => "1") do
-        @test M.binary_cfl_check(Dict{String, Any}()) === NoBinaryCFLCheck()
-        @test CSAdvectionWorkspace(CubedSphereMesh(; Nc = 4), 2).binary_cfl_check ===
-              NoBinaryCFLCheck()
-    end
-end
-
 @testset "split-sweep operators check the binary's subcycle count" begin
     f = steep_cm_fixture()
     (; mesh, Nz) = f
     @test _cs_static_palindrome_subcycle_count(f.panels_am, f.panels_bm, f.panels_cm,
                                                f.panels_m, mesh.Nc, mesh.Hp, Nz, 0.95) == 2
 
-    single(ws; kw...) = begin
-        rm, m = deepcopy(f.panels_rm), deepcopy(f.panels_m)
-        strang_split_cs!(rm, m, f.panels_am, f.panels_bm, f.panels_cm, mesh,
-                         UpwindScheme(), ws; kw...)
-        (rm, m)
-    end
     packed(op, ws; kw...) = begin
         rm = ntuple(p -> reshape(copy(f.panels_rm[p]), size(f.panels_rm[p])..., 1), 6)
         m = deepcopy(f.panels_m)
@@ -92,15 +51,9 @@ end
     checked() = CSAdvectionWorkspace(mesh, Nz; n_tracers = 1, binary_cfl_check = BinaryCFLCheck())
     trusting() = CSAdvectionWorkspace(mesh, Nz; n_tracers = 1)
 
-    runs = (("strang_split_cs!", ws -> single(ws; subcycle_count = 1),
-                                 ws -> single(ws; subcycle_count = 2),
-                                 ws -> single(ws)),
-            ("strang_split_cs_mt_pingpong!", ws -> packed(strang_split_cs_mt!, ws; subcycle_count = 1),
+    runs = (("strang_split_cs_mt_pingpong!", ws -> packed(strang_split_cs_mt!, ws; subcycle_count = 1),
                                              ws -> packed(strang_split_cs_mt!, ws; subcycle_count = 2),
-                                             ws -> packed(strang_split_cs_mt!, ws)),
-            ("strang_split_cs_mt!", ws -> packed(_strang_split_cs_mt_copyback!, ws; subcycle_count = 1),
-                                    ws -> packed(_strang_split_cs_mt_copyback!, ws; subcycle_count = 2),
-                                    ws -> packed(_strang_split_cs_mt_copyback!, ws)))
+                                             ws -> packed(strang_split_cs_mt!, ws)),)
     for (caller, too_few, enough, runtime) in runs
         err = try too_few(checked()); nothing catch e; e end
         @test err isa ArgumentError && contains(err.msg, caller) &&
@@ -135,14 +88,4 @@ end
     @test_throws ArgumentError TransportModel(state, fluxes, grid, UpwindScheme();
                                               binary_cfl_check = BinaryCFLCheck(),
                                               advection_workspace = CSAdvectionWorkspace(mesh, Nz; n_tracers = 1))
-end
-
-@testset "run configuration" begin
-    has(ws, parts...) = any(w -> all(p -> occursin(p, w), parts), ws)
-    findings(cfg) = M.DrivenRunner._config_key_findings(Dict{String, Any}(cfg))
-    f = findings("advection" => Dict("scheme" => "ppm", "check_binary_cfl" => true))
-    @test isempty(f.errors) && isempty(f.warnings)
-    @test has(findings("advection" => Dict("scheme" => "linrood", "check_binary_cfl" => false)).warnings,
-              "check_binary_cfl", "linrood")
-    @test has(findings("run" => Dict("check_binary_cfl" => true)).errors, "check_binary_cfl")
 end

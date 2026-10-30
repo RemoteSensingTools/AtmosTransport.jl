@@ -5,8 +5,9 @@ module also hosts the footprint and 4D-Var code.
 
 `Adjoints` is the module that contains this folder,
 [`../Footprint/`](../Footprint/), and [`../Inversion/`](../Inversion/). Files in
-this folder hold the per-operator reverse kernels: split-sweep advection, seam
-exchange, halo fill, vertical diffusion, convection, and the Lin-Rood tape.
+this folder hold support policy, objective seeding, operator-adjoint wiring
+and the Lin-Rood tape. Numerical advection, diffusion and convection kernels
+live next to their forward operators.
 Meteorology (air mass and fluxes) is fixed input. Only tracer mass is
 differentiated. The forward model the reverse pass transposes is the
 production `StepPlan` (`../Operators/StepPlan/`), replayed with the production
@@ -25,7 +26,7 @@ because later files use types defined earlier:
 `ObjectiveSeeding.jl`, `Footprint/FootprintResult.jl` and
 `Footprint/StepForcing.jl`; then the
 `Inversion/` type, IO, covariance, and preconditioner files; then inline
-helpers (`CSAdjointWorkspace`); then the kernel files in this folder ending
+helpers; then the operator-adjoint wiring files in this folder ending
 with `LinRoodTape.jl`; then `Footprint/StepReplay.jl`, `AdjointSupport.jl`
 and the remaining `Footprint/` files; and finally `Inversion/Jacobian.jl`, `CostGradient.jl`,
 and `Optimizer.jl`. The export block at the end of `Adjoints.jl` is the
@@ -34,7 +35,8 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 
 ## Entry Points
 
-- Scheme support unions in [`Adjoints.jl`](Adjoints.jl):
+- Scheme support unions assembled in [`Adjoints.jl`](Adjoints.jl) from
+  Advection-owned sweep unions:
   `CSAdjointLinearScheme` (`UpwindScheme`, `SlopesScheme{NoLimiter}`,
   `PPMScheme{NoLimiter, SameAsHorizontal}`), `CSAdjointNonlinearScheme`
   (`PPMScheme{MonotoneLimiter}` and `PPMScheme{CW84Limiter}`, both with
@@ -52,8 +54,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   `require_adjoint_support(plan, ops...)`, which every entry point calls
   before recording and which throws an error naming every unsupported
   piece.
-- `CSAdjointWorkspace(mesh, prototype; column_scratch = false)` in
-  [`Adjoints.jl`](Adjoints.jl): per-panel transpose scratch, the 12-seam seed
+- `CSAdjointWorkspace(mesh, prototype; column_scratch = false)` from
+  [`Advection/CubedSphere/adjoint_workspace.jl`](../Operators/Advection/CubedSphere/adjoint_workspace.jl),
+  imported and exported by `Adjoints.jl`: per-panel transpose scratch, the 12-seam seed
   cache, and (with `column_scratch = true`) the per-column storage of the FV3
   vertical sweep's reverse pass.
 - Objectives in [`ObjectiveSeeding.jl`](ObjectiveSeeding.jl):
@@ -71,7 +74,7 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 ## File Map
 
 - [`Adjoints.jl`](Adjoints.jl) — module, imports from `Operators`/`Tape`,
-  scheme unions, include order, workspace, exports
+  support unions, include order, workspace imports, exports
 - [`AdjointSupport.jl`](AdjointSupport.jl) — the setup guard
   (`adjoint_support`, `require_adjoint_support` for a plan and its operators
   and for a replay)
@@ -80,17 +83,9 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
   add the objective's linear functional from `../Footprint/StepForcing.jl`;
   the seed values are unchanged), per-step surface read-out
   `_accumulate_surface_footprint!`
-- [`AdvectionAdjoint.jl`](AdvectionAdjoint.jl) — per-scheme face
-  coefficients, x/y/z sweep adjoint kernels, `_adjoint_scheme_sweep!`.
-  The monotone-PPM variant is the linearization around the recorded `rm`,
-  computed with six-component derivative tuples (`_d6_*`). The FV3 vertical
-  method calls the column kernel in
-  `../Operators/Advection/vertical_fv3_profile_adjoint.jl`.
-- [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — transpose of the paired
-  physical-seam exchange in `../Operators/Advection/CubedSphereSeams.jl`
-- [`HaloAdjoint.jl`](HaloAdjoint.jl) — transpose of `fill_panel_halos!` and
-  `copy_corners!`. Halo seeds are atomically added into the source interior
-  cells.
+- Numerical advection transposes: [Advection/CubedSphere/](../Operators/Advection/CubedSphere/README.md)
+  owns `AdvectionAdjoint.jl`, `HaloAdjoint.jl`, `CubedSphereSeamsAdjoint.jl`
+  and `adjoint_workspace.jl`; Adjoints imports their reverse entrypoints.
 - [`DiffusionAdjoint.jl`](DiffusionAdjoint.jl) — input validation and launch wiring for
   CS diffusion; numerical Kz/Dkg transpose kernels live in Diffusion,
   plus input validation
@@ -109,7 +104,7 @@ reachable as `AtmosTransport.<name>` but does not re-export them.
 
 - Supporting a new advection scheme: add it to a `CSAdjoint*Scheme` union,
   add face-coefficient and `_add_*_face_adjoint!` methods in
-  [`AdvectionAdjoint.jl`](AdvectionAdjoint.jl), and extend the
+  [`AdvectionAdjoint.jl`](../Operators/Advection/CubedSphere/AdvectionAdjoint.jl), and extend the
   `_record_sweep!` dispatch in `../Footprint/TapeRecording.jl`.
 - Supporting a new convection or diffusion variant: add the adjoint arm
   (`_apply_cs_convection_adjoint!` or `_apply_cs_diffusion_adjoint!`) and an
@@ -207,8 +202,8 @@ Backend extensions supply tape/adjoint backend hooks.
 ## Shared helpers owned here
 
 Objective seeding, `adjoint_support`, `require_adjoint_support`, schedules and
-operator-adjoint wiring remain here. Diffusion workspace checks and numerical
-kernels have one home in Operators/Diffusion.
+operator-adjoint wiring remain here. Advection, diffusion and convection numerical kernels have one home beside
+their forward operators. CSAdjointWorkspace is re-exported from Advection.
 
 ## Forward<->adjoint mirrors
 

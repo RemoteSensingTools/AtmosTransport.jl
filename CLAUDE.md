@@ -110,7 +110,7 @@ mass basis, supported operators, and load-time consistency gates.
 
 ## Extending The Code
 
-- New advection scheme: add the type in `src/Operators/Advection/schemes.jl`,
+- New advection scheme: add the type in `src/Operators/Advection/Reconstruction/schemes.jl`,
   implement the interface in `src/Operators/Advection/Advection.jl`, wire it
   into the sweep path, and add uniform-field, mass-conservation, adjoint, and
   CPU/GPU tests.

@@ -1,235 +1,130 @@
 # Advection
 
-Finite-volume tracer advection with directional splitting or cubed-sphere
-Lin–Rood horizontal cross terms.
+Finite-volume tracer transport and its numerical transposes. `Advection.jl`
+assembles one module, preserving `AtmosTransport.Operators.Advection` names.
 
-This folder owns the transport core: reconstruction, limiter logic,
-structured and face-indexed sweeps, cubed-sphere panel transport, and
-the model-facing `apply!` entrypoints that the transport block calls.
+## Layout and entry points
 
-## Entry Points
+- [Reconstruction/](Reconstruction/README.md): scheme/limiter types, face
+  reconstruction and PPM sub-grid distributions.
+- [Structured/](Structured/README.md): latitude-longitude packed sweeps,
+  reduced-Gaussian face sweeps, workspace, CFL budget and Strang splitting.
+- [CubedSphere/](CubedSphere/README.md): panel halos, seams, packed sweeps,
+  subcycling, CS state adapters, FV3 vertical profile and numerical adjoints.
+- Root files: the fenced Lin–Rood implementation and `cs_workspace.jl`.
 
-- Scheme hierarchy:
-  [`schemes.jl`](schemes.jl)
-  defines `AbstractAdvectionScheme`, `UpwindScheme`, `SlopesScheme`,
-  `PPMScheme`, and `LinRoodPPMScheme`
-- Structured and face-indexed runtime orchestrators:
-  [`StrangSplitting.jl`](StrangSplitting.jl) provides `strang_split!`,
-  [`multitracer_strang.jl`](multitracer_strang.jl) `strang_split_mt!`, and
-  [`strang_apply.jl`](strang_apply.jl) the `apply!` entry points
-- Cubed-sphere runtime orchestrator:
-  [`CubedSphereStrang.jl`](CubedSphereStrang.jl) provides `strang_split_cs!`
-  and `strang_split_cs_mt!`; [`cs_workspace.jl`](cs_workspace.jl)
-  `CSAdvectionWorkspace`
-- Lin–Rood horizontal transport:
-  [`linrood_horizontal.jl`](linrood_horizontal.jl) provides `fv_tp_2d_cs!`,
-  [`LinRood.jl`](LinRood.jl) `CSLinRoodAdvectionWorkspace`; configured runs
-  pair it by default with the FV3 `kord = 8` vertical profile
-- Cubed-sphere halo support:
-  [`HaloExchange.jl`](HaloExchange.jl)
-  provides `fill_panel_halos!` and `copy_corners!`
-- Vertical mass fluxes are supplied by meteorological forcing. Advection
-  tests construct their fixture fluxes locally in `test_advection_kernels.jl`.
+These are plain sub-folders of the same module. The fenced root workspaces
+and Lin–Rood kernels use child helpers, and CS drivers need the root workspace
+types. Separate submodules would introduce circular imports or require editing
+the fenced implementation. Shared-module assembly keeps the existing forward kernel
+and scheme identities; among the children dependencies point from CubedSphere
+to Structured to Reconstruction. Root assembly wires all three. A future
+LinRood folder and the separate StepPlan midpoint change can revisit this.
 
-## Runtime Shape
+`apply!` / `strang_split!` dispatch on state topology. Latitude-longitude uses
+`strang_split_mt!`; reduced Gaussian uses face sweeps; split CS schemes use
+`strang_split_cs_mt!` / `strang_split_cs_mt_pingpong!`. The single-tracer CS
+copy-back palindrome and structured single-tracer shells have been removed;
+low-level callers pack one tracer in the fourth dimension. Lin–Rood retains
+its production single-tracer `_sweep_z_panels!` and `_sweep_z!` helpers.
 
-`scheme="ppm"` selects standard split PPM with its default monotone limiter;
-`limiter="cw84"` selects the complete Colella–Woodward PPM (`CW84Limiter`).
-`scheme="linrood"` selects the CS cross-term path; `ppm_order=5` (default) or
-`7` chooses its edge-value family. ORD=7 retains the order-5 interior and adds
-special panel-edge treatment: one edge value per face, the Putman–Lin seam
-average at the panel edge and FV3's one-sided values on the faces beside it
-(`_ppm_edge_values_ord7`), in the forward and adjoint kernels alike. It does not select a seventh-order transport
-method. Its configured vertical default is `fv3_kord8`; `vertical="upwind"`
-selects first-order vertical transport. Both have an adjoint.
-Configuration parsing lives in
-[`../../Models/RuntimePhysicsSpecs.jl`](../../Models/RuntimePhysicsSpecs.jl).
+## Numerical contracts
 
-- LatLon and reduced-Gaussian transport run through the `apply!` methods in
-  [`strang_apply.jl`](strang_apply.jl) and the palindrome in
-  [`StrangSplitting.jl`](StrangSplitting.jl)
-- Cubed-sphere transport runs through
-  [`CubedSphereStrang.jl`](CubedSphereStrang.jl)
-- Diffusion and surface flux are not separate outer blocks here; they are
-  threaded into the palindrome midpoint through imports from
-  `../Diffusion` and `../SurfaceFlux`. Every topology builds the midpoint
-  with `palindrome_center!` ([`StrangSplitting.jl`](StrangSplitting.jl)):
-  one `V(dt)` without a surface-flux operator, otherwise
-  `surface_flux_center!` with the diffusion operator's coupling,
-  `V(dt/2) → S(dt) → V(dt/2)` or `S(dt) → V(dt)`
-- A cubed-sphere split-sweep step starts with `fill_cs_step_start_halos!`
-  ([`CubedSphereStrang.jl`](CubedSphereStrang.jl), all edge halos plus the
-  X-orientation corners): the first X sweep reads halos, and convection or
-  chemistry between steps changed the interiors. The packed palindrome
-  (`strang_split_cs_mt_pingpong!`) fills halos only before the horizontal
-  sweeps that read them, so it returns stale halos; its Z sweeps and
-  midpoint operators must stay column-local (interior reads only)
-- Cubed-sphere X stencils read the halo unwrapped (`_HaloPaddedAxis`) and
-  without bounds checks: `Hp ≥ required_halo_width(scheme)` is validated
-  before any seam-cache or sweep launch (`_validate_halo_for_scheme`)
-- CFL subcycling (every topology): one count `n` from the palindrome
-  outflow budget against `min(m_start, m_end)` (no pass removes more than
-  `cfl_limit / 2` of a cell's current mass; an invalid flux set throws), then `(X Y Z)^n → midpoint → (Z Y X)^n` with every flux
-  divided by `n` (`H V` / `V H` on reduced Gaussian); `n = 1` is the plain
-  palindrome
-- This folder is the main place where topology-specific transport
-  execution diverges while the public operator API stays uniform
+The midpoint stays inside the existing palindrome. `palindrome_center!`
+combines diffusion and surface flux with the configured coupling:
+`V(dt/2) → S(dt) → V(dt/2)` or `S(dt) → V(dt)`, and one `V(dt)` without
+surface flux. Moving this into StepPlan is a separate change.
 
-Packed CS sweep launch geometry is selected by
-`_cs_packed_sweep_workgroupsize`. The CUDA extension uses a 32×2 tile for
-Float32 PPM and a 32-thread row for Float64 PPM; other paths keep their
-existing 256-thread default. These layouts reduce inactive threads on panel
-rows while retaining the same kernels, tracer loop, air-mass update, and
-copy-back/ping-pong behavior. GPU launch
-regressions are checked by `test/diagnostic/test_cs_ppm_launch_gpu.jl`.
+CFL subcycling runs `(X Y Z)^n → midpoint → (Z Y X)^n`, or `(H V)^n →
+midpoint → (V H)^n` on reduced Gaussian, with flux divided by `n` and a
+budget against `min(m_start, m_end)`. Lin–Rood retains its own H/Z palindrome
+and binary scheduling behavior. Every sweep reads separate input and output
+buffers. The CS packed palindrome returns stale halos: callers refresh them
+with `fill_cs_step_start_halos!` at the next step start. Z and midpoint
+operators must remain column-local. Recorder hooks, halo fills, their order,
+and the final host synchronization are part of the adjoint/performance
+contract.
 
-## File Map
+GPU kernels retain their original signatures, workgroups and array layouts.
+`_cs_packed_sweep_workgroupsize` is the backend extension hook; packed upwind
+still uses 256. X uses `_HaloPaddedAxis`; Y retains its bounds-check policy.
 
-- [`Advection.jl`](Advection.jl) — submodule assembly, imports, include order
-- [`schemes.jl`](schemes.jl) — scheme and limiter type hierarchy
-- [`limiters.jl`](limiters.jl) — limiter formulas and slope controls
-- [`reconstruction.jl`](reconstruction.jl) — face-value reconstruction
-  logic shared by the sweep kernels
-- [`structured_kernels.jl`](structured_kernels.jl) — structured-grid
-  sweep kernels and helpers
-- [`multitracer_kernels.jl`](multitracer_kernels.jl) — fused multi-tracer
-  transport kernels and `TracerView`
-- [`workspace.jl`](workspace.jl) — `AdvectionWorkspace`, the double
-  buffers of the structured and face-indexed sweeps
-- [`sweeps.jl`](sweeps.jl) — directional sweeps: structured x/y/z
-  (generated with `@eval`) and face-indexed horizontal/vertical
-- [`subcycling.jl`](subcycling.jl) — palindrome CFL subcycle counts of the
-  structured and face-indexed paths
-- [`StrangSplitting.jl`](StrangSplitting.jl) — structured and cubed-sphere
-  `strang_split!`, and `palindrome_center!`, the diffusion/surface-flux
-  midpoint shared by every topology
-- [`strang_apply.jl`](strang_apply.jl) — model-facing `apply!` for
-  structured and face-indexed states (the RG `H → V → H` path)
-- [`multitracer_strang.jl`](multitracer_strang.jl) — multi-tracer sweeps
-  and `strang_split_mt!`
-- [`HaloExchange.jl`](HaloExchange.jl) — cubed-sphere panel-edge halo
-  exchange and corner fill, written as point operations (`EdgeHaloFill`,
-  `CornerHaloFill`; see `Architectures.AbstractPointOp`): with the default
-  fusion policy (CUDA) one launch fills all 24 panel edges and, for `dir = 1`
-  or `2`, a second the corners; on Metal there are 24 edge launches and, for
-  `dir = 1` or `2`, 6 corner launches, each with bound panel arrays; one
-  synchronization follows the last launch under either policy unless
-  `sync = false` (the packed palindrome queues its exchanges and synchronizes
-  once at the end of `strang_split_cs_mt!`). On the CPU the same bodies run as
-  loops
-- [`cs_sweep_common.jl`](cs_sweep_common.jl), [`cs_sweep_x.jl`](cs_sweep_x.jl),
-  [`cs_sweep_y.jl`](cs_sweep_y.jl), [`cs_sweep_z.jl`](cs_sweep_z.jl) —
-  cubed-sphere panel sweeps (shared kernels and gamma-clamped upwind, then
-  per direction, with paired seam transfers for X and Y)
-- [`cs_workspace.jl`](cs_workspace.jl) — `CSAdvectionWorkspace`
-- [`cs_subcycling.jl`](cs_subcycling.jl) — the palindrome outflow budget
-  shared by all split-sweep topologies and the cubed-sphere subcycle count
-- [`CubedSphereStrang.jl`](CubedSphereStrang.jl) — panel-native
-  cubed-sphere palindrome (`strang_split_cs!`, `strang_split_cs_mt!`) and
-  the step-start halo refresh `fill_cs_step_start_halos!`
-- [`vertical_fv3_profile.jl`](vertical_fv3_profile.jl) — vertical sweep with
-  FV3's `scalar_profile` (kord 8) piecewise-parabolic tracer profile
-- [`vertical_fv3_profile_adjoint.jl`](vertical_fv3_profile_adjoint.jl) —
-  its reverse pass: the forward profile code replayed on `_LinearForm`
-  numbers (value plus partials) to obtain the limiter branches and local
-  Jacobians, and the transposed column kernel used by the Lin-Rood adjoint
-- [`CubedSphereSeams.jl`](CubedSphereSeams.jl) — canonical physical seam
-  transfers paired across panels within each directional group; a group's
-  transfers are cached in one launch (`SeamTransferCache` point operations,
-  see `Architectures.AbstractPointOp`) and applied by one `Fused` set of
-  `SeamTransferApply` operations (one launch under `FuseLaunches`); a panel
-  corner cell on two seams of the group is written by the later seam's
-  operation, earlier contribution first, so it receives the transfers in seam
-  order
-- [`ppm_subgrid_distributions.jl`](ppm_subgrid_distributions.jl) — PPM
-  subcell distributions shared by CS-specific code
-- [`LinRoodSeams.jl`](LinRoodSeams.jl) — shared final seam estimates and
-  their transpose for conservative Lin–Rood panel exchange
-- [`LinRood.jl`](LinRood.jl) — Lin-Rood workspace, divergence damping, PPM
-  face, pre-advection and update kernels
-- [`linrood_horizontal.jl`](linrood_horizontal.jl) — Lin-Rood horizontal
-  advection drivers (`fv_tp_2d_cs!`, q-space variant) and the Lin-Rood Strang split
-- [`linrood_adjoint_kernels.jl`](linrood_adjoint_kernels.jl),
-  [`linrood_adjoint_rm_faces.jl`](linrood_adjoint_rm_faces.jl),
-  [`linrood_adjoint_panel.jl`](linrood_adjoint_panel.jl) — Lin-Rood adjoint
-  kernels (update, pre-advection and q-input faces; rm-input faces; the
-  one-panel horizontal adjoint) used by the CS reverse path
+Mass-floor policies remain distinct: reconstruction divides by `max(m, eps)`;
+CS upwind returns zero flux for non-positive mass; Lin–Rood uses its strict
+`100eps` empty-cell threshold. The upwind adjoint's eps floor, the absent
+LL/RG upwind Courant clamp and the three different dual-number implementations
+remain follow-ups. No policy unification belongs in this structural change.
 
-## Common Tasks
+## File map
 
-- Adding a new advection scheme:
-  start in [`schemes.jl`](schemes.jl), then wire reconstruction behavior
-  in [`reconstruction.jl`](reconstruction.jl)
-- Debugging mass conservation:
-  read the palindrome structure in [`StrangSplitting.jl`](StrangSplitting.jl)
-  or [`CubedSphereStrang.jl`](CubedSphereStrang.jl) before changing kernels
-- Extending cubed-sphere transport:
-  start with [`CubedSphereStrang.jl`](CubedSphereStrang.jl) and
-  [`HaloExchange.jl`](HaloExchange.jl); keep the panel-native boundary honest
-- Performance tuning:
-  compare [`multitracer_kernels.jl`](multitracer_kernels.jl) against
-  [`structured_kernels.jl`](structured_kernels.jl) before adding another
-  launch path
-- Debugging topology dispatch:
-  read the `apply!` methods in [`strang_apply.jl`](strang_apply.jl)
+- `Advection.jl`: imports and include order.
+- `cs_dispatch.jl`: CS state dispatch and midpoint closures; the shared `apply!`
+  and `strang_split!` facade methods call the CS drivers.
+- `cs_workspace.jl`: fenced CS workspace, scratch and subcycle logging.
+- `LinRood.jl`: fenced Lin–Rood workspaces and forward kernels.
+- `LinRoodSeams.jl`: fenced shared face projection, also its own transpose.
+- `linrood_horizontal.jl`: fenced forward horizontal drivers and palindrome.
+- `linrood_adjoint_kernels.jl`: fenced update, predictor and q-face transposes.
+- `linrood_adjoint_rm_faces.jl`: fenced tracer-mass face transposes.
+- `linrood_adjoint_panel.jl`: fenced panel reverse composition.
 
-## Cross-Dependencies
-
-- `../Diffusion` and `../SurfaceFlux` are imported into the palindrome
-  midpoint; changes there can change advection runtime behavior
-- The cubed-sphere adjoint (`../../Adjoints/`, `../../Footprint/`) replays
-  the production step: the CS `strang_split!`, the packed ping-pong
-  palindrome, the Lin-Rood palindrome and `fv_tp_2d_cs!` take a `recorder`
-  (`../StepRecording.jl`) and call its hooks before every sweep, after every
-  halo exchange, at the center and inside the Lin-Rood operator; production
-  passes `NoStepRecorder()`, whose hooks are no-ops. A new tracer-changing
-  operation in these palindromes needs a hook (and a tape record), or the
-  adjoint parity test (`test/core/test_cs_adjoint_step_plan_parity.jl`)
-  fails
-- [`../../State/`](../../State/) provides tracer slices, flux-state
-  types, and the panel-native cubed-sphere containers
-- [`../../Grids/`](../../Grids/) provides mesh geometry and panel
-  connectivity
-- [`../../MetDrivers/`](../../MetDrivers/) provides
-  `uses_binary_substep_contract`, which controls runtime subcycling ownership.
-- [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl)
-  chooses when this folder's `apply!` methods are executed
-
-## Related Docs And Tests
-
-- Topology coverage:
-  [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
-- Runtime/block ordering:
-  [`../../Models/TransportModel.jl`](../../Models/TransportModel.jl) and
-  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
-- Runtime walkthrough:
-  [`../../../docs/20_RUNTIME_FLOW.md`](../../../docs/20_RUNTIME_FLOW.md)
-- Tests:
-  - [`../../../test/core/test_advection_kernels.jl`](../../../test/core/test_advection_kernels.jl)
-  - [`../../../test/core/test_cubed_sphere_advection.jl`](../../../test/core/test_cubed_sphere_advection.jl)
-  - [`../../../test/core/test_basis_explicit_core.jl`](../../../test/core/test_basis_explicit_core.jl)
-  - [`../../../test/core/test_emissions_palindrome.jl`](../../../test/core/test_emissions_palindrome.jl)
-  - [`../../../test/core/test_diffusion_palindrome_contract.jl`](../../../test/core/test_diffusion_palindrome_contract.jl)
-
-Diffusion owns `preflight_diffusion` and all DiffusionWorkspace validation;
-advection calls that public preflight before any sweep mutates tracers.
+The three sub-folder READMEs list every child file.
 
 ## Depends on
 
-State, Grids, MetDrivers, Architectures, Parameters, the parent operator roots,
-Diffusion and SurfaceFlux. Diffusion owns its storage preflight.
+Grids (meshes, panel connectivity and seam indices), State (tracer and flux
+containers), Parameters (defaults), Architectures (point operations),
+MetDrivers (`uses_binary_substep_contract`), SectionTimer and the parent
+Operators interfaces/recorder hooks. Diffusion owns `preflight_diffusion`;
+Diffusion and SurfaceFlux supply the existing midpoint operators. No dependency
+on Adjoints or Tape is introduced.
 
 ## Used by
 
-Models, StepPlan, Adjoints and preprocessing continuity/CFL checks.
+Models, Operators/StepPlan, Adjoints, Footprint and the CUDA launch extension.
+Adjoints keeps support policy, recording and reverse-walk wiring.
 
 ## Shared helpers owned here
 
-Public advection schemes, workspaces, sweep/halo APIs and transport palindromes.
-Diffusion midpoint calls use `preflight_diffusion` and `apply_vertical_diffusion_vmr!`.
+- Scheme/limiter types, `required_halo_width`, `needs_column_scratch`,
+  `AdvectionWorkspace`, `CSAdvectionWorkspace`, `CSLinRoodAdvectionWorkspace`.
+- `CSAdjointWorkspace`, `CSAdjointLinearScheme`, `CSAdjointNonlinearScheme`,
+  `CSAdjointFV3Vertical`: reverse scratch and kernel dispatch
+  unions; the public `Adjoints.CSAdjointWorkspace` import remains available.
+- `_adjoint_scheme_sweep!`, `_adjoint_fill_panel_halos!`: numerical reverse
+  entrypoints consumed by the Adjoints tape walk and Lin–Rood tape wiring.
+- `_cs_packed_sweep_workgroupsize`: backend launch-layout extension hook.
+- `_share_lr_seam_faces!`, `_accumulate_linrood_halo_adjoint!`,
+  `apply_linrood_horizontal_adjoint_single_panel!`, `apply_linrood_update_adjoint!`:
+  the existing Lin–Rood reverse interface, implemented in fenced root files.
+- `fill_panel_halos!`, `copy_corners!`, `fill_cs_step_start_halos!`,
+  `palindrome_center!`, `strang_split!`, `strang_split_mt!`, `strang_split_cs_mt!`:
+  forward execution and shared center/halo contracts.
+
+`_ppm_edge_value(..., FT)` is the common fourth-order edge expression for
+reconstruction, ORD5/ORD7 scalar edges and the split-sweep adjoint value.
+The fenced D6 Lin–Rood edge formula remains unchanged.
+
+<!-- The structure checker reads these explicit owned interfaces. -->
+# shared: _adjoint_scheme_sweep!, _adjoint_fill_panel_halos!, _cs_packed_sweep_workgroupsize, _share_lr_seam_faces!, _accumulate_linrood_halo_adjoint!
 
 ## Forward<->adjoint mirrors
 
-Structured/CS sweep and halo mirrors remain recorded in `test/structure/mirrors.toml`.
-Lin-Rood and its adjoint files remain fenced; D2 changes only the diffusion preflight
-import and unfenced callers.
+CS sweep/reconstruction ↔ `CubedSphere/AdvectionAdjoint.jl`;
+`CubedSphere/HaloExchange.jl` ↔ `CubedSphere/HaloAdjoint.jl`;
+`CubedSphere/CubedSphereSeams.jl` ↔ `CubedSphere/CubedSphereSeamsAdjoint.jl`;
+`CubedSphere/vertical_fv3_profile.jl` ↔ `vertical_fv3_profile_adjoint.jl`.
+The FV3 transpose shares forward profile functions through `_LinearForm` and
+is supported for Lin–Rood vertical sweeps. Split-sweep FV3 adjoint support is
+unchanged. Lin–Rood forward ↔ fenced `linrood_adjoint_*.jl` plus
+`Adjoints/LinRoodTape.jl` wiring. Exact file pairs are in
+`test/structure/mirrors.toml`.
+
+## Tests
+
+`test_advection_kernels`, `test_cubed_sphere_advection` (including the independent
+scalar Z-sweep reference), `test_subcycle_composition`, `test_cs_halo_fill`,
+`test_cs_seam_exchange`, `test_fv3_vertical_profile`, `test_ppm_cw84_limiter`,
+`test_cs_adjoint_production_parity` and `test_cs_adjoint_step_plan_parity` guard
+the forward and reverse contracts. GPU goldens and a warm performance A/B are
+required when reviewing host launch changes.

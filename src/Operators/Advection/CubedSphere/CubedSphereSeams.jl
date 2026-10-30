@@ -276,27 +276,3 @@ function _apply_cs_seams!(panels_rm::NTuple{6}, panels_m::NTuple{6}, cache,
     end
     return nothing
 end
-
-function _sweep_cs_horizontal!(panels_rm::NTuple{6}, panels_m::NTuple{6},
-                                panels_flux::NTuple{6}, mesh::CubedSphereMesh,
-                                scheme::AbstractAdvectionScheme, workspace,
-                                direction::Val{D}; flux_scale=one(eltype(panels_m[1]))) where D
-    _cache_cs_seams!(workspace.seam_flux, panels_rm, panels_m, panels_flux,
-                     mesh, scheme, direction, flux_scale)
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz, Nt = size(panels_m[1], 3), size(panels_rm[1], 4)
-    for p in 1:6
-        flux = _CSInteriorFlux(panels_flux[p], mesh, direction)
-        if ndims(panels_rm[p]) == 3
-            sweep! = D == 1 ? _sweep_x_panel! : _sweep_y_panel!
-            sweep!(panels_rm[p], panels_m[p], flux, scheme, workspace.rm_A,
-                   workspace.m_A, Nc, Hp, Nz; flux_scale)
-        else
-            sweep! = D == 1 ? _sweep_x_panel_mt! : _sweep_y_panel_mt!
-            sweep!(panels_rm[p], panels_m[p], flux, scheme, workspace.rm_4d_A,
-                   workspace.m_A, Nc, Hp, Nz, Nt; flux_scale)
-        end
-    end
-    _apply_cs_seams!(panels_rm, panels_m, workspace.seam_flux, mesh, direction)
-    return nothing
-end

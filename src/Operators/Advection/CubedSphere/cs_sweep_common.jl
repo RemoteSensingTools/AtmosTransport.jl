@@ -10,64 +10,9 @@ using KernelAbstractions: @kernel, @index, @Const, synchronize, get_backend, CPU
 # of halo-padded arrays. The Hp offset is added to all indices.
 # =========================================================================
 
-# These KA kernels dispatch on `scheme` via _xface_tracer_flux and work for
-# UpwindScheme, SlopesScheme, and PPMScheme. They are used by the higher-order
-# _sweep_x/y/z_panel! methods (AbstractAdvectionScheme fallback) via KA_CPU().
-# On GPU backends, they can be launched directly with the appropriate backend.
-# The UpwindScheme specialization uses hand-written gamma-clamped loops instead
-# (positivity-safe even at CFL > 1).
-
-"""X-sweep kernel on one CS panel. Interior i ∈ [1,Nc], neighbors via halo."""
-@kernel function _cs_xsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
-                                     @Const(am), scheme, Nc, Hp, flux_scale)
-    ii, jj, k = @index(Global, NTuple)
-    @inbounds begin
-        # Map to halo-padded indices
-        i = ii + Hp
-        j = jj + Hp
-        # Face fluxes: am has same halo-padded layout
-        am_l = flux_scale * am[i, j, k]
-        am_r = flux_scale * am[i + 1, j, k]
-        # Stencil neighbours come from the halo, so the x indices need no periodic wrap
-        flux_L = _xface_tracer_flux(Int32(i), j, k, rm, m, am_l, scheme, _HaloPaddedAxis())
-        flux_R = _xface_tracer_flux(Int32(i) + Int32(1), j, k, rm, m, am_r, scheme, _HaloPaddedAxis())
-        rm_new[i, j, k] = rm[i, j, k] + flux_L - flux_R
-        m_new[i, j, k]  = m[i, j, k]  + am_l - am_r
-    end
-end
-
-"""Y-sweep kernel on one CS panel. Interior j ∈ [1,Nc], halo provides neighbors."""
-@kernel function _cs_ysweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
-                                     @Const(bm), scheme, Nc, Hp, flux_scale)
-    ii, jj, k = @index(Global, NTuple)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        bm_s = flux_scale * bm[i, j, k]
-        bm_n = flux_scale * bm[i, j + 1, k]
-        Ny_padded = Int32(Nc + 2 * Hp)
-        flux_S = _yface_tracer_flux(i, Int32(j), k, rm, m, bm_s, scheme, Ny_padded)
-        flux_N = _yface_tracer_flux(i, Int32(j) + Int32(1), k, rm, m, bm_n, scheme, Ny_padded)
-        rm_new[i, j, k] = rm[i, j, k] + flux_S - flux_N
-        m_new[i, j, k]  = m[i, j, k]  + bm_s - bm_n
-    end
-end
-
-"""Z-sweep kernel on one CS panel. Same as LatLon z-kernel but with Hp offset."""
-@kernel function _cs_zsweep_kernel!(rm_new, @Const(rm), m_new, @Const(m),
-                                     @Const(cm), scheme, Nz, Hp, flux_scale)
-    ii, jj, k = @index(Global, NTuple)
-    @inbounds begin
-        i = ii + Hp
-        j = jj + Hp
-        cm_t = flux_scale * cm[i, j, k]
-        cm_b = flux_scale * cm[i, j, k + 1]
-        flux_T = _zface_tracer_flux(i, j, Int32(k), rm, m, cm_t, scheme, Int32(Nz))
-        flux_B = _zface_tracer_flux(i, j, Int32(k) + Int32(1), rm, m, cm_b, scheme, Int32(Nz))
-        rm_new[i, j, k] = rm[i, j, k] + flux_T - flux_B
-        m_new[i, j, k]  = m[i, j, k]  + cm_t - cm_b
-    end
-end
+# Packed generic kernels call the shared face reconstruction. Upwind uses
+# the gamma-clamped kernels in cs_sweep_{x,y,z}.jl. Host launchers below retain
+# each scheme's original argument types, timer sections and workgroups.
 
 """Packed-tracer X-sweep kernel on one CS panel."""
 @kernel function _cs_xsweep_mt_kernel!(rm_new_4d, @Const(rm_4d),
@@ -234,4 +179,71 @@ end
         copy!()
     end
     return nothing
+end
+
+# Host-only axis dispatch. Kernels, argument types, workgroups and timer labels
+# are the same as the former directional launch wrappers.
+@inline _cs_panel_kernel(::Val{1}, ::AbstractAdvectionScheme) = _cs_xsweep_mt_kernel!
+@inline _cs_panel_kernel(::Val{2}, ::AbstractAdvectionScheme) = _cs_ysweep_mt_kernel!
+@inline _cs_panel_kernel(::Val{3}, ::AbstractAdvectionScheme) = _cs_zsweep_mt_kernel!
+@inline _cs_panel_kernel(::Val{1}, ::UpwindScheme) = _cs_xsweep_mt_upwind_kernel!
+@inline _cs_panel_kernel(::Val{2}, ::UpwindScheme) = _cs_ysweep_mt_upwind_kernel!
+@inline _cs_panel_kernel(::Val{3}, ::UpwindScheme) = _cs_zsweep_mt_upwind_kernel!
+@inline _cs_panel_sections(::Val{1}) = (:cs_kernel_launch_x_mt, :cs_kernel_sync_x_mt)
+@inline _cs_panel_sections(::Val{2}) = (:cs_kernel_launch_y_mt, :cs_kernel_sync_y_mt)
+@inline _cs_panel_sections(::Val{3}) = (:cs_kernel_launch_z_mt, :cs_kernel_sync_z_mt)
+
+function _sweep_cs_panel_mt_pingpong!(rm_out, m_out, rm, m, flux,
+                                      scheme::AbstractAdvectionScheme,
+                                      Nc, Hp, Nz, Nt, direction::Val{D};
+                                      flux_scale = one(eltype(m))) where D
+    D == 3 || _validate_halo_for_scheme(scheme, Hp)
+    FT = eltype(m)
+    backend = get_backend(rm)
+    workgroupsize = _cs_packed_sweep_workgroupsize(backend, scheme, FT)
+    kernel! = _cs_panel_kernel(direction, scheme)(backend, workgroupsize)
+    launch_section, sync_section = _cs_panel_sections(direction)
+    _profiled_launch_and_sync!(backend, launch_section, sync_section) do
+        kernel!(rm_out, rm, m_out, m, flux, scheme,
+                Int32(D == 3 ? Nz : Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    return nothing
+end
+
+function _sweep_cs_panel_mt_pingpong!(rm_out, m_out, rm, m, flux,
+                                      scheme::UpwindScheme,
+                                      Nc, Hp, Nz, Nt, direction::Val{D};
+                                      flux_scale = one(eltype(m))) where D
+    FT = eltype(m)
+    backend = get_backend(rm)
+    kernel! = _cs_panel_kernel(direction, scheme)(backend, 256)
+    launch_section, sync_section = _cs_panel_sections(direction)
+    _profiled_launch_and_sync!(backend, launch_section, sync_section) do
+        kernel!(rm_out, rm, m_out, m, flux,
+                Int32(D == 3 ? Nz : Nc), Int32(Hp), Int32(Nt), FT(flux_scale);
+                ndrange=(Nc, Nc, Nz))
+    end
+    return nothing
+end
+
+function _sweep_cs_horizontal_pingpong!(rm_out::NTuple{6}, m_out::NTuple{6},
+                                        rm::NTuple{6}, m::NTuple{6}, flux::NTuple{6},
+                                        mesh::CubedSphereMesh, scheme::AbstractAdvectionScheme,
+                                        direction::Val{D};
+                                        flux_scale = one(eltype(m[1])),
+                                        seam_flux = nothing) where D
+    Nc, Hp = mesh.Nc, mesh.Hp
+    Nz = size(m[1], 3)
+    Nt = size(rm[1], 4)
+    cache = seam_flux === nothing ?
+        similar(rm[1], eltype(m[1]), Nc, Nz, Nt + 1, 12) : seam_flux
+    _cache_cs_seams!(cache, rm, m, flux, mesh, scheme, direction, flux_scale)
+    for p in 1:6
+        _sweep_cs_panel_mt_pingpong!(rm_out[p], m_out[p], rm[p], m[p],
+            _CSInteriorFlux(flux[p], mesh, direction), scheme, Nc, Hp, Nz, Nt,
+            direction; flux_scale)
+    end
+    _apply_cs_seams!(rm_out, m_out, cache, mesh, direction)
+    return rm_out, m_out
 end

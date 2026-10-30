@@ -40,7 +40,7 @@ using .AtmosTransport
 using .AtmosTransport.Architectures: architecture_from_config, ensure_runtime!,
     array_adapter, architecture_label, assert_float_type!
 using .AtmosTransport.Operators.Advection: fill_panel_halos!,
-    strang_split_cs!, CSAdvectionWorkspace,
+    strang_split_cs_mt!, CSAdvectionWorkspace,
     LinRoodWorkspace, strang_split_linrood_ppm!,
     UpwindScheme, SlopesScheme, PPMScheme
 
@@ -66,11 +66,11 @@ end
 @inline _linrood_order(::LinRoodPPMScheme{ORD}) where ORD = ORD
 
 function _make_cs_advection_workspaces(::AbstractAdvectionScheme, mesh, Nz; FT, array_type)
-    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type), nothing
+    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type, n_tracers=1), nothing
 end
 
 function _make_cs_advection_workspaces(::LinRoodPPMScheme, mesh, Nz; FT, array_type)
-    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type),
+    return CSAdvectionWorkspace(mesh, Nz; FT, array_type = array_type, n_tracers=1),
            LinRoodWorkspace(mesh; FT, Nz)
 end
 
@@ -105,8 +105,10 @@ end
 function _apply_cs_transport!(scheme::AbstractAdvectionScheme,
                               rm, pm, pam_p, pbm_p, pcm_p,
                               mesh, ws, _ws_lr)
-    strang_split_cs!(rm, pm, pam_p, pbm_p, pcm_p, mesh, scheme, ws;
-                     cfl_limit = 0.95)
+    packed = map(a -> reshape(a, size(a)..., 1), rm)
+    AtmosTransport.Operators.Advection.fill_cs_step_start_halos!(packed, pm, mesh)
+    strang_split_cs_mt!(packed, pm, pam_p, pbm_p, pcm_p, mesh, scheme, ws;
+                        cfl_limit = 0.95)
     return nothing
 end
 

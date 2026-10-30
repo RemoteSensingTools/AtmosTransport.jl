@@ -185,3 +185,11 @@ end
         @test G.edge_halo_ij(Int32.(args)...) == G.edge_halo_ij(args...)
     end
 end
+
+@testset "Cubed-sphere total cell area" begin
+    for FT in (Float32, Float64), Nc in (8, 24, 48)
+        mesh = CubedSphereMesh(; FT, Nc)
+        expected = FT(4) * FT(π) * mesh.radius^2
+        @test abs(6sum(mesh.cell_areas) - expected) / expected < (FT == Float32 ? 1e-5 : 1e-12)
+    end
+end

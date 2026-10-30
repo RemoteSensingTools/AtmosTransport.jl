@@ -8,7 +8,7 @@
 #   _zface_tracer_flux(i, j, face_k, rm, m, F, scheme, Nz)  (z: closed)
 #
 # These are the ONLY functions that change between schemes.  The universal
-# kernel shells (structured_kernels.jl) call them, and Julia specializes
+# kernel shells (multitracer_kernels.jl) call them, and Julia specializes
 # the full kernel at compile time for each concrete scheme type — the GPU
 # sees a single monomorphic code path.
 #
@@ -87,7 +87,7 @@ struct _HaloPaddedAxis end
 Floor on a cell's air mass, `eps(FT)`, wherever the `UpwindScheme`,
 `SlopesScheme` and `PPMScheme` face fluxes divide by it, so a vanishingly small
 mass (e.g. the uppermost level near the TOA) cannot produce a NaN. The
-cubed-sphere sweep adjoints (`src/Adjoints/AdvectionAdjoint.jl`) use the same
+cubed-sphere sweep adjoints (`../CubedSphere/AdvectionAdjoint.jl`) use the same
 floor, so their coefficients stay the derivatives of these fluxes.
 """
 @inline _advection_mass_floor(::Type{FT}) where {FT} = eps(FT)
@@ -595,7 +595,10 @@ Stencil: 4 cells `[c_ll, c_l | c_r, c_rr]` with the interface between `c_l` and 
 The weights come from `_ppm_edge_weights`.
 """
 @inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr)
-    FT = typeof(c_ll)
+    return _ppm_edge_value(c_ll, c_l, c_r, c_rr, typeof(c_ll))
+end
+
+@inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::Type{FT}) where FT
     seven_twelfths, one_twelfth = _ppm_edge_weights(FT)
     return seven_twelfths * (c_l + c_r) - one_twelfth * (c_ll + c_rr)
 end

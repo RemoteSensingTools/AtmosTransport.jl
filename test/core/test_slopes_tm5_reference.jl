@@ -17,7 +17,7 @@ using Test
 
 using AtmosTransport
 using .AtmosTransport.Operators: MonotoneLimiter
-using .AtmosTransport.Operators.Advection: AdvectionWorkspace, sweep_x!
+using .AtmosTransport.Operators.Advection: AdvectionWorkspace, sweep_x_mt!
 
 include(joinpath(@__DIR__, "..", "helpers", "tm5_dynamu_reference.jl"))
 
@@ -27,11 +27,14 @@ include(joinpath(@__DIR__, "..", "helpers", "tm5_dynamu_reference.jl"))
 function production_run(c0, m0, a, nsweeps, scheme)
     N = length(c0)
     m  = reshape(copy(m0), N, 1, 1)
-    rm = reshape(c0 .* m0, N, 1, 1)
+    rm = reshape(c0 .* m0, N, 1, 1, 1)
     am = reshape([a[mod1(i - 1, N)] for i in 1:N + 1], N + 1, 1, 1)
-    ws = AdvectionWorkspace(m)
+    ws = AdvectionWorkspace(m; n_tracers=1)
+    spare_rm, spare_m = ws.rm_4d_B, ws.m_B
     for _ in 1:nsweeps
-        sweep_x!(rm, m, am, scheme, ws)
+        sweep_x_mt!(rm, spare_rm, m, spare_m, am, scheme, ws)
+        rm, spare_rm = spare_rm, rm
+        m, spare_m = spare_m, m
     end
     return vec(rm), vec(m)
 end

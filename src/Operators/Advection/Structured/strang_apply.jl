@@ -102,58 +102,6 @@ function _preflight_advection_workspace(workspace::AdvectionWorkspace,
     return nothing
 end
 
-function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
-                grid::AtmosGrid{<:CubedSphereMesh},
-                scheme::AbstractAdvectionScheme, dt;
-                workspace,
-                diffusion_workspace = nothing,
-                cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                diffusion_op::AbstractDiffusion = NoDiffusion(),
-                emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                meteo = nothing,
-                recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
-    strang_split!(state, fluxes, grid, scheme;
-                  workspace = workspace,
-                  diffusion_workspace = diffusion_workspace,
-                  cfl_limit = cfl_limit,
-                  diffusion_op = diffusion_op,
-                  emissions_op = emissions_op,
-                  meteo = meteo,
-                  dt = dt,
-                  recorder = recorder)
-    return nothing
-end
-
-# NoAdvection no-op apply! — CubedSphere.  Same contract as the LL
-# variant above.  The CS workspace is typed as `Any` so callers can
-# pass either `nothing` (the natural choice when advection is off)
-# or a leftover `CSAdvectionWorkspace` from a previous configuration
-# without touching this dispatch.
-@inline function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
-                         grid::AtmosGrid{<:CubedSphereMesh},
-                         ::NoAdvection, dt;
-                         workspace = nothing,
-                         diffusion_workspace = nothing,
-                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         diffusion_op::AbstractDiffusion = NoDiffusion(),
-                         emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                         meteo = nothing,
-                         recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
-    recorder isa NoStepRecorder || throw(ArgumentError(
-        "NoAdvection (scheme = \"none\") has no record in the cubed-sphere adjoint tape"))
-    _noadvection_reject_emissions_op(emissions_op)
-    preflight_diffusion(diffusion_op, diffusion_workspace, dt,
-                         state.air_mass, ntracers(state), state.halo_width)
-    if !(diffusion_op isa NoDiffusion)
-        # NoAdvection + diffusion on CS: single V(dt) step via the
-        # mass-flux VMR wrapper. State carries `state.halo_width`.
-        apply_vertical_diffusion_vmr!(state.tracers_raw, state.air_mass,
-                                       diffusion_op, diffusion_workspace, dt, meteo;
-                                       halo_width = state.halo_width)
-    end
-    return nothing
-end
-
 # NoAdvection no-op apply! — face-indexed (ReducedGaussian).  Same
 # contract as the LL / CS variants above.  Defined OUTSIDE the
 # `@eval` loop below because that loop only generates methods

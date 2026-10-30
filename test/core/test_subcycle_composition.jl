@@ -78,8 +78,10 @@ _cs_max_q_error(rm, m, q, I) = maximum(maximum(abs.(rm[p][I, I, :, 1] ./ m[p][I,
     for (flow, A, convention) in ((:rotation, 0.15, G.GEOSNativePanelConvention()),
                                   (:rotation, 0.20, G.GnomonicPanelConvention()),
                                   (:strain,   0.30, G.GEOSNativePanelConvention())),
-        scheme in (UpwindScheme(), PPMScheme(MonotoneLimiter()), PPMScheme(CW84Limiter()))
+        FT in (Float32, Float64),
+        scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()), PPMScheme(CW84Limiter()))
         mesh, m0, am, bm, cm = _cs_flow_problem(flow, A; convention)
+        m0, am, bm, cm = map(x -> map(a -> FT.(a), x), (m0, am, bm, cm))
         I = _cs_interior(mesh)
         n = Adv._cs_static_palindrome_subcycle_count(am, bm, cm, m0, mesh.Nc, mesh.Hp, 1,
                                                      AT.Parameters.DEFAULT_CFL_LIMIT)
@@ -88,27 +90,17 @@ _cs_max_q_error(rm, m, q, I) = maximum(maximum(abs.(rm[p][I, I, :, 1] ./ m[p][I,
             @test n >= 5
 
             # Packed ping-pong driver (production), the midpoint observes the air mass.
-            rm = _cs_packed(map(a -> q0 .* a, m0)); m = map(copy, m0)
+            rm = _cs_packed(map(a -> FT(q0) .* a, m0)); m = map(copy, m0)
             Adv.fill_panel_halos!(rm, mesh; dir = 1)
             ws = Adv.CSAdvectionWorkspace(mesh, m0[1]; n_tracers = 1)
             mid_min = Ref(Inf)
             midpoint! = (ar, amass) -> (mid_min[] = minimum(minimum(amass[p][I, I, :] ./ m0[p][I, I, :]) for p in 1:6))
             Adv.strang_split_cs_mt!(rm, m, am, bm, cm, mesh, scheme, ws; midpoint!)
-            @test _cs_max_q_error(rm, m, q0, I) < 1e-12
+            @test _cs_max_q_error(rm, m, FT(q0), I) < (FT == Float32 ? 2e-6 : 1e-12)
             @test mid_min[] > 0.5
             @test minimum(minimum(m[p][I, I, :]) for p in 1:6) > 0
 
-            # Packed copy-back driver.
-            rm = _cs_packed(map(a -> q0 .* a, m0)); m = map(copy, m0)
-            Adv.fill_panel_halos!(rm, mesh; dir = 1)
-            Adv._strang_split_cs_mt_copyback!(rm, m, am, bm, cm, mesh, scheme,
-                                               Adv.CSAdvectionWorkspace(mesh, m0[1]; n_tracers = 1))
-            @test _cs_max_q_error(rm, m, q0, I) < 1e-12
 
-            # Single-tracer driver.
-            rm = map(a -> q0 .* a, m0); m = map(copy, m0)
-            Adv.strang_split_cs!(rm, m, am, bm, cm, mesh, scheme, Adv.CSAdvectionWorkspace(mesh, 1))
-            @test maximum(maximum(abs.(rm[p][I, I, :] ./ m[p][I, I, :] .- q0)) for p in 1:6) < 1e-12
         end
     end
 end
@@ -212,13 +204,15 @@ end
         Adv.strang_split_mt!(rm, m, a, b, c, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1))
         mr = copy(m0); rr = reshape(q .* m0, Nx, Ny, Nz, 1); ws = Adv.AdvectionWorkspace(mr; n_tracers = 1)
         fs = 1.0 / n
-        for _ in 1:n
-            Adv.sweep_x_mt!(rr, mr, a, scheme, ws, fs); Adv.sweep_y_mt!(rr, mr, b, scheme, ws, fs)
-            Adv.sweep_z_mt!(rr, mr, c, scheme, ws, fs)
-        end
-        for _ in 1:n
-            Adv.sweep_z_mt!(rr, mr, c, scheme, ws, fs); Adv.sweep_y_mt!(rr, mr, b, scheme, ws, fs)
-            Adv.sweep_x_mt!(rr, mr, a, scheme, ws, fs)
+        spare_r, spare_m = similar(rr), similar(mr)
+        for sweeps in ((Adv.sweep_x_mt!, Adv.sweep_y_mt!, Adv.sweep_z_mt!),
+                       (Adv.sweep_z_mt!, Adv.sweep_y_mt!, Adv.sweep_x_mt!))
+            fluxes = sweeps[1] === Adv.sweep_x_mt! ? (a, b, c) : (c, b, a)
+            for _ in 1:n, (sweep!, flux) in zip(sweeps, fluxes)
+                sweep!(rr, spare_r, mr, spare_m, flux, scheme, ws, fs)
+                rr, spare_r = spare_r, rr
+                mr, spare_m = spare_m, mr
+            end
         end
         @test isequal(rm, rr)
         @test isequal(m, mr)
@@ -265,9 +259,12 @@ _ll_outflow(am, bm, cm) = (max.(0, -am[1:end-1, :, :]) .+ max.(0, am[2:end, :, :
             fs = 1.0 / n
             worst_fraction = 0.0
             min_mass = Inf
+            spare_r, spare_m = similar(rr), similar(m)
             pass!(sweep!, flux, d) = begin
                 worst_fraction = max(worst_fraction, maximum(fs .* out[d] ./ m))
-                sweep!(rr, m, flux, UpwindScheme(), ws, fs)
+                sweep!(rr, spare_r, m, spare_m, flux, UpwindScheme(), ws, fs)
+                rr, spare_r = spare_r, rr
+                m, spare_m = spare_m, m
                 min_mass = min(min_mass, m[4, 4, 1])
             end
             for _ in 1:n
@@ -434,11 +431,6 @@ end
         # observation forcing.
         @test kinds == vcat([:h1], forward, [:mid], reverse_half, [:end])
         @test ops[end].step == 1
-
-        est = AT.cs_tape_byte_estimate(m0, [am], [bm], [cm], mesh, scheme)
-        @test est.sweep_records == count(in((:x, :y, :z)), kinds)
-        @test est.halo_records == count(in((:h1, :h2)), kinds)
-        @test est.step_records == count(==(:end), kinds)
 
         # The tape's forward trajectory is the production step: the step-start
         # halo refresh and the packed-tracer palindrome (the zero-rate

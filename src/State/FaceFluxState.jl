@@ -221,7 +221,7 @@ end
 
 Panel-native structured-directional flux storage for cubed-sphere transport.
 Each field is an `NTuple{CS_PANEL_COUNT}` of halo-padded panel arrays matching the
-`strang_split_cs!` contract.
+`strang_split_cs_mt!` contract.
 """
 function _validate_cs_flux_storage(am, bm, cm)
     all(panel -> ndims(panel) == 3, (am..., bm..., cm...)) ||

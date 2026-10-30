@@ -31,163 +31,6 @@
 #   Putman & Lin (2007) — FV3 cubed-sphere transport
 # ---------------------------------------------------------------------------
 
-# =========================================================================
-# Public API: strang_split_cs!
-# =========================================================================
-
-"""
-    strang_split_cs!(panels_rm, panels_m, panels_am, panels_bm, panels_cm,
-                     mesh, scheme, workspace; flux_scale=1,
-                     cfl_limit=DEFAULT_CFL_LIMIT)
-
-Perform one Strang-split advection step on a 6-panel cubed-sphere field
-with automatic CFL-based subcycling.
-
-## Splitting sequence
-
-With `n` subcycles and every flux divided by `n`:
-
-    repeat n times:                ← forward half, (X Y Z)^n
-        [fill_panel_halos!(dir=1)] ← from the second pass on: Z changed the interiors
-        X sweep
-        → fill_panel_halos!(dir=1) ← exchange halos between panels (X direction)
-        → Y sweep
-        → fill_panel_halos!(dir=2) ← exchange halos between panels (Y direction)
-        → Z sweep
-    midpoint!()                    ← diffusion / surface flux, once
-    repeat n times:                ← reverse half, (Z Y X)^n
-        Z sweep
-        → fill_panel_halos!(dir=2)
-        → Y sweep
-        → fill_panel_halos!(dir=2)
-        → fill_panel_halos!(dir=1)
-        → X sweep
-        → fill_panel_halos!(dir=1)
-
-The first X sweep reads the halos as the caller leaves them: production
-`strang_split!` and the adjoint replays refresh them with
-`fill_cs_step_start_halos!` at every step start.
-
-At `n = 1` this is Strang's X-Y-Z-Z-Y-X palindrome. For `n > 1` the
-composition stays symmetric (the reverse half is the adjoint of the forward
-half), so it keeps the palindrome's second-order splitting with the same 6n
-sweeps. Second-order splitting requires sufficiently accurate subflows; the
-composition alone does not prove the transport's temporal order. Horizontal
-groups pair physical seam transfers before halo exchange supplies neighboring
-values for the next reconstruction.
-
-## Subcycling
-
-The count comes from the palindrome budget
-`2 * (out_x + out_y + out_z) / (n min(m_start, m_end)) ≤ cfl_limit`, `m_end`
-the cell's mass after the step (`_cs_static_palindrome_subcycle_count`). A supplied `subcycle_count` uses the
-binary's schedule; a workspace built with `binary_cfl_check = BinaryCFLCheck()`
-(`[advection] check_binary_cfl = true`) checks it against the runtime budget.
-
-## Panel array layout
-
-Each panel's rm and m arrays are `(Nc+2Hp, Nc+2Hp, Nz)` with Hp-wide halos.
-Interior cells are at indices `[Hp+1:Hp+Nc, Hp+1:Hp+Nc, :]`. The sweep
-kernels only update interior cells; halo regions are filled by
-`fill_panel_halos!` from adjacent panels.
-
-## Arguments
-
-- `panels_rm`, `panels_m`: NTuple{6} of 3D arrays `(Nc+2Hp, Nc+2Hp, Nz)` —
-  tracer mass and air mass. Modified in-place.
-- `panels_am`, `panels_bm`, `panels_cm`: NTuple{6} of flux arrays.
-  `am[Nc+2Hp+1, Nc+2Hp, Nz]`, `bm[Nc+2Hp, Nc+2Hp+1, Nz]`,
-  `cm[Nc+2Hp, Nc+2Hp, Nz+1]`. Read-only.
-- `mesh`: `CubedSphereMesh` with Nc, Hp, and panel connectivity.
-- `scheme`: advection scheme — `UpwindScheme()` uses gamma-clamped upwind
-  for tracer face transfers. `SlopesScheme()` and `PPMScheme()` use the generic
-  KA kernels with `_xface_tracer_flux` dispatch. Higher-order schemes
-  require `mesh.Hp ≥ 2` (Slopes) or `mesh.Hp ≥ 3` (PPM).
-- `workspace`: pre-allocated `CSAdvectionWorkspace` buffers.
-- `flux_scale`: overall scaling applied to all fluxes (default 1.0).
-- `cfl_limit`: palindrome outflow budget per subcycle, as a fraction of the
-  smaller of the cell's masses at the start and end of the step (default
-  `DEFAULT_CFL_LIMIT`, 0.95).
-"""
-function strang_split_cs!(panels_rm::NTuple{6},
-                          panels_m::NTuple{6},
-                          panels_am::NTuple{6},
-                          panels_bm::NTuple{6},
-                          panels_cm::NTuple{6},
-                          mesh::CubedSphereMesh,
-                          scheme,
-                          workspace::CSAdvectionWorkspace;
-                          flux_scale = one(eltype(panels_m[1])),
-                          cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                          subcycle_count::Union{Nothing, Integer} = nothing,
-                          midpoint! = nothing)
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz = size(panels_rm[1], 3)
-    FT = eltype(panels_m[1])
-    fs = convert(FT, flux_scale)
-    cfl_ft = convert(FT, cfl_limit)
-
-    # Budget all six legs against initial carrier mass. Face-local tracer
-    # clamping does not replace a safe total-outflow budget.
-    n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs!",
-                                     subcycle_count, panels_am, panels_bm, panels_cm,
-                                     panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
-    _record_cs_subcycle_growth!(workspace, n_pal, n_pal, n_pal)
-    fs_sub = fs / FT(n_pal)
-
-    # ---- Forward half: (X → Y → Z)^n_pal ----
-    for pass in 1:n_pal
-        if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-        end
-        SectionTimer.@section :cs_sweep_x begin
-            _sweep_cs_horizontal!(
-                panels_rm, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-        end
-
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_cs_horizontal!(
-                panels_rm, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-        end
-
-        SectionTimer.@section :cs_sweep_z _sweep_z_panels!(
-            panels_rm, panels_m, panels_cm, mesh, scheme, workspace; flux_scale = fs_sub)
-    end
-
-    midpoint! === nothing || midpoint!()
-
-    # ---- Reverse half: (Z → Y → X)^n_pal ----
-    for _ in 1:n_pal
-        SectionTimer.@section :cs_sweep_z _sweep_z_panels!(
-            panels_rm, panels_m, panels_cm, mesh, scheme, workspace; flux_scale = fs_sub)
-
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_cs_horizontal!(
-                panels_rm, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm, mesh; dir=2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,  mesh; dir=2)
-        end
-
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-        SectionTimer.@section :cs_sweep_x begin
-            _sweep_cs_horizontal!(
-                panels_rm, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm, mesh; dir=1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,  mesh; dir=1)
-        end
-    end
-
-    return nothing
-end
-
 """
     fill_cs_step_start_halos!(panels_rm, panels_m, mesh; sync = true)
 
@@ -195,8 +38,7 @@ Refresh the halos of the air mass and the tracer mass at the start of a
 cubed-sphere split-sweep transport step: all four edge halos, then the corners
 in the X-sweep orientation (`fill_panel_halos!(…; dir = 1)`). With
 `sync = false` a device refresh is only queued.
-The step's first X sweep reads these halos (`strang_split_cs!` refills them
-only between its own sweeps). Operators that run between two transport steps
+The step's first X sweep reads these halos. Operators that run between two transport steps
 (convection, chemistry) update interior cells only, so without the refresh
 that sweep would read tracer halos from before them; the packed palindrome
 `strang_split_cs_mt!` also returns stale halos (it skips the fills after its
@@ -238,92 +80,9 @@ end
 Packed-tracer cubed-sphere split-sweep transport. This is the production CS
 path for `CSSplitSweepStyle` schemes: air mass is advanced once per sweep and
 all tracers in each panel's fourth dimension are updated inside the same panel
-kernel. The sequence and CFL contract match [`strang_split_cs!`](@ref).
+kernel. The sequence is `(X Y Z)^n → midpoint → (Z Y X)^n`, with one
+CFL count from the palindrome outflow budget.
 """
-function _strang_split_cs_mt_copyback!(panels_rm_4d::NTuple{6},
-                                       panels_m::NTuple{6},
-                                       panels_am::NTuple{6},
-                                       panels_bm::NTuple{6},
-                                       panels_cm::NTuple{6},
-                                       mesh::CubedSphereMesh,
-                                       scheme::AbstractAdvectionScheme,
-                                       workspace::CSAdvectionWorkspace;
-                                       flux_scale = one(eltype(panels_m[1])),
-                                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                                       subcycle_count::Union{Nothing, Integer} = nothing,
-                                       midpoint! = nothing)
-    Nc, Hp = mesh.Nc, mesh.Hp
-    Nz = size(panels_m[1], 3)
-    Nt = size(panels_rm_4d[1], 4)
-    _check_cs_packed_workspace(workspace, Nt)
-    rm_4d_A, m_A = workspace.rm_4d_A, workspace.m_A
-    FT = eltype(panels_m[1])
-    fs = convert(FT, flux_scale)
-    cfl_ft = convert(FT, cfl_limit)
-
-    n_pal = _cs_palindrome_subcycles(workspace.binary_cfl_check, "strang_split_cs_mt!",
-                                     subcycle_count, panels_am, panels_bm, panels_cm,
-                                     panels_m, Nc, Hp, Nz, cfl_ft; flux_scale = fs)
-    _record_cs_subcycle_growth!(workspace, n_pal, n_pal, n_pal)
-    fs_sub = fs / FT(n_pal)
-
-    # Forward half: (X → Y → Z)^n_pal.
-    for pass in 1:n_pal
-        if pass > 1     # the previous Z sweep changed the interiors the X halos mirror
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-        end
-        SectionTimer.@section :cs_sweep_x begin
-            _sweep_cs_horizontal!(
-                panels_rm_4d, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-        end
-
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_cs_horizontal!(
-                panels_rm_4d, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-        end
-
-        SectionTimer.@section :cs_sweep_z for p in 1:6
-            _sweep_z_panel_mt!(panels_rm_4d[p], panels_m[p], panels_cm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_sub)
-        end
-    end
-
-    midpoint! === nothing || midpoint!()
-
-    # Reverse half: (Z → Y → X)^n_pal.
-    for _ in 1:n_pal
-        SectionTimer.@section :cs_sweep_z for p in 1:6
-            _sweep_z_panel_mt!(panels_rm_4d[p], panels_m[p], panels_cm[p],
-                               scheme, rm_4d_A, m_A, Nc, Hp, Nz, Nt; flux_scale = fs_sub)
-        end
-
-        SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
-        SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-        SectionTimer.@section :cs_sweep_y begin
-            _sweep_cs_horizontal!(
-                panels_rm_4d, panels_m, panels_bm, mesh, scheme, workspace, Val(2); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_y fill_panel_halos!(panels_rm_4d, mesh; dir = 2)
-            SectionTimer.@section :cs_halo_m_y  fill_panel_halos!(panels_m,     mesh; dir = 2)
-        end
-
-        SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-        SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-        SectionTimer.@section :cs_sweep_x begin
-            _sweep_cs_horizontal!(
-                panels_rm_4d, panels_m, panels_am, mesh, scheme, workspace, Val(1); flux_scale=fs_sub)
-            SectionTimer.@section :cs_halo_rm_x fill_panel_halos!(panels_rm_4d, mesh; dir = 1)
-            SectionTimer.@section :cs_halo_m_x  fill_panel_halos!(panels_m,     mesh; dir = 1)
-        end
-    end
-
-    return nothing
-end
-
 function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
                              panels_m::NTuple{6},
                              panels_am::NTuple{6},
@@ -365,8 +124,7 @@ It fills halos only where a horizontal sweep reads them: before every X sweep
 X sweep for the Y sweep, and after the reverse Z sweep for the reverse Y
 sweep. `fill_panel_halos!` writes every halo cell from the interiors alone, and
 the Z sweeps and the midpoint operators read only interior columns, so the
-fills `strang_split_cs!` also runs after the forward Y and both reverse
-horizontal sweeps would never be read: the interiors are the same, and the
+fills after the forward Y and both reverse horizontal sweeps would never be read: the interiors are the same, and the
 returned halos are stale.
 
 `recorder` observes the palindrome (`record_sweep!` before each sweep,
@@ -517,7 +275,7 @@ function _sweep_z_panels_mt_pingpong!(panels_rm_4d_out::NTuple{6},
     return panels_rm_4d_out, panels_m_out
 end
 
-"""Single-tracer Z-sweep of all six panels (the split-sweep `strang_split_cs!` path)."""
+"""Single-tracer Z-sweep of all six panels, used by Lin–Rood production transport."""
 function _sweep_z_panels!(panels_rm::NTuple{6}, panels_m::NTuple{6}, panels_cm::NTuple{6},
                           mesh::CubedSphereMesh, scheme::AbstractAdvectionScheme,
                           workspace::CSAdvectionWorkspace;
@@ -549,5 +307,5 @@ function _sweep_z!(rm_panels, m_panels, cm_panels,
     return nothing
 end
 
-export strang_split_cs!, strang_split_cs_mt!, CSAdvectionWorkspace
+export strang_split_cs_mt!, CSAdvectionWorkspace
 export AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck
