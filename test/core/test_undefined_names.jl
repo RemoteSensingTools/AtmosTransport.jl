@@ -35,12 +35,7 @@ const ALLOWED_UNDEFINED_NAMES = Dict(
     # `FT`. Production builds `PBLPhysicsParameters{FT}(...)`; the outer form
     # works only when every field is passed.
     "AtmosTransport.Operators.Diffusion.FT" => "Base.@kwdef outer constructor of PBLPhysicsParameters",
-    # Pre-existing bug, deferred with the source drivers to PP4:
-    # `process_era5_n320_to_cs_day` assigns `surf_reader` inside its `try`
-    # block, so the `finally` clause's `@isdefined(surf_reader) &&
-    # close_era5_surface_reader(surf_reader)` sees no local and never closes
-    # the ERA5 surface reader.
-    "AtmosTransport.Preprocessing.surf_reader" => "PP4: ERA5 N320 surface reader is never closed",
+
 )
 
 function _package_modules(root::Module)

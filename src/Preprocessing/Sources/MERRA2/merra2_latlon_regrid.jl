@@ -9,7 +9,7 @@
 # MFXC.
 #
 # This is a near-clone of `process_era5_n320_to_cs_day`
-# (transport_binary/era5_n320_regrid.jl): identical mass-derivation, global
+# (Sources/ERA5/era5_n320_regrid.jl): identical mass-derivation, global
 # dry-mass pin, wind rotation, flux reconstruction, Poisson balance
 # (= the pressure-fixer), cm diagnosis, adaptive substep policy, contract
 # verification, and streaming writer. The ONLY substantive change is replacing
@@ -57,7 +57,7 @@
 # all conservatively regridded as intensive fields:
 #   * `cmfmc` (Nz+1 edges) and `dtrain`: A3 3-hour averages, converted to the
 #     dry basis with the output window's endpoint QV exactly as the GEOS
-#     cubed-sphere path does (`_moist_to_dry_cmfmc!`, `_moist_to_dry_dtrain!`).
+#     cubed-sphere path does (`moist_to_dry_cmfmc!`, `moist_to_dry_dtrain!`).
 #   * `cmfmc_cloud_base`: GCHP's convective cloud base, the lowest layer whose
 #     regridded A3mstC DQRCU is positive (surface layer if none), stored as a
 #     top-down layer index.
@@ -319,8 +319,8 @@ function merra2_window_physics!(out, settings::MERRA2Settings, cur, nxt, h::Inte
         qv_b = _lerp_panels!(out.qv_b, cur.c180_fields.qv, nxt.c180_fields.qv, f1)
         foreach(copyto!, out.cmfmc, cur.phys.cmfmc)
         foreach(copyto!, out.dtrain, cur.phys.dtrain)
-        _moist_to_dry_dtrain!(out.dtrain, qv_a, qv_b)
-        _moist_to_dry_cmfmc!(out.cmfmc, qv_a, qv_b)
+        moist_to_dry_dtrain!(out.dtrain, qv_a, qv_b)
+        moist_to_dry_cmfmc!(out.cmfmc, qv_a, qv_b)
         cmfmc, dtrain = out.cmfmc, out.dtrain
     end
     if has_surface(settings)
@@ -372,16 +372,13 @@ the dry air mass, layer thickness and surface pressure derived from them.
 struct MERRA2BlockState{FT, P <: MERRA2ToC180Pipeline{FT}}
     pipe       :: P
     m_dry      :: NTuple{6, Array{FT, 3}}
-    delp_dry   :: NTuple{6, Array{FT, 3}}
     ps_dry     :: NTuple{6, Matrix{FT}}
-    ps_dry_acc :: NTuple{6, Matrix{Float64}}
 end
 
 function MERRA2BlockState(pipe::MERRA2ToC180Pipeline{FT}) where FT
     Nc, Nz = size(pipe.c180_fields.qv[1], 1), pipe.Nz
     panels(T, dims...) = ntuple(_ -> zeros(T, dims...), 6)
-    return MERRA2BlockState(pipe, panels(FT, Nc, Nc, Nz), panels(FT, Nc, Nc, Nz),
-                            panels(FT, Nc, Nc), panels(Float64, Nc, Nc))
+    return MERRA2BlockState(pipe, panels(FT, Nc, Nc, Nz), panels(FT, Nc, Nc))
 end
 
 """
@@ -401,7 +398,6 @@ struct MERRA2DayDriver{S, H, G, V, W, B, F, X, Q}
     dt_window    :: Float64
     policy       :: SubstepSchedulePolicy
     steps_min    :: Int
-    cfl_target   :: Float64
     balance      :: B          # (; tol, project_every, weights)
     flux         :: F          # (; method, thickness) of the flux reconstruction
     positivity_limit :: Float64
@@ -443,6 +439,7 @@ function _merra2_window_scratch(::Type{FT}, Nc, Nz, face_table) where FT
             u_local = panels(Nc, Nc, Nz), v_local = panels(Nc, Nc, Nz),
             m_a = panels(Nc, Nc, Nz), m_b = panels(Nc, Nc, Nz),
             ps_dry = panels(Nc, Nc), ps_moist = panels(Nc, Nc),
+            ps_acc = ntuple(_ -> zeros(Float64, Nc, Nc), 6),
             fidelity_capture = Ref{Any}(nothing),
             fidelity_map = FidelitySampleMap(face_table),
             omega_cells = OmegaFidelityCells(Nc),
@@ -458,15 +455,15 @@ function _pin_endpoint_mass!(target::Float64, grid, m_dry, ps_dry, qv, vc)
     areas = grid.mesh.cell_areas
     g = eltype(areas)(STANDARD_GRAVITY)
     dB = diff(vc.B)
-    _pin_cs_global_air_mass!(m_dry, qv, areas, g, target, dB)
+    pin_cs_global_air_mass!(m_dry, qv, areas, g, target, dB)
     for p in 1:6
-        _ps_from_air_mass!(ps_dry[p], m_dry[p], areas, g, size(areas, 1), size(m_dry[p], 3))
+        ps_from_air_mass!(ps_dry[p], m_dry[p], areas, g, size(areas, 1), size(m_dry[p], 3))
     end
     return nothing
 end
 
 function _derive_endpoint_mass!(d::MERRA2DayDriver, s::MERRA2BlockState)
-    derive_c180_dry_mass!(s.m_dry, s.delp_dry, s.ps_dry, s.ps_dry_acc,
+    derive_c180_dry_mass!(s.m_dry, s.ps_dry, d.scratch.ps_acc,
                           s.pipe.c180_fields.ps, s.pipe.c180_fields.qv, d.vc, d.grid.mesh.cell_areas)
     _pin_endpoint_mass!(d.mass_target, d.grid, s.m_dry, s.ps_dry,
                         s.pipe.c180_fields.qv, d.vc)
@@ -544,7 +541,6 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
                                           steps, g.poisson_scratch; tol,
                                           max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
                                           project_every, weights = d.balance.weights)
-    sync_all_cs_boundary_mirrors!(x.am, x.bm, mesh.connectivity, Nc, Nz)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
     cm_diag = diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,
@@ -560,7 +556,7 @@ function _adapt_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b)
     diag = _balance_window!(d, ps_moist, m_a, m_b, steps)
     d.policy.adaptive_substeps || return steps, diag
     for _ in 1:ADAPTIVE_SUBSTEP_MAX_REFINEMENTS
-        pos = verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.cfl_target,
+        pos = verify_substep_positivity_cs!(m_a, x.am, x.bm, x.cm; cfl_limit = d.policy.substep_cfl_target,
                                             m_next = m_b)
         next = next_substeps(d.policy, steps, pos.ratio)
         next == steps && break
@@ -612,7 +608,7 @@ function _emit_block!(d::MERRA2DayDriver, cur::MERRA2BlockState, nxt::MERRA2Bloc
         steps, balance = _adapt_window!(d, x.ps_moist, x.m_a, x.m_b)
         t_balance = time() - t_balance
         _record_window!(diag, d, x.m_a, x.m_b, win, steps, balance)
-        _fill_cs_mass_delta_payload!(x.dm, x.m_a, x.m_b)
+        fill_cs_mass_delta_payload!(x.dm, x.m_a, x.m_b)
         payload = merge((m = x.m_a, am = x.am, bm = x.bm, cm = x.cm, ps = x.ps_dry, dm = x.dm),
                         merra2_window_physics!(d.win_phys, d.settings, cur.pipe, nxt.pipe, h, d.nsub))
         flux_evidence = wind_derived_evidence(
@@ -796,7 +792,7 @@ function process_merra2_to_cs_day(date::Date,
         @info @sprintf("  Output: %s (Nc=%d, Nz=%d, FT=%s)", basename(out_path), target_grid.Nc, Nz, string(FT))
         d = MERRA2DayDriver(
             settings, handles, target_grid, vc, writer, nsub, Float64(dt_met_seconds), policy,
-            Int(steps_per_window), Float64(substep_cfl_target),
+            Int(steps_per_window),
             (tol = Float64(cs_balance_tol), project_every = Int(cs_balance_project_every),
              weights = column_weights(settings.column_balance_weights, vc.B)),
             (method = face_flux_method(settings, target_grid),
@@ -912,5 +908,4 @@ end
 preprocessor_pair_supported(::CubedSphereTargetGeometry, ::MERRA2Settings) = true
 
 # Output filename: clear MERRA-2 prefix, matching the other native writers.
-_native_output_filename(::MERRA2Settings, date::Date, FT::Type) =
-    "merra2_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
+native_output_prefix(::MERRA2Settings) = "merra2_"

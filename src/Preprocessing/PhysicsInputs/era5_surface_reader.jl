@@ -321,7 +321,7 @@ function _normalize_surface_ll!(field::AbstractMatrix{FT},
 end
 
 """
-    _surface_flux_to_upward_wm2(raw, ds, var_name, FT) -> Matrix{FT}
+    surface_flux_to_upward_wm2(raw, ds, var_name, FT) -> Matrix{FT}
 
 Normalise an ERA5 surface turbulent heat flux to **upward-positive W m⁻²**.
 
@@ -340,7 +340,7 @@ Fields already stored as a rate (units without `J`, e.g. a pre-divided
 either from the `units` attribute containing `J` or from the canonical
 short/long names of the two accumulated fluxes.
 """
-function _surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
+function surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
     units = lowercase(String(get(ds[var_name].attrib, "units", "")))
     lname = lowercase(var_name)
     accumulated = occursin("j", units) || lname in (
@@ -514,14 +514,14 @@ function load_era5_surface_window(reader::ERA5SurfaceReader,
     pblh, _, _ = _load_surface_field(reader, :pblh, win_idx, FT)
     ustar = _load_surface_ustar(reader, win_idx, FT)
     hflux_raw, hflux_ds, hflux_name = _load_surface_field(reader, :hflux, win_idx, FT)
-    hflux = _surface_flux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
+    hflux = surface_flux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
     t2m, _, _ = _load_surface_field(reader, :t2m, win_idx, FT)
 
     surface = (pblh = pblh, t2m = t2m, ustar = ustar, hflux = hflux)
     if with_latent
         lh_raw, lh_ds, lh_name = _load_surface_field(reader, :lhflux, win_idx, FT)
         surface = merge(surface,
-                        (lhflux = _surface_flux_to_upward_wm2(lh_raw, lh_ds, lh_name, FT),))
+                        (lhflux = surface_flux_to_upward_wm2(lh_raw, lh_ds, lh_name, FT),))
     end
 
     _validate_surface_shapes!(surface, (reader.Nx, reader.Ny))

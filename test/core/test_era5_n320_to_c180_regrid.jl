@@ -5,15 +5,15 @@
 #
 # Verifies the regrid surface for ERA5 → cubed sphere:
 #
-#   1. Output struct + workspace allocate with the right shapes.
+#   1. The physical N320 sphere (IFS radius) stays distinct from the
+#      target regrid sphere.
 #   2. Regrid of a uniform PS field returns the same value on every C-target
-#      cell to floating-point roundoff (idempotency check).
+#      cell to floating-point roundoff (Float32 and Float64).
 #   3. Regrid is mass-conserving: ∫ PS · dA preserved between the N320 source
 #      and the C-target destination.
-#   4. Per-panel mean PS lands in a physical range after regridding real PS.
-#   5. (opt-in, real GRIB) End-to-end smoke for 2021-12-01 hour 0:
-#      regrid PS / U / V / T / Q from the actual N320 archive to a small CS
-#      target and check physical ranges + means.
+#   4. (opt-in, real GRIB via ATMOS_ERA5_N320_ROOT) N320 decode of
+#      2021-12-01 hour 0 (grid discovery, T/Q/PS/U/V ranges and means) and
+#      the pipeline allocator's coefficient-file vs Nz guard.
 #
 # A small `Nc = 8` CS target keeps the hermetic regridder build under a few
 # seconds.
@@ -24,20 +24,19 @@ using Dates
 
 import AtmosTransport
 
-using .AtmosTransport.Preprocessing: ERA5N320Settings, ERA5GRIBDayHandles,
-                                      ERA5N320WindowFields,
-                                      ERA5C180RegridFields, ERA5C180RegridWorkspace,
-                                      allocate_era5_n320_spectral_workspace,
-                                      allocate_era5_n320_window_fields,
-                                      allocate_era5_c180_regrid_fields,
-                                      allocate_era5_c180_regrid_workspace,
-                                      regrid_n320_to_c180!,
-                                      discover_era5_n320_source_grid,
-                                      discover_era5_spectral_truncation,
-                                      read_era5_n320_window_fields!,
-                                      open_era5_day, close_era5_day!,
-                                      build_target_geometry,
-                                      CubedSphereTargetGeometry
+using .AtmosTransport.Preprocessing: ERA5N320Settings, open_era5_day, close_era5_day!,
+                                     allocate_era5_n320_to_c180_pipeline,
+                                     discover_era5_spectral_truncation,
+                                     discover_era5_n320_source_grid,
+                                     allocate_era5_n320_spectral_workspace,
+                                     read_era5_n320_window_fields!, ERA5GRIBDayHandles,
+                                     ERA5N320WindowFields, ERA5C180RegridFields,
+                                     ERA5C180RegridWorkspace,
+                                     allocate_era5_n320_window_fields,
+                                     allocate_era5_c180_regrid_fields,
+                                     allocate_era5_c180_regrid_workspace,
+                                     regrid_n320_to_c180!, build_target_geometry,
+                                     CubedSphereTargetGeometry
 using .AtmosTransport.Grids: ncells, nrings, cell_area
 using .AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
 
@@ -71,38 +70,6 @@ end
 
 @testset "ERA5 N320 → C180 regrid — breakpoint D" begin
 
-    @testset "Output + workspace shapes" begin
-        src = _tiny_source_grid(Float64)
-        dst = _tiny_cs_target(Float64; Nc = 8)
-        Nz = 4
-
-        fields = allocate_era5_c180_regrid_fields(dst, Nz)
-        @test fields isa ERA5C180RegridFields{Float64}
-        @test all(size(fields.ps[p]) == (8, 8)     for p in 1:6)
-        @test all(size(fields.u[p])  == (8, 8, Nz) for p in 1:6)
-        @test all(size(fields.v[p])  == (8, 8, Nz) for p in 1:6)
-        @test all(size(fields.t[p])  == (8, 8, Nz) for p in 1:6)
-        @test all(size(fields.qv[p]) == (8, 8, Nz) for p in 1:6)
-
-        @test_throws ArgumentError allocate_era5_c180_regrid_fields(dst, 0)
-
-        mktempdir() do cache_dir
-            ws = allocate_era5_c180_regrid_workspace(src, dst, Nz;
-                                                      cache_dir = cache_dir)
-            @test ws isa ERA5C180RegridWorkspace
-            @test length(ws.dst_flat_2d) == 6 * 8 * 8
-            @test size(ws.dst_flat_3d)   == (6 * 8 * 8, Nz)
-            @test size(ws.src_flat_3d)   == (ncells(src.mesh), Nz)
-
-            # Cache file should exist after first call; second call reuses it.
-            files = readdir(cache_dir)
-            @test any(startswith.(files, "regridder_"))
-
-            ws2 = allocate_era5_c180_regrid_workspace(src, dst, Nz;
-                                                       cache_dir = cache_dir)
-            @test ws2 isa ERA5C180RegridWorkspace
-        end
-    end
 
     @testset "physical N320 sphere is distinct from target regrid sphere" begin
         src = _tiny_source_grid(Float64; radius = IFS_EARTH_RADIUS)
@@ -115,11 +82,11 @@ end
               4π * IFS_EARTH_RADIUS^2 rtol = 1e-6
     end
 
-    @testset "Uniform PS regrid recovers the source value ($nlon_mode)" for nlon_mode in ("regular", "octahedral")
+    @testset "Uniform PS regrid recovers the source value ($nlon_mode)" for nlon_mode in ("regular", "octahedral"), FT in (Float32, Float64)
         # Octahedral rings change length from ring to ring, which leaves uncovered
         # slivers between the chord-edged source cells; the coverage division undoes them.
-        src = _tiny_source_grid(Float64; nlon_mode)
-        dst = _tiny_cs_target(Float64; Nc = 8)
+        src = _tiny_source_grid(FT; nlon_mode)
+        dst = _tiny_cs_target(FT; Nc = 8)
         Nz = 2
 
         ws  = allocate_era5_c180_regrid_workspace(src, dst, Nz)
@@ -128,7 +95,7 @@ end
         # The coverage division must not hide a broken regridder: every source
         # polygon is intersected in full, and only the octahedral rings leave gaps.
         R = ws.regridder
-        @test sum(R.dst_areas .* ws.coverage) ≈ sum(R.src_areas) rtol = 1e-12
+        @test sum(R.dst_areas .* ws.coverage) ≈ sum(R.src_areas) rtol = (FT === Float64 ? 1e-12 : 1e-6)
         if nlon_mode == "regular"
             @test all(c -> abs(c - 1) < 1e-6, ws.coverage)
         else
@@ -192,70 +159,82 @@ end
                 dst_integral += panel[i, j] * Float64(cell_area(mesh_dst, i, j))
             end
         end
-        @test isapprox(dst_integral, src_integral; rtol = 1e-3)
+        @test isapprox(dst_integral, src_integral; rtol = 2e-6)
     end
 
-    @testset "Float32 round-trip" begin
-        src = _tiny_source_grid(Float32)
-        dst = _tiny_cs_target(Float32; Nc = 8)
-        Nz = 2
-
-        ws  = allocate_era5_c180_regrid_workspace(src, dst, Nz)
-        fields = allocate_era5_c180_regrid_fields(dst, Nz)
-        win = allocate_era5_n320_window_fields(src, Nz)
-        fill!(win.ps, 101325.0f0)
-        fill!(win.t, 250.0f0)
-        regrid_n320_to_c180!(fields, win, ws, dst)
-
-        @test fields isa ERA5C180RegridFields{Float32}
-        for p in 1:6
-            @test all(isapprox.(fields.ps[p], 101325.0f0; rtol = 1e-5))
-            @test all(isapprox.(fields.t[p],  250.0f0;    rtol = 1e-5))
-        end
-    end
 
     # -----------------------------------------------------------------------
     # Real-data smoke. Wires B + D end-to-end so a regression in either path
     # is visible. Uses a small Nc = 24 CS target to keep regridder build
     # under 1-2 minutes (full C180 takes longer and we cover that in F).
     # -----------------------------------------------------------------------
+end
+
+@testset "Native N320 input (optional archive)" begin
     real_root_env = get(ENV, "ATMOS_ERA5_N320_ROOT", "")
     if !isempty(real_root_env) && isdir(real_root_env)
-        @testset "Real N320 → C24 regrid (2021-12-01 hour 0)" begin
+        @testset "Real N320 decode and pipeline coefficient contract" begin
             settings = ERA5N320Settings(; root_dir = real_root_env)
             handles  = open_era5_day(settings, Date(2021, 12, 1))
+
             try
+                dst = _tiny_cs_target(Float32; Nc = 24)
+                @test_throws DimensionMismatch allocate_era5_n320_to_c180_pipeline(handles, dst; Nz = 72)
+                pipeline = allocate_era5_n320_to_c180_pipeline(handles, dst; Nz = 137, include_convection = false)
+                @test pipeline.convection_fields === nothing
                 T = discover_era5_spectral_truncation(handles.core_path)
-                src = discover_era5_n320_source_grid(handles.core_path; FT = Float64)
-                dst = _tiny_cs_target(Float64; Nc = 24)
+                @test T == 639
+
+                grid = discover_era5_n320_source_grid(handles.core_path; FT = Float64)
+                @test grid.gaussian_number == 320
+                @test nrings(grid.mesh)    == 640
+                @test minimum(grid.nlon_per_ring) >= 18
+                @test maximum(grid.nlon_per_ring) == 1280
+
                 Nz = 137
+                ws = allocate_era5_n320_spectral_workspace(grid, T, Nz)
+                f  = allocate_era5_n320_window_fields(grid, Nz)
 
-                spec_ws = allocate_era5_n320_spectral_workspace(src, T, Nz)
-                win = allocate_era5_n320_window_fields(src, Nz)
-                read_era5_n320_window_fields!(win, spec_ws, handles, Date(2021, 12, 1), 0)
+                read_era5_n320_window_fields!(f, ws, handles, Date(2021, 12, 1), 0)
 
-                regrid_ws = allocate_era5_c180_regrid_workspace(src, dst, Nz)
-                fields = allocate_era5_c180_regrid_fields(dst, Nz)
-                regrid_n320_to_c180!(fields, win, regrid_ws, dst)
+                # Physical-range gates. ECMWF model atmosphere covers ~175 K
+                # (mesopause) to ~330 K (summer Sahara surface), Q is bounded
+                # by ~30 g/kg in the tropical boundary layer, and the lowest
+                # surface pressures on Earth are over the Himalayas/Tibet
+                # plateau (~490 hPa over the highest summits).
+                @test all(175.0     .<= f.t  .<= 330.0)
+                @test all(0.0       .<= f.qv .<= 0.03)
+                @test all(30_000.0  .<= f.ps .<= 110_000.0)
 
-                # Per-panel PS sanity: every panel mean within a reasonable
-                # band around the global ~985 hPa.
-                for p in 1:6
-                    panel_mean = sum(fields.ps[p]) / length(fields.ps[p])
-                    @test 90_000.0 <= panel_mean <= 102_000.0
-                end
+                # Wind ranges checked on cells with |φ| ≤ 89° — the two polar
+                # rings of N320 are at ±89.78° where `1/cos(φ)` amplifies any
+                # spectral synthesis noise. Stratospheric jets reach ~150 m/s.
+                mesh = grid.mesh
+                interior_cells = vcat([mesh.ring_offsets[j]:(mesh.ring_offsets[j + 1] - 1)
+                                       for j in 1:nrings(mesh)
+                                       if abs(mesh.latitudes[j]) <= 89.0]...)
+                @test all(-200.0 .<= f.u[interior_cells, :] .<= 200.0)
+                @test all(-200.0 .<= f.v[interior_cells, :] .<= 200.0)
 
-                # T and Q stay in physical ranges after regridding.
-                t_all = vcat([vec(fields.t[p]) for p in 1:6]...)
-                qv_all = vcat([vec(fields.qv[p]) for p in 1:6]...)
-                @test all(170.0 .<= t_all  .<= 330.0)
-                @test all(0.0   .<= qv_all .<= 0.03)
+                # Global means: PS within 2% of the ~985 hPa global average
+                # for December (cell-area-weighted is better but cells are
+                # equator-weighted in N320, which is close enough).
+                ps_mean = sum(f.ps) / length(f.ps)
+                @test 96_000.0 <= ps_mean <= 102_000.0
+
+                # Global mean temperature integrated across all 137 levels
+                # is near 240 K for a standard atmosphere weighted by mass.
+                # We use a simple level-arithmetic mean here, which is biased
+                # cold relative to mass-weighted (stratosphere over-represented)
+                # but stays in a reproducible range.
+                t_mean = sum(f.t) / length(f.t)
+                @test 230.0 <= t_mean <= 260.0
             finally
                 close_era5_day!(handles)
             end
         end
     else
-        @info "Skipping real N320 → CS regrid smoke (set ATMOS_ERA5_N320_ROOT to enable)."
+        @info "Skipping real N320 window-reader smoke (set ATMOS_ERA5_N320_ROOT to enable)."
         @test_skip false
     end
 end

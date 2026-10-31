@@ -109,8 +109,7 @@ function allocate_window_workspace(grid::ReducedGaussianTargetGeometry,
     qv_ws = nothing
     if settings.mass_basis == :dry
         date_str = Dates.format(date, "yyyymmdd")
-        thermo_path = joinpath(settings.thermo_dir,
-                               "era5_thermo_ml_$(date_str).nc")
+        thermo_path = era5_thermo_path(settings.thermo_dir, date_str)
         isfile(thermo_path) ||
             error("Thermo file not found for dry-basis conversion: $thermo_path")
         qv_ws = allocate_reduced_qv_workspace(grid, Nz_native, thermo_path;

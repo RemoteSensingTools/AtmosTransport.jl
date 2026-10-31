@@ -60,8 +60,7 @@ function synthesize_next_day_hour0!(work::ReducedTransformWorkspace,
                                settings.half_dt)
     dry = settings.mass_basis == :dry && qv_ws !== nothing
     if dry
-        path = joinpath(settings.thermo_dir,
-                        "era5_thermo_ml_$(Dates.format(date + Day(1), "yyyymmdd")).nc")
+        path = era5_thermo_path(settings.thermo_dir, date + Day(1))
         isfile(path) || error("Thermo file not found for the next-day endpoint: $path")
         qv_ws.qv_ll .= read_qv_from_thermo(path, 1, qv_ws.Nx_ll, qv_ws.Ny_ll, vertical.Nz_native;
                                            FT = Float64)

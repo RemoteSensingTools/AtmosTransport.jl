@@ -283,12 +283,12 @@ end
     a = ntuple(p -> Float32.(rand(3, 3) .+ p), 6)
     b = ntuple(p -> Float32.(rand(3, 3) .- p), 6)
     dst = ntuple(_ -> zeros(Float32, 3, 3), 6)
-    @test P._lerp_panels!(dst, a, b, 0) == a                       # exact block start
-    @test P._lerp_panels!(dst, a, b, 1) == b                       # exact block end
-    @test P._lerp_panels!(dst, a, b, 1 / 3)[2] ≈ (2a[2] .+ b[2]) ./ 3
-    @test P.merra2_windows_per_block(10800) == 1
-    @test P.merra2_windows_per_block(3600) == 3
-    @test_throws ArgumentError P.merra2_windows_per_block(1800)
+    @test P.MERRA2._lerp_panels!(dst, a, b, 0) == a                       # exact block start
+    @test P.MERRA2._lerp_panels!(dst, a, b, 1) == b                       # exact block end
+    @test P.MERRA2._lerp_panels!(dst, a, b, 1 / 3)[2] ≈ (2a[2] .+ b[2]) ./ 3
+    @test P.MERRA2.merra2_windows_per_block(10800) == 1
+    @test P.MERRA2.merra2_windows_per_block(3600) == 3
+    @test_throws ArgumentError P.MERRA2.merra2_windows_per_block(1800)
 
     # Surface fields of window h average the A1 hours inside it.
     settings = MERRA2Settings(; root_dir = "/tmp/x", archive = GEOSChemArchive(), include_surface = true)
@@ -301,3 +301,31 @@ end
     @test window_pblh(1, 1) == 200                                 # 3-hourly: mean of hours 1-3
     @test [window_pblh(h, 3) for h in 1:3] == [100, 200, 300]      # hourly: one A1 record each
 end
+
+    @testset "load_met_settings — ERA5-N320 dispatch" begin
+        mktempdir() do root
+            toml_path = joinpath(root, "era5_n320.toml")
+            open(toml_path, "w") do io
+                println(io, """
+                [source]
+                name = "ERA5-N320"
+
+                [preprocessing]
+                include_surface = true
+                include_convection = true
+                """)
+            end
+
+            s = load_met_settings(toml_path; root_dir = root)
+
+            # Per-call kwargs override TOML values.
+            s_override = load_met_settings(toml_path;
+                root_dir = root, include_surface = false)
+            @test s_override.include_surface === false
+
+            open(toml_path, "a") do io
+                println(io, "include_vdiff_fields = false")
+            end
+            @test_throws ArgumentError load_met_settings(toml_path; root_dir = root)
+        end
+    end

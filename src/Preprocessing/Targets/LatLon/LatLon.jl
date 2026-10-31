@@ -1,6 +1,8 @@
 """Lat-lon spectral staging, window contracts and daily preprocessing."""
 module LatLon
 
+import ..Spectral: era5_thermo_path
+
 import ...State
 import ...AtomicFiles: commit_atomic_staging
 import ...MetDrivers: ReplayScratch,

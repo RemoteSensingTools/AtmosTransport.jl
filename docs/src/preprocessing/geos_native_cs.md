@@ -87,7 +87,7 @@ The preprocessor then diagnoses vertical mass flux with `diagnose_cs_cm!`
 from the corrected horizontal divergence and explicit layer mass tendency.
 The implementation and its correction policy live in
 `src/Preprocessing/MassClosure/cs_poisson_balance.jl` and the native-source driver
-`src/Preprocessing/transport_binary/cubed_sphere_geos.jl` (the per-window
+`src/Preprocessing/Sources/GEOS/cubed_sphere_geos.jl` (the per-window
 closures in `geos_cs_window.jl` and `geos_cs_omega.jl` beside it).
 
 The endpoint convention is the **raw dry endpoint** rather than the
@@ -220,7 +220,7 @@ four are present. The runtime's `[diffusion].kind =
 
 For each of the 24 hourly windows:
 
-1. **Read** (`src/Preprocessing/sources/geos_read_window.jl::read_window!`):
+1. **Read** (`src/Preprocessing/Sources/GEOS/geos_read_window.jl::read_window!`):
     - Open `CTM_A1` for hourly `MFXC`, `MFYC`, `DELP` (window-constant).
     - Open `CTM_I1` for instantaneous `PS`, `QV` at hour `n` and `n+1`.
     - Expose `MFXC` / `MFYC` as a rate-like diagnostic by dividing by
@@ -290,7 +290,7 @@ When `[source] include_convection = true`:
    correction is still per-window (see step 3).
 
 3. **Dry-basis correction**
-   (`_moist_to_dry_dtrain!`, `_moist_to_dry_cmfmc!`):
+   (`moist_to_dry_dtrain!`, `moist_to_dry_cmfmc!`):
     - GMAO ships `CMFMC` and `DTRAIN` as **moist-air** mass fluxes,
       kg / m² / s. The runtime needs them on the same dry basis as
       `state.air_mass`, so the reader multiplies by `(1 − qv_face)`

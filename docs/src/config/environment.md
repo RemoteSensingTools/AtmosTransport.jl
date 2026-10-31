@@ -23,8 +23,8 @@ package reads no others.
 |---|---|---|
 | `ATMOSTR_TIMERS`, `ATMOSTR_NVTX`, `ATMOSTR_ALLOC_TIMERS` | Section timers, NVTX ranges, and allocation counts within the timers (`1`, `true`, `on` or `yes`; `ATMOSTR_ALLOC_TIMERS` only together with `ATMOSTR_TIMERS`). | `src/SectionTimer.jl` |
 | `ATMOSTR_PROFILE_GPU` | With timers on (`1`, `true`, `on` or `yes`): synchronize after each cubed-sphere sweep kernel and time the launch and the wait separately (slower). | `src/Operators/Advection/CubedSphere/cs_sweep_common.jl` |
-| `ATMOS_OMEGA_TIMING` | Timing output of the GEOS OMEGA-consistent `cm` closure in the preprocessor. | `src/Preprocessing/transport_binary/cubed_sphere_geos.jl` |
-| `ERA5_N320_PROFILE` | `1`: per-window timing of the ERA5 N320 preprocessor. | `src/Preprocessing/sources/era5_n320_window.jl`, `era5_n320_to_cs.jl` |
+| `ATMOS_OMEGA_TIMING` | Timing output of the GEOS OMEGA-consistent `cm` closure in the preprocessor. | `src/Preprocessing/Sources/GEOS/cubed_sphere_geos.jl` |
+| `ERA5_N320_PROFILE` | `1`: per-window timing of the ERA5 N320 preprocessor. | `src/Preprocessing/Sources/ERA5/era5_n320_window.jl`, `era5_n320_to_cs.jl` |
 
 ## Removed
 

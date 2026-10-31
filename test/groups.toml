@@ -188,7 +188,7 @@ paths = [
     "src/Adjoints/ConvectionAdjoint.jl",
     "src/Preprocessing/PhysicsInputs/convection_mass_basis.jl",
     "src/Preprocessing/PhysicsInputs/tm5_convection_*.jl",
-    "src/Preprocessing/sources/era5_n320_mass_convection.jl",
+    "src/Preprocessing/Sources/ERA5/era5_n320_mass_convection.jl",
     "scripts/preprocessing/attach_catrine_tm5_convection_cs.jl",
     "scripts/validation/diagnose_tm5_active_layers.jl",
 ]
@@ -361,16 +361,7 @@ files = [
     "core/test_met_source_loader.jl",
 ]
 paths = [
-    "src/Preprocessing/sources/**",
-    "src/Preprocessing/Spectral/**",
-    "src/Preprocessing/Targets/ReducedGaussian/**",
-    "src/Preprocessing/MassClosure/ring_poisson_balance.jl",
-    "src/Preprocessing/Core/**",
-    "src/Preprocessing/PhysicsInputs/era5_surface_reader.jl",
-    "src/Preprocessing/transport_binary/{era5,geos,merra2}*.jl",
-    "src/Preprocessing/Targets/LatLon/*_spectral.jl",
-    "src/Preprocessing/Targets/CubedSphere/*_spectral.jl",
-    "src/Preprocessing/sources/era5_grib_geometry.jl",
+    "src/Preprocessing/**",
     "config/met_sources/**",
 ]
 

@@ -12,8 +12,8 @@
 # to ~Nz levels-per-thread. -t16 gives ~6× per-window over serial (~28 min/day
 # vs ~2.9 h). Set ERA5_N320_PROFILE=1 to log the per-phase breakdown.
 #
-# Per-window pipeline (B/C/D/E from `sources/era5.jl`, wired in
-# `transport_binary/era5_n320_regrid.jl`):
+# Per-window pipeline (B/C/D/E from `src/Preprocessing/Sources/ERA5/era5*.jl`,
+# wired in `src/Preprocessing/Sources/ERA5/era5_n320_regrid.jl`):
 #
 #   1. Spectral synthesis of VO + D → U/V, T, LNSP → PS on the N320 mesh
 #   2. Q read directly from `gridType = reduced_gg`

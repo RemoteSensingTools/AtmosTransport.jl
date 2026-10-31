@@ -31,3 +31,9 @@ function next_day_hour0(date::Date, dates, spectral_dir::String, T_target::Int;
     end
     return nothing
 end
+
+"""Daily ERA5 thermodynamic NetCDF path shared by source-independent workflows."""
+era5_thermo_path(dir::AbstractString, date::Date) =
+    era5_thermo_path(dir, Dates.format(date, "yyyymmdd"))
+era5_thermo_path(dir::AbstractString, date_string::AbstractString) =
+    joinpath(dir, "era5_thermo_ml_$(date_string).nc")
