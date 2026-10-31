@@ -20,9 +20,15 @@ else
                                    air_mass_reset_mode = c.reset, prefetch_windows = false)
     end
 
+    # The convection workspace's cell areas come from the host mesh; the
+    # convection cases check that they reach the kernels as device arrays.
+    _metrics(ws::AT.Operators.Convection.CMFMCMatrixWorkspace) = ws.tm5_workspace.cell_metrics
+    _metrics(ws) = ws.cell_metrics
+
     @testset "CUDA captured preserve_vmr reset targets and replay" begin
-        for scheme in (AT.UpwindScheme(), AT.PPMScheme(AT.MonotoneLimiter()))
-            c = Case(; scheme, diffusion = :split, reset = :preserve_vmr, steps = [2, 2])
+        for (scheme, conv) in ((AT.UpwindScheme(), :none), (AT.PPMScheme(AT.MonotoneLimiter()), :none),
+                               (AT.UpwindScheme(), :cmfmc), (AT.UpwindScheme(), :tm5))
+            c = Case(; scheme, conv, diffusion = :split, reset = :preserve_vmr, steps = [2, 2])
             sim = _gpu_reset_simulation(c)
             inp = AT.cs_adjoint_inputs(_gpu_reset_simulation(c))
             schedule = inp.kwargs.schedule
@@ -30,6 +36,8 @@ else
                 @test all(p -> p isa CuArray, Iterators.flatten(targets))
             end
             @test inp.panels_m0[1] isa CuArray
+            conv === :none ||
+                @test all(a -> a isa CuArray, _metrics(inp.kwargs.convection_workspace))
             AT.run!(sim)
             expected = map(Array, _interior(_rm(sim)))
             replay() = first(ADJ.Footprint._cs_replay_for_call(inp.panels_rm0, inp.panels_m0,

@@ -3,6 +3,10 @@
 The adjoint surface covers cubed-sphere objectives, observations, footprints,
 preconditioning, and 4D-Var solvers. `Tape` owns checkpoint schedules and
 device, pinned-host, and memory-mapped tape storage.
+`Adjoints.Inversion.ObservationBinding` owns inversion records, column binding,
+observation/departure IO and OCO-2 MIP conversion. `Observations` owns forward
+placement, retrievals and sampling; inversion exports remain available through
+the `Inversion` and `Adjoints` facades.
 
 ## Adjoints
 
@@ -18,7 +22,7 @@ to the caller's validation code. `CSFootprintResult` contains `objective`,
 
 ```@autodocs
 Modules = [AtmosTransport.Adjoints, AtmosTransport.Adjoints.Footprint,
-           AtmosTransport.Adjoints.Inversion.Observations, AtmosTransport.Adjoints.Inversion.Solver]
+           AtmosTransport.Adjoints.Inversion.ObservationBinding, AtmosTransport.Adjoints.Inversion.Solver]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```

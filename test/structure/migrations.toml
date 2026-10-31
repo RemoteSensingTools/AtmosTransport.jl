@@ -1,21 +1,11 @@
 # Reviewed identity migrations; see test/structure/README.md.
 
 [[migration]]
-from = "AtmosTransport.Preprocessing.Core"
-to = ["AtmosTransport.Preprocessing.Common"]
-reason = "RN1: Preprocessing.Core shadowed Julia's built-in Core (JET 0.9 rewrites relative ..Core imports); retain its dependency budget"
+from = "AtmosTransport.Adjoints.Inversion.Observations"
+to = ["AtmosTransport.Adjoints.Inversion.ObservationBinding"]
+reason = "FU1 RN2: distinguish inversion observation binding from package-level Observations"
 
 [[migration]]
-from = "AtmosTransport.Preprocessing.LatLon"
-to = ["AtmosTransport.Preprocessing.LatLonTarget"]
-reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
-
-[[migration]]
-from = "AtmosTransport.Preprocessing.ReducedGaussian"
-to = ["AtmosTransport.Preprocessing.ReducedGaussianTarget"]
-reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
-
-[[migration]]
-from = "AtmosTransport.Preprocessing.CubedSphere"
-to = ["AtmosTransport.Preprocessing.CubedSphereTarget"]
-reason = "RN1: rename target module; CubedSphere is also a package dependency; retain its dependency budget"
+from = "src/Adjoints/Inversion/Observations"
+to = ["src/Adjoints/Inversion/ObservationBinding"]
+reason = "FU1 RN2: align the observation flow folder with its renamed child module"

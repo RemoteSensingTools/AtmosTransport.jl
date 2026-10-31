@@ -80,7 +80,9 @@ ATMSNAP output. All selected tracers keep their independent Float64 totals,
 even when no layer or column diagnostic is requested.
 
 Explicit snapshot schedules sort a copy of the supplied hours, including
-`Vector{Float64}` inputs, and reject non-finite hours in the constructor.
+`Vector{Float64}` inputs, and reject Boolean and non-finite entries in the constructor.
+`OUTPUT_FORMATS`, `OUTPUT_PER_TRACER_KEYS` and `OUTPUT_COLUMN_MASS_KEYS` are
+shared with the runner's unread-key checks, including alias precedence.
 
 Geometry convention tags come from Grids and mass-basis tags from State.
 Observation placement uses `AbstractPlacementCoordinate`; Grids owns

@@ -151,6 +151,6 @@ folders (A1: fenced root types and Lin-Rood share one module). The Models
 folders are ordinary submodules (MD2 removed MD1's shared-Models exemption).
 Edges between the Advection sibling folders and all external dependencies keep
 the ordinary order. Explicit
-relative imports resolve local child modules before inherited aliases, so
-`Adjoints.Inversion.Observations` and the package's `Observations` module stay
-distinct owners.
+relative imports resolve local child modules before inherited aliases.
+`Adjoints.Inversion.ObservationBinding` owns the inversion observation flow;
+the package's `Observations` owns forward placement, retrievals and sampling.
