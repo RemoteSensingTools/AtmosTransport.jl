@@ -122,9 +122,12 @@ Julia 1.10 and the current release stays the merge requirement.
 
 The repository structure test reads `ATMOSTR_STRUCTURE_BASE` (default
 `origin/main`). The quick gate uses the same default and exports its selected
-ref to the tests; an explicit `<git-ref>` argument takes precedence. CI quick
-and full tests, docs, and CPU benchmarks fetch `github.base_ref` for pull
-requests, or `main` otherwise, and set `ATMOSTR_STRUCTURE_BASE=origin/<branch>`.
+ref to the tests; an explicit `<git-ref>` argument takes precedence. The CI
+quick and full test jobs fetch `github.base_ref` for pull requests and set
+`ATMOSTR_STRUCTURE_BASE=origin/<branch>`. On a push to `main` they use the
+commit before the push (`github.event.before`, or `HEAD^1` when that commit is
+all zeros or cannot be fetched), so a merge validates the migration rows it adds. The docs and benchmark workflows
+also set the variable but do not run the structure check.
 A depth-one fetch suffices for the structure snapshots (`git show <base>:<path>`).
 For example, prepare the default base in a shallow checkout with:
 

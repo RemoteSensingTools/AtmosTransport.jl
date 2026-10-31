@@ -32,7 +32,9 @@ as first introduction. Synthetic fixtures explicitly opt out of base checking.
   definitions across folders that currently share a module. Module imports
   point to the module's entry folder; named bindings also point to definition
   folders. Existing reverse edges in this unaligned layout have reasons in
-  `folder_order_allow`; these exceptions and allowed edges only shrink.
+  `folder_order_allow`; these exceptions and allowed edges only shrink. An
+  exception is kept only for a reverse edge that the order rules would
+  otherwise reject; module child wiring and shared-module wiring need none.
   Folder-order enforcement also rejects new cycles: a cycle needs a reverse
   edge. Existing exceptions can preserve current cycles until folder cleanup.
   `noncore_allowlist.toml` snapshots current core-to-non-core dependencies.
@@ -85,19 +87,38 @@ where that base already contains the snapshot. P1's base has no snapshots, so
 this first introduction is reviewed in the PR. There is no allowance
 regeneration or accept-all flag. New allowances require an explicit owner decision.
 
-X1 migrates P1's historical identities in the comparison, without accepting
-new debt: the old Analysis conservation files and their module-assembly
-private imports map to Diagnostics, other non-core paths map into Extras,
-and SectionTimer folder edges map to `src`. Diagnostics inherits the former
-Analysis dependencies on earlier core modules; Analysis gains only its
-Diagnostics re-export edge. The old facade-to-timer folder exception now
-covers the facade's Diagnostics include. No reverse exception is added.
-Clone/docstring digests, method signatures, private helper names and byte
-ceilings survive this migration unchanged, and allowance counts cannot grow.
-Bases already using the new identities receive the ordinary exact-key
-comparison. Entries eliminated by declared sharing or other cleanup are
-removed. Duplicate, docstring, folder-size and mirror snapshots currently
-have no moved file keys; their identities and counts remain unchanged.
+## Migrations
+
+Snapshots are keyed by module names, folder paths and file paths. A PR that
+moves, renames or splits a unit declares each budget transfer in
+`migrations.toml` as a `[[migration]]` row with `from`, `to` and `reason`.
+`from` must be a module or folder of the base `src/LAYERS.toml`, or a Julia
+file of the base. Every target must be a current identity of the same kind.
+In the base snapshots the checker substitutes the targets for `from`:
+
+- Targets receive the base dependencies of `from` and may use each other. The
+  order checks still reject references to later modules or folders. A child
+  module may use its parent facade, which precedes it in include order.
+- Base edges to `from` may point to any target.
+- `from` keeps its budget only if it is also a target, so a reused vacated
+  name inherits nothing.
+- Only module, folder and file fields of allowance ids follow rows. Each base
+  allowance and folder-order exception moves to at most one place, so the
+  number of entries never grows.
+- Byte ceilings drawn from one base ceiling may not exceed it in sum.
+- Rows are not chained.
+
+The checker rejects rows without a reason, invalid identities, and unused or
+redundant row targets.
+
+A row identical to one in the base `migrations.toml` was applied there and is
+inert. On an unchanged file, as on a clean `main`, it only produces a warning.
+A PR that edits `migrations.toml` must delete such rows.
+
+CI compares a push to `main` with the commit before the push, so the merge
+validates its rows. `docs/src/development/structure.md` gives the details and
+the rows of past cleanups. The checker contains no code specific to a past
+cleanup.
 
 `docs/src/development/code_map.md` is generated from the same inventory and
 checked byte for byte by the gate and repository structure test. Each folder
@@ -122,45 +143,15 @@ access and dynamic code generation can hide a dependency. Macro argument
 syntax is scanned without expansion. It checks source and extension structure,
 including non-core modules, without adding numerical tests of non-core APIs.
 
-M1 recognizes parent-folder child wiring by the same ancestry rule used for
-module wiring. The dependency-budget migration replaces the old single
-MetDrivers binary unit with BinaryFormat and BinaryReaders, inheriting only
-its earlier dependencies and parent interfaces. The ERA5 geometry facade
-binding follows its moved Preprocessing source. This migration applies only
-to LAYERS edges; private uses, duplicates, clones and byte ceilings only shrink.
-
-C1 splits Convection into the facade and TM5/CMFMC children. The LAYERS-only
-baseline migration inherits the old lower dependencies and maps existing
-consumers to the children. CMFMC may call the earlier TM5 solve; no new reverse
-edge, clone digest, private-use allowance or folder budget is accepted.
-
-PP1 splits the preprocessing dependency budget into Core, Vertical and Spectral.
-The LAYERS-only migration grants each child the former lower dependencies;
-Vertical may call Core and Spectral may call Core and Vertical. Existing facade
-consumers may follow the moved bindings. No child may import the parent or a
-later stage, and no reverse exception or clone/private/docstring allowance is
-added. The migration does not apply when the base already contains Core.
-
-PP2 continues that LAYERS-only migration for MassClosure and PhysicsInputs.
-Both can call Core/Vertical/Spectral and the former lower package dependencies;
-neither imports the facade or deferred stages, and PhysicsInputs has no
-MassClosure edge. Existing consumers follow the moved bindings. No debt
-allowance or reverse folder-order exception is added; the root size allowance
-is removed now that its immediate source is within budget.
-T1 splits the former shared Adjoints unit into Adjoints core, Footprint,
-Inversion.Observations and Inversion.Solver. The LAYERS baseline migration
-inherits the existing lower dependency budgets and permits facade child
-wiring; it removes the old folder-cycle exceptions. Clone, private-use and
-size identities receive no new allowances. Explicit relative imports resolve
-local child modules before inherited aliases, so Inversion.Observations and
-the package's Observations module remain distinct owners.
-
-MD1 preserves Models' module identities while moving files into Core, Physics,
-InitialConditions and Runner. Historical allowance file keys follow the exact
-move map; names, signatures and digests cannot grow. Only the existing Models
-folder dependency budget is divided among those folders. Shared Models files
-use the plain-folder fallback because Core stepping/adjoint and Physics refresh
-dispatch on Runner's DrivenSimulation, which contains Core.TransportModel.
-The checker permits that internal shared-module wiring; child modules and all
-external dependencies retain normal ordering. The two old Models folder-order
-exceptions and the oversized Models allowance are removed.
+Folder edges point to earlier folders unless `folder_order_allow` records an
+exception. A module entry file may wire child modules in its subfolders, as
+for module edges. Two shared-module layouts also wire their folders:
+`src/Operators/Advection` with its Reconstruction, Structured and CubedSphere
+folders (A1: fenced root types and Lin-Rood share one module), and the
+`src/Models` Core, Physics, InitialConditions and Runner folders where their
+files share `AtmosTransport.Models` (MD1: Core stepping and Physics refresh
+dispatch on Runner's DrivenSimulation). Edges between the Advection sibling
+folders and all external dependencies keep the ordinary order. Explicit
+relative imports resolve local child modules before inherited aliases, so
+`Adjoints.Inversion.Observations` and the package's `Observations` module stay
+distinct owners.
