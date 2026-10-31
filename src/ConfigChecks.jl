@@ -1,8 +1,9 @@
 """
     ConfigChecks
 
-Shared helpers for reading TOML configuration tables: strict Boolean, integer
-and date values, the `[numerics] float_type` parser, and known-key checks that
+Shared helpers for reading TOML configuration tables: strict Boolean, integer,
+real and date values, string choices from a table of options, the
+`[numerics] float_type` parser, and known-key checks that
 suggest the intended key for a misspelled one. `Output`, `Preprocessing` and
 `Models` use them, so this module is loaded right after `Architectures`.
 """
@@ -10,7 +11,8 @@ module ConfigChecks
 
 using Dates: Date
 
-export config_bool, config_int, config_date, parse_float_type, key_suggestion, unknown_key_messages, check_known_keys
+export config_bool, config_int, config_float, config_date, parse_choice,
+       parse_float_type, key_suggestion, unknown_key_messages, check_known_keys
 
 """
     config_bool(value, path) -> Bool
@@ -42,6 +44,19 @@ function config_int(value, path::AbstractString; min = nothing)
 end
 
 """
+    config_float(value, path) -> Float64
+
+Read a real-valued setting as `Float64`. Integers are accepted; Booleans,
+strings and other values raise an `ArgumentError` naming `path`. Range and
+finiteness checks belong to the caller.
+"""
+function config_float(value, path::AbstractString)
+    value isa Real && !(value isa Bool) ||
+        throw(ArgumentError("$(path) must be a number; got $(repr(value))"))
+    return Float64(value)
+end
+
+"""
     config_date(value, path) -> Date
 
 Read a TOML date or an ISO date string (`YYYY-MM-DD`). Invalid values raise an
@@ -54,6 +69,34 @@ function config_date(value, path::AbstractString)
         date === nothing || return date
     end
     throw(ArgumentError("$(path) must be a date in YYYY-MM-DD format; got $(repr(value))"))
+end
+
+"""
+    parse_choice(value, choices::NamedTuple, path)
+
+Return the entry of `choices` whose key is the string `value` in lower case,
+e.g. `parse_choice("Daily", (single = A(), daily = B()), "[output].split")`
+returns `B()`. Alias spellings are extra keys with the same value. A value that
+is not a string, or not a key, raises an `ArgumentError` naming `path` and
+listing one spelling per distinct choice (the first key that maps to it).
+"""
+function parse_choice(value, choices::NamedTuple, path::AbstractString)
+    value isa AbstractString ||
+        throw(ArgumentError("$(path) must be a string; got $(repr(value))"))
+    key = Symbol(lowercase(value))
+    haskey(choices, key) && return choices[key]
+    throw(ArgumentError("$(path) must be one of $(_choice_spellings(choices)); got $(repr(value))"))
+end
+
+# The first key of each distinct value: canonical spellings, without aliases.
+function _choice_spellings(choices::NamedTuple)
+    spellings, seen = String[], Any[]
+    for (key, choice) in pairs(choices)
+        any(isequal(choice), seen) && continue
+        push!(seen, choice)
+        push!(spellings, String(key))
+    end
+    return join(spellings, ", ")
 end
 
 """

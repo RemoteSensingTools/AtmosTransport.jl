@@ -10,9 +10,13 @@ writing topology-specific NetCDF files directly.
 ## Files
 
 - `Output.jl` assembles the module (imports, include order, exports).
-- `runtime_output.jl` defines the `[output]` schedule, partition and
-  layer-selection types, runtime output specification, and the resolved
-  `physics_*`/time-origin metadata carried to every sink.
+- `runtime_output.jl` parses `[output]` into a `RuntimeOutputSpec`: the
+  schedule, partition, format and layer-selection types, the `[output]` key
+  tables (`OUTPUT_KEYS`, `SNAPSHOT_SCHEDULE_KEYS`, ...; alias keys in
+  precedence order) with their choice tables, `check_output_targets`, and the
+  resolved `physics_*`/time-origin metadata carried to every sink. Scalars and
+  choices are read with the ConfigChecks helpers (`config_bool`, `config_int`,
+  `config_float`, `parse_choice`).
 - `binary_reader.jl` defines `read_snapshot_binary` for the conversion script.
 - `binary_writer.jl` writes the ATMSNAP snapshot binary (header with
   the mesh definition and radius, Float32 payload).
@@ -38,7 +42,6 @@ writing topology-specific NetCDF files directly.
   snapshot writer builds its CS layout from the former and then adds `lev` and
   `time`; snapshot and observation files take their provenance from the latter.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
-- `output_config.jl` owns the `[output]` key tables and `check_output_targets`.
 
 Observation sources, retrievals and sampling live in
 [`../Observations/`](../Observations/README.md).
@@ -85,12 +88,29 @@ Observation placement uses `AbstractPlacementCoordinate`; Grids owns
 
 ## Depends on
 
-Grids (geometry), State (mass basis and tracer storage), Architectures
-(compensated totals), ConfigChecks and the package source-revision helpers.
+- Grids: meshes, cell areas, CS geometry and definition/convention tags.
+- State: `basis_symbol`, `mass_basis`, tracer access.
+- Parameters: `EARTH_RADIUS` (ATMSNAP files without a recorded radius).
+- Architectures: `compensated_total`, `CPU` and the shared backend trait
+  `_total_accumulator_type` (column sums on Metal).
+- ConfigChecks: `config_bool`, `config_int`, `config_float`, `parse_choice`,
+  `parse_float_type`.
+- Package root: `expand_data_path`, `source_revision`.
+- External: NCDatasets, HDF5_jll (error-handler silencing in
+  `_create_netcdf_dataset`), JSON3 and Mmap (ATMSNAP), KernelAbstractions
+  (column-sum kernel).
 
 ## Used by
 
-Models, Observations, GriddedIO, Diagnostics and post-processing scripts.
+- Models.DrivenRunner: capture, `NetCDFSnapshotStream`/`append_snapshot!`,
+  batch writers, `runtime_output_spec` and its accessors, the key tables and
+  `check_output_targets`.
+- Observations.Sampling: the lock, path, partition and NetCDF primitives below.
+- GriddedIO: `define_cs_horizontal_geometry!`, `define_provenance_attributes!`.
+- Diagnostics and Extras/Analysis: `runtime_output_spec`, output paths,
+  `with_netcdf_lock`.
+- Scripts: `read_snapshot_binary`/`write_snapshot_netcdf`
+  (`scripts/postprocess/binary_to_netcdf.jl`), `column_mean_mixing_ratio`.
 
 ## Shared helpers owned here
 
@@ -98,6 +118,10 @@ Models, Observations, GriddedIO, Diagnostics and post-processing scripts.
 `define_provenance_attributes!`, `define_product_attributes!`, `check_output_targets` and the exported
 output-key tables. Observations shares the existing lock, path and NetCDF
 schema primitives so lock nesting and written metadata stay unchanged.
+Within Output, `_column_ratio` is the one column-mean quotient (public
+`column_mean_mixing_ratio` and the writers), `_time_units`/`_TIME_CALENDAR`
+the one time-unit spelling of NetCDF and ATMSNAP, and `_physics_attribute_key`
+the one `physics_` key check of every sink.
 
 # shared: _NETCDF_IO_LOCK _parse_tracer_names _output_partition _substitute_day_template _insert_suffix_before_extension _has_day_token _ensure_parent_dir _create_netcdf_dataset _tracer_units _payload_fill_value _grid_type_string
 

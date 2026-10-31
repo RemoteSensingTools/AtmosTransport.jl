@@ -115,9 +115,7 @@ function _define_common_attributes!(ds, mesh, frames, mass_basis_sym::Symbol;
     options === nothing ||
         (ds.attrib["output_options"] = _options_string(options))
     for key in sort!(collect(keys(physics_attributes)))
-        startswith(key, "physics_") || throw(ArgumentError(
-            "runtime physics attribute $(repr(key)) must start with `physics_`"))
-        ds.attrib[key] = physics_attributes[key]
+        ds.attrib[_physics_attribute_key(key)] = physics_attributes[key]
     end
 
     # `history` is the CF-canonical "what touched this file" chain. We
@@ -135,14 +133,21 @@ _grid_type_string(::LatLonMesh) = "latlon"
 _grid_type_string(::ReducedGaussianMesh) = "reduced_gaussian"
 _grid_type_string(::CubedSphereMesh) = "cubed_sphere"
 
+# Snapshot time units: elapsed hours, as CF `hours since <run start>` in the
+# proleptic Gregorian calendar when the start is known. NetCDF snapshots and the
+# ATMSNAP header write the same strings.
+const _TIME_CALENDAR = "proleptic_gregorian"
+_time_units(::Nothing) = "hours"
+_time_units(origin::DateTime) = "hours since " * Dates.format(origin, "yyyy-mm-dd HH:MM:SS")
+
 function _time_attributes(origin::Union{Nothing, DateTime})
     if origin === nothing
-        return Dict("units" => "hours",
+        return Dict("units" => _time_units(origin),
                     "long_name" => "elapsed simulation time",
                     "comment" => "hours since the configured simulation start")
     end
-    return Dict("units" => "hours since " * Dates.format(origin, "yyyy-mm-dd HH:MM:SS"),
-                "calendar" => "proleptic_gregorian",
+    return Dict("units" => _time_units(origin),
+                "calendar" => _TIME_CALENDAR,
                 "long_name" => "time",
                 "standard_name" => "time")
 end
@@ -320,28 +325,13 @@ function _define_rg_geometry!(ds, mesh::ReducedGaussianMesh, Nz::Integer, times,
 end
 
 
-function _cs_central_meridian(mesh::CubedSphereMesh)
-    return longitude_offset_deg(cs_definition(mesh))
-end
-
-function _cs_panel_center_arrays(mesh::CubedSphereMesh)
-    Nc = mesh.Nc
-    lons = Array{Float64}(undef, Nc, Nc, 6)
-    lats = Array{Float64}(undef, Nc, Nc, 6)
+# Stack the per-panel `(lon, lat)` matrices of `panel_lonlat(mesh, p)` (centres:
+# `n = Nc`, corners: `n = Nc + 1`) into `(n, n, 6)` arrays.
+function _cs_panel_lonlat_arrays(panel_lonlat, mesh::CubedSphereMesh, n::Integer)
+    lons = Array{Float64}(undef, n, n, 6)
+    lats = Array{Float64}(undef, n, n, 6)
     for p in 1:6
-        lonp, latp = panel_cell_center_lonlat(mesh, p)
-        lons[:, :, p] = lonp
-        lats[:, :, p] = latp
-    end
-    return lons, lats
-end
-
-function _cs_panel_corner_arrays(mesh::CubedSphereMesh)
-    Nc = mesh.Nc
-    lons = Array{Float64}(undef, Nc + 1, Nc + 1, 6)
-    lats = Array{Float64}(undef, Nc + 1, Nc + 1, 6)
-    for p in 1:6
-        lonp, latp = panel_cell_corner_lonlat(mesh, p)
+        lonp, latp = panel_lonlat(mesh, p)
         lons[:, :, p] = lonp
         lats[:, :, p] = latp
     end
@@ -388,7 +378,7 @@ function define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh)
     defDim(ds, "nf", 6)
 
     convention_tag = panel_convention_tag(mesh)
-    central_meridian = _cs_central_meridian(mesh)
+    central_meridian = longitude_offset_deg(cs_definition(mesh))
     coordinate_tag = coordinate_law_tag(coordinate_law(mesh))
     center_tag = center_law_tag(center_law(mesh))
     definition_tag = String(cs_definition_tag(cs_definition(mesh)))
@@ -420,8 +410,8 @@ function define_cs_horizontal_geometry!(ds, mesh::CubedSphereMesh)
                          "grads_dim" => "e",
                          "long_name" => "cubed-sphere face"))[:] = Int32.(1:6)
 
-    lons, lats = _cs_panel_center_arrays(mesh)
-    clons, clats = _cs_panel_corner_arrays(mesh)
+    lons, lats = _cs_panel_lonlat_arrays(panel_cell_center_lonlat, mesh, Nc)
+    clons, clats = _cs_panel_lonlat_arrays(panel_cell_corner_lonlat, mesh, Nc + 1)
     defVar(ds, "lons", Float64, ("Xdim", "Ydim", "nf"),
            attrib = Dict("units" => "degrees_east",
                          "long_name" => "cell-center longitude",
