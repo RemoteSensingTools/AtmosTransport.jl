@@ -52,7 +52,8 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     STANDARD_GRAVITY,
     TM5_CONVECTION_SOURCE_KEY,
     TM5_EC2TM_CONVENTION_KEY
-import ..Core: AbstractColumnWeights,
+# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
+import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
     AbstractTargetGeometry,
     CubedSphereTargetGeometry,
     ERA5SpectralSettings,

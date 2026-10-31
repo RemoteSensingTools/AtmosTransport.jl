@@ -11,7 +11,8 @@ import ...MetDrivers: ReplayScratch,
 import ...MetDrivers.BinaryFormat: poisson_balance_target,
     set_transport_header_steps_per_window_schedule!
 import ...Parameters: DEFAULT_POSITIVITY_CFL_LIMIT
-import ..Core: AbstractColumnWeights,
+# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
+import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
     ERA5SpectralSettings,
     LatLonTargetGeometry,
     MassWeightedColumn,
