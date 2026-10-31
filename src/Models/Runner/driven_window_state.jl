@@ -1,5 +1,5 @@
 # DrivenSimulation: state halos, air-mass reset at window ends, window payload copies and prefetch.
-# Split from DrivenSimulation.jl (refactor phase 4); included by Models.jl in this order.
+# Split from DrivenSimulation.jl (refactor phase 4); included by Runner.jl in this order.
 
 @inline _storage_eltype(reference) = eltype(reference)
 @inline _storage_eltype(reference::NTuple{6}) = eltype(reference[1])

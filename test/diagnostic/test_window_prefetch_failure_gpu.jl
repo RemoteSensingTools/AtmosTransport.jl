@@ -17,7 +17,7 @@ else
         let
             model,driver = WindowPrefetchFixtures.prefetch_fixture()
             sim = M.DrivenSimulation(Adapt.adapt(CuArray,model),driver;prefetch_windows=true)
-            M._finish_window_prefetch!(sim)
+            M.Runner._finish_window_prefetch!(sim)
             active = sim.window
             sim.prefetch_window_index = 2
             failed_task = sim.prefetch_task = Threads.@spawn error("prefetch input failed")
@@ -25,7 +25,7 @@ else
                 input = R.RunInputResources(driver,sim)
                 failure = try
                     R._with_run_resource(input) do
-                        M._take_prefetched_window!(sim,2)
+                        M.Runner._take_prefetched_window!(sim,2)
                     end
                 catch err
                     err
@@ -36,12 +36,12 @@ else
                 @test sim.window === active
                 @test sim.prefetch_window_index == 0
                 @test !istaskstarted(sim.prefetch_task)
-                @test M._finish_window_prefetch!(sim) === nothing
+                @test M.Runner._finish_window_prefetch!(sim) === nothing
                 @test istaskfailed(failed_task)
             finally
                 # Baseline failures must not leave an unobserved task behind.
                 try
-                    M._finish_window_prefetch!(sim)
+                    M.Runner._finish_window_prefetch!(sim)
                 catch err
                     err isa TaskFailedException || rethrow()
                 end

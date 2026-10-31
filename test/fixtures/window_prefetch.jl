@@ -53,7 +53,7 @@ function check_prefetch_startup(adapter; enabled=true, stop_window=2, device_win
     end
     sim = DrivenSimulation(model,driver;stop_window,prefetch_windows=enabled)
     # `prefetch_windows = false` always loads synchronously; CPU runs never prefetch.
-    @test sim.prefetch_enabled == (enabled && M._window_backend_adapter(model.state.air_mass) !== Array &&
+    @test sim.prefetch_enabled == (enabled && M.Runner._window_backend_adapter(model.state.air_mass) !== Array &&
                                    Threads.nthreads() > 1)
     prefetching = sim.prefetch_enabled && stop_window > 1
     try
@@ -77,7 +77,7 @@ function check_prefetch_startup(adapter; enabled=true, stop_window=2, device_win
                 @test Array(a) == Array(b)
             end
             old_current,old_prefetch = sim.window,sim.prefetch_window
-            M._take_prefetched_window!(sim,2)
+            M.Runner._take_prefetched_window!(sim,2)
             @test sim.window === old_prefetch
             @test sim.prefetch_window === old_current
             @test sim.prefetch_window_index == 0
@@ -85,7 +85,7 @@ function check_prefetch_startup(adapter; enabled=true, stop_window=2, device_win
             @test sim.prefetch_window === sim.window
         end
     finally
-        M._finish_window_prefetch!(sim)
+        M.Runner._finish_window_prefetch!(sim)
     end
 end
 

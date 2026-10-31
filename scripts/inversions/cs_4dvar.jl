@@ -139,7 +139,7 @@ const Adv = AtmosTransport.Operators.Advection
 # Config validation. Every table and key the driver reads is listed here;
 # unknown tables and keys are errors, and known keys that the selected kind
 # leaves unread are warnings, as in the forward-run checks
-# (`src/Models/Runner/config_keys.jl`).
+# (`src/Models/Runner/DrivenRunner/config_keys.jl`).
 # ---------------------------------------------------------------------------
 
 const _GRADIENT_DESCENT_KEYS = ("initial_step", "min_step", "step_shrink", "line_search")

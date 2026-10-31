@@ -1,11 +1,7 @@
 # DrivenSimulation: per-window physics refresh (diffusion dz and Kz, convection forcing) and midpoint forcing.
-# Split from DrivenSimulation.jl (refactor phase 4); included by Models.jl in this order.
+# Split from DrivenSimulation.jl (refactor phase 4); included by Runner.jl in this order.
 
-# Surface-source shape and compatibility helpers live with the operator.
-using ..Operators.SurfaceFlux: _surface_shape,
-                                _check_surface_source_compatibility,
-                                stage_surface_flux_window!
-using ..Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
+using ...Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
                               stage_hybrid_coefficients!,
                               recover_total_surface_pressure_staged!,
                               fill_dz_hydrostatic_constT_staged!,

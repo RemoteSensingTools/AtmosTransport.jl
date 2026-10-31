@@ -117,10 +117,11 @@ records an exception. Two wiring cases are exempt:
 
 - A module entry file may include or re-export child modules in its
   subfolders.
-- Two named layouts share one module across folders:
-  - `src/Operators/Advection` may wire its `Reconstruction`, `Structured` and
-    `CubedSphere` folders.
-  - The Models folders may wire each other where they share
-    `AtmosTransport.Models`.
+- `src/Operators/Advection` may wire its `Reconstruction`, `Structured` and
+  `CubedSphere` folders while they share one module.
+
+Models uses the ordinary child-module wiring rule. MD2 removes MD1's shared-module
+exception: its siblings follow `Physics → Core → InitialConditionIO → Runner`,
+with driven stepping, forcing refresh and capture owned by Runner.
 
 Sibling order and all external dependencies still follow the ordinary rules.

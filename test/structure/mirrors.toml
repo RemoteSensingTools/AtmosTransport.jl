@@ -57,5 +57,5 @@ forward = "src/Operators/Advection/CubedSphere/cs_sweep_y.jl"
 adjoint = "src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl"
 forward = "src/Operators/Advection/CubedSphere/cs_sweep_z.jl"
 [[pairs]]
-adjoint = "src/Models/Core/adjoint_schedule.jl"
-forward = "src/Models/Core/driven_stepping.jl"
+adjoint = "src/Models/Runner/adjoint_schedule.jl"
+forward = "src/Models/Runner/driven_stepping.jl"

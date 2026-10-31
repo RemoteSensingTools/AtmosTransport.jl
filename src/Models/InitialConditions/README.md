@@ -3,6 +3,7 @@
 Cubed-sphere initial-condition builders and the file-based surface-flux sources
 for every topology.
 
+This folder is the `Models.InitialConditionIO` submodule (no wrapper module).
 These files are included into the `InitialConditionIO` module at the end of
 [`InitialConditionIO.jl`](InitialConditionIO.jl). That file owns the
 lat-lon and reduced-Gaussian `build_initial_mixing_ratio` methods,
@@ -25,7 +26,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   halo.
 - Runner-private CS helpers: `_build_cs_initial_mixing_ratio(..., vmr; surface_pressure)`
   (reuses an interior buffer) and `_cs_pack_interior_into_halo!`. Both are called
-  by `_initialize_cs_dry_state` in [`../Runner/model_setup.jl`](../Runner/model_setup.jl).
+  by `_initialize_cs_dry_state` in [`../Runner/DrivenRunner/model_setup.jl`](../Runner/DrivenRunner/model_setup.jl).
 - [`surface_flux.jl`](surface_flux.jl): `build_surface_flux_source(grid, tracer_name,
   cfg, FT; reference_time)` (methods for lat-lon, reduced-Gaussian, and cubed-sphere
   grids) and `build_surface_flux_sources(grid, tracer_specs, FT; reference_time)`. They

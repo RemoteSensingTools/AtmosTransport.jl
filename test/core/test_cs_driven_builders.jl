@@ -69,55 +69,55 @@ struct StubReader
 end
 AtmosTransport.MetDrivers.has_cmfmc(r::StubReader) = r.has_cmfmc
 AtmosTransport.MetDrivers.has_tm5_convection(r::StubReader) = r.has_tm5
-AtmosTransport.Models._runtime_recipe_style(::StubReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5_convection(r::StubReader) = r.has_tm5
-AtmosTransport.Models._runtime_has_cmfmc(r::StubReader) = r.has_cmfmc
-AtmosTransport.Models._runtime_has_dtrain(r::StubReader) = r.has_cmfmc
-AtmosTransport.Models._runtime_has_surface(::StubReader) = false
+AtmosTransport.Models.Physics._runtime_has_tm5_convection(r::StubReader) = r.has_tm5
+AtmosTransport.Models.Physics._runtime_has_cmfmc(r::StubReader) = r.has_cmfmc
+AtmosTransport.Models.Physics._runtime_has_dtrain(r::StubReader) = r.has_cmfmc
+AtmosTransport.Models.Physics._runtime_has_surface(::StubReader) = false
 
 struct StubMatrixReader
     has_cmfmc :: Bool
     has_dtrain :: Bool
 end
-AtmosTransport.Models._runtime_recipe_style(::StubMatrixReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubMatrixReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_cmfmc(r::StubMatrixReader) = r.has_cmfmc
-AtmosTransport.Models._runtime_has_dtrain(r::StubMatrixReader) = r.has_dtrain
+AtmosTransport.Models.Physics._runtime_has_cmfmc(r::StubMatrixReader) = r.has_cmfmc
+AtmosTransport.Models.Physics._runtime_has_dtrain(r::StubMatrixReader) = r.has_dtrain
 
 struct StubPBLReader end
-AtmosTransport.Models._runtime_recipe_style(::StubPBLReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubPBLReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5_convection(::StubPBLReader) = false
-AtmosTransport.Models._runtime_has_cmfmc(::StubPBLReader) = false
-AtmosTransport.Models._runtime_has_surface(::StubPBLReader) = true
-AtmosTransport.Models._pbl_cache_shape(::StubPBLReader) = (4, 4, 2)
+AtmosTransport.Models.Physics._runtime_has_tm5_convection(::StubPBLReader) = false
+AtmosTransport.Models.Physics._runtime_has_cmfmc(::StubPBLReader) = false
+AtmosTransport.Models.Physics._runtime_has_surface(::StubPBLReader) = true
+AtmosTransport.Models.Physics._pbl_cache_shape(::StubPBLReader) = (4, 4, 2)
 
 struct StubGCHPVDIFFReader end
-AtmosTransport.Models._runtime_recipe_style(::StubGCHPVDIFFReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubGCHPVDIFFReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5_convection(::StubGCHPVDIFFReader) = false
-AtmosTransport.Models._runtime_has_cmfmc(::StubGCHPVDIFFReader) = false
-AtmosTransport.Models._runtime_has_surface(::StubGCHPVDIFFReader) = true
-AtmosTransport.Models._runtime_has_gchp_vdiff(::StubGCHPVDIFFReader) = true
-AtmosTransport.Models._pbl_cache_shape(::StubGCHPVDIFFReader) = (4, 4, 2)
+AtmosTransport.Models.Physics._runtime_has_tm5_convection(::StubGCHPVDIFFReader) = false
+AtmosTransport.Models.Physics._runtime_has_cmfmc(::StubGCHPVDIFFReader) = false
+AtmosTransport.Models.Physics._runtime_has_surface(::StubGCHPVDIFFReader) = true
+AtmosTransport.Models.Physics._runtime_has_gchp_vdiff(::StubGCHPVDIFFReader) = true
+AtmosTransport.Models.Physics._pbl_cache_shape(::StubGCHPVDIFFReader) = (4, 4, 2)
 
 struct StubDkgReader end
-AtmosTransport.Models._runtime_recipe_style(::StubDkgReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubDkgReader) =
     AtmosTransport.Models.CubedSphereRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5_convection(::StubDkgReader) = false
-AtmosTransport.Models._runtime_has_cmfmc(::StubDkgReader) = false
-AtmosTransport.Models._runtime_has_surface(::StubDkgReader) = false
-AtmosTransport.Models._runtime_has_precomputed_dkg(::StubDkgReader) = true
-AtmosTransport.Models._pbl_cache_shape(::StubDkgReader) = (4, 4, 2)
+AtmosTransport.Models.Physics._runtime_has_tm5_convection(::StubDkgReader) = false
+AtmosTransport.Models.Physics._runtime_has_cmfmc(::StubDkgReader) = false
+AtmosTransport.Models.Physics._runtime_has_surface(::StubDkgReader) = false
+AtmosTransport.Models.Physics._runtime_has_precomputed_dkg(::StubDkgReader) = true
+AtmosTransport.Models.Physics._pbl_cache_shape(::StubDkgReader) = (4, 4, 2)
 
 struct StubStructuredReader
     has_tm5 :: Bool
 end
-AtmosTransport.Models._runtime_recipe_style(::StubStructuredReader) =
+AtmosTransport.Models.Physics._runtime_recipe_style(::StubStructuredReader) =
     AtmosTransport.Models.LatLonRuntimeRecipeStyle()
-AtmosTransport.Models._runtime_has_tm5_convection(r::StubStructuredReader) = r.has_tm5
-AtmosTransport.Models._runtime_has_cmfmc(::StubStructuredReader) = false
+AtmosTransport.Models.Physics._runtime_has_tm5_convection(r::StubStructuredReader) = r.has_tm5
+AtmosTransport.Models.Physics._runtime_has_cmfmc(::StubStructuredReader) = false
 
 @testset "runtime operator builders" begin
 
