@@ -750,11 +750,9 @@ end
 
 folder_bytes(inv, files) = sum(f -> filesize(joinpath(inv.root, f)), files; init = 0)
 
-# Shared-module folders whose wiring check_folders! permits explicitly (A1, MD1).
+# Shared-module folders whose wiring check_folders! permits explicitly (A1).
 const A1_HOME = "src/Operators/Advection"
 const A1_CHILDREN = A1_HOME .* ["/Reconstruction", "/Structured", "/CubedSphere"]
-const MD1_HOME = "src/Models"
-const MD1_FOLDERS = MD1_HOME .* ["/Physics", "/Core", "/InitialConditions", "/Runner"]
 
 function check_folders!(errors, inv, found, layers; io = stdout)
     folders = source_folders(inv)
@@ -781,15 +779,7 @@ function check_folders!(errors, inv, found, layers; io = stdout)
         shared_advection_wiring = a == A1_HOME && b in A1_CHILDREN &&
             all(inv.files[f] == "AtmosTransport.Operators.Advection"
                 for f in get(folders, b, String[]))
-        # MD1's explicitly permitted plain-folder fallback: Core stepping and
-        # Physics refresh dispatch on Runner's DrivenSimulation, whose model is
-        # Core.TransportModel. This is one existing module, not new module edges.
-        # Only these shared Models files bypass folder ordering; child modules
-        # and every dependency outside Models still obey the usual rules.
-        shared_models_wiring = a in [MD1_HOME; MD1_FOLDERS] && b in [MD1_HOME; MD1_FOLDERS] &&
-            any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, a, String[])) &&
-            any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, b, String[]))
-        if !child_wiring && !shared_advection_wiring && !shared_models_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0)
+        if !child_wiring && !shared_advection_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0)
             haskey(exceptions, "$a|$b") ? push!(needed, "$a|$b") : push!(errors, "T1 reference to later folder: $a -> $b")
         end
     end

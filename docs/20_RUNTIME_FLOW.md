@@ -49,7 +49,7 @@ step!(sim)
 └── invoke callbacks
 ```
 
-The implementation lives in `src/Models/Core/driven_stepping.jl`; the schedule is
+The implementation lives in `src/Models/Runner/driven_stepping.jl`; the schedule is
 the simulation's `StepPlan` (`sim.plan`, `src/Operators/StepPlan/`), built once
 from `physics_cadence`, the driver's window contract and
 `air_mass_reset_mode`. In simplified form:

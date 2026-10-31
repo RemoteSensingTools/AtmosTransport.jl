@@ -1,13 +1,4 @@
-# Reviewed identity migrations for scripts/checks/check_structure.jl.
-# A PR that moves, renames or splits a module or source folder declares each
-# budget transfer here; see test/structure/README.md for the semantics. Rows
-# already in the base are inert: the checker warns, and a PR that edits this
-# file must delete them.
-#
-# [[migration]]
-# from = "src/Old"
-# to = ["src/New/Lower", "src/New/Upper"]
-# reason = "Why the split keeps the old dependency budget"
+# Reviewed identity migrations; see test/structure/README.md.
 
 [[migration]]
 from = "AtmosTransport.Preprocessing.Core"

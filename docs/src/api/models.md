@@ -11,9 +11,13 @@ Use `step!(model, dt)` for a full model step; driven runs execute their
 `surface_pressure`, `pressure_basis`, and `qv` for pressure remapping. Set
 `mass_basis` when converting that VMR with `pack_initial_tracer_mass`.
 
-The source is grouped under `Models/Core`, `Physics`, `InitialConditions` and
-`Runner`; these are plain folders where the driven type, stepping and refresh
-methods share the existing Models module. Nested module paths remain stable.
+The folder submodules load in the order
+`Physics → Core → InitialConditionIO → Runner`. Physics owns specs and
+recipes; Core owns model construction, fixed-step simulation, callbacks and the
+`step!`/`run!` generics; `InitialConditionIO` (the `InitialConditions` folder)
+owns the IC pipeline; Runner owns driven stepping, `run_window!`, forcing
+refresh, adjoint capture and configured runs. The Models facade re-exports the
+public names; child-module paths remain aliases of the same modules.
 
 Diagnostics and scripts can use the public Models run interface:
 
@@ -38,10 +42,13 @@ are owned by `GriddedIO/initial_condition_conventions.jl`.
 ```@autodocs
 Modules = [
     AtmosTransport.Models,
+    AtmosTransport.Models.Physics,
+    AtmosTransport.Models.Core,
     AtmosTransport.Models.InitialConditionIO,
-    AtmosTransport.Models.BinaryPathExpander,
-    AtmosTransport.Models.InputStaging,
-    AtmosTransport.Models.DrivenRunner,
+    AtmosTransport.Models.Runner,
+    AtmosTransport.Models.Runner.BinaryPathExpander,
+    AtmosTransport.Models.Runner.InputStaging,
+    AtmosTransport.Models.Runner.DrivenRunner,
 ]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false

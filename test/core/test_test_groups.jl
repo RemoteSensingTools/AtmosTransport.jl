@@ -81,12 +81,12 @@ end
 @testset "runtime composition and public entry points remain reachable" begin
     groups = load_groups(joinpath(TEST_ROOT, "groups.toml"))
     for path in ("src/Operators/StepPlan/StepPlan.jl",
-                 "src/Models/Core/TransportModel.jl", "src/Models/Core/driven_stepping.jl")
+                 "src/Models/Core/TransportModel.jl", "src/Models/Runner/driven_stepping.jl")
         selection = select_changed(groups, TEST_ROOT, [path])
         @test "surface_flux_chemistry" in selection.topics
         @test "runner" in selection.topics
     end
-    for path in ("src/Models/Runner/DrivenRunner.jl", "src/Models/Runner/InputStaging.jl",
+    for path in ("src/Models/Runner/DrivenRunner/DrivenRunner.jl", "src/Models/Runner/InputStaging.jl",
                  "src/Models/Physics/RuntimePhysicsRecipe.jl", "src/MetDrivers/BinaryReaders/reader.jl",
                  "src/Preprocessing/entrypoint.jl",
                  "scripts/run_transport.jl",
