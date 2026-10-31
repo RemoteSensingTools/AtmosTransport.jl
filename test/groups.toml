@@ -443,16 +443,16 @@ paths = [
 ]
 
 [topics.adjoint_footprint]
-description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, tape storage and checkpointing (full, stride, revolve)"
+description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, tape storage and checkpointing (full, stride, revolve) and the bitwise tape gate"
 files = [
     "core/test_linrood_kernel_adjoints.jl",
     "core/test_cs_adjoint_production_parity.jl",
     "core/test_cs_adjoint_step_plan_parity.jl",
+    "core/test_cs_adjoint_tape_bitwise.jl",
     "core/test_cs_linrood_fv3_adjoint.jl",
     "core/test_cs_ppm_adjoint_footprint.jl",
     "core/test_cs_stride_checkpoint.jl",
-    "core/test_cs_tape_mmap_roundtrip.jl",
-    "core/test_cs_tape_path.jl",
+    "core/test_cs_tape_storage.jl",
 ]
 paths = [
     "src/Adjoints/**",

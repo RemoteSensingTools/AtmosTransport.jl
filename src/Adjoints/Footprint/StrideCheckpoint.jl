@@ -14,12 +14,19 @@
 # has run is a function of the step index.
 # ---------------------------------------------------------------------------
 
-# Per-window / per-base-case subdirectory under a user-supplied `tape_path`.
-# Five zero-padded digits keep alphabetical sort agreeing with numeric order
-# through nsteps = 99999. The leading tag distinguishes Stride (`window_*`)
-# from Revolve (`step_*`) subdirs so one `tape_path` tree can host both.
-_stride_window_subdir(w::Integer) = "window_" * lpad(w, 5, '0')
-_revolve_step_subdir(step::Integer) = "step_" * lpad(step, 5, '0')
+# The tape storage of a call is opened once, after the replay has counted the
+# bytes of the largest tape the call records, when the storage reserves them up
+# front (`MmapCSTapeStorage`): the recorder that counts them during a
+# propagation run from step 1, else none.
+_tape_size_counter(tape_storage) =
+    _needs_tape_size(tape_storage) ? _CSCountingRecorder() : NoStepRecorder()
+
+# The mmap bytes (`_tape_slot_bytes`) of the tape of `steps` (counted from step 1).
+_counted_slot_bytes(::NoStepRecorder, _steps::AbstractUnitRange) = 0
+function _counted_slot_bytes(counter::_CSCountingRecorder, steps::AbstractUnitRange)
+    through = counter.slot_bytes_through_step
+    return through[last(steps)] - (first(steps) == 1 ? 0 : through[first(steps) - 1])
+end
 
 # The reverse state of one adjoint start at the end of the replayed run: the
 # starting adjoint state (from the run's final air mass), zero footprints for
@@ -52,101 +59,75 @@ function _footprint_result(start, footprints, lambda, dt, replay::_CSReplay)
         objective, footprints, lag_steps, FT(dt), lambda)
 end
 
-# FullCheckpoint: one tape for all starts. The storage is constructed here so
-# it is finalized deterministically after the last reverse walk. With
-# `tape_path !== nothing` this is load-bearing — the user's directory keeps
-# `records.bin` + `manifest.toml` after the call returns rather than relying
-# on GC to flush the manifest. A pre-constructed `AbstractCSTapeStorage` is
-# used as is (`_build_window_storage` returns it unchanged) and not finalized
-# here, so the caller's manual lifecycle is preserved. When the caller
-# supplied `tape_path`, manifest/close failures propagate (a saved tape
-# without a valid manifest defeats the purpose of `tape_path`); temp-dir
-# tapes keep warn-and-continue, as `cleanup_on_finalize` deletes them anyway.
+# FullCheckpoint: one tape for all starts. A storage that reserves its extent
+# first counts the tape on a run of all steps, then the replay restarts from
+# its initial snapshot, which reproduces the recording run bit for bit.
 function _collect_footprints(::FullCheckpoint, replay::_CSReplay, starts, dt;
-                             tape_storage, tape_path, forcing)
-    storage = _build_window_storage(tape_storage, tape_path)
-    owns_storage = !(tape_storage isa AbstractCSTapeStorage)
-    strict_finalize = tape_path !== nothing
+                             tape_storage, forcing)
+    steps = 1:_replay_nsteps(replay)
+    counter = _tape_size_counter(tape_storage)
+    if counter isa _CSCountingRecorder
+        initial = _replay_snapshot(replay)
+        _replay_steps!(replay, steps; recorder = counter)
+        _replay_restore!(replay, initial)
+    end
+    storage = _open_tape_storage(tape_storage, _counted_slot_bytes(counter, steps))
     try
-        ops = _record_cs_tape!(replay, 1:_replay_nsteps(replay), storage)
+        ops = _record_cs_tape!(replay, steps, storage)
         return map(starts) do start
             lambda, footprints, ws = _start_reverse(replay, start)
             _walk!(footprints, lambda, ops, replay, ws, forcing)
             _footprint_result(start, footprints, lambda, dt, replay)
         end
     finally
-        owns_storage && finalize_tape!(storage; quiet = true, strict = strict_finalize)
+        _release_opened_tape_storage!(storage, tape_storage)
     end
 end
 
 # StrideCheckpoint(K): one propagation pass saves the replay state at every
-# K-step boundary; the reverse pass re-records each window from its saved
-# left edge into a fresh window tape, walks it backwards and drops it. Peak
-# tape is one window; the propagation pass is shared by all starts.
+# K-step boundary (and counts the window tapes for a storage that reserves its
+# extent); the reverse pass re-records each window from its saved left edge
+# into the one storage of the call, walks it backwards and rewinds the storage.
+# Peak tape is one window; the propagation pass is shared by all starts.
 function _collect_footprints(schedule::StrideCheckpoint, replay::_CSReplay, starts, dt;
-                             tape_storage, tape_path, forcing)
+                             tape_storage, forcing)
     n = _replay_nsteps(replay)
-    nw = checkpoint_window_count(schedule, n)
-    checkpoints = Vector{Any}(undef, nw)
-    for w in 1:nw
+    windows = [checkpoint_window_range(schedule, w, n) for w in 1:checkpoint_window_count(schedule, n)]
+    checkpoints = Vector{Any}(undef, length(windows))
+    counter = _tape_size_counter(tape_storage)
+    for (w, steps) in enumerate(windows)
         checkpoints[w] = _replay_snapshot(replay)
-        _replay_steps!(replay, checkpoint_window_range(schedule, w, n))
+        _replay_steps!(replay, steps; recorder = counter)
     end
     final = _replay_snapshot(replay)
-    return map(starts) do start
-        _replay_restore!(replay, final)
-        lambda, footprints, ws = _start_reverse(replay, start)
-        for w in nw:-1:1
-            # Per-window storage, finalized after its walk: for `:mmap` each
-            # window opens its own `records.bin` (under
-            # `joinpath(tape_path, "window_NNNNN")` with `tape_path`).
-            storage_w = _build_window_storage(tape_storage, tape_path, _stride_window_subdir(w))
-            try
+    storage = _open_tape_storage(tape_storage,
+                                 maximum(steps -> _counted_slot_bytes(counter, steps), windows))
+    try
+        return map(starts) do start
+            _replay_restore!(replay, final)
+            lambda, footprints, ws = _start_reverse(replay, start)
+            for w in reverse(eachindex(windows))
+                _rewind_tape_storage!(storage)
                 _replay_restore!(replay, checkpoints[w])
-                ops = _record_cs_tape!(replay, checkpoint_window_range(schedule, w, n), storage_w)
+                ops = _record_cs_tape!(replay, windows[w], storage)
                 _walk!(footprints, lambda, ops, replay, ws, forcing)
-            finally
-                finalize_tape!(storage_w; quiet = true, strict = tape_path !== nothing)
             end
+            _footprint_result(start, footprints, lambda, dt, replay)
         end
-        _footprint_result(start, footprints, lambda, dt, replay)
+    finally
+        _release_opened_tape_storage!(storage, tape_storage)
     end
 end
 
-# The storage checks the drivers rely on, made up front: Stride and Revolve
-# build and finalize one storage per window, so they reject a pre-constructed
-# storage, and the Lin-Rood tape is device-only. The 4D-Var gradient calls
-# this before its forward run, so a rejected combination does not waste that
-# run.
-_require_tape_storage_supported(scheme, ::FullCheckpoint, tape_storage) =
-    _require_scheme_tape_storage(scheme, tape_storage)
-
-function _require_tape_storage_supported(scheme, schedule::AbstractCheckpointSchedule,
-                                         tape_storage)
-    tape_storage isa AbstractCSTapeStorage && throw(ArgumentError(
-        "$(nameof(typeof(schedule))) requires `tape_storage` to be a Symbol " *
-        "(:device, :pinned_host, or :mmap), not a pre-constructed " *
-        "$(typeof(tape_storage)); the driver builds and finalize_tape!s one " *
-        "storage instance per window."))
+# The storage checks the drivers rely on, made before any forward run: the
+# `tape_storage` argument is supported, and the Lin-Rood tape is device-only.
+# The 4D-Var gradient calls this before its forward run, so a rejected
+# combination does not waste that run.
+function _require_tape_storage_supported(scheme, tape_storage)
+    _validate_tape_storage(tape_storage)
     return _require_scheme_tape_storage(scheme, tape_storage)
 end
 
 _require_scheme_tape_storage(::CSAdjointLinRoodScheme, tape_storage) =
     _linrood_validate_tape_storage(tape_storage)
 _require_scheme_tape_storage(_scheme, _tape_storage) = nothing
-
-# Per-scheme `tape_path` compatibility. LinRood is pinned to `:device`
-# storage, so a non-nothing `tape_path` is meaningless and would only produce
-# empty `records.bin` / `manifest.toml` side effects under the user's tree.
-# Reject here, BEFORE `_resolve_tape_path` runs `mkpath`, so an invalid
-# request leaves the filesystem untouched.
-function _require_tape_path_supported(scheme,
-                                       tape_path::Union{Nothing, AbstractString})
-    tape_path === nothing && return nothing
-    scheme isa CSAdjointLinRoodScheme && throw(ArgumentError(
-        "tape_path is not supported with LinRoodPPMScheme; the LinRood " *
-        "reverse tape is :device-only. Omit tape_path or pick a non-" *
-        "LinRood scheme. (Mmap eviction for LinRood is reserved for a " *
-        "Plan 26 follow-up that refactors the LinRood tape.)"))
-    return nothing
-end

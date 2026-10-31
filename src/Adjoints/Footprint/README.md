@@ -11,10 +11,12 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `StepReplay.jl`: `CSStepSchedule`, resolved windows, replay setup, stepping,
   snapshots and restore. Clock arithmetic is shared with Models via StepPlans.
 - `ReplaySupport.jl`: replay-specific extension of `require_adjoint_support`.
-- `TapeRecorder.jl`: production recorder hooks and counting recorder.
+- `TapeRecorder.jl`: production recorder hooks and counting recorder (also
+  the per-step byte count an mmap tape reserves before recording).
 - `TapeRecording.jl`: sweep records, recording and `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
-- `StrideCheckpoint.jl`, `revolve_checkpoint.jl`: Full/Stride/Revolve drivers.
+- `StrideCheckpoint.jl`, `revolve_checkpoint.jl`: Full/Stride/Revolve drivers
+  and the tape-storage checks made before the forward run.
 - `FootprintAPI.jl`: footprint and seeded-footprint entry points.
 
 ## Depends on
@@ -45,9 +47,13 @@ state (emission Kahan compensation, convection/diffusion carries and caches).
 Each sweep stores its entering air mass and, for limited schemes, tracer mass.
 The reverse reads them with separate Tape roles. Every step ends with a
 forcing marker; one emission record per step stores the surface footprint.
-Full/Stride/Revolve preserve the existing arithmetic and restart behavior.
-Lin–Rood accepts device tape storage only. Level Nz is the surface.
+Full/Stride/Revolve give the same gradients bit for bit on one CPU thread
+(`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape
+storage, rewinds it before each re-recorded window and releases it at the
+end; a storage that reserves its extent (`MmapCSTapeStorage`) is sized by
+counting the largest tape on the replay first. Lin–Rood accepts device tape
+storage only. Level Nz is the surface.
 
-# shared: CSFootprintResult, _ZeroStart, _cs_objective_footprints, _cs_replay_for_call, _cs_surface_footprints, _replay_m, _replay_rm, _replay_steps!, _require_tape_path_supported, _require_tape_storage_supported, _validate_step_sequences
+# shared: CSFootprintResult, _ZeroStart, _cs_objective_footprints, _cs_replay_for_call, _cs_surface_footprints, _replay_m, _replay_rm, _replay_steps!, _require_tape_storage_supported, _validate_step_sequences
 
 # shared: _validate_step_sequences

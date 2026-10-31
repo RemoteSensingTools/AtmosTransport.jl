@@ -6,7 +6,8 @@
 #     tape record per hook, so the tape holds exactly the operators production
 #     ran, in production order.
 #   * `_CSCountingRecorder` counts the records and staged bytes a tape
-#     recorder would write (`cs_tape_byte_estimate`).
+#     recorder would write (`cs_tape_byte_estimate`, and the extent an mmap
+#     tape reserves before recording).
 #
 # Both implement every hook the cubed-sphere step reaches; a hook they do not
 # implement is a `MethodError`, never a skipped record. The reverse walk
@@ -163,9 +164,11 @@ mutable struct _CSCountingRecorder <: AbstractStepRecorder
     state        :: Int      # staged full-panel tuples
     state_bytes  :: Int
     bytes_per_state :: Int
+    slot_bytes   :: Int      # the staged states' bytes in an mmap tape (`_tape_slot_bytes`)
+    slot_bytes_through_step :: Vector{Int}    # `slot_bytes` at the end of each counted step
 end
 
-_CSCountingRecorder() = _CSCountingRecorder(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+_CSCountingRecorder() = _CSCountingRecorder(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Int[])
 
 _bytes_of(panels) = sum(p -> sizeof(eltype(p)) * length(p), panels)
 
@@ -173,12 +176,17 @@ function _count_state!(r::_CSCountingRecorder, panels)
     r.state += 1
     bytes = _bytes_of(panels)
     r.state_bytes += bytes
+    r.slot_bytes += _tape_slot_bytes(panels)
     r.bytes_per_state = bytes
     return nothing
 end
 
 _begin_recorded_step!(::_CSCountingRecorder, _s, _diffusion_ws, _time) = nothing
-_end_recorded_step!(r::_CSCountingRecorder, _s) = (r.step += 1; nothing)
+function _end_recorded_step!(r::_CSCountingRecorder, _s)
+    r.step += 1
+    push!(r.slot_bytes_through_step, r.slot_bytes)
+    return nothing
+end
 record_halo!(r::_CSCountingRecorder, _dir) = (r.halo += 1; nothing)
 function record_sweep!(r::_CSCountingRecorder, _direction, scheme, panels_m, _rm, _flux, _scale)
     r.sweep += 1
@@ -197,11 +205,13 @@ function record_convection!(r::_CSCountingRecorder, _op, _forcing, panels_m, _dt
     _count_state!(r, panels_m)
     return nothing
 end
-function record_air_mass_reset!(r::_CSCountingRecorder, mode, state, _target)
+# Counts what the tape recorder stages: the air mass and the target (whose
+# element type may differ from the state's).
+function record_air_mass_reset!(r::_CSCountingRecorder, mode, state, target)
     r.reset += 1
     r.halo += 1
     if mode === :preserve_vmr
-        _count_state!(r, state.air_mass); _count_state!(r, state.air_mass)
+        _count_state!(r, state.air_mass); _count_state!(r, target)
     end
     return nothing
 end
