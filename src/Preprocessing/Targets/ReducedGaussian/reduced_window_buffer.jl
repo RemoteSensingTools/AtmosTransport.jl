@@ -1,5 +1,5 @@
 # Reduced-Gaussian spectral preprocessing: two-slot window buffer, window workspace, ingest/drain/flush with adaptive substeps.
-# Split from reduced_transport_helpers.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Split from reduced_transport_helpers.jl (refactor phase 4); included by ReducedGaussian.jl in this order.
 
 """
     SlidingWindowBuffer{FT}
@@ -39,7 +39,6 @@ function fill_buffer_slot!(buf::SlidingWindowBuffer{FT},
     copyto!(buf.m[slot],     merged.m_merged)
     copyto!(buf.hflux[slot], merged.hflux_merged)
     copyto!(buf.fidelity_samples[slot], merged.fidelity_merged)
-    copyto!(buf.cm[slot],    merged.cm_merged)
     buf.ps[slot] .= ps_vec   # broadcast handles Float64→FT conversion in-place
     return nothing
 end
@@ -75,24 +74,14 @@ function _get_or_build_rg_compressed_laplacian!(cache,
                                                 nc::Int,
                                                 nf::Int)
     cache_key = _rg_compressed_laplacian_cache_key(grid)
-    cached = cache === nothing ? nothing : get(cache, cache_key, nothing)
     t_cl = time()
-    if cached !== nothing
-        cL = cached
-        total_entries = cL.row_ptr[end] - 1
-        avg_neighbors = total_entries / nc
-        @info @sprintf("  Compressed Laplacian: reused %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
-                       total_entries, avg_neighbors, nf,
-                       nf / max(total_entries, 1), time() - t_cl)
-        return cL
+    cL, reused = cached_or_build!(cache, cache_key) do
+        build_compressed_laplacian(work.face_left, work.face_right, nc)
     end
-
-    cL = build_compressed_laplacian(work.face_left, work.face_right, nc)
-    cache === nothing || (cache[cache_key] = cL)
     total_entries = cL.row_ptr[end] - 1
     avg_neighbors = total_entries / nc
-    @info @sprintf("  Compressed Laplacian: %d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
-                   total_entries, avg_neighbors, nf,
+    @info @sprintf("  Compressed Laplacian: %s%d unique entries (avg %.1f neighbors/cell) from %d faces (%.0f× compression, %.2fs)",
+                   reused ? "reused " : "", total_entries, avg_neighbors, nf,
                    nf / max(total_entries, 1), time() - t_cl)
     return cL
 end
@@ -192,74 +181,9 @@ function _verify_rg_stored_window!(contract,
                                        write_replay_on, accumulate)
 end
 
-function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
-                              contract,
-                              win_idx::Int,
-                              steps_per_window::Int;
-                              write_replay_on::Bool,
-                              substep_policy) where FT
-    _ = steps_per_window
-    steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
-    old_steps = workspace.steps_schedule[win_idx]
-    source_steps = old_steps
-    workspace.fidelity_capture[] = capture_faceindexed_flux_samples(
-        workspace.work.fidelity_sampler.faces, workspace.buf.hflux[workspace.cur],
-        workspace.buf.fidelity_samples[workspace.cur])
-    diag = nothing
-    contract_diag = nothing
-    while true
-        old_steps == steps ||
-            rescale_substep_amounts!((workspace.buf.hflux[workspace.cur],),
-                                     old_steps, steps)
-        old_steps = steps
-        workspace.steps_schedule[win_idx] = steps
-        contract.steps_per_window = steps
-        diag = balance_window!(workspace.hflux_work, workspace.m_cur_work,
-                               workspace.m_next_work, workspace.cm_work,
-                               workspace.div_scratch, workspace.dm_target_work,
-                               workspace.buf, workspace.cur,
-                               workspace.buf.m[workspace.nxt],
-                               workspace.work, workspace.cL, steps;
-                               weights = workspace.balance_weights)
-        contract_diag = _verify_rg_stored_window!(
-            contract, workspace, workspace.buf.m[workspace.nxt], win_idx;
-            write_replay_on = write_replay_on, accumulate = false)
-        next_steps = next_substeps(substep_policy, steps,
-                                   contract_diag.positivity.ratio)
-        next_steps == steps && break
-        steps = next_steps
-    end
-    update_accumulator!(contract, contract_diag.positivity, win_idx)
-    amount_seconds = 0.5 * workspace.dt_met_seconds / steps
-    initial_seconds = 0.5 * workspace.dt_met_seconds / source_steps
-    accepted_capture = scale_captured_flux_samples(
-        workspace.fidelity_capture[], amount_seconds / initial_seconds)
-    flux_evidence = faceindexed_wind_evidence(
-        ReducedGaussianTargetGeometry, accepted_capture,
-        workspace.buf.hflux[workspace.cur]; method = "reduced_spectral_uv_dp",
-        amount_seconds)
-    omega_evidence = NoSourceOmegaEvidence{
-        ReducedGaussianTargetGeometry,FT,SourceHasNoOmega}(SourceHasNoOmega())
-    ready = ReadyWindow{ReducedGaussianTargetGeometry, FT}(
-        win_idx,
-        (m = workspace.buf.m[workspace.cur],
-         hflux = workspace.buf.hflux[workspace.cur],
-         cm = workspace.buf.cm[workspace.cur],
-         ps = workspace.buf.ps[workspace.cur]),
-        FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
-                                   NoColumnClosureRecord()))
-    workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
-    return (ready = ready, balance = diag, contract = contract_diag)
-end
-
-function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
-                              contract,
-                              win_idx::Int,
-                              steps_per_window::Int;
-                              write_replay_on::Bool,
-                              substep_policy,
-                              m_next = workspace.buf.m[workspace.cur]) where FT
-    _ = steps_per_window
+function _finish_reduced_window!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
+                                  contract, win_idx::Int, m_next;
+                                  write_replay_on::Bool, substep_policy) where FT
     steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
     old_steps = workspace.steps_schedule[win_idx]
     source_steps = old_steps
@@ -309,4 +233,22 @@ function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace{
         FluxFidelityEvidenceBundle(flux_evidence, omega_evidence,
                                    NoColumnClosureRecord()))
     return (ready = ready, balance = diag, contract = contract_diag)
+end
+
+function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                              contract, win_idx::Int, steps_per_window::Int;
+                              write_replay_on::Bool, substep_policy)
+    result = _finish_reduced_window!(workspace, contract, win_idx,
+                                     workspace.buf.m[workspace.nxt];
+                                     write_replay_on, substep_policy)
+    workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
+    return result
+end
+
+function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
+                              contract, win_idx::Int, steps_per_window::Int;
+                              write_replay_on::Bool, substep_policy,
+                              m_next=workspace.buf.m[workspace.cur])
+    return _finish_reduced_window!(workspace, contract, win_idx, m_next;
+                                   write_replay_on, substep_policy)
 end

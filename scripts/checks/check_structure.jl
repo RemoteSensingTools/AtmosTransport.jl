@@ -260,6 +260,14 @@ parent_module(m) = contains(m, '.') ? first(rsplit(m, '.'; limit = 2)) : ""
 
 function module_path(inv, mod, names, dots)
     isempty(names) && return ""
+    # Absolute package imports cannot resolve to a nested module with the same
+    # leaf name (e.g. CubedSphere.SphericalGeometry vs Preprocessing.CubedSphere).
+    # Relative imports still resolve through the ordinary lexical scope below.
+    project = joinpath(inv.root, "Project.toml")
+    if dots == 0 && isfile(project) &&
+       haskey(get(TOML.parsefile(project), "deps", Dict()), first(names))
+        return ""
+    end
     if dots > 0
         parts = String.(split(mod, '.'))
         base = parts[1:max(0, length(parts) - dots + 1)]
@@ -740,6 +748,40 @@ function relocate_pp2_layers(before, file)
     return migrated
 end
 
+# PP3 relocates target/binary identities only. The binary protocols load below
+# LL, then RG/CS (which reuse LL spectral staging/logging). PP1/PP2 stages keep
+# their existing budgets. GS1 can express these four ordered child mappings
+# directly in migrations.toml; no clone/private/docstring/size debt migrates.
+function relocate_pp3_layers(before, file)
+    file == "src/LAYERS.toml" || return before
+    parent = "AtmosTransport.Preprocessing"
+    modules = get(before, "modules", Dict())
+    haskey(modules, parent * ".TransportBinary") && return before
+    haskey(modules, parent) || return before
+    migrated = deepcopy(before)
+    for (table, home, sep, names) in (
+        ("modules", parent, ".", ["TransportBinary", "LatLon", "ReducedGaussian", "CubedSphere"]),
+        ("folders", "src/Preprocessing", "/",
+         ["TransportBinary", "Targets/LatLon", "Targets/ReducedGaussian", "Targets/CubedSphere"]))
+        budgets = get(migrated, table, Dict())
+        haskey(budgets, home) || continue
+        children = home .* sep .* names
+        stages = home .* sep .* ["Core", "Vertical", "Spectral", "MassClosure", "PhysicsInputs"]
+        prior = copy(budgets[home])
+        lower = filter(d -> d != home && !startswith(d, home * sep), prior)
+        for (owner, deps) in budgets
+            owner in stages && continue
+            (home in deps || home * sep * "transport_binary" in deps) && append!(deps, children)
+        end
+        budgets[home] = [prior; children]
+        for (i, child) in enumerate(children)
+            earlier = i == 1 ? String[] : children[1:min(i - 1, 2)]
+            budgets[child] = [lower; stages; earlier]
+        end
+    end
+    return migrated
+end
+
 # A1 retains one module because the fenced root workspaces/Lin-Rood kernels
 # and the topology files share types. Split its existing folder budget only;
 # sibling dependencies remain Reconstruction <- Structured <- CubedSphere.
@@ -824,6 +866,7 @@ function allowance_growth(before, after, file)
     before = relocate_c1_layers(before, file)
     before = relocate_pp1_layers(before, file)
     before = relocate_pp2_layers(before, file)
+    before = relocate_pp3_layers(before, file)
     before = relocate_a1_layers(before, file)
     before = relocate_t1_layers(before, file)
     if file == "src/LAYERS.toml"

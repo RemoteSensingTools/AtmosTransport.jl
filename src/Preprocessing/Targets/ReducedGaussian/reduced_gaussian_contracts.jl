@@ -108,7 +108,7 @@ function verify_substep_positivity_rg!(m::AbstractMatrix{FT},
                                         cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                         outgoing_h::Union{Nothing, AbstractMatrix{Float64}} = nothing,
                                         bad_h::Union{Nothing, AbstractMatrix{Bool}} = nothing) where FT
-    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_rg!")
+    validate_cfl_limit(cfl_limit, "verify_substep_positivity_rg!")
     nc, Nz = size(m)
     size(hflux, 2) == Nz ||
         error("verify_substep_positivity_rg!: hflux level count " *
@@ -347,8 +347,8 @@ function verify_rg_window_contract!(m_cur::AbstractMatrix{FT},
     # `ReducedGaussianContract` constructor validates too, but the
     # wrapper is exported and CS production paths call analogous CS
     # wrappers directly — same defense-in-depth pattern.
-    _validate_replay_tol(replay_tol, "verify_rg_window_contract!")
-    _validate_cfl_limit(positivity_cfl_limit, "verify_rg_window_contract!")
+    validate_replay_tol(replay_tol, "verify_rg_window_contract!")
+    validate_cfl_limit(positivity_cfl_limit, "verify_rg_window_contract!")
     isfinite(boundary_stub_tol) && boundary_stub_tol ≥ 0 ||
         error("verify_rg_window_contract!: boundary_stub_tol = " *
               "$(boundary_stub_tol); must be finite and ≥ 0.")
@@ -392,7 +392,7 @@ end
 Zero-valued state for accumulating the worst per-window RG positivity
 diagnostic across a preprocessing loop.
 """
-init_rg_positivity_accumulator() = RGWorst((0.0, :none, 0, (0, 0)))
+init_rg_positivity_accumulator() = init_positivity_accumulator(Val(2))
 
 """
     update_rg_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
@@ -401,11 +401,7 @@ Return an updated RG accumulator from a fresh per-window diagnostic.
 """
 function update_rg_positivity_accumulator(worst::RGWorst, diag::NamedTuple,
                                             win_idx::Integer)
-    diag.ratio > worst.ratio || return worst
-    return RGWorst((Float64(diag.ratio),
-                    diag.direction === nothing ? :none : Symbol(diag.direction),
-                    Int(win_idx),
-                    NTuple{2, Int}(diag.location)))
+    return update_positivity_accumulator(worst, diag, win_idx)
 end
 
 """
@@ -422,48 +418,9 @@ function summarize_rg_positivity_status(worst::RGWorst;
                                           steps_per_window::Integer,
                                           require_substep_positivity::Bool = true,
                                           quarantine_path::Union{Nothing, AbstractString} = nothing)
-    msg = @sprintf("max outgoing/m=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
-                   worst.ratio, worst.direction, worst.win,
-                   worst.location, cfl_limit)
-    if worst.ratio <= cfl_limit
-        @info "  Per-substep positivity gate: $msg"
-        return nothing
-    end
-
-    max_safe_factor       = typemax(Int) ÷ max(Int(steps_per_window), 1)
-    useful_recommendation = isfinite(worst.ratio) &&
-                             isfinite(cfl_limit) && cfl_limit > 0 &&
-                             worst.ratio / cfl_limit <= max_safe_factor
-
-    detail = if useful_recommendation
-        recommended = max(Int(steps_per_window),
-                          ceil(Int, worst.ratio / cfl_limit) * Int(steps_per_window))
-        "Per-substep positivity contract violated: $msg. " *
-        "The binary stores fluxes that violate positivity at the recorded " *
-        "`steps_per_window=$(steps_per_window)`. Re-run with " *
-        "`steps_per_window=$(recommended)` (or higher) on the source " *
-        "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
-        "to suppress."
-    else
-        "Per-substep positivity contract violated, and no representable " *
-        "`steps_per_window` can rescue it: $msg. " *
-        "The observed ratio is `Inf`/`NaN` (m<=0, NaN-mass/flux, or Inf-flux) " *
-        "or finite but pathologically large; the configured `cfl_limit` may " *
-        "also be non-positive. Either the source data has been corrupted " *
-        "upstream of preprocessing, the pressure-fixer / endpoint-balance " *
-        "pass drove a cell negative, or `[numerics].positivity_cfl_limit` is " *
-        "misconfigured (must satisfy `0 < cfl_limit <= 1`). Investigate the " *
-        "source field at the reported cell location, or set " *
-        "`[numerics].require_substep_positivity = false` to record the " *
-        "violation as a warning and keep the binary for diagnostic inspection."
-    end
-    if require_substep_positivity
-        quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
-        error(detail)
-    else
-        @warn detail
-    end
-    return nothing
+    return summarize_positivity_status(worst; budget_label="outgoing/m",
+                                        cfl_limit, steps_per_window,
+                                        require_substep_positivity, quarantine_path)
 end
 
 # ---------------------------------------------------------------------------
@@ -520,13 +477,8 @@ mutable struct ReducedGaussianContract{FT} <:
                                           boundary_stub_tol::Real = 0.0,
                                           face_left::AbstractVector{<:Integer},
                                           face_right::AbstractVector{<:Integer}) where FT
-        isfinite(replay_tol) && replay_tol > 0 ||
-            error("ReducedGaussianContract: replay_tol = $(replay_tol); " *
-                  "must be finite and > 0 (Inf would silently disable replay; " *
-                  "NaN would fail every window late).")
-        isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
-            error("ReducedGaussianContract: positivity_cfl_limit = " *
-                  "$(positivity_cfl_limit); must be in (0, 1].")
+        validate_replay_tol(replay_tol, "ReducedGaussianContract")
+        validate_cfl_limit(positivity_cfl_limit, "ReducedGaussianContract")
         steps_per_window ≥ 1 ||
             error("ReducedGaussianContract: steps_per_window = " *
                   "$(steps_per_window); must be ≥ 1.")

@@ -21,12 +21,12 @@ remap retain it where reproducing IFS geometry requires it.
 - CLI: [`../../scripts/preprocessing/preprocess_transport_binary.jl`](../../scripts/preprocessing/preprocess_transport_binary.jl)
   `<config.toml> [--day D | --start D --end D]` calls
   `process_day(cfg::Dict{String, Any}; day_override, start_date, end_date)` in
-  [`transport_binary/entrypoint.jl`](transport_binary/entrypoint.jl). A config
+  [`entrypoint.jl`](entrypoint.jl). A config
   with `[source].toml` takes the native-source path (`load_met_settings`);
   otherwise it is ERA5 spectral (`[input].spectral_dir`, `ERA5SpectralSettings`).
 - Per-day extension point: `process_day(date, grid::AbstractTargetGeometry,
   settings, vertical; ...)`; the fallback in
-  [`transport_binary/topology_dispatch.jl`](transport_binary/topology_dispatch.jl)
+  [`TransportBinary/topology_dispatch.jl`](TransportBinary/topology_dispatch.jl)
   rejects pairs unless `preprocessor_pair_supported` returns `true`.
 - Target grids: `build_target_geometry(cfg_grid, FT)` ([`Core/target_geometry.jl`](Core/target_geometry.jl));
   `[grid].type` is `latlon`, `era5_native_reduced_gaussian` (alias
@@ -46,13 +46,13 @@ remap retain it where reproducing IFS geometry requires it.
 
 | Settings type | Target | `process_day` lives in | Day loop |
 |---|---|---|---|
-| `ERA5SpectralSettings` | `LatLonTargetGeometry` | [`transport_binary/latlon_spectral.jl`](transport_binary/latlon_spectral.jl) | unified driver |
-| `ERA5SpectralSettings` | `ReducedGaussianTargetGeometry` | [`reduced_spectral_day.jl`](reduced_spectral_day.jl) | unified driver |
-| `ERA5SpectralSettings` | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_spectral.jl`](transport_binary/cubed_sphere_spectral.jl) | unified driver |
+| `ERA5SpectralSettings` | `LatLonTargetGeometry` | [`Targets/LatLon/latlon_spectral.jl`](Targets/LatLon/latlon_spectral.jl) | unified driver |
+| `ERA5SpectralSettings` | `ReducedGaussianTargetGeometry` | [`Targets/ReducedGaussian/reduced_spectral_day.jl`](Targets/ReducedGaussian/reduced_spectral_day.jl) | unified driver |
+| `ERA5SpectralSettings` | `CubedSphereTargetGeometry` | [`Targets/CubedSphere/cubed_sphere_spectral.jl`](Targets/CubedSphere/cubed_sphere_spectral.jl) | unified driver |
 | `GEOSITSettings`, `GEOSFPSettings` | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_geos.jl`](transport_binary/cubed_sphere_geos.jl) | unified driver |
 | `ERA5N320Settings` | `CubedSphereTargetGeometry` | [`transport_binary/era5_n320_regrid.jl`](transport_binary/era5_n320_regrid.jl) | own loop |
 | `MERRA2Settings` | `CubedSphereTargetGeometry` | [`transport_binary/merra2_latlon_regrid.jl`](transport_binary/merra2_latlon_regrid.jl) | own loop |
-| LL transport binary | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_regrid.jl`](transport_binary/cubed_sphere_regrid.jl) | own loop, own CLI |
+| LL transport binary | `CubedSphereTargetGeometry` | [`Targets/CubedSphere/cubed_sphere_regrid.jl`](Targets/CubedSphere/cubed_sphere_regrid.jl) | own loop, own CLI |
 
 GEOS targets need `panel_convention = "geos_native"` and a target `Nc` equal
 to the source `Nc` or an integer divisor of it (nested block coarsening).
@@ -119,9 +119,14 @@ ERA5 N320 and MERRA-2 to CS:
 Stage submodules load in pipeline order: [Core](Core/README.md), [Vertical](Vertical/README.md),
 [Spectral](Spectral/README.md), [MassClosure](MassClosure/README.md),
 and [PhysicsInputs](PhysicsInputs/README.md). All retained public names remain reachable through
-`Preprocessing`. Targets, TransportBinary and Sources remain in their existing folders for PP3/PP4.
+`Preprocessing`. Shared [TransportBinary](TransportBinary/README.md) APIs load next, followed by
+[LatLon](Targets/LatLon/README.md), [ReducedGaussian](Targets/ReducedGaussian/README.md),
+and [CubedSphere](Targets/CubedSphere/README.md). These targets are direct child modules
+of Preprocessing. RG and CS reuse LL staging/logging; targets import no parent or source
+implementation. Sources and per-source day drivers remain for PP4.
 The subfolders have their own READMEs
 ([`sources/`](sources/README.md), [`transport_binary/`](transport_binary/README.md)).
+The facade owns [`entrypoint.jl`](entrypoint.jl), which dispatches to the stages.
 
 - [`Preprocessing.jl`](Preprocessing.jl) — module, imports, include order, exports
 - [`Core/binary_pipeline.jl`](Core/binary_pipeline.jl) — pipeline protocols and staging paths; the root includes the deferred `transport_binary/` workflows
@@ -136,15 +141,15 @@ The subfolders have their own READMEs
 - [`Spectral/spectral_io.jl`](Spectral/spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
 - [`Spectral/spectral_synthesis.jl`](Spectral/spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
 - [`Spectral/reduced_spectral_synthesis.jl`](Spectral/reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
-- [`reduced_transport_helpers.jl`](reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, horizontal fluxes and level merge (cm diagnosis is in MassClosure/ring_closure.jl)
-- [`reduced_window_buffer.jl`](reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
-- [`reduced_spectral_day.jl`](reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
+- [`Targets/ReducedGaussian/reduced_transport_helpers.jl`](Targets/ReducedGaussian/reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, horizontal fluxes and level merge (balanced cm uses MetDrivers.recompute_cm_from_dm_target!)
+- [`Targets/ReducedGaussian/reduced_window_buffer.jl`](Targets/ReducedGaussian/reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
+- [`Targets/ReducedGaussian/reduced_spectral_day.jl`](Targets/ReducedGaussian/reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
 - [`Spectral/mass_support.jl`](Spectral/mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
 - [`MassClosure/ring_poisson_balance.jl`](MassClosure/ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
 - [`../Grids/CSGlobalFaceTable.jl`](../Grids/CSGlobalFaceTable.jl) — CS global cell and face indexing (the face table)
 - [`MassClosure/cs_poisson_solver.jl`](MassClosure/cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
 - [`MassClosure/cs_poisson_balance.jl`](MassClosure/cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, `diagnose_cs_cm!`; shared weights are in `MassClosure/column_weights.jl`
-- [`cs_transport_helpers.jl`](cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`) (wind recovery is in MassClosure)
+- [`Targets/CubedSphere/cs_transport_helpers.jl`](Targets/CubedSphere/cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`) (wind recovery is in MassClosure)
 - [`MassClosure/cs_flux_reconstruction.jl`](MassClosure/cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
 - [`MassClosure/cs_wind_rotation.jl`](MassClosure/cs_wind_rotation.jl) — east/north → panel-local wind rotation and LL face fluxes → cell-center winds
 - [`MassClosure/cs_native_fluxes.jl`](MassClosure/cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
@@ -231,10 +236,9 @@ The subfolders have their own READMEs
   `test_{ll,rg,cs}_preprocessor_contract.jl`, `test_preprocessor_substep_schedule.jl`,
   `test_replay_consistency.jl`, `test_global_ps_pin.jl`, `test_poisson_balance.jl`,
   `test_rg_poisson_balance.jl`, `test_vertical_transforms.jl`,
-  `test_spectral_pole_rows.jl`, `test_qv_longitude_normalization.jl`,
+  `test_spectral_targets.jl`, `test_qv_longitude_normalization.jl`,
   `test_preprocessing_integrity.jl`, `test_preprocessing_cache_io.jl`; byte
-  reproducibility in `test_ll_spectral_unified_driver.jl`,
-  `test_rg_preprocessor_unified_driver.jl`, `test_cs_spectral_unified_driver.jl`.
+  reproducibility in the shared `test_spectral_targets.jl`.
   End-to-end cases against recorded references: [`../../test/golden/`](../../test/golden/).
 
 Panel indexing, the global face table, panel packing, geometry-tag parsing and

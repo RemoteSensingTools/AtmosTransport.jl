@@ -3,7 +3,7 @@
 """
 Unit tests for QV longitude/latitude normalization helpers in
 `src/Preprocessing/Spectral/mass_support.jl` and the bilinear interpolator in
-`src/Preprocessing/transport_binary/latlon_workspaces.jl`.
+`src/Preprocessing/Targets/LatLon/latlon_workspaces.jl`.
 
 Codex findings #2 + #3 (regrid-bug audit, 2026-04-28):
 
@@ -12,7 +12,7 @@ Codex findings #2 + #3 (regrid-bug audit, 2026-04-28):
   staging-mesh `[-180, 180)` cell-centered convention. Files already
   centered at -180° must be left alone.
 
-- `_interpolate_ll_qv!` target latitudes must use the cell-centered
+- `interpolate_ll_qv!` target latitudes must use the cell-centered
   staging-mesh convention (`-90 + (j - 0.5) × 180/Ny_dst`), not the
   pole-inclusive convention used by ERA5 source. Without this, the
   interpolation places QV at face latitudes instead of cell centers,
@@ -29,7 +29,7 @@ using Dates
 using NCDatasets
 
 using AtmosTransport
-using AtmosTransport.Preprocessing: normalize_lon_to_centered, _interpolate_ll_qv!,
+using AtmosTransport.Preprocessing: normalize_lon_to_centered, interpolate_ll_qv!,
                                     LatLonBilinearWeights, read_thermo_coordinates,
                                     allocate_qv_workspace, read_window_qv!,
                                     build_target_geometry

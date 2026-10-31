@@ -88,7 +88,7 @@ end
     end
     for path in ("src/Models/DrivenRunner.jl", "src/Models/InputStaging.jl",
                  "src/Models/RuntimePhysicsRecipe.jl", "src/MetDrivers/BinaryReaders/reader.jl",
-                 "src/Preprocessing/transport_binary/entrypoint.jl",
+                 "src/Preprocessing/entrypoint.jl",
                  "scripts/run_transport.jl",
                  "scripts/preprocessing/preprocess_transport_binary.jl",
                  "examples/generate_synthetic_quickstart.jl")

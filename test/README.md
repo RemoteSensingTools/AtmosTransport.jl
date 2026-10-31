@@ -70,7 +70,9 @@ julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
   `test_environment_variables`, `test_documentation_links`,
   `test_config_schema_agreement`, `test_config_key_checks`), the groups
   meta-test, the source-structure ratchet (`test_structure`), the
-  required-keyword call check (`test_keyword_calls`), and
+  required-keyword call check (`test_keyword_calls`), the undefined-global
+  scan of all package methods (`test_undefined_names`: a name a module uses
+  but never imports fails only when that line runs), and
   physics smokes: mass conservation and uniform-tracer invariance of the
   advection kernels, convection and diffusion, short driven lat-lon runs, a
   cubed-sphere run with every operator family across a file handoff, binary

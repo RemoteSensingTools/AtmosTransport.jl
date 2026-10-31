@@ -139,7 +139,7 @@ function validate_staged_binary!(writer::LatLonDeferredBinaryWriter)
         "lat-lon writer produced no staging artifact"))
     expected = Int(writer.header["header_bytes"]) +
                Int(writer.header["nwindow"]) * Int(writer.header["window_bytes"])
-    return _validate_staged_size(writer.path, expected)
+    return validate_staged_size(writer.path, expected)
 end
 
 function allocate_window_workspace(grid::LatLonTargetGeometry,
@@ -148,7 +148,6 @@ function allocate_window_workspace(grid::LatLonTargetGeometry,
                                    spec,
                                    date::Date,
                                    ::Type{FT};
-                                   cache = nothing,
                                    source_steps_per_window::Integer = 1,
                                    write_replay_on::Bool = true) where FT
     Nz_native = vertical.Nz_native
@@ -388,7 +387,6 @@ function process_day(date::Date,
         error("Header JSON too large: $(length(header_json)) >= $(HEADER_SIZE)")
 
     workspace = allocate_window_workspace(grid, settings, vertical, spec, date, FT;
-                                          cache = run_cache,
                                           source_steps_per_window = steps_per_met,
                                           write_replay_on)
     storage = workspace.storage
@@ -436,10 +434,7 @@ function process_day(date::Date,
             error(@sprintf("SIZE MISMATCH: expected %d bytes, got %d",
                            byte_sizes.total_bytes, actual))
 
-        last_merged = (m = storage.all_m[Nt],
-                       am = storage.all_am[Nt],
-                       bm = storage.all_bm[Nt])
-        return driver_result.out_path, last_merged
+        return driver_result.out_path
     finally
         surface_reader === nothing || close_era5_surface_reader(surface_reader)
     end

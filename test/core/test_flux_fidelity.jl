@@ -5,6 +5,7 @@
 using Test
 using Random
 using AtmosTransport
+include(joinpath(@__DIR__, "..", "helpers", "preprocessing_evidence.jl"))
 using JSON3
 
 const Pre = AtmosTransport.Preprocessing
@@ -54,11 +55,13 @@ function omega_evidence(candidate; n = 64, nz = 20, seed = 3)
         samples, "fixture", "instantaneous", "dry", Pre.MERRA2_WIND_OMEGA_BASELINE)
 end
 
-function omega_header(candidate; kwargs...)
+omega_header(candidate; kwargs...) = omega_header(omega_evidence(candidate; kwargs...))
+
+function omega_header(evidence::Pre.AbstractOmegaFidelityEvidence)
     acc = Pre.FluxFidelityAccumulator()
-    flux = Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourceHasNoWinds}(Pre.SourceHasNoWinds())
+    flux = Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourcePayloadOnly}(Pre.SourcePayloadOnly())
     Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(
-        flux, omega_evidence(candidate; kwargs...), Pre.NoColumnClosureRecord()), 1)
+        flux, evidence, Pre.NoColumnClosureRecord()), 1)
     header = Dict{String,Any}()
     err = try
         Pre.flux_fidelity_header!(header, acc)
@@ -70,28 +73,6 @@ function omega_header(candidate; kwargs...)
 end
 
 @testset "typed write-time flux fidelity" begin
-    @testset "sample maps are deterministic and canonical" begin
-        Nc = 4
-        mesh = Grids.CubedSphereMesh(; Nc, FT=Float64)
-        table = Pre.build_cs_global_face_table(
-            Nc, Grids.panel_connectivity_for(mesh.convention))
-        a = Pre.FidelitySampleMap(table; samples_per_window=32)
-        b = Pre.FidelitySampleMap(table; samples_per_window=32)
-        @test a.version == 1
-        @test a.seed == b.seed
-        @test a.faces == b.faces
-        @test length(a.faces) == length(unique(a.faces)) == 32
-        @test all(f -> 1 <= f <= table.nf, a.faces)
-        # Structured lat-lon: ranked once, the same rule as before the cache.
-        s = Pre.StructuredFidelitySampler(12, 7; samples_per_window = 20)
-        nface = 13 * 7 + 12 * 8
-        ranked = sort(collect(1:nface); by = f -> Pre._splitmix64(
-            xor(Pre.FLUX_FIDELITY_SAMPLE_SEED, UInt64(f))))
-        @test s.faces == sort(ranked[1:20])
-        @test Pre.StructuredFidelitySampler(12, 7; samples_per_window = 20).faces == s.faces
-        cells = Pre.OmegaFidelityCells(4; samples_per_window = 16)
-        @test length(cells.cells) == 16 && issorted(cells.cells)
-    end
 
     @testset "wind evidence passes; injected errors fail before write" begin
         for FT in (Float32, Float64)
@@ -137,19 +118,8 @@ end
         # Mixed kinds of evidence.
         acc = Pre.FluxFidelityAccumulator()
         Pre.verify_flux_fidelity!(acc, bundle(e), 1)
-        Pre.verify_flux_fidelity!(acc, Pre.default_fidelity_evidence(CS, Float32), 2)
+        Pre.verify_flux_fidelity!(acc, payload_only_evidence(CS, Float32), 2)
         @test_throws ArgumentError Pre.flux_fidelity_header!(Dict{String,Any}(), acc)
-    end
-
-    @testset "effective time sampling: boundary fallback is recorded" begin
-        h = certificate(win -> bundle(wind_evidence(Float32, (7, 9), 2; time_sampling =
-            win == 3 ? "window_start_boundary_fallback" : "window_mean")), 3, 2)
-        @test h["flux_fidelity_time_sampling"] == "mixed"
-        @test h["flux_fidelity_time_sampling_by_window"] ==
-              ["window_mean", "window_mean", "window_start_boundary_fallback"]
-        @test parse_flux(h).time_sampling_by_window[3] == "window_start_boundary_fallback"
-        bad = copy(h); bad["flux_fidelity_time_sampling_by_window"] = ["window_mean"]
-        @test_throws ArgumentError parse_flux(bad)
     end
 
     @testset "native fluxes are not applicable, with the balance correction" begin
@@ -303,18 +273,7 @@ end
                        for (s, e) in zip(src, noise)]
             evidence = Pre.SourceOmegaEvidence{CS,Float64,typeof(samples)}(
                 samples, "fixture", "instantaneous", "dry", Pre.MERRA2_WIND_OMEGA_BASELINE)
-            acc = Pre.FluxFidelityAccumulator()
-            Pre.verify_flux_fidelity!(acc, Pre.FluxFidelityEvidenceBundle(
-                Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourceHasNoWinds}(Pre.SourceHasNoWinds()),
-                evidence, Pre.NoColumnClosureRecord()), 1)
-            header = Dict{String,Any}()
-            err = try
-                Pre.flux_fidelity_header!(header, acc)
-                nothing
-            catch e
-                e
-            end
-            return header, err
+            return omega_header(evidence)
         end
         unscaled, err = scaled_cm_header(1.0)
         @test err === nothing
@@ -341,7 +300,7 @@ end
             Pre.MERRA2_WIND_OMEGA_BASELINE)
         @test_throws ArgumentError Pre.verify_flux_fidelity!(Pre.FluxFidelityAccumulator(),
             Pre.FluxFidelityEvidenceBundle(
-                Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourceHasNoWinds}(Pre.SourceHasNoWinds()),
+                Pre.NoFluxFidelityEvidence{CS,Float64,Pre.SourcePayloadOnly}(Pre.SourcePayloadOnly()),
                 empty, Pre.NoColumnClosureRecord()), 1)
     end
 

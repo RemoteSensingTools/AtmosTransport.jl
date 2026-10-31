@@ -14,7 +14,7 @@
 # - Native GEOS fluxes have no independent source: their certificate is
 #   `not_applicable` and records only the balance correction.
 
-using ..MetDrivers.BinaryFormat: fidelity_tag, FLUX_FIDELITY_SAMPLE_SEED,
+using ...MetDrivers.BinaryFormat: fidelity_tag, FLUX_FIDELITY_SAMPLE_SEED,
     FidelityPassed, FidelityFailed, FidelityNotApplicable, FidelityUnavailable,
     WindRederivedFidelity, NativePassthroughFidelity, NoFluxFidelityKind
 const OMEGA_FIDELITY_PRESSURE_BANDS =
@@ -34,7 +34,6 @@ fidelity_sample_rule(::Type{ReducedGaussianTargetGeometry}) = "rg_hashed_latitud
 
 abstract type AbstractFluxFidelityReason end
 struct EvidenceNotAttached <: AbstractFluxFidelityReason end
-struct SourceHasNoWinds <: AbstractFluxFidelityReason end
 struct SourcePayloadOnly <: AbstractFluxFidelityReason end
 struct SourceNotOpened <: AbstractFluxFidelityReason end
 struct SourceHasNoOmega <: AbstractFluxFidelityReason end
@@ -42,7 +41,6 @@ struct SourceHasNoOmega <: AbstractFluxFidelityReason end
 struct NativeFluxesNotRederivable <: AbstractFluxFidelityReason end
 
 fidelity_reason(::EvidenceNotAttached) = "evidence_not_attached"
-fidelity_reason(::SourceHasNoWinds) = "source_has_no_winds"
 fidelity_reason(::SourcePayloadOnly) = "source_payload_only"
 fidelity_reason(::SourceNotOpened) = "source_not_opened"
 fidelity_reason(::SourceHasNoOmega) = "source_has_no_omega"
@@ -50,7 +48,7 @@ fidelity_reason(::NativeFluxesNotRederivable) = "native_fluxes_not_rederivable"
 
 # `not_applicable`: the check cannot exist for this source; `unavailable`: it
 # could, but its input was not opened or attached.
-fidelity_status_label(::Union{SourceHasNoWinds, SourcePayloadOnly, SourceHasNoOmega,
+fidelity_status_label(::Union{SourcePayloadOnly, SourceHasNoOmega,
                               NativeFluxesNotRederivable}) = fidelity_tag(FidelityNotApplicable())
 fidelity_status_label(::Union{EvidenceNotAttached, SourceNotOpened}) = fidelity_tag(FidelityUnavailable())
 
@@ -237,12 +235,7 @@ struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}
     closure::C
 end
 
-function default_fidelity_evidence(::Type{G}, ::Type{FT}) where {G,FT}
-    return FluxFidelityEvidenceBundle(
-        NoFluxFidelityEvidence{G,FT,SourcePayloadOnly}(SourcePayloadOnly()),
-        NoSourceOmegaEvidence{G,FT,SourceHasNoOmega}(SourceHasNoOmega()),
-        NoColumnClosureRecord())
-end
+
 
 # ---------------------------------------------------------------------------
 # Deterministic sample maps
@@ -255,12 +248,16 @@ struct FidelitySampleMap
     faces::Vector{Int}
 end
 
-@inline function _splitmix64(x::UInt64)
+@inline function splitmix64(x::UInt64)
     z = x + UInt64(0x9e3779b97f4a7c15)
     z = xor(z, z >> 30) * UInt64(0xbf58476d1ce4e5b9)
     z = xor(z, z >> 27) * UInt64(0x94d049bb133111eb)
     return xor(z, z >> 31)
 end
+
+"""Rank canonical ids by the unchanged SplitMix64 sample rule and explicit salt."""
+ranked_fidelity_ids(ids, seed::UInt64, salt::Integer=0) =
+    sort(collect(ids); by=id -> splitmix64(xor(seed, UInt64(id), UInt64(salt))))
 
 function FidelitySampleMap(face_table::CSGlobalFaceTable;
                            version::Integer=1,
@@ -287,7 +284,7 @@ function FidelitySampleMap(face_table::CSGlobalFaceTable;
     selected = Int[]
     function take_stratum!(xs, wanted, salt)
         isempty(xs) && return
-        ranked = sort(xs; by=f -> _splitmix64(xor(seed, UInt64(f), UInt64(salt))))
+        ranked = ranked_fidelity_ids(xs, seed, salt)
         append!(selected, @view ranked[1:min(wanted, length(ranked))])
     end
     take_stratum!(seam, cld(ns, 4), 1)
@@ -295,7 +292,7 @@ function FidelitySampleMap(face_table::CSGlobalFaceTable;
     take_stratum!(interior, ns - length(selected), 3)
     if length(selected) < ns
         remaining = setdiff(collect(1:face_table.nf), selected)
-        sort!(remaining; by=f -> _splitmix64(xor(seed, UInt64(f), UInt64(4))))
+        remaining = ranked_fidelity_ids(remaining, seed, 4)
         append!(selected, @view remaining[1:(ns - length(selected))])
     end
     sort!(selected)
@@ -317,7 +314,7 @@ end
 function StructuredFidelitySampler(Nx::Integer, Ny::Integer; samples_per_window::Integer=256)
     nface = (Nx + 1) * Ny + Nx * (Ny + 1)
     ns = min(Int(samples_per_window), nface)
-    ranked = sort(collect(1:nface); by=f -> _splitmix64(xor(FLUX_FIDELITY_SAMPLE_SEED, UInt64(f))))
+    ranked = ranked_fidelity_ids(1:nface, FLUX_FIDELITY_SAMPLE_SEED)
     return StructuredFidelitySampler(Int(Nx), Int(Ny), sort(ranked[1:ns]))
 end
 
@@ -330,8 +327,7 @@ end
 function OmegaFidelityCells(Nc::Integer; samples_per_window::Integer=256)
     nc = 6 * Int(Nc) * Int(Nc)
     ns = min(Int(samples_per_window), nc)
-    ranked = sort(collect(1:nc); by=c -> _splitmix64(xor(
-        FLUX_FIDELITY_SAMPLE_SEED, UInt64(c), UInt64(0x0a11ce))))
+    ranked = ranked_fidelity_ids(1:nc, FLUX_FIDELITY_SAMPLE_SEED, 0x0a11ce)
     return OmegaFidelityCells(Int(Nc), sort(ranked[1:ns]))
 end
 
@@ -417,7 +413,7 @@ end
     sign = UInt64(1) << 63
     return iszero(u & sign) ? (u | sign) : ~u
 end
-@inline _ulp_distance(a::FT, b::FT) where {FT<:Union{Float32,Float64}} =
+@inline ulp_distance(a::FT, b::FT) where {FT<:Union{Float32,Float64}} =
     UInt64(abs(Int128(_ordered_bits(a)) - Int128(_ordered_bits(b))))
 
 # Shared per-window bookkeeping of sampled evidence (wind or native).
@@ -500,7 +496,7 @@ function verify_flux_fidelity!(acc::FluxFidelityAccumulator,
         acc.sumsq_abs += ae * ae
         acc.max_rel = max(acc.max_rel, re)
         acc.sumsq_rel += re * re
-        acc.max_ulp = max(acc.max_ulp, _ulp_distance(s.reference, s.candidate))
+        acc.max_ulp = max(acc.max_ulp, ulp_distance(s.reference, s.candidate))
         _record_balance_correction!(acc, ref, Float64(s.balanced), s.level)
     end
     acc.wind_windows += 1
@@ -1179,12 +1175,7 @@ end
 function _map_structured_fidelity_column!(column::AbstractVector{FT}, native::AbstractVector{FT},
                                           vertical, ps_face::Float64,
                                           ::Val{:merge_map}) where FT
-    fill!(column, zero(FT))
-    mm = vertical.merge_map
-    @inbounds for k in eachindex(mm)
-        column[mm[k]] += native[k]
-    end
-    return column
+    return sum_merged_layers!(column, native, vertical.merge_map)
 end
 _map_structured_fidelity_column!(column, native, vertical, ps_face::Float64,
                                  ::Val{:pressure_overlap}) =

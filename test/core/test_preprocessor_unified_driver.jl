@@ -4,6 +4,7 @@
 using Test
 
 using AtmosTransport
+include(joinpath(@__DIR__, "..", "helpers", "preprocessing_evidence.jl"))
 using .AtmosTransport.Preprocessing: AbstractMetSettings,
                                        AbstractMetReader,
                                        AbstractWindowContract,
@@ -55,7 +56,7 @@ FakeWorkspace{FT}(; flush_final::Bool=false, preverified::Bool=false,
     FakeWorkspace{FT}(Any[], Int[], Int[], flush_final, preverified, accumulated)
 
 _fake_ready(::Type{FT}, index::Int) where FT =
-    ReadyWindow{LatLonTargetGeometry, FT}(index, (token = index,))
+    ReadyWindow{LatLonTargetGeometry, FT}(index, (token = index,), payload_only_evidence(LatLonTargetGeometry, FT))
 
 _fake_diag() = (replay = (max_rel_err = 0.0, max_abs_err = 0.0),
                 positivity = (ok = true, ratio = 0.0, direction = :none,

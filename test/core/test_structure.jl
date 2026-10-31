@@ -539,3 +539,35 @@ end
               ("AtmosTransport.Upper.Lower", "local_value")
     end
 end
+
+@testset "PP3 target and binary identities retain one-way dependencies" begin
+    parent = "AtmosTransport.Preprocessing"
+    stages = parent .* [".Core", ".Vertical", ".Spectral", ".MassClosure", ".PhysicsInputs"]
+    children = parent .* [".TransportBinary", ".LatLon", ".ReducedGaussian", ".CubedSphere"]
+    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids"; stages],
+                                    stages[1] => ["AtmosTransport.Grids"]),
+                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/Core"]))
+    after = StructureCheck.relocate_pp3_layers(before, "src/LAYERS.toml")
+    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
+    @test StructureCheck.relocate_pp3_layers(after, "src/LAYERS.toml") == after
+    @test after["modules"][stages[1]] == before["modules"][stages[1]]
+    @test children[1] in after["modules"][children[2]]
+    @test children[2] in after["modules"][children[3]]
+    @test children[2] in after["modules"][children[4]]
+    for (from,to) in ((children[1],children[2]),(children[2],children[4]),
+                      (children[4],children[3]),(children[3],parent),(stages[1],children[1]))
+        expanded=deepcopy(after); push!(expanded["modules"][from],to)
+        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
+    end
+    debt=Dict("allow"=>Dict("old"=>"existing debt"))
+    @test StructureCheck.relocate_pp3_layers(debt,"clone") == debt
+end
+
+@testset "absolute package imports cannot bind a target module with the same leaf name" begin
+    structure_fixture() do root
+        write_toml(joinpath(root,"Project.toml"), Dict("deps"=>Dict("Lower"=>"external-package")))
+        inv=StructureCheck.inventory(root)
+        @test StructureCheck.module_path(inv,"AtmosTransport.Upper",["Lower","Geometry"],0) == ""
+        @test StructureCheck.module_path(inv,"AtmosTransport.Upper",["Lower"],2) == "AtmosTransport.Lower"
+    end
+end

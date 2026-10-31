@@ -21,7 +21,7 @@ existing lat-lon binary to the cubed sphere is the separate entry point
 `regrid_transport_binary` / `regrid_ll_binary_to_cs`. The ERA5 spectral
 paths (LL, RG, CS) and the GEOS native CS path run through one shared driver,
 `run_unified_preprocessor_day!` in
-`src/Preprocessing/transport_binary/driver.jl`. The ERA5 N320 → CS
+`src/Preprocessing/TransportBinary/driver.jl`. The ERA5 N320 → CS
 (`era5_n320_regrid.jl`), MERRA-2 → CS (`merra2_latlon_regrid.jl`), and
 LL-binary → CS (`cubed_sphere_regrid.jl`) paths run their own per-day loops
 and call the same CS write-time replay and positivity gates.
@@ -37,7 +37,7 @@ abstraction:
 
 The driver pairs each concrete source / vertical / target combination
 with a typed contract surface from
-`src/Preprocessing/transport_binary/window_contracts.jl`:
+`src/Preprocessing/TransportBinary/window_contracts.jl`:
 
 | Trait | Role |
 | --- | --- |
