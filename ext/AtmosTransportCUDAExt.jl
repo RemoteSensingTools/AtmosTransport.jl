@@ -9,13 +9,10 @@ module AtmosTransportCUDAExt
 import AtmosTransport
 import CUDA
 import AtmosTransport.Tape:
-    PinnedHostCSTapeStorage,
-    PinnedHostCSTapeSlot,
-    _MmapTapeFile,
-    _allocate_tape_slot,
-    _register_tape_read_backend!,
-    _mmap_prepare_for_panels!,
-    stage_panels!
+    _free_tape_array!,
+    _pin_host_chunk,
+    _tape_synchronize,
+    _unpin_host_chunk
 using AtmosTransport.Architectures: GPU
 using CUDA: CuArray, CUDABackend
 
@@ -59,42 +56,35 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
     AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
 
-_pinned_host_panel(a::CuArray{T,N}) where {T,N} =
-    CUDA.pin(Array{T,N}(undef, size(a)))
+# Adjoint tape hooks (`src/Tape/`). Tape memory is released explicitly when a
+# reverse-pass call returns (device slabs, read caches, checkpoints, Lin–Rood
+# records), so the CUDA pool gets it back now rather than at a later GC.
+_free_tape_array!(a::CuArray) = CUDA.unsafe_free!(a)
 
-function _allocate_tape_slot(storage::PinnedHostCSTapeStorage,
-                             panels::NTuple{6,<:CuArray})
-    storage.synchronize = CUDA.synchronize
-    _register_tape_read_backend!(storage, panels)
-    host_panels = ntuple(p -> _pinned_host_panel(panels[p]), 6)
-    return PinnedHostCSTapeSlot(storage, host_panels)
+# Device↔host tape copies are synchronous: staging and every read wait for
+# the device (host pools: `PinnedHostCSTapeStorage`, `MmapCSTapeStorage`).
+_tape_synchronize(::CuArray) = CUDA.synchronize()
+
+# A pinned-host tape arena registers each chunk with the driver once, when it
+# allocates it (`cuMemHostRegister`), and unregisters it before freeing it:
+# a staged state is then one device→host copy into page-locked memory, with
+# no per-state allocation or registration. The registration belongs to the
+# context that was current when the chunk was allocated.
+struct _CUDAHostRegistration
+    context::CUDA.CuContext
+    ptr::Ptr{Cvoid}
 end
 
-function stage_panels!(slot::PinnedHostCSTapeSlot,
-                       src::NTuple{6,<:CuArray})
-    @inbounds for p in 1:6
-        copyto!(slot.host_panels[p], src[p])
+function _pin_host_chunk(::CuArray, ptr::Ptr, nbytes::Integer)
+    CUDA.cuMemHostRegister_v2(Ptr{Cvoid}(ptr), Csize_t(nbytes), Cuint(0))
+    return _CUDAHostRegistration(CUDA.context(), Ptr{Cvoid}(ptr))
+end
+
+function _unpin_host_chunk(registration::_CUDAHostRegistration)
+    CUDA.context!(registration.context; skip_destroyed = true) do
+        CUDA.cuMemHostUnregister(registration.ptr)
     end
-    CUDA.synchronize()
-    return slot
-end
-
-# Mmap tape policy on GPU. `_mmap_prepare_for_panels!` is called from
-# `_allocate_tape_slot(::_MmapTapeFile, panels)` (the scratch file an
-# `MmapCSTapeStorage` call opens) before the span is handed out; it records
-# the CuArray backend of the per-role read
-# caches (allocated on first read) and installs the CUDA.synchronize hook
-# so subsequent `copyto!(::Array, ::CuArray)` and
-# `copyto!(::CuArray, ::Array)` operations against the mmap views are
-# wrapped by a device sync. No specialised `_allocate_tape_slot` or
-# `stage_panels!` is needed: both default to mmap-write / mmap-read,
-# and CUDA.jl provides synchronous `copyto!` between `Array` and
-# `CuArray` of matching element type and shape.
-function _mmap_prepare_for_panels!(storage::_MmapTapeFile,
-                                   panels::NTuple{6,<:CuArray})
-    storage.synchronize = CUDA.synchronize
-    _register_tape_read_backend!(storage, panels)
-    return storage
+    return nothing
 end
 
 end # module AtmosTransportCUDAExt

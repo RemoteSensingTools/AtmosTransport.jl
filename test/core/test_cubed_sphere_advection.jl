@@ -541,7 +541,8 @@ end
         # hooks, so recording leaves the production result unchanged.
         out, mout = map(copy, rm), map(copy, m)
         ws = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
-        recorder = Adj.Footprint._CSTapeRecorder(AtmosTransport.DeviceCSTapeStorage())
+        recorder = Adj.Footprint._CSTapeRecorder(AtmosTransport.FullStateTape(),
+            AtmosTransport.Tape._open_tape_pool(AtmosTransport.DeviceCSTapeStorage(), 0))
         Adv.fv_tp_2d_cs!(out, mout, inner_am, inner_bm, mesh, Val(ord), ws.cs, ws.linrood;
                          recorder)
         record = only(recorder.ops)

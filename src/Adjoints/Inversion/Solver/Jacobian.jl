@@ -66,9 +66,11 @@ named time windows. Each returned `footprints[obj, window]` entry is an
 `NTuple{6}` of `(Nc, Nc)` arrays. Window aggregation is a weighted sum of
 per-step emission-rate footprints; use `CSSurfaceFluxWindow(...;
 normalize=true)` for average-rate controls or explicit `weights` for a
-custom temporal basis. `kwargs` are those of `cs_surface_emission_footprint`.
-Every checkpoint schedule records (and recomputes) the forward run once and
-walks it once per objective.
+custom temporal basis. `kwargs` are those of `cs_surface_emission_footprint`,
+including `tape` (an `AdjointTape`). Every checkpoint schedule records the
+forward run once (`StrideCheckpoint` re-records each window once) and walks
+each tape once per objective; with `StrideCheckpoint` the adjoint states of
+all objectives are held at once.
 """
 function cs_surface_flux_jacobian(panels_rm0, panels_m0,
                                   panels_am_steps,
@@ -83,9 +85,9 @@ function cs_surface_flux_jacobian(panels_rm0, panels_m0,
     isempty(objective_vec) && throw(ArgumentError("at least one objective is required"))
     isempty(window_vec) && throw(ArgumentError("at least one surface-flux window is required"))
 
-    # Under the default `FullCheckpoint` the forward tape is recorded once and
-    # walked once per objective; the objectives share the trajectory, so each
-    # walk is the one a separate `cs_surface_emission_footprint` call makes.
+    # The forward tape (each stride window) is recorded once and walked once
+    # per objective; the objectives share the trajectory, so each walk is the
+    # one a separate `cs_surface_emission_footprint` call makes.
     per_step = CSFootprintResult[result for result in _cs_objective_footprints(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, objective_vec; kwargs...)]

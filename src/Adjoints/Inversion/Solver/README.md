@@ -13,8 +13,11 @@
 - `CostGradient.jl`: control-to-source rates, the one forward run (which
   samples the observations and records the tape), weighted departures, one
   forced reverse pass and background cost/gradient; `CSCostOnly` evaluations
-  run the forward run alone.
-- `Optimizer.jl`: gradient descent, L-BFGS, cached evaluations and dispatch.
+  run the forward run alone. `cs_surface_flux_4dvar` opens a tape runtime of
+  its `tape` per call; `_cs_surface_flux_4dvar` evaluates with a given one.
+- `Optimizer.jl`: gradient descent, L-BFGS, cached evaluations and dispatch;
+  `cs_surface_flux_4dvar_optimize` shares one tape runtime (one pool) between
+  its evaluations and releases it when it returns.
 - `Departures.jl`: solver-result adapter to observation-owned departure IO.
 
 ## Depends on

@@ -1,18 +1,23 @@
 # Bitwise gate of the cubed-sphere adjoint tape (core/test_cs_adjoint_tape_bitwise.jl).
 #
-# Every tape storage and checkpoint schedule must give the same gradients, bit
-# for bit, as the device tape with `FullCheckpoint` (the reference variant):
-# footprints and the initial adjoint of the objective, seeded and
-# multi-objective (Jacobian) entry points, and the 4D-Var cost and gradient
-# (layer and column means with a co-sample after the last assimilated step,
-# and, for the cases marked `operators`, the observation operators: time
+# Every tape storage and checkpoint schedule (`AdjointTape`) must give the same
+# gradients, bit for bit, as the default tape (device storage, `FullCheckpoint`;
+# the reference variant): footprints and the initial adjoint of the objective,
+# seeded and multi-objective (Jacobian) entry points, the 4D-Var cost and
+# gradient (layer and column means with a co-sample after the last assimilated
+# step, and, for the cases marked `operators`, the observation operators: time
 # windows, placed points, averaging-kernel columns with the rebin and the hat
 # projection, a cell average, a column the surface-pressure screen leaves out,
-# background terms and the preconditioned space).
+# background terms and the preconditioned space), and a two-iteration 4D-Var
+# optimization, whose evaluations share one tape pool.
 # The cases use rough fields (random values, spikes, exact zeros and ties, sign
 # changes, nonzero emission rates), so the limited PPM reverse meets every
 # branch of its limiters; `limiter_code_counts` histograms those branches on
-# the recorded tape and the test requires each one to occur.
+# the recorded tape and the test requires each one to occur. Most cases pass
+# their inputs directly; the `CapturedInputs` cases capture them with
+# `cs_adjoint_inputs` from a production `DrivenSimulation` (rough met windows
+# on the mock driver of `cs_adjoint_step_plan.jl`), so the gate also covers
+# the capture: per-window flux sharing and scaling, per-window forcing.
 #
 # CPU kernels scatter with atomic adds, so results are bitwise reproducible
 # only single-threaded: the test runs this file in a `--threads=1` subprocess.
@@ -27,12 +32,16 @@
 #     --out=FILE          write all digests and limiter-code counts (TOML)
 #     --record=FILE       write the reference digests in the fixture format
 #     --check=FILE        compare the reference digests with a recorded FILE
-#     --reference-only    run only the reference variant (e.g. on an older
-#                         checkout whose tape API differs)
+#     --reference-only    run only the reference variant, which passes no tape
+#                         keyword (so it also runs on a checkout whose tape
+#                         API differs, e.g. to record main)
 #
-# It prints every problem (a variant that differs from the reference, a
-# limiter branch that never occurs, a digest that differs from `--check`) and
-# exits with status 1 if there is one. A same-host A/B of a branch against
+# It prints every problem (an entry point that throws, a variant that differs
+# from the reference, a limiter branch that never occurs, a digest that differs
+# from `--check`) and exits with status 1 if there is one; a failing entry point
+# does not stop the run. Every array the tape frees explicitly is filled with
+# NaN when it is freed (`poison_freed_tape_arrays!`), so a free before the last
+# read of an array (a use-after-free on a GPU) changes the digests. A same-host A/B of a branch against
 # main: `--record=main.toml` on main, `--check=main.toml` on the branch, both
 # with `SUBPROCESS_FLAGS` (the flags of the test).
 module CSAdjointTapeHarness
@@ -48,6 +57,13 @@ const TapeMod = AT.Tape
 const Adv = AT.Operators.Advection
 
 const HP = 3
+
+# The small driven configuration of the step-plan parity tests (C4, 5 levels,
+# Float64): its mock met driver, grid, convection forcing and operators.
+module StepPlanConfig
+include(joinpath(@__DIR__, "cs_adjoint_step_plan.jl"))
+end
+const SPC = StepPlanConfig
 
 # ---------------------------------------------------------------------------
 # Deterministic rough fields: a splitmix64 hash of the indices, the same on
@@ -145,6 +161,25 @@ _rates(::Type{FT}, Nc, nsteps) where FT =
 # Cases
 # ---------------------------------------------------------------------------
 
+"""The case's inputs go to the entry points directly: rough fluxes of every step."""
+struct DirectInputs end
+
+"""
+    CapturedInputs(; flux_kind = :full_window_mass_amount, vary_ps = true)
+
+The case's inputs are `cs_adjoint_inputs` of a production `DrivenSimulation`
+on the mock met driver of `cs_adjoint_step_plan.jl`, with rough met windows
+(air mass, tracer, face fluxes of streamfunction amplitude `flow`, window mass
+change) and nonzero rough emission rates: one shared flux set per met window,
+scaled by production for `flux_kind = :full_window_mass_amount` (by
+`1/(2 steps)`, different per window), and with `vary_ps` a surface pressure,
+hence a diffusion layer thickness, per window. Float64, `Nc = 4`, `Nz = 5`.
+"""
+Base.@kwdef struct CapturedInputs
+    flux_kind::Symbol = :full_window_mass_amount
+    vary_ps::Bool = true
+end
+
 """One configuration of the production step, run with every tape variant."""
 Base.@kwdef struct Case
     name::String
@@ -162,10 +197,28 @@ Base.@kwdef struct Case
     stride::Int = 2                     # StrideCheckpoint K of the variants
     storages::Vector{String} = ["pinned_host", "mmap"]   # host storages of the variants
     operators::Bool = false             # also run the 4D-Var observation operators (`fourdvar_operators`)
+    inputs = DirectInputs()             # or `CapturedInputs` (cs_adjoint_inputs of a DrivenSimulation)
 end
 
 _limited(scheme) = scheme isa AT.PPMScheme &&
                    (scheme.limiter isa AT.MonotoneLimiter || scheme.limiter isa AT.CW84Limiter)
+
+# The cases whose inputs `cs_adjoint_inputs` captures from a production
+# simulation, in both tiers. The first shares each met window's fluxes under
+# CFL subcycles (counted from the shared arrays at every step), full-window
+# flux storage scaled differently per window, substep CMFMC convection and a
+# diffusion layer thickness per window; the second under the binary window
+# contract with a window-end reset, window TM5 convection and substep flux
+# storage. The 4D-Var control windows (steps 1:3 and 3:7) cross the met
+# windows [2, 3, 2].
+const CAPTURED_CASES = [
+    Case(name = "captured_monotone_cmfmcsub_split_mass_cfl", scheme = AT.PPMScheme(AT.MonotoneLimiter()),
+         conv = :cmfmc, diffusion = :split, cadence = :substep, contract = false,
+         reset = :preserve_tracer_mass, flow = 2.4, storages = ["mmap"], inputs = CapturedInputs()),
+    Case(name = "captured_cw84_tm5win_boundary_vmr", scheme = AT.PPMScheme(AT.CW84Limiter()),
+         conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, stride = 3, storages = ["pinned_host"],
+         inputs = CapturedInputs(flux_kind = :substep_mass_amount)),
+]
 
 # The pairwise core set: each scheme, both float types, every convection
 # operator and diffusion coupling, both cadences, every reset mode, CFL
@@ -175,7 +228,7 @@ _limited(scheme) = scheme isa AT.PPMScheme &&
 # both strides, and the mmap tape (sized by counting on the replay) meets CFL
 # subcycles and substep CMFMC convection. The observation operators run on one
 # Float64 case with CFL subcycles and the mmap tape and one Float32 case with
-# the pinned-host tape.
+# the pinned-host tape. The captured cases (both tiers) close the set.
 const CORE_CASES = [
     Case(name = "f64_cw84_tm5win_boundary_vmr", scheme = AT.PPMScheme(AT.CW84Limiter()),
          conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, storages = ["mmap"]),
@@ -194,6 +247,7 @@ const CORE_CASES = [
          storages = ["pinned_host"]),
     Case(name = "f32_ppm_none_boundary_mass", FT = Float32, scheme = AT.PPMScheme(AT.NoLimiter()),
          diffusion = :boundary, reset = :preserve_tracer_mass, storages = ["mmap"]),
+    CAPTURED_CASES...,
 ]
 
 # The full matrix (opt-in): every scheme × float type × physics family.
@@ -212,13 +266,15 @@ function full_cases()
                          (ph.contract ? "" : "_cfl"))
         push!(cases, Case(; name, FT, scheme, ph...))
     end
-    return cases
+    return append!(cases, CAPTURED_CASES)
 end
 
 # The inputs of a case: the step's fluxes, schedule, reset targets, surface
 # rates and the keywords of its operators (built fresh for every call: the
 # workspaces carry scratch).
-function problem(c::Case)
+problem(c::Case) = problem(c, c.inputs)
+
+function problem(c::Case, ::DirectInputs)
     FT = c.FT
     mesh = AT.CubedSphereMesh(Nc = c.Nc, Hp = HP, FT = FT)
     nsteps = sum(c.steps)
@@ -238,7 +294,9 @@ function problem(c::Case)
             rates = _rates(FT, c.Nc, nsteps))
 end
 
-function physics_kwargs(P)
+physics_kwargs(P) = physics_kwargs(P, P.case.inputs)
+
+function physics_kwargs(P, ::DirectInputs)
     c = P.case
     FT, Nc, Nz = c.FT, c.Nc, c.Nz
     kw = (;)
@@ -283,20 +341,79 @@ function physics_kwargs(P)
                 cell_metrics = metrics, halo_width = HP))
 end
 
+# Met window `w` of a captured case: rough air mass, face fluxes and window
+# mass change on the step-plan grid (mass in units of its `S`, about
+# 1500 kg m⁻² per layer), the step plan's convection forcing of window `w`
+# (its CMFMC 40 times stronger, so the CMFMC CFL needs 2-3 sub-steps) and a
+# surface pressure that changes per window with `vary_ps`.
+function _captured_window(c::Case, inputs::CapturedInputs, w::Int)
+    mesh, Nc, Nz, S = SPC.MESH, SPC.NC, SPC.NZ, SPC.S
+    N = Nc + 2HP
+    m = map(a -> S .* a, _air_mass(Float64, mesh, Nz, 200 + w))
+    am, bm, cm = map(f -> map(a -> S .* a, f), _step_fluxes(Float64, mesh, Nz, 200 + w, c.flow))
+    dm = ntuple(p -> [S * 0.002 * _sym(_u(210 + w, p, i, j, k)) for i in 1:N, j in 1:N, k in 1:Nz], 6)
+    cmfmc(f) = AT.ConvectionForcing(map(a -> 40 .* a, f.cmfmc), map(a -> 40 .* a, f.dtrain), nothing)
+    forcing = c.conv === :tm5 ? SPC._tm5_forcing(w) :
+              c.conv in (:cmfmc, :cmfmc_matrix) ? cmfmc(SPC._cmfmc_forcing(w)) : nothing
+    ps = inputs.vary_ps ? 95_000.0 - 3000.0w : 95_000.0
+    return AT.TransportWindow(m, ntuple(_ -> fill(ps, Nc, Nc), 6),
+                              AT.CubedSphereFaceFluxState{AT.DryBasis}(am, bm, cm);
+                              deltas = AT.MetDrivers.CubedSphereFluxDeltas(dm), convection = forcing,
+                              dkg = ntuple(_ -> fill(S * 1e-5, Nc, Nc, Nz), 6))
+end
+
+# The production simulation of a captured case (not yet run): the case's
+# scheme and operators on the mock driver, a rough tracer and nonzero rough
+# emission rates of both signs.
+function _captured_simulation(c::Case, inputs::CapturedInputs)
+    c.FT === Float64 && c.Nc == SPC.NC && c.Nz == SPC.NZ ||
+        error("$(c.name): captured cases run on the step-plan grid (Float64, Nc = $(SPC.NC), Nz = $(SPC.NZ))")
+    windows = [_captured_window(c, inputs, w) for w in eachindex(c.steps)]
+    driver = SPC._PlanDriver{Float64, typeof(SPC.GRID), eltype(windows)}(
+        SPC.GRID, windows, SPC.WINDOW_DT, c.steps, c.contract, inputs.flux_kind)
+    air = map(copy, windows[1].air_mass)
+    state = AT.CubedSphereState(AT.DryBasis, SPC.MESH, air; CO2 = _tracer_mass(air, SPC.MESH, 10))
+    model = AT.TransportModel(state, AT.allocate_face_fluxes(SPC.MESH, SPC.NZ; basis = AT.DryBasis),
+                              SPC.GRID, c.scheme; diffusion = SPC._diffusion_op(c.diffusion),
+                              convection = SPC._convection_op(c.conv))
+    rates = ntuple(p -> [SPC.S * 1e-6 * _nonzero(_sym(_u(122, p, i, j))) for i in 1:SPC.NC, j in 1:SPC.NC], 6)
+    return AT.DrivenSimulation(model, driver; surface_sources = (AT.SurfaceFluxSource(:CO2, rates),),
+                               physics_cadence = c.cadence, air_mass_reset_mode = c.reset)
+end
+
+_capture(c::Case, inputs::CapturedInputs) =
+    AT.cs_adjoint_inputs(_captured_simulation(c, inputs); tracer = :CO2)
+
+function problem(c::Case, inputs::CapturedInputs)
+    x = _capture(c, inputs)
+    return (; case = c, mesh = x.mesh, m0 = x.panels_m0, rm0 = x.panels_rm0, am = x.panels_am_steps,
+            bm = x.panels_bm_steps, cm = x.panels_cm_steps, schedule = x.kwargs.schedule,
+            nsteps = length(x.panels_am_steps), rates = x.kwargs.emission_rates)
+end
+
+# The operator keywords of a fresh capture (its workspaces carry scratch).
+physics_kwargs(P, inputs::CapturedInputs) =
+    Base.structdiff(_capture(P.case, inputs).kwargs,
+                    NamedTuple{(:scheme, :schedule, :surface_flux, :emission_rates)})
+
 # ---------------------------------------------------------------------------
-# Variants `checkpoint/storage`: the reference is the device tape with
-# FullCheckpoint. `strideK` is the case's stride (2 and 3 both cross the met
-# windows [2, 3, 2]) and `S` each of its host storages.
+# Variants `checkpoint/storage` of the `AdjointTape`: the reference is the
+# default tape (device storage, FullCheckpoint), passed as no keyword.
+# `strideK` is the case's stride (2 and 3 both cross the met windows
+# [2, 3, 2]) and `S` each of its host storages. The Jacobian's two objectives
+# share each stride window's recording; the optimization's evaluations share
+# one tape pool (rewound, and an mmap file counted and reserved once).
 # ---------------------------------------------------------------------------
 
 const REFERENCE = "full/device"
 
 const VARIANT_TEMPLATES = (
-    footprint = [REFERENCE, "strideK/device", "revolve/device", "full/S", "strideK/S", "revolve/S"],
+    footprint = [REFERENCE, "strideK/device", "full/S", "strideK/S"],
     seeded = [REFERENCE, "strideK/S"],
-    jacobian = [REFERENCE, "revolve/S"],
-    fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
-    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
+    jacobian = [REFERENCE, "strideK/device", "strideK/S"],
+    fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
+    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
+    optimize = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
 )
 
 # The entry points a case runs.
@@ -307,13 +424,16 @@ variants(c::Case, entry::Symbol) =
     unique!([replace(t, "K" => string(c.stride), "S" => s)
              for t in VARIANT_TEMPLATES[entry] for s in c.storages])
 
+const STORAGES = Dict("device" => () -> AT.DeviceCSTapeStorage(),
+                      "pinned_host" => () -> AT.PinnedHostCSTapeStorage())
+
 function _variant_kwargs(variant::AbstractString, scratch::AbstractString)
+    variant == REFERENCE && return (;)
     schedule, storage = split(variant, '/')
     checkpoint = schedule == "full" ? AT.FullCheckpoint() :
-                 schedule == "revolve" ? AT.RevolveCheckpoint() :
                  AT.StrideCheckpoint(parse(Int, chopprefix(schedule, "stride")))
-    tape_storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : Symbol(storage)
-    return (; checkpoint, tape_storage)
+    storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
+    return (; tape = AT.AdjointTape(; storage, checkpoint))
 end
 
 # ---------------------------------------------------------------------------
@@ -438,6 +558,8 @@ end
 
 _common(P) = (; scheme = P.case.scheme, schedule = P.schedule, physics_kwargs(P)...)
 
+_norm(tuples) = sqrt(sum(sum(abs2, a) for t in tuples for a in t))
+
 function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractString)
     kw = (; _common(P)..., _variant_kwargs(variant, scratch)...)
     if entry === :footprint
@@ -473,6 +595,20 @@ function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractS
                                        column_met, preconditioner = _preconditioner(P), kw...)
         return ("cost" => [r.cost], "simulated" => r.simulated, "gradients" => r.gradients,
                 "chi_cost" => [chi.cost], "chi_gradients" => chi.gradients)
+    elseif entry === :optimize
+        # Fixed-step gradient descent: two iterations, three evaluations into
+        # one tape pool. The step moves the controls by about a tenth of their
+        # size along the default tape's gradient (the same for every variant).
+        probe = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, _observations(P),
+                                         _controls(P); _common(P)...)
+        step = _norm([c.value for c in _controls(P)]) / (10 * _norm(probe.gradients))
+        optimizer = AT.CSGradientDescent(; iterations = 2, initial_step = step, min_step = step,
+                                         line_search = false)
+        r = AT.cs_surface_flux_4dvar_optimize(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, _observations(P),
+                                              _controls(P); optimizer, kw...)
+        length(r.cost_history) == 3 || error("the optimization took $(r.iterations) of 2 steps")
+        return ("cost_history" => r.cost_history, "controls" => [c.value for c in r.controls],
+                "gradients" => r.last.gradients)
     end
     error("unknown entry point $entry")
 end
@@ -571,9 +707,15 @@ end
 function case_limiter_codes(P)
     replay, _ = ADJ.Footprint._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
                                                   _common(P)..., base_emission_rates = P.rates)
-    ops = ADJ.Footprint._record_cs_tape!(replay, 1:P.nsteps, TapeMod.DeviceCSTapeStorage())
-    return limiter_code_counts(ops, P.case.Nc, P.case.Nz)
+    return limiter_code_counts(_device_tape!(replay, 1:P.nsteps), P.case.Nc, P.case.Nz)
 end
+
+# The device tape of `steps` (`--reference-only` on a checkout from before the
+# tape pools records with the storage descriptor itself).
+_device_tape!(replay, steps) = isdefined(TapeMod, :_open_tape_pool) ?
+    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.FullStateTape(),
+                                   TapeMod._open_tape_pool(TapeMod.DeviceCSTapeStorage(), 0)) :
+    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.DeviceCSTapeStorage())
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -587,20 +729,28 @@ host_fingerprint() = Dict{String, Any}(
     run_cases(cases; scratch, reference_only = false) -> Dict
 
 Digests of every (case, entry point, variant, quantity) and the limiter-code
-counts of the limited-PPM cases, as written by `--out`.
+counts of the limited-PPM cases, as written by `--out`. An entry point that
+throws is reported in `failures` (one line per case, entry point and variant)
+and the run continues; it has no digests.
 """
 function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
     out = Dict{String, Any}("host" => host_fingerprint(), "threads" => Threads.nthreads())
     results = Dict{String, Any}()
+    failures = String[]
     for c in cases
         t0 = time()
         P = problem(c)
         digests = Dict{String, Any}()
         for entry in entries(c)
             vs = reference_only ? [REFERENCE] : variants(c, entry)
-            digests[String(entry)] = Dict{String, Any}(
-                v => Dict{String, Any}(name => digest(x) for (name, x) in run_entry(P, entry, v, scratch))
-                for v in vs)
+            d = digests[String(entry)] = Dict{String, Any}()
+            for v in vs
+                try
+                    d[v] = Dict{String, Any}(name => digest(x) for (name, x) in run_entry(P, entry, v, scratch))
+                catch err
+                    push!(failures, "$(c.name) $entry $v: " * first(sprint(showerror, err), 400))
+                end
+            end
         end
         entry = Dict{String, Any}("digests" => digests)
         if _limited(c.scheme)
@@ -611,6 +761,8 @@ function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
         println(stderr, "  ", rpad(c.name, 44), round(time() - t0; digits = 1), " s")
     end
     out["cases"] = results
+    out["failures"] = failures
+    out["poisoned_arrays"] = POISONED[]
     return out
 end
 
@@ -629,12 +781,16 @@ end
 function variant_mismatches(out)
     bad = String[]
     for (name, entry) in out["cases"], (e, d) in entry["digests"], (v, q) in d
+        haskey(d, REFERENCE) || continue          # a failed reference is in `entry_failures`
         for (quantity, h) in q
             h == d[REFERENCE][quantity] || push!(bad, "$name $e $v: $quantity differs from $REFERENCE")
         end
     end
     return sort!(bad)
 end
+
+"""Entry points that threw: one line per case, entry point and variant."""
+entry_failures(out) = sort!(String[f for f in get(out, "failures", String[])])
 
 # The branch histograms of a limited case: profile branches on every axis and
 # region, and the CW84 minmod slopes.
@@ -673,6 +829,25 @@ function reference_mismatches(out, reference)
         end
     end
     return sort!(bad)
+end
+
+# ---------------------------------------------------------------------------
+# Freed tape memory is poisoned
+# ---------------------------------------------------------------------------
+
+# On a GPU the tape frees its arrays explicitly (`_free_tape_array!`:
+# `unsafe_free!` of device slabs, read caches, stride checkpoints and Lin–Rood
+# records) and the memory is handed out again, so a free placed before the last
+# read of an array is a use-after-free. On the CPU the free is a no-op, so the
+# bitwise gate fills every freed float array with NaN at that moment instead:
+# a premature free then changes the digests. The method is added in the
+# harness's own subprocess only (`main`), never in the test process, and is a
+# no-op on trees without the hook.
+const POISONED = Ref(0)
+function poison_freed_tape_arrays!()
+    isdefined(TapeMod, :_free_tape_array!) || return false
+    @eval TapeMod._free_tape_array!(a::Array{<:AbstractFloat}) = (fill!(a, NaN); $POISONED[] += 1; nothing)
+    return true
 end
 
 # The flags of every bitwise run: one thread, and the default bounds checks
@@ -721,9 +896,11 @@ function main(args = ARGS)
     Threads.nthreads() == 1 ||
         @warn "run with --threads=1: CPU atomics are not bitwise reproducible across threads"
     cases = tier == "core" ? CORE_CASES : full_cases()
+    poison_freed_tape_arrays!()
     # Production logs each growth of the CFL subcycle count; keep warnings.
+    # `invokelatest`: the run sees the poisoning method defined just above.
     out = with_logger(ConsoleLogger(stderr, Warn)) do
-        mktempdir(scratch -> run_cases(cases; scratch, reference_only))
+        mktempdir(scratch -> Base.invokelatest(run_cases, cases; scratch, reference_only))
     end
     out_file === nothing || open(io -> TOML.print(io, out; sorted = true), out_file, "w")
     record_file === nothing || open(record_file, "w") do io
@@ -731,7 +908,8 @@ function main(args = ARGS)
         println(io, "# recorded from main on the [host] below; see test/README.md.")
         TOML.print(io, reference_digests(out); sorted = true)
     end
-    problems = vcat(variant_mismatches(out), missing_limiter_codes(out))
+    problems = vcat(entry_failures(out), variant_mismatches(out), missing_limiter_codes(out))
+    println(stderr, "freed tape arrays poisoned: ", out["poisoned_arrays"])
     if check_file !== nothing
         reference = TOML.parsefile(check_file)
         same_host(out, reference) ||

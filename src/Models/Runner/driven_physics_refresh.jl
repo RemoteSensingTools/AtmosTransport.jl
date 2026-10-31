@@ -279,6 +279,13 @@ function _refresh_convection_forcing!(::AbstractConvection, model::TransportMode
     return nothing
 end
 
+# Whether `_refresh_forcing!` rewrites the model's face fluxes at step
+# `substep` of the current window: every step when they are interpolated
+# within the window, else at the window's first step only. The steps in
+# between read the same arrays, so `cs_adjoint_inputs` captures them once.
+_refreshes_fluxes(sim::DrivenSimulation, substep::Int) =
+    sim.interpolate_fluxes_within_window || substep == 1
+
 # Forcing of the step `substep` of the current window. Interpolated fluxes
 # and humidity change every step. Window-constant fluxes and the convection
 # forcing change only with the window: the operators read the model's copies
@@ -288,11 +295,12 @@ end
 # computes it itself.
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
-    if sim.interpolate_fluxes_within_window
-        interpolate_fluxes!(sim.model.fluxes, sim.window, λ)
-        _apply_runtime_flux_storage_scale!(sim)
-    elseif substep == 1
-        copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
+    if _refreshes_fluxes(sim, substep)
+        if sim.interpolate_fluxes_within_window
+            interpolate_fluxes!(sim.model.fluxes, sim.window, λ)
+        else
+            copy_fluxes!(sim.model.fluxes, sim.window.fluxes)
+        end
         _apply_runtime_flux_storage_scale!(sim)
     end
     if sim.qv_buffer !== nothing

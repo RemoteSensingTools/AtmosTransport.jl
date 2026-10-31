@@ -205,9 +205,10 @@ const P64 = _sweep_problem()
         @test full.observation_cost ≈
               sum(0.5 * ((ref.simulated[i] - o.value) / o.sigma)^2 for (i, o) in enumerate(observations)) rtol = 1e-14
         @test _relerr(full.gradients, ref.gradients) <= 1e-12
-        # The schedules replay the same tape: Stride and Revolve match Full.
-        for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-            result = _fourdvar(P64, observations, controls; scheme, physics, checkpoint)
+        # The schedules replay the same tape: Stride matches Full.
+        for K in (1, 2, 3)
+            result = _fourdvar(P64, observations, controls; scheme, physics,
+                               tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)))
             @test result.simulated == full.simulated
             @test _relerr(result.gradients, full.gradients) <= 1e-12
         end
@@ -222,8 +223,9 @@ end
     controls = _controls(P64)
     for scheme in (AT.UpwindScheme(), AT.PPMScheme(AT.MonotoneLimiter()))
         ref = _reference_4dvar(P64, observations, controls; scheme, physics = :tm5)
-        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-            result = _fourdvar(P64, observations, controls; scheme, physics = :tm5, checkpoint)
+        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.StrideCheckpoint(3))
+            result = _fourdvar(P64, observations, controls; scheme, physics = :tm5,
+                               tape = AT.AdjointTape(; checkpoint))
             @test _relerr(result.gradients, ref.gradients) <= 1e-12
         end
     end
@@ -247,24 +249,36 @@ end
 # One tape and one reverse pass per gradient, whatever the observation count
 # ---------------------------------------------------------------------------
 
-# Device tape storage that counts staged states and reads of staged states.
+# A tape storage that is its own pool and counts staged states, reads of
+# staged states, and the opens, rewinds and releases of its pool.
 mutable struct _CountingTapeStorage <: TapeMod.AbstractCSTapeStorage
     stages::Int
     reads::Int
+    opens::Int
+    rewinds::Int
+    releases::Int
 end
-_CountingTapeStorage() = _CountingTapeStorage(0, 0)
+_CountingTapeStorage() = _CountingTapeStorage(0, 0, 0, 0, 0)
+struct _CountingSlot{P}
+    storage::_CountingTapeStorage
+    panels::P
+end
+TapeMod._open_tape_pool(s::_CountingTapeStorage, _nbytes::Integer) = (s.opens += 1; s)
+TapeMod._holds_tape_bytes(::_CountingTapeStorage, _nbytes::Integer) = true
+TapeMod._rewind_tape_pool!(s::_CountingTapeStorage) = (s.rewinds += 1; s)
+TapeMod._release_tape_pool!(s::_CountingTapeStorage) = (s.releases += 1; nothing)
 TapeMod._allocate_tape_slot(s::_CountingTapeStorage, panels::NTuple{6}) =
-    TapeMod.CSTapeSlot(s, ntuple(p -> similar(panels[p]), 6))
-function TapeMod.stage_panels!(slot::TapeMod.CSTapeSlot{_CountingTapeStorage}, src::NTuple{6})
+    _CountingSlot(s, ntuple(p -> similar(panels[p]), 6))
+function TapeMod.stage_panels!(slot::_CountingSlot, src::NTuple{6})
     slot.storage.stages += 1
     foreach(p -> copyto!(slot.panels[p], src[p]), 1:6)
     return slot
 end
-function TapeMod._tape_panels(slot::TapeMod.CSTapeSlot{_CountingTapeStorage},
-                              ::TapeMod.AbstractTapeReadRole)
+function TapeMod._tape_panels(slot::_CountingSlot, ::TapeMod.AbstractTapeReadRole)
     slot.storage.reads += 1
     return slot.panels
 end
+_counting_tape(storage; kw...) = AT.AdjointTape(; storage, kw...)
 
 
 
@@ -276,27 +290,28 @@ end
     mktempdir() do root
         dir = joinpath(root, "tape")
         duplicate = [controls[1], controls[1]]          # duplicate control names
-        @test_throws ArgumentError _fourdvar(P64, observations, duplicate; scheme,
-                                             tape_storage = AT.MmapCSTapeStorage(dir))
-        @test_throws ArgumentError _fourdvar(P64, observations, controls; scheme,
-                                             tape_storage = :mmap)
+        mmap = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir))
+        @test_throws ArgumentError _fourdvar(P64, observations, duplicate; scheme, tape = mmap)
+        @test_throws TypeError _fourdvar(P64, observations, controls; scheme, tape = :mmap)
         # Lin-Rood tapes are device-only.
         @test_throws ArgumentError _fourdvar(P64, observations, controls;
-                                             scheme = AT.LinRoodPPMScheme(),
-                                             tape_storage = AT.MmapCSTapeStorage(dir))
+                                             scheme = AT.LinRoodPPMScheme(), tape = mmap)
         @test_throws ArgumentError _fourdvar(P64, observations, controls;
                                              scheme = AT.LinRoodPPMScheme(),
-                                             tape_storage = :pinned_host)
+                                             tape = AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage()))
         @test !ispath(dir)
     end
-    # A pre-constructed storage serves Stride and Revolve too: one storage per
-    # call, every step staged once, as with FullCheckpoint.
+    # One pool per call: Full records into it once; Stride rewinds it for each
+    # window and stages every step once, as Full does. The call releases it.
     full = _CountingTapeStorage()
-    reference = _fourdvar(P64, observations, controls; scheme, tape_storage = full)
-    for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
+    reference = _fourdvar(P64, observations, controls; scheme, tape = _counting_tape(full))
+    @test (full.opens, full.rewinds, full.releases) == (1, 0, 1)
+    for K in (2, 3)
         storage = _CountingTapeStorage()
-        result = _fourdvar(P64, observations, controls; scheme, checkpoint, tape_storage = storage)
+        result = _fourdvar(P64, observations, controls; scheme,
+                           tape = _counting_tape(storage; checkpoint = AT.StrideCheckpoint(K)))
         @test storage.stages == full.stages
+        @test (storage.opens, storage.rewinds, storage.releases) == (1, cld(3, K), 1)
         @test _relerr(result.gradients, reference.gradients) <= 1e-13
     end
 end
@@ -334,16 +349,17 @@ end
     n, full = _replayed_steps(evaluate)
     @test n == 4                                # one forward run, recording steps 1-3 (was 4 + 3)
     storage = _CountingTapeStorage()
-    _fourdvar(P64, observations, controls; scheme, tape_storage = storage)
+    _fourdvar(P64, observations, controls; scheme, tape = _counting_tape(storage))
     est = AT.cs_tape_byte_estimate(P64.m, P64.am[1:3], P64.bm[1:3], P64.cm[1:3], P64.mesh, scheme)
     @test storage.stages == est.state_records    # the co-sample's step is not taped
-    n, stride = _replayed_steps(clock -> evaluate(clock; checkpoint = AT.StrideCheckpoint(2)))
+    n, stride = _replayed_steps(clock -> evaluate(clock; tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(2))))
     @test n == 4 + 3                            # the forward run saves the checkpoints; windows re-record 3 steps
     mktempdir() do root
-        n, mmap = _replayed_steps(clock -> evaluate(clock; tape_storage = AT.MmapCSTapeStorage(joinpath(root, "full"))))
+        mmap_tape(dir) = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir))
+        n, mmap = _replayed_steps(clock -> evaluate(clock; tape = mmap_tape(joinpath(root, "full"))))
         @test n == 3 + 4                        # the counting run sizes the file, then one forward run
         dir = joinpath(root, "cost")
-        n, cost = _replayed_steps(clock -> evaluate(clock; tape_storage = AT.MmapCSTapeStorage(dir),
+        n, cost = _replayed_steps(clock -> evaluate(clock; tape = mmap_tape(dir),
                                                     evaluation = AT.CSCostOnly()))
         @test n == 4                            # the forward run alone: no tape, no reverse pass
         @test !ispath(dir)                      # and no tape storage
@@ -376,6 +392,34 @@ end
     @test chi_cost.cost == chi_full.cost && isempty(chi_cost.gradients)
 end
 
+@testset "an optimization records every evaluation into one tape pool" begin
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+    observations, controls = _observations(P64), _controls(P64)
+    optimizer = AT.CSGradientDescent(; iterations = 2, initial_step = 1e3, min_step = 1e-3)
+    optimize(clock; tape) = AT.cs_surface_flux_4dvar_optimize(
+        P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, observations, controls;
+        scheme, dt = DT, diffusion_meteo = clock, optimizer, tape)
+    storage = _CountingTapeStorage()
+    n, counted = _replayed_steps(clock -> optimize(clock; tape = _counting_tape(storage)))
+    evaluations = n ÷ P64.nsteps                # one forward run of every step per evaluation
+    @test evaluations >= 3 && n == evaluations * P64.nsteps
+    # Opened once, rewound by every later evaluation, released at the end.
+    @test (storage.opens, storage.rewinds, storage.releases) == (1, evaluations - 1, 1)
+    mktempdir() do root
+        dir = joinpath(root, "tape")
+        n_mmap, mmap = _replayed_steps(clock -> optimize(clock; tape = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir))))
+        # One file for the optimization: its counting run (every step) comes once.
+        @test n_mmap == n + P64.nsteps
+        @test isempty(readdir(dir))
+        @test mmap.cost_history == counted.cost_history
+        @test Threads.nthreads() == 1 ? mmap.last.gradients == counted.last.gradients :
+                                        _relerr(mmap.last.gradients, counted.last.gradients) <= 1e-13
+    end
+    stride = optimize(nothing; tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(3)))
+    @test Threads.nthreads() == 1 ? stride.cost_history == counted.cost_history :
+                                    isapprox(stride.cost_history, counted.cost_history; rtol = 1e-13)
+end
+
 @testset "the reverse pass stops at the last assimilated step" begin
     # An averaging-kernel column at step 4 that the surface-pressure screen
     # rejects (retrieval surface at 2000 hPa, model about 1000 hPa): the
@@ -387,7 +431,8 @@ end
     screened = AT.CSObservation(4, AT.CSRetrievalColumnObjective(3, 2, 2, 1.36e-3, column, O.DryInterfaces();
         max_surface_pressure_mismatch_pa = 1000.0, mismatch_policy = O.SkipUnplaced()), 0.08, 0.001)
     counted(observations) = (storage = _CountingTapeStorage();
-        r = _fourdvar(P64, observations, controls; scheme, tape_storage = storage, column_met = met); (storage, r))
+        r = _fourdvar(P64, observations, controls; scheme, tape = _counting_tape(storage), column_met = met);
+        (storage, r))
     kept, r_kept = counted(_observations(P64; last = 3))
     taped, r_taped = with_logger(NullLogger()) do
         counted([_observations(P64; last = 3); screened])
@@ -424,33 +469,41 @@ _same_footprints(a, b) = _BITWISE ? _footprint_difference(a, b) == 0 :
                   AT.CSLayerMeanObjective(4, 1, 2, P64.Nz - 1)]
     windows = [AT.CSSurfaceFluxWindow(:all, 1:P64.nsteps), AT.CSSurfaceFluxWindow(:mean12, 1:2; normalize = true)]
     rates = ADJ.Inversion.Solver._surface_rates_from_controls(_controls(P64), P64.nsteps, P64.mesh, P64.rm[1])
-    @testset "$(_label(scheme)), physics $physics, $storage" for (scheme, physics, storage) in (
-            (AT.UpwindScheme(), :tm5, :device),
-            (AT.UpwindScheme(), :split, :pinned_host),
-            (AT.PPMScheme(AT.MonotoneLimiter()), :cmfmc, :device),
-            (AT.PPMScheme(AT.MonotoneLimiter()), :boundary, AT.MmapCSTapeStorage(mktempdir())),
-            (AT.LinRoodPPMScheme(), :tm5, :device))
+    @testset "$(_label(scheme)), physics $physics, $(nameof(typeof(tape.storage))), $(nameof(typeof(tape.checkpoint)))" for
+            (scheme, physics, tape) in (
+            (AT.UpwindScheme(), :tm5, AT.AdjointTape()),
+            (AT.UpwindScheme(), :split, AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage())),
+            (AT.UpwindScheme(), :boundary, AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(3))),
+            (AT.PPMScheme(AT.MonotoneLimiter()), :cmfmc, AT.AdjointTape()),
+            (AT.PPMScheme(AT.MonotoneLimiter()), :boundary,
+             AT.AdjointTape(; storage = AT.MmapCSTapeStorage(mktempdir()))),
+            (AT.PPMScheme(AT.MonotoneLimiter()), :split,
+             AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))),
+            (AT.LinRoodPPMScheme(), :tm5, AT.AdjointTape()),
+            (AT.LinRoodPPMScheme(), :cmfmc, AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(2))))
         base = scheme isa AT.UpwindScheme ? nothing : rates
         jac = AT.cs_surface_flux_jacobian(P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh,
                                           objectives, windows; scheme, dt = DT,
-                                          base_emission_rates = base, tape_storage = storage,
+                                          base_emission_rates = base, tape,
                                           _physics(physics, P64)...)
         for (o, objective) in enumerate(objectives)
             single = AT.cs_surface_emission_footprint(
                 P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, objective;
-                scheme, dt = DT, base_emission_rates = base, tape_storage = storage,
+                scheme, dt = DT, base_emission_rates = base, tape,
                 _physics(physics, P64)...)
             @test jac.per_step_results[o].objective == objective
             @test _same_footprints(jac.per_step_results[o], single)
         end
     end
-    @testset "one recording for all objectives" begin
+    @testset "one recording for all objectives ($(nameof(typeof(checkpoint))))" for
+            checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(3))
         scheme = AT.UpwindScheme()
         est = AT.cs_tape_byte_estimate(P64.m, P64.am, P64.bm, P64.cm, P64.mesh, scheme)
         storage = _CountingTapeStorage()
         AT.cs_surface_flux_jacobian(P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh,
                                     objectives, windows; scheme, dt = DT,
-                                    tape_storage = storage)
+                                    tape = _counting_tape(storage; checkpoint))
+        # Stride records each window once and walks it for every objective.
         @test storage.stages == est.state_records
         @test storage.reads == length(objectives) * est.state_records
     end

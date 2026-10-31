@@ -14,11 +14,14 @@ No lower sibling imports Runner.
 - `driven_window_state.jl`: window storage, copies, staging and prefetch.
 - `driven_physics_refresh.jl`: per-window dz/Kz, convection forcing and midpoint
   refresh; expressions and the one-step-window rule are unchanged.
+  `_refreshes_fluxes` says at which steps `_refresh_forcing!` rewrites the face
+  fluxes (a window's first step, or every step when interpolated).
 - `driven_stepping.jl`: driven constructor, plan phases, window advance,
   source staging, clock transition, `step!`, `run_window!` and `run!`; imports
   the StepPlans reset/halo helpers and SurfaceFlux staging helpers it calls.
 - `adjoint_schedule.jl`: `CSStepSchedule(sim)`, `cs_adjoint_inputs`, fresh-state
-  checks and production forcing capture.
+  checks and production forcing capture (one copy of the face fluxes each time
+  production rewrites them, shared by the steps of a met window).
 - `BinaryPathExpander.jl`: existing binary-path child module.
 - `InputStaging.jl`: existing input-staging child module.
 - [`DrivenRunner/`](DrivenRunner/README.md): configured runner, model setup,
@@ -52,5 +55,6 @@ configured runner (DrivenRunner closes inputs after draining it):
 ## Forward<->adjoint mirrors
 
 `driven_stepping.jl` and `adjoint_schedule.jl` share the production plan,
-refresh functions and clock transition. Operators.StepPlans owns clock/dt
+refresh functions and clock transition; the capture copies the fluxes exactly
+when `_refreshes_fluxes` says production rewrote them. Operators.StepPlans owns clock/dt
 arithmetic. Resource cleanup drains prefetch before closing the input binary.

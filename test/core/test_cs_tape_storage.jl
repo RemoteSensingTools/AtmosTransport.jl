@@ -1,18 +1,21 @@
 #!/usr/bin/env julia
 #
-# Tape storage of the cubed-sphere adjoint: the `tape_storage` values a
-# reverse-pass call accepts and rejects, and the on-disk tier.
+# Tape storage of the cubed-sphere adjoint: the runtime pools a call opens
+# from the storage of its `AdjointTape`, and the `tape` values a reverse-pass
+# call accepts and rejects.
 #
-# `MmapCSTapeStorage(dir)` names a required scratch directory. Each call counts
-# its largest tape, checks the free space of `dir`, and reserves the extent in
-# one anonymous (unlinked) file before recording, so a full disk is an
-# `ArgumentError` with the required and available bytes, not a SIGBUS while
-# recording. The file is mapped once; slots are 64-byte aligned views into
-# that mapping, and releasing the storage unmaps and closes it, so nothing of
-# it outlives the call. Reads come back as views (CPU) or through device
-# caches keyed by read role and panel shape (GPU, emulated here). Gradient
-# parity of every storage and checkpoint schedule is the bitwise gate
-# `test_cs_adjoint_tape_bitwise.jl`.
+# Every pool is reused: a rewind starts the next tape (stride window, 4D-Var
+# evaluation) in the same memory and makes the previous tape's slots stale
+# (`StaleTapeSlotError`), and a release frees the memory now. The device pool
+# reuses its arrays; the pinned-host arena allocates and registers (pins) its
+# host chunks once; `MmapCSTapeStorage(dir)` counts the largest tape, checks
+# the free space of `dir`, and reserves the extent in one anonymous (unlinked)
+# file before recording, so a full disk is an `ArgumentError` with the
+# required and available bytes, not a SIGBUS while recording. Host slots are
+# 64-byte aligned views into the pool's memory that never leave it: reads
+# copy into caches keyed by read role and panel shape (on the device for GPU
+# panels, emulated here). Gradient parity of every storage and checkpoint
+# schedule is the bitwise gate `test_cs_adjoint_tape_bitwise.jl`.
 using Test
 
 import AtmosTransport
@@ -33,6 +36,9 @@ _build_panels(kind::Symbol; Nc = 3, Hp = 3, Nz = 4, FT = Float32, seed = 1) =
 
 _panel_bytes(panels) = sum(p -> sizeof(eltype(p)) * length(p), panels)
 
+# Byte offsets of a host slot's panel views from `base`.
+_offsets(slot, base) = ntuple(p -> Int(pointer(slot.panels[p]) - Ptr{eltype(slot.panels[p])}(base)), 6)
+
 # Mappings of this process into files under `dir` (Linux).
 _mappings_under(dir) = Sys.islinux() ?
     count(line -> occursin(realpath(dir), line), eachline("/proc/self/maps")) : 0
@@ -41,6 +47,91 @@ _mappings_under(dir) = Sys.islinux() ?
 _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
                                 isapprox(a[s][p], b[s][p]; rtol = 1e-12, atol = 1e-15), 1:6),
                   eachindex(a, b))
+
+# A stand-in for device arrays: host pools copy reads into caches `similar` to
+# it, and the arena registers its chunks for it, as for CUDA and AMDGPU arrays.
+struct _PseudoDevArray{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+Base.size(a::_PseudoDevArray) = size(a.data)
+Base.@propagate_inbounds Base.getindex(a::_PseudoDevArray, i::Int...) = a.data[i...]
+Base.@propagate_inbounds Base.setindex!(a::_PseudoDevArray, v, i::Int...) = (a.data[i...] = v)
+Base.IndexStyle(::Type{<:_PseudoDevArray}) = IndexLinear()
+Base.similar(::_PseudoDevArray, ::Type{S}, dims::Dims) where {S} = _PseudoDevArray(Array{S}(undef, dims))
+Base.copyto!(dst::_PseudoDevArray, src::AbstractArray) = (copyto!(dst.data, src); dst)
+Base.copyto!(dst::AbstractArray, src::_PseudoDevArray) = (copyto!(dst, src.data); dst)
+Base.copyto!(dst::_PseudoDevArray, src::_PseudoDevArray) = (copyto!(dst.data, src.data); dst)
+wrap6(panels) = ntuple(p -> _PseudoDevArray(panels[p]), 6)
+
+# Its backend's chunk registrations, as the extensions make them.
+const _REGISTERED = Dict{Ptr{UInt8}, Int}()
+struct _PseudoRegistration
+    ptr::Ptr{UInt8}
+end
+function TapeMod._pin_host_chunk(::_PseudoDevArray, ptr::Ptr, nbytes::Integer)
+    haskey(_REGISTERED, ptr) && error("chunk registered twice")
+    _REGISTERED[Ptr{UInt8}(ptr)] = nbytes
+    return _PseudoRegistration(Ptr{UInt8}(ptr))
+end
+TapeMod._unpin_host_chunk(r::_PseudoRegistration) = (pop!(_REGISTERED, r.ptr); nothing)
+
+@testset "device pool: arrays reused across tapes, stale slots refused" begin
+    src = _build_panels(:m; Nz = 3)
+    pool = TapeMod._open_tape_pool(AT.DeviceCSTapeStorage(), 0)
+    slots = [TapeMod._stage_panels(pool, map(a -> a .+ k, src)) for k in 1:3]
+    @test all(k -> all(p -> TapeMod._tape_panels(slots[k], TapeMod.AirMassRead())[p] == src[p] .+ k, 1:6), 1:3)
+    arrays = [slot.panels for slot in slots]
+    # The next tape (a stride window, an evaluation) records into the same arrays.
+    TapeMod._rewind_tape_pool!(pool)
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(slots[1], TapeMod.AirMassRead())
+    again = [TapeMod._stage_panels(pool, src) for _ in 1:2]
+    @test all(k -> again[k].panels === arrays[k], 1:2)
+    # A state of another element type takes a new array in that place.
+    other = TapeMod._stage_panels(pool, map(a -> Float64.(a), src))
+    @test other.panels !== arrays[3] && eltype(other.panels[1]) === Float64
+    @test length(pool.slabs) == 3
+    @test TapeMod._tape_panels(other, TapeMod.TracerMassRead())[2] == Float64.(src[2])
+    TapeMod._release_tape_pool!(pool)
+    @test pool.released && isempty(pool.slabs)
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(other, TapeMod.AirMassRead())
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._stage_panels(pool, src)
+end
+
+@testset "pinned-host arena: chunks allocated and pinned once, reused across tapes" begin
+    # A 2.24 MB state: the first chunk (64 MiB) holds 29 of them.
+    src = wrap6(_build_panels(:m; Nc = 48, Hp = 3, Nz = 16, FT = Float64))
+    nbytes = TapeMod._tape_slot_bytes(src)
+    arena = TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+    slots = [TapeMod._stage_panels(arena, src) for _ in 1:40]
+    nchunks = length(arena.chunks)
+    @test nchunks == 2 && length(_REGISTERED) == 2
+    @test all(c -> haskey(_REGISTERED, c.base) && _REGISTERED[c.base] == c.capacity, arena.chunks)
+    @test arena.chunks[1].capacity == TapeMod._HOST_ARENA_MIN_CHUNK
+    @test all(slot -> all(p -> UInt(pointer(slot.panels[p])) % 64 == 0, 1:6), slots)
+    # Reads copy into the role's device cache.
+    got = TapeMod._tape_panels(slots[end], TapeMod.AirMassRead())
+    @test got[3] isa _PseudoDevArray && got[3].data == src[3].data
+    # The next tape reuses the chunks in order: no allocation, no registration.
+    bases = [c.base for c in arena.chunks]
+    TapeMod._rewind_tape_pool!(arena)
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(slots[1], TapeMod.AirMassRead())
+    doubled = map(a -> _PseudoDevArray(a.data .* 2), src)
+    again = [TapeMod._stage_panels(arena, doubled) for _ in 1:40]
+    @test [c.base for c in arena.chunks] == bases && length(_REGISTERED) == 2
+    @test pointer(again[1].panels[1]) == pointer(slots[1].panels[1])
+    @test TapeMod._tape_panels(again[40], TapeMod.TracerMassRead())[6].data == 2 .* src[6].data
+    # Release unregisters and frees every chunk now.
+    TapeMod._release_tape_pool!(arena)
+    @test isempty(_REGISTERED) && isempty(arena.chunks) && isempty(arena.read_caches)
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(again[1], TapeMod.AirMassRead())
+    @test_throws TapeMod.StaleTapeSlotError TapeMod._stage_panels(arena, src)
+    # Plain host panels need no registration.
+    cpu = TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+    slot = TapeMod._stage_panels(cpu, map(a -> a.data, src))
+    @test cpu.chunks[1].registration === nothing
+    @test TapeMod._tape_panels(slot, TapeMod.AirMassRead())[1] == src[1].data
+    TapeMod._release_tape_pool!(cpu)
+end
 
 @testset "mmap tape file: reservation and slots" begin
     @testset "anonymous file, reserved extent, bit-exact slots" begin
@@ -56,26 +147,34 @@ _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
             @test filesize(storage.io) == 2nbytes
             @test storage.mapping != C_NULL
             slot = TapeMod._stage_panels(storage, src)
-            @test slot.eltype === Float64
-            @test slot.offsets == (0, stride, 2stride, 3stride, 4stride, 5stride)
+            @test slot isa TapeMod.HostCSTapeSlot && eltype(slot.panels[1]) === Float64
+            @test _offsets(slot, storage.mapping) == (0, stride, 2stride, 3stride, 4stride, 5stride)
             @test storage.cursor == nbytes
             got = TapeMod._tape_panels(slot, TapeMod.AirMassRead())
             @test all(p -> got[p] == src[p] && eltype(got[p]) === Float64, 1:6)
+            # A read is a copy in the role's cache, never a view of the file.
+            @test all(p -> got[p] !== slot.panels[p], 1:6)
 
-            # Rewinding reuses the extent (one stride window after another).
-            TapeMod._rewind_tape_storage!(storage)
+            # Rewinding reuses the extent (one stride window after another);
+            # the previous tape's slots are stale.
+            TapeMod._rewind_tape_pool!(storage)
             @test storage.cursor == 0
             again = TapeMod._stage_panels(storage, map(a -> a .+ 1, src))
-            @test again.offsets == slot.offsets
+            @test _offsets(again, storage.mapping) == _offsets(slot, storage.mapping)
+            @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(slot, TapeMod.AirMassRead())
+            @test_throws TapeMod.StaleTapeSlotError TapeMod.stage_panels!(slot, src)
             TapeMod._stage_panels(storage, src)
             # Growth past the reservation is a counting bug, not a silent extension.
             @test_throws ErrorException TapeMod._stage_panels(storage, src)
             @test filesize(storage.io) == 2nbytes
+            @test TapeMod._holds_tape_bytes(storage, 2nbytes) && !TapeMod._holds_tape_bytes(storage, 2nbytes + 1)
 
-            TapeMod._release_tape_storage!(storage)
-            @test storage.closed
-            @test_throws ArgumentError TapeMod._tape_panels(slot, TapeMod.AirMassRead())
-            @test_throws ArgumentError TapeMod._stage_panels(storage, src)
+            TapeMod._release_tape_pool!(storage)
+            @test storage.released && !TapeMod._holds_tape_bytes(storage, 0)
+            # The slots are refused after the unmap rather than read.
+            @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(again, TapeMod.AirMassRead())
+            @test_throws TapeMod.StaleTapeSlotError TapeMod._stage_panels(storage, src)
+            TapeMod._release_tape_pool!(storage)           # a second release is a no-op
             @test isempty(readdir(dir))
         end
     end
@@ -88,14 +187,15 @@ _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
             storage = TapeMod._MmapTapeFile(dir, sum(TapeMod._tape_slot_bytes, srcs))
             slots = [TapeMod._stage_panels(storage, src) for src in srcs]
             @test storage.cursor == storage.capacity
-            @test issorted([slot.offsets[1] for slot in slots])
-            @test all(slot -> all(o -> o % 64 == 0, slot.offsets), slots)
+            offsets = [_offsets(slot, storage.mapping) for slot in slots]
+            @test issorted(first.(offsets))
+            @test all(o -> all(x -> x % 64 == 0, o), offsets)
             for idx in 4:-1:1      # the reverse walk's order
                 got = TapeMod._tape_panels(slots[idx], TapeMod.AirMassRead())
                 @test all(p -> size(got[p]) == size(srcs[idx][p]) && got[p] == srcs[idx][p] &&
                                eltype(got[p]) === eltype(srcs[idx][p]), 1:6)
             end
-            TapeMod._release_tape_storage!(storage)
+            TapeMod._release_tape_pool!(storage)
         end
     end
 
@@ -143,12 +243,12 @@ _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
                 slots = [TapeMod._stage_panels(storage, src) for _ in 1:8]
                 foreach(slot -> TapeMod._tape_panels(slot, TapeMod.AirMassRead()), slots)
                 Sys.islinux() && @test _mappings_under(dir) == before + 1   # one mapping per file
-                TapeMod._release_tape_storage!(storage)
-                @test storage.closed && storage.mapping == C_NULL && !isopen(storage.io)
+                TapeMod._release_tape_pool!(storage)
+                @test storage.released && storage.mapping == C_NULL && !isopen(storage.io)
                 # No GC in between: the mapping and the descriptor are gone.
                 @test _mappings_under(dir) == before
             end
-            TapeMod._release_tape_storage!(TapeMod._MmapTapeFile(dir, 0))   # empty tape
+            TapeMod._release_tape_pool!(TapeMod._MmapTapeFile(dir, 0))   # empty tape
             @test isempty(readdir(dir))
         end
     end
@@ -172,24 +272,9 @@ _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
     end
 
     @testset "role- and shape-keyed device read caches" begin
-        # A stand-in for device arrays: the generic `_mmap_prepare_for_panels!`
-        # records the backend, so reads copy into per-role, per-shape caches as
-        # the CUDA and AMDGPU extensions do.
-        struct _PseudoDevArray{T, N} <: AbstractArray{T, N}
-            data::Array{T, N}
-        end
-        Base.size(a::_PseudoDevArray) = size(a.data)
-        Base.@propagate_inbounds Base.getindex(a::_PseudoDevArray, i::Int...) = a.data[i...]
-        Base.@propagate_inbounds Base.setindex!(a::_PseudoDevArray, v, i::Int...) =
-            (a.data[i...] = v)
-        Base.IndexStyle(::Type{<:_PseudoDevArray}) = IndexLinear()
-        Base.similar(::_PseudoDevArray, ::Type{S}, dims::Dims) where {S} =
-            _PseudoDevArray(Array{S}(undef, dims))
-        Base.copyto!(dst::_PseudoDevArray, src::AbstractArray) = (copyto!(dst.data, src); dst)
-        Base.copyto!(dst::AbstractArray, src::_PseudoDevArray) = (copyto!(dst, src.data); dst)
-        Base.copyto!(dst::_PseudoDevArray, src::_PseudoDevArray) = (copyto!(dst.data, src.data); dst)
-
-        wrap6(panels) = ntuple(p -> _PseudoDevArray(panels[p]), 6)
+        # Device panels (`_PseudoDevArray`): the pool records their backend, so
+        # reads copy into per-role, per-shape caches on it, as with CUDA and
+        # AMDGPU arrays.
         shape_key(src) = ntuple(p -> size(src[p]), 6)
         air, tracer = TapeMod.AirMassRead(), TapeMod.TracerMassRead()
         mktempdir() do dir
@@ -211,14 +296,14 @@ _same(a, b) = all(s -> all(p -> Threads.nthreads() == 1 ? a[s][p] == b[s][p] :
             @test all(p -> m_read[p] !== rm_read[p], 1:6)
             @test all(p -> m_read[p].data == sources[1][p].data && rm_read[p].data == sources[5][p].data, 1:6)
             @test length(storage.read_caches) == 5
-            TapeMod._release_tape_storage!(storage)
+            TapeMod._release_tape_pool!(storage)
             @test isempty(storage.read_caches)
         end
     end
 end
 
 # ---------------------------------------------------------------------------
-# `tape_storage` values of the reverse-pass entry points
+# `tape` values of the reverse-pass entry points
 # ---------------------------------------------------------------------------
 
 function _problem(; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
@@ -244,7 +329,7 @@ function _problem(; Nc = 4, Nz = 3, nsteps = 4, FT = Float64)
     return mesh, m, rm, am, bm, cm
 end
 
-@testset "tape_storage values" begin
+@testset "tape values" begin
     mesh, m, rm, am, bm, cm = _problem()
     objective = AT.CSColumnMeanObjective(1, 2, 2)
     seed = map(zero, rm)
@@ -252,6 +337,22 @@ end
     footprint(; kw...) = AT.cs_surface_emission_footprint(rm, m, am, bm, cm, mesh, objective;
                                                           scheme, dt = 1.0, kw...)
     reference = footprint()
+
+    @testset "AdjointTape" begin
+        @test AT.AdjointTape() === AT.AdjointTape(AT.FullStateTape(), AT.DeviceCSTapeStorage(),
+                                                  AT.FullCheckpoint())
+        tape = AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))
+        @test tape isa AT.AdjointTape{AT.FullStateTape, AT.PinnedHostCSTapeStorage, AT.StrideCheckpoint}
+        @test isbits(tape)                        # a descriptor: no runtime state
+        for bad in ((; storage = :device), (; storage = "mmap"), (; checkpoint = :full),
+                    (; content = nothing))
+            @test_throws TypeError AT.AdjointTape(; bad...)
+        end
+        @test_throws ArgumentError AT.StrideCheckpoint(0)
+        # The Symbol API is gone.
+        @test_throws MethodError footprint(; tape_storage = :device)
+        @test_throws TypeError footprint(; tape = :device)
+    end
 
     @testset "MmapCSTapeStorage needs a directory and leaves nothing in it" begin
         @test_throws ArgumentError AT.MmapCSTapeStorage("")
@@ -261,51 +362,58 @@ end
             dir = joinpath(root, "tape")
             storage = AT.MmapCSTapeStorage(dir)
             @test !ispath(dir)                       # created by the call, not the constructor
-            for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(3), AT.RevolveCheckpoint())
-                result = footprint(; tape_storage = storage, checkpoint)
+            for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(3))
+                result = footprint(; tape = AT.AdjointTape(; storage, checkpoint))
                 @test _same(result.footprints, reference.footprints)
-                # Unmapped and closed when the call returns, without a GC.
+                # Unmapped and closed when the call returns, without a GC (the
+                # file is unlinked at creation: no name is ever left).
                 @test isempty(readdir(dir))
                 @test _mappings_under(dir) == 0
             end
         end
     end
 
-    @testset "a pre-built mmap tape file stays the caller's" begin
-        mktempdir() do dir
-            file = TapeMod._MmapTapeFile(dir, 1 << 22)
-            for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-                @test _same(footprint(; tape_storage = file, checkpoint).footprints,
-                            reference.footprints)
-                @test !file.closed            # neither sized nor released by the call
-            end
-            TapeMod._release_tape_storage!(file)
+    @testset "a runtime reuses its pool; a larger mmap tape gets a new file" begin
+        Footprint = AT.Adjoints.Footprint
+        mktempdir() do root
+            dir = joinpath(root, "tape")
+            runtime = Footprint._TapeRuntime(AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir)))
+            first_pool = Footprint._tape_pool!(runtime, 1 << 16)
+            @test Footprint._tape_pool!(runtime, 1 << 12) === first_pool   # rewound, reused
+            @test first_pool.generation == 2
+            larger = Footprint._tape_pool!(runtime, 1 << 20)
+            @test larger !== first_pool && first_pool.released && larger.capacity == 1 << 20
+            Footprint._release_tape_runtime!(runtime)
+            @test larger.released && runtime.pool === nothing
             @test _mappings_under(dir) == 0
         end
+        runtime = Footprint._TapeRuntime(AT.AdjointTape())
+        pool = Footprint._tape_pool!(runtime, 0)
+        @test Footprint._tape_pool!(runtime, 1 << 40) === pool          # device pools grow on demand
+        Footprint._release_tape_runtime!(runtime)
+        @test pool.released
     end
 
-    @testset "a pre-constructed storage serves every schedule" begin
+    @testset "one tape serves every call and schedule" begin
         for storage in (AT.DeviceCSTapeStorage(), AT.PinnedHostCSTapeStorage()),
-            checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-            @test _same(footprint(; tape_storage = storage, checkpoint).footprints, reference.footprints)
+            checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+            tape = AT.AdjointTape(; storage, checkpoint)
+            @test _same(footprint(; tape).footprints, reference.footprints)
+            @test _same(footprint(; tape).footprints, reference.footprints)
         end
     end
 
     @testset "rejected values" begin
         mktempdir() do root
             dir = joinpath(root, "tape")
-            for bad in (:mmap, :disk, "device", nothing)
-                @test_throws ArgumentError footprint(; tape_storage = bad)
-            end
-            for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint()),
-                tape_storage in (:pinned_host, AT.PinnedHostCSTapeStorage(), AT.MmapCSTapeStorage(dir))
+            for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2)),
+                storage in (AT.PinnedHostCSTapeStorage(), AT.MmapCSTapeStorage(dir))
+                tape = AT.AdjointTape(; storage, checkpoint)
                 # The Lin-Rood tape is device-only.
                 @test_throws ArgumentError AT.cs_surface_emission_footprint(
-                    rm, m, am, bm, cm, mesh, objective;
-                    scheme = AT.LinRoodPPMScheme(), checkpoint, tape_storage)
+                    rm, m, am, bm, cm, mesh, objective; scheme = AT.LinRoodPPMScheme(), tape)
                 @test_throws ArgumentError AT.cs_surface_emission_footprint_from_seed(
-                    seed, m, am, bm, cm, mesh;
-                    scheme = AT.LinRoodPPMScheme(), checkpoint, tape_storage)
+                    seed, m, am, bm, cm, mesh; scheme = AT.LinRoodPPMScheme(), tape)
             end
             @test !ispath(dir)
         end

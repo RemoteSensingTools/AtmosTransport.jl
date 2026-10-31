@@ -2,6 +2,89 @@
 
 ## Unreleased
 
+- **Breaking (adjoint API): one `tape = AdjointTape(...)` keyword replaces
+  `tape_storage` and `checkpoint`.** Every reverse-pass entry point
+  (`cs_surface_emission_footprint`, `cs_surface_emission_footprint_from_seed`,
+  `cs_surface_flux_jacobian`, `cs_surface_flux_4dvar`,
+  `cs_surface_flux_4dvar_optimize`) takes `tape = AdjointTape(; content,
+  storage, checkpoint)`: `content = FullStateTape()` (what each record
+  stages; the only content today), `storage = DeviceCSTapeStorage()` (the
+  default), `PinnedHostCSTapeStorage()` or `MmapCSTapeStorage(dir)`, and
+  `checkpoint = FullCheckpoint()` (the default) or `StrideCheckpoint(K)`.
+  Migration: `tape_storage = :device` → omit it; `tape_storage =
+  :pinned_host` → `tape = AdjointTape(; storage = PinnedHostCSTapeStorage())`;
+  `tape_storage = MmapCSTapeStorage(dir), checkpoint = StrideCheckpoint(K)` →
+  `tape = AdjointTape(; storage = MmapCSTapeStorage(dir), checkpoint =
+  StrideCheckpoint(K))`. The Symbol storages, pre-built storage objects as
+  arguments (the storages are now immutable descriptors) and
+  `RevolveCheckpoint` (bisection; it measured 2.0–2.1× the time of
+  `StrideCheckpoint` with no lower device peak) are removed, as are the
+  exported `PinnedHostCSTapeSlot` and `MmapCSTapeSlot` (one `HostCSTapeSlot`).
+  The inversion driver `scripts/inversions/cs_4dvar.jl` reads the same
+  choices from an optional `[adjoint.tape]` table (`content`, `storage`,
+  `scratch_dir`, `checkpointing`, `stride`).
+- **Adjoint tape memory is reused and released explicitly.** Each call opens
+  one pool from its tape's storage, records every stride window into the same
+  memory (before, each window allocated new arrays and left the previous
+  window's to the garbage collector), and frees it when it returns: device
+  arrays, read caches, stride checkpoints and Lin–Rood records with
+  `unsafe_free!`, pinned host memory and mmap files at once.
+  `cs_surface_flux_4dvar_optimize` keeps one pool for all its evaluations (an
+  mmap file is counted and reserved once, so `FullCheckpoint` with
+  `MmapCSTapeStorage` no longer runs a counting forward per evaluation, and
+  later evaluations write into an extent that is already mapped).
+  `StrideCheckpoint` records each window once for all adjoint starts (the
+  objectives of `cs_surface_flux_jacobian`) instead of once per start. A tape
+  record read after its pool was rewound or released throws a
+  `StaleTapeSlotError`. `CSTapeSlot` (the device slot) now holds
+  `(pool, panels, generation)`.
+  Measured on an L40S (C90 MERRA-2, 48 steps, convection and diffusion,
+  Float32, single runs): device `StrideCheckpoint` peaks at 2.35 instead of
+  7.13 GiB (upwind) and 3.03 instead of 11.38 GiB (monotone PPM); a
+  four-evaluation 4D-Var optimization peaks at 7.3 / 11.5 GiB with device
+  `FullCheckpoint` and 2.9 / 3.6 GiB with device `StrideCheckpoint`, instead
+  of 22.5 GiB for both; after a 4-step device-tape footprint call 165–168 MB
+  of device memory is still in use instead of 675–1156 MB. Per optimization evaluation,
+  mmap `FullCheckpoint` takes 55–56 % less time, pinned-host `FullCheckpoint`
+  42–44 % less, pinned-host `StrideCheckpoint` 58–61 % less, mmap
+  `StrideCheckpoint` 18–22 % less and device tapes 1–2 % less. A single
+  device-tape call takes 0–2 % longer: the 3–5 ms of freeing its tape now
+  happen inside the call instead of in a later garbage collection.
+- **Pinned-host tapes pin their memory once.** `PinnedHostCSTapeStorage`
+  allocates host memory in chunks (64 MiB, doubling to 1 GiB) that the CUDA
+  and AMDGPU extensions register with the driver once per chunk, instead of
+  allocating and registering (and later unregistering) six host arrays per
+  staged state; staging and reads stay synchronous copies. Mmap tapes now
+  read through read caches on the CPU too, so no view of the file outlives
+  its release. Measured as above: pinned-host `StrideCheckpoint` footprints and
+  4D-Var evaluations take 50–56 % less time and `FullCheckpoint` 4–19 % less;
+  re-recording into a reused pool costs 9.7–13.9 instead of 29–48 ms per step
+  (device-to-host about 24 GB/s; the reverse pass reads back at about
+  23.6 GB/s); mmap tapes are unchanged (−2…+3 %).
+- The mmap tape retries `fallocate` when a signal interrupts it (EINTR) and
+  reports the `mmap` error it got, not one overwritten by a later
+  allocation.
+- Gradients are bit-identical for every storage and schedule. The adjoint
+  tape's bitwise gate checks a Jacobian under `StrideCheckpoint` and gains a
+  two-iteration 4D-Var optimization (`optimize`), whose reference digests
+  are added to the fixture from main; every earlier digest is unchanged.
+- **`cs_adjoint_inputs` copies the face fluxes once per met window.** It
+  copied `am`, `bm` and `cm` at every step, although production rewrites them
+  only at a window's first step (window-constant fluxes); the steps of a
+  window now reference one copy (`panels_am_steps[s] === panels_am_steps[s +
+  1]` inside a window), and fluxes interpolated within the window are still
+  copied every step. The adjoint's replay builds one flux state per shared
+  set, so `flux_scale ≠ 1` scales each set once instead of copying every
+  step. The captures of a MERRA-2 day (Float32; measured bytes per flux set
+  times the steps or windows of the day) hold 1.16 instead of 10.0 GB of
+  fluxes at C90 (207 steps) and 4.34 instead of 73.2 GB at C180 (405 steps),
+  in the memory of the simulation's backend (host or GPU). Gradients are
+  bit-identical. The adjoint
+  tape's bitwise gate gains two cases whose inputs `cs_adjoint_inputs`
+  captures from a production simulation (CFL subcycles, full-window flux
+  scaling, CMFMC sub-steps, per-window forcing and layer thickness; the
+  binary window contract with a window-end reset); their digests are recorded
+  from main.
 - Output snapshot `hours` / `snapshot_hours` lists reject Boolean entries instead
   of silently treating them as zero or one hour.
 - Convection workspaces copy their cell-area metrics onto the storage backend
