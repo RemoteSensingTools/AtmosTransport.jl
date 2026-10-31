@@ -117,6 +117,7 @@ using ....GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ....Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
+                OUTPUT_COLUMN_MASS_KEYS, OUTPUT_PER_TRACER_KEYS, OUTPUT_FORMATS,
                 check_output_targets, AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!,
                 SnapshotFrame, AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, RuntimeOutputSpec,

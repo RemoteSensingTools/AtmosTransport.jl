@@ -1,12 +1,15 @@
 # Inversion observations
 
-`AtmosTransport.Adjoints.Inversion.Observations` owns observation records,
+`AtmosTransport.Adjoints.Inversion.ObservationBinding` owns observation records,
 binding, sampling and IO. It is distinct from `AtmosTransport.Observations`,
 which owns the forward sampler, placement and retrieval primitives.
+The child name describes the inversion observation flow from records and
+columns to bound samples, departures and OCO-2 MIP IO, and avoids shadowing
+the package-level module during static inference on Julia 1.10.
 
 ## File Map
 
-- `ObservationsModule.jl`: module imports, includes and exports.
+- `ObservationBindingModule.jl`: module imports, includes and exports.
 - `Observations.jl`: time sampling, bound observations, placement codes and stencils.
 - `ObservationColumns.jl`: meteorology and objective sampling/stencil construction.
 - `ObservationBinding.jl`: records → cells, time windows, flags and cell averages.

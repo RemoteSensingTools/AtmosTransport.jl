@@ -160,7 +160,8 @@ The per-launch column count `B` is set by exactly one of:
   [`derive_tile_columns`](@ref) from
   [`TM5Convection`](@ref)'s `tile_workspace_gib` field. Bypassed
   if `tile_columns` is also passed (explicit wins).
-- `cell_metrics` carries topology cell areas. Production
+- `cell_metrics` carries topology cell areas, copied onto the storage
+  backend of `air_mass`. Production
   `convection_workspace_for(::TM5Convection, ...)` supplies this;
   leaving it `nothing` is only for unit-area solver tests.
 
@@ -196,7 +197,7 @@ function TM5Workspace(air_mass;
     f_scratch   = conv1                     # alias — see docstring
     amu_scratch = similar(template, FT,  Nz + 1, allocated_columns)
     amd_scratch = similar(template, FT,  Nz + 1, allocated_columns)
-    metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, FT)
+    metrics = cell_metrics === nothing ? nothing : _cmfmc_metric_buffer(cell_metrics, template, FT)
     carry = _empty_ledger_carry(air_mass, FT)
     return TM5Workspace{FT,
                         typeof(conv1), typeof(pivots), typeof(cloud_dims),
