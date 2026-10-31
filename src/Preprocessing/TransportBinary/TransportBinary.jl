@@ -51,7 +51,8 @@ import ...Parameters: DEFAULT_POSITIVITY_CFL_LIMIT,
     OMEGA_FIDELITY_SLOPE_MIN,
     STANDARD_GRAVITY,
     TM5_CONVECTION_MASS_BASIS_KEY
-import ..Core: AbstractTargetGeometry,
+# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
+import AtmosTransport.Preprocessing.Core: AbstractTargetGeometry,
     CubedSphereTargetGeometry,
     LatLonTargetGeometry,
     MAX_SPECIFIC_HUMIDITY,

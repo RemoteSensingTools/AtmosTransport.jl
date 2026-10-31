@@ -30,7 +30,8 @@ import ...Parameters: DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POSITIVITY_CFL_LIMIT,
     HORIZONTAL_BALANCE_TAG,
     STANDARD_GRAVITY
-import ..Core: AbstractColumnWeights,
+# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
+import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
     ERA5SpectralSettings,
     MAX_SPECIFIC_HUMIDITY,
     MassWeightedColumn,
