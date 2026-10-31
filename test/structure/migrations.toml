@@ -1,41 +1,11 @@
 # Reviewed identity migrations; see test/structure/README.md.
 
 [[migration]]
-from = "AtmosTransport.Models"
-to = ["AtmosTransport.Models", "AtmosTransport.Models.Physics", "AtmosTransport.Models.Core", "AtmosTransport.Models.Runner"]
-reason = "MD2: specs, model and driven implementation become ordered submodules behind the existing facade"
+from = "AtmosTransport.Adjoints.Inversion.Observations"
+to = ["AtmosTransport.Adjoints.Inversion.ObservationBinding"]
+reason = "FU1 RN2: distinguish inversion observation binding from package-level Observations"
 
 [[migration]]
-from = "AtmosTransport.Models.BinaryPathExpander"
-to = ["AtmosTransport.Models.Runner.BinaryPathExpander"]
-reason = "MD2: binary paths are owned by Runner; preserve the old facade alias"
-
-[[migration]]
-from = "AtmosTransport.Models.InputStaging"
-to = ["AtmosTransport.Models.Runner.InputStaging"]
-reason = "MD2: input staging is owned by Runner; preserve the old facade alias"
-
-[[migration]]
-from = "AtmosTransport.Models.DrivenRunner"
-to = ["AtmosTransport.Models.Runner.DrivenRunner"]
-reason = "MD2: configured runtime is owned by Runner and imports lower siblings directly"
-
-[[migration]]
-from = "src/Models"
-to = ["src/Models", "src/Models/Physics"]
-reason = "MD2: the specs own the operator imports previously supplied by the Models module"
-
-[[migration]]
-from = "src/Models/Core"
-to = ["src/Models/Core", "src/Models/Runner"]
-reason = "MD2: driven stepping and capture move beside DrivenSimulation; model support and shared stepping generics remain in Core"
-
-[[migration]]
-from = "src/Models/Physics"
-to = ["src/Models/Physics", "src/Models/Runner"]
-reason = "MD2: forcing refresh dispatches on the driven runtime in Runner"
-
-[[migration]]
-from = "src/Models/Runner"
-to = ["src/Models/Runner/DrivenRunner"]
-reason = "MD2: the existing configured-runner child gets its own folder so driven runtime and orchestration each remain below the folder budget"
+from = "src/Adjoints/Inversion/Observations"
+to = ["src/Adjoints/Inversion/ObservationBinding"]
+reason = "FU1 RN2: align the observation flow folder with its renamed child module"

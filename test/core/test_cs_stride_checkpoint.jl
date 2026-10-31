@@ -229,7 +229,13 @@ end
         final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
         scheme, dt = 1.0, base_panels_rm0 = ntuple(p -> zeros(size(panels_rm[p])), 6))
     @test _footprints_equal(ref, explicit_zero)
-    @test ref.initial_adjoint == explicit_zero.initial_adjoint
+    if Threads.nthreads() == 1
+        @test ref.initial_adjoint == explicit_zero.initial_adjoint
+    else
+        # Reverse-halo atomics can sum in a different order on multiple threads.
+        @test all(isapprox(a, b; rtol = 1e-12, atol = 1e-15)
+                  for (a, b) in zip(ref.initial_adjoint, explicit_zero.initial_adjoint))
+    end
 
     for K in (2, 3, 6)
         stride = AT.cs_surface_emission_footprint_from_seed(

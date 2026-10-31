@@ -21,7 +21,10 @@ transposes. The CUDA extension adds the Float64 collaborative depth limit.
 ## Shared helpers owned here
 
 `convection_workspace_for(op, state, grid)` owns runtime workspace construction.
-The storage-only helpers below are shared by both child modules.
+The storage-only helpers below are shared by both child modules. Every buffer,
+including the cell-area metrics copied from the host mesh, is allocated like
+the state's air mass, so a workspace built for device state (`with_convection`
+on a GPU model, the fresh workspace of `cs_adjoint_inputs`) is device-resident.
 
 # shared: _cmfmc_metric_buffer, _empty_ledger_carry, _fitted_ledger_carry
 

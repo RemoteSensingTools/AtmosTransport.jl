@@ -1,4 +1,4 @@
-module Observations
+module ObservationBinding
 using ....Operators.Advection: NoLimiter
 using ....Operators.Advection: PPMScheme
 using ...Footprint: _validate_step_sequences
@@ -32,4 +32,4 @@ include("DeparturesIO.jl")
 include("OCO2MIPObservations.jl")
 include("ForwardSampling.jl")
 
-end # module Observations
+end # module ObservationBinding

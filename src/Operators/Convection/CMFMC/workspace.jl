@@ -9,10 +9,11 @@ Per-sim pre-allocated workspace for [`CMFMCConvection`](@ref).
   cell, shape matching `air_mass` (`(Nx, Ny, Nz)` for structured
   grids, `(ncells, Nz)` for face-indexed grids). Reused across all
   substeps and all tracers.
-- `cell_metrics :: CA` — pre-adapted cell-area metric vector used by
-  the CFL scan and the kernel:
+- `cell_metrics :: CA` — cell-area metric used by the CFL scan and the
+  kernel, copied onto the storage backend of `air_mass`:
   `cell_areas_by_latitude(mesh)` for structured grids,
-  per-cell `cell_area(mesh, c)` for face-indexed grids.
+  per-cell `cell_area(mesh, c)` for face-indexed grids, the panel areas
+  for cubed-sphere grids.
 - `cached_n_sub :: Base.RefValue{Int}` — the CFL-derived sub-step
   count for the current met window. Stays valid as long as
   `cache_valid[] == true`; re-computed from the current CMFMC /
@@ -59,7 +60,7 @@ function CMFMCWorkspace(air_mass::AbstractArray{FT}; cell_metrics = nothing) whe
     metrics = if cell_metrics === nothing
         nothing
     else
-        _cmfmc_metric_buffer(cell_metrics, FT)
+        _cmfmc_metric_buffer(cell_metrics, air_mass, FT)
     end
     carry = _empty_ledger_carry(air_mass, FT)
     return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(
@@ -77,7 +78,7 @@ function CMFMCWorkspace(air_mass::NTuple{N, <:AbstractArray{FT}}; cell_metrics =
     metrics = if cell_metrics === nothing
         nothing
     else
-        _cmfmc_metric_buffer(cell_metrics, FT)
+        _cmfmc_metric_buffer(cell_metrics, air_mass[1], FT)
     end
     carry = _empty_ledger_carry(air_mass, FT)
     return CMFMCWorkspace{FT, typeof(qc_scratch), typeof(metrics), typeof(carry)}(

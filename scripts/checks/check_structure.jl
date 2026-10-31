@@ -320,8 +320,8 @@ function resolve_imports(inv)
                 scope = parent_module(scope)
             end
             # An explicit relative module path resolves in its own scope before
-            # inherited aliases. Inversion.Observations shadows the package's
-            # Observations module; both are valid owners.
+            # inherited aliases, including child modules with a name also used
+            # by an ancestor's import.
             direct = imp.dots > 0 ? join([split(scope, '.'); imp.names], '.') : ""
             direct in inv.order || (direct = "")
             target, member = isempty(direct) ?

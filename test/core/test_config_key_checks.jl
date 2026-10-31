@@ -96,6 +96,20 @@ end
     @test has(w, "[output]", "snapshot_file", "because `path` is set")
     @test has(w, "[output]", "stop_hour", "without an interval key")
     @test has(w, "[output]", "deflate_level", "binary_mmap")
+    # Every accepted binary alias must warn about settings its writer ignores.
+    for (alias, format) in pairs(AtmosTransport.Output.OUTPUT_FORMATS)
+        format isa AtmosTransport.Output.BinaryMmapOutput || continue
+        w = key_messages(Dict("output" => Dict("format" => uppercase(String(alias)),
+                                              "deflate_level" => 1)))
+        @test has(w, "[output]", "deflate_level", "binary_mmap")
+    end
+    fields = Dict{String, Any}(k => false for k in AtmosTransport.Output.OUTPUT_COLUMN_MASS_KEYS)
+    merge!(fields, Dict(k => Dict("CO2" => copy(fields))
+                       for k in AtmosTransport.Output.OUTPUT_PER_TRACER_KEYS))
+    w = key_messages(Dict("output" => Dict("fields" => fields)))
+    @test has(w, "[output.fields]", "tracer_fields", "because `per_tracer` is set")
+    @test has(w, "[output.fields]", "column_mass", "because `column_mass_per_area` is set")
+    @test has(w, "[output.fields.per_tracer.CO2]", "column_mass", "because `column_mass_per_area` is set")
     # Unknown keys are errors; known keys a setting leaves unread are warnings.
     f = Runner._config_key_findings(Dict(
         "diffussion" => Dict("kind" => "constant"),
