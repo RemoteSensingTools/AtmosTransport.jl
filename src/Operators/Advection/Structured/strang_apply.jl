@@ -26,23 +26,6 @@ function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
     return nothing
 end
 
-# Advection alone is the identity; StepPlans owns diffusion-only composition.
-@inline function apply!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
-                         grid::AtmosGrid{<:LatLonMesh}, ::NoAdvection, dt;
-                         workspace = nothing,
-                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         meteo = nothing) where {B <: AbstractMassBasis}
-    return nothing
-end
-
-@inline function apply!(state::CellState{B}, fluxes::FaceIndexedFluxState{B},
-                         grid::AtmosGrid{<:AbstractHorizontalMesh}, ::NoAdvection, dt;
-                         workspace = nothing,
-                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         meteo = nothing) where {B <: AbstractMassBasis}
-    return nothing
-end
-
 function _preflight_advection_workspace(workspace::AdvectionWorkspace,
                                         tracers_raw::AbstractArray{FT, 4},
                                         air_mass::AbstractArray{FT, 3}) where FT

@@ -120,9 +120,10 @@ scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
 A `NoAdvection` identity operator is available for isolating other
 operators (e.g. convection-only timing, regression). Select with
-`[advection] scheme = "none"`. Diffusion-only runs are supported as a
-single mass-conserving vertical solve. Surface fluxes require an advection
-palindrome and are therefore rejected with `NoAdvection`.
+`[advection] scheme = "none"`. `StepPlans.transport_step!` composes it
+without sweeps; Advection has no `apply!` method for it. Diffusion-only runs
+are supported as a single mass-conserving vertical solve. Surface fluxes
+require an advection palindrome and are therefore rejected with `NoAdvection`.
 
 ## Diffusion
 

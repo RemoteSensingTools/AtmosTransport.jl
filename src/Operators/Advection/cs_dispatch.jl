@@ -164,15 +164,3 @@ function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
                   recorder = recorder)
     return nothing
 end
-
-# Pure advection identity. StepPlans handles the diffusion-only composition.
-@inline function apply!(state::CubedSphereState{B}, fluxes::CubedSphereFaceFluxState{B},
-                         grid::AtmosGrid{<:CubedSphereMesh}, ::NoAdvection, dt;
-                         workspace = nothing,
-                         cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                         meteo = nothing,
-                         recorder::AbstractStepRecorder = NoStepRecorder()) where {B <: AbstractMassBasis}
-    recorder isa NoStepRecorder || throw(ArgumentError(
-        "NoAdvection (scheme = \"none\") has no record in the cubed-sphere adjoint tape"))
-    return nothing
-end

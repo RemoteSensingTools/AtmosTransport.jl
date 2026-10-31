@@ -583,7 +583,7 @@ None recorded.
 
 ## `src/Operators/Advection`
 
-Size: **137399 bytes / 39256.9 tokens**. Public names: **21**.
+Size: **136725 bytes / 39064.3 tokens**. Public names: **21**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Parameters`, `src/State`.
 
@@ -594,7 +594,7 @@ Files:
 - `Advection.jl` (3719 bytes)
 - `LinRood.jl` (24652 bytes)
 - `LinRoodSeams.jl` (2564 bytes)
-- `cs_dispatch.jl` (8167 bytes)
+- `cs_dispatch.jl` (7493 bytes)
 - `cs_workspace.jl` (8741 bytes)
 - `linrood_adjoint_kernels.jl` (26739 bytes)
 - `linrood_adjoint_panel.jl` (17944 bytes)
@@ -647,7 +647,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Advection/Reconstruction`
 
-Size: **76828 bytes / 21950.9 tokens**. Public names: **18**.
+Size: **76886 bytes / 21967.4 tokens**. Public names: **18**.
 
 Depends on: `src/Operators`, `src/Parameters`.
 
@@ -658,7 +658,7 @@ Files:
 - `limiters.jl` (7673 bytes)
 - `ppm_subgrid_distributions.jl` (12048 bytes)
 - `reconstruction.jl` (36358 bytes)
-- `schemes.jl` (20749 bytes)
+- `schemes.jl` (20807 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -666,7 +666,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Advection/Structured`
 
-Size: **50759 bytes / 14502.6 tokens**. Public names: **4**.
+Size: **49950 bytes / 14271.4 tokens**. Public names: **4**.
 
 Depends on: `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Parameters`, `src/State`.
 
@@ -677,7 +677,7 @@ Files:
 - `StrangSplitting.jl` (4103 bytes)
 - `multitracer_kernels.jl` (5873 bytes)
 - `multitracer_strang.jl` (5694 bytes)
-- `strang_apply.jl` (6274 bytes)
+- `strang_apply.jl` (5465 bytes)
 - `subcycling.jl` (9499 bytes)
 - `sweeps.jl` (13886 bytes)
 - `workspace.jl` (5430 bytes)
@@ -800,7 +800,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/StepPlan`
 
-Size: **37167 bytes / 10619.1 tokens**. Public names: **28**.
+Size: **37094 bytes / 10598.3 tokens**. Public names: **28**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -808,8 +808,8 @@ Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Models/Cor
 
 Files:
 
-- `StepPlan.jl` (27011 bytes)
-- `midpoint.jl` (10156 bytes)
+- `StepPlan.jl` (27014 bytes)
+- `midpoint.jl` (10080 bytes)
 
 Forward ↔ adjoint mirrors:
 

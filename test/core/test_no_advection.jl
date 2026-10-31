@@ -6,10 +6,10 @@ Why this exists:
 - A "convection-only" production timing run needs to disable advection on a CS
   binary without also disabling diffusion plumbing in a way that silently drops
   Strang-half-stepping.
-- NoAdvection must therefore be a *typed* no-op (so dispatch picks it up at
-  compile time and bypasses the sweep kernels entirely) and must hard-reject
-  non-NoSurfaceFlux companion operators. StepPlan composes standalone diffusion
-  when advection is disabled.
+- NoAdvection must therefore be a *typed* no-op (`transport_step!` dispatches
+  on it at compile time and bypasses the sweep kernels entirely) and must
+  hard-reject non-NoSurfaceFlux companion operators. StepPlan composes
+  standalone diffusion when advection is disabled.
 """
 
 using Test
@@ -22,7 +22,6 @@ using AtmosTransport: CellState, CubedSphereState, DryBasis,
                       NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
                       ConstantField,
                       SurfaceFluxSource, SurfaceFluxOperator, NoSurfaceFlux,
-                      apply!,
                       LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                       HybridSigmaPressure, AtmosGrid,
                       required_halo_width
@@ -36,10 +35,10 @@ const FT = Float64
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# LatLon: tracer + air mass are bit-identical after NoAdvection apply!
+# LatLon: tracer + air mass are bit-identical after a NoAdvection step
 # ---------------------------------------------------------------------------
 
-@testset "NoAdvection LatLon — apply! is a no-op" begin
+@testset "NoAdvection LatLon — transport_step! is a no-op" begin
     Nx, Ny, Nz = 6, 4, 2
     mesh = LatLonMesh(; Nx=Nx, Ny=Ny, FT=FT)
     vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -61,7 +60,7 @@ const FT = Float64
     air_before = copy(state.air_mass)
     co2_before = copy(state.tracers.CO2)
 
-    apply!(state, fluxes, grid, NoAdvection(), FT(1800); workspace=ws)
+    transport_step!(state, fluxes, grid, NoAdvection(), FT(1800); workspace=ws)
 
     @test state.air_mass == air_before          # bit-identical
     @test state.tracers.CO2 == co2_before       # bit-identical
@@ -71,7 +70,7 @@ end
 # ReducedGaussian (face-indexed): tracer is bit-identical after NoAdvection
 # ---------------------------------------------------------------------------
 
-@testset "NoAdvection ReducedGaussian — apply! is a no-op" begin
+@testset "NoAdvection ReducedGaussian — transport_step! is a no-op" begin
     Nz = 2
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT=FT)
     vc = HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1])
@@ -87,17 +86,20 @@ end
     air_before = copy(state.air_mass)
     co2_before = copy(state.tracers.CO2)
 
-    apply!(state, fluxes, grid, NoAdvection(), FT(1800))
+    transport_step!(state, fluxes, grid, NoAdvection(), FT(1800))
 
     @test state.air_mass == air_before
     @test state.tracers.CO2 == co2_before
 end
 
 # ---------------------------------------------------------------------------
-# CubedSphere: tracer is bit-identical after NoAdvection apply!
+# CubedSphere: tracer is bit-identical after a NoAdvection step; the cubed-
+# sphere adjoint tape has no NoAdvection record, so a recorder is rejected.
 # ---------------------------------------------------------------------------
 
-@testset "NoAdvection CubedSphere — apply! is a no-op + workspace is nothing" begin
+struct _TapeRecorderStandIn <: AtmosTransport.Operators.AbstractStepRecorder end
+
+@testset "NoAdvection CubedSphere — transport_step! is a no-op + workspace is nothing" begin
     Nc, Hp, Nz = 4, 1, 2
     N = Nc + 2Hp
     mesh = CubedSphereMesh(; Nc=Nc, Hp=Hp, FT=FT)
@@ -118,9 +120,14 @@ end
     air_before = deepcopy(cs_state.air_mass)
     co2_before = deepcopy(cs_state.tracers.CO2)
 
-    apply!(cs_state, cs_fluxes, grid, NoAdvection(), FT(1800); workspace=nothing)
+    transport_step!(cs_state, cs_fluxes, grid, NoAdvection(), FT(1800); workspace=nothing)
 
     @test all(cs_state.air_mass[p] == air_before[p] for p in 1:6)
+    @test all(cs_state.tracers.CO2[p] == co2_before[p] for p in 1:6)
+
+    @test_throws ArgumentError transport_step!(cs_state, cs_fluxes, grid, NoAdvection(),
+                                               FT(1800); workspace=nothing,
+                                               recorder=_TapeRecorderStandIn())
     @test all(cs_state.tracers.CO2[p] == co2_before[p] for p in 1:6)
 end
 
@@ -193,9 +200,9 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# Companion-op rejection on the face-indexed (RG) and CS entry points —
-# the rejection helper is shared, but each topology has its own apply!
-# method, so each path must wire the helper in.
+# Companion-op rejection on the face-indexed (RG) and CS states — the
+# NoAdvection `transport_step!` is shared, so check each topology's
+# preflight and diffusion dispatch.
 # ---------------------------------------------------------------------------
 
 @testset "NoAdvection on RG + CS: diffusion runs, emissions still rejected" begin
@@ -209,7 +216,7 @@ end
     rg_kz     = ConstantField{FT, 2}(FT(1.0))
     rg_diff   = ImplicitVerticalDiffusion(; kz_field=rg_kz)
 
-    # Without a workspace, the apply! API surfaces a clear ArgumentError
+    # Without a workspace, transport_step! surfaces a clear ArgumentError
     # rather than a kernel-internal FieldError on `w_scratch`.
     @test_throws ArgumentError transport_step!(rg_state, rg_fluxes, rg_grid, NoAdvection(),
                                       FT(1800); diffusion_op=rg_diff)

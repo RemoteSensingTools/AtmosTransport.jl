@@ -44,11 +44,17 @@ select the original tracer's ledger carry and source name. CS records the
 center air mass, then each diffusion/emission call before it runs. Production
 and adjoint replay use this same composition and reverse records in order.
 
-`NoAdvection` skips sweeps and applies a single `V(dt)` here. Its emission
-rejection and the CS recorder guard remain. Direct Advection `apply!` is the
-advection-only API; callers composing physics use `transport_step!` or supply
-a typed `midpoint` hook. To add a midpoint operator, extend the composition
-here with its recorder/transpose; keep Advection independent of that physics.
+`transport_step!` is the one entry point for transport with physics. A
+`TransportMidpoint` passed directly to Advection `apply!` skips the diffusion
+preflight and the reduced-Gaussian coupling check, so a bad workspace fails
+only after the forward half has changed the state. Direct Advection `apply!`
+with its default `NoMidpoint()` is the advection-only API.
+
+`NoAdvection` has no Advection `apply!` method. Its `transport_step!` method
+skips the sweeps, rejects surface fluxes, rejects a recorder on the cubed
+sphere and applies a single `V(dt)`. To add a midpoint operator, extend the
+composition here with its recorder/transpose; keep Advection independent of
+that physics.
 
 ## File Map
 

@@ -88,6 +88,15 @@ function Adv.apply_midpoint!(::ScaleMidpoint, rm, _m)
     foreach(p -> (rm[p] .*= 1.01), 1:6)
     return nothing
 end
+# A column-local midpoint that does not commute with the vertical sweeps: it
+# scales only the surface layer, by a factor that depends on the tracer index
+# the per-tracer reduced-Gaussian driver passes (packed lat-lon passes none).
+struct SurfaceScaleMidpoint <: Adv.AbstractMidpointHook end
+_surface_factor(::Nothing) = 1.25
+_surface_factor(tracer::Integer) = 1 + 0.25 * tracer
+_surface_scale!(rm::AbstractArray{<:Any, 4}, tracer) = (rm[:, :, end, :] .*= _surface_factor(tracer); nothing)
+_surface_scale!(rm::AbstractMatrix, tracer) = (rm[:, end] .*= _surface_factor(tracer); nothing)
+Adv.apply_midpoint!(::SurfaceScaleMidpoint, rm, _m, tracer = nothing) = _surface_scale!(rm, tracer)
 
 @testset "CS subcycling keeps a uniform tracer uniform (rotation and strain)" begin
     q0 = 0.4
@@ -204,7 +213,7 @@ end
     end
 end
 
-@testset "lat-lon subcycled step is (X Y Z)^n | (Z Y X)^n" begin
+@testset "lat-lon subcycled step is (X Y Z)^n | midpoint | (Z Y X)^n" begin
     Nx, Ny, Nz = 12, 8, 3
     m0 = [1.0 + 0.1 * sin(i + 2j + 3k) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
     q  = [0.4 + 0.1 * cos(2i - j + k) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
@@ -212,18 +221,22 @@ end
     bm = [0.2 * cos(0.4i + 0.9j + k) for i in 1:Nx, j in 1:Ny+1, k in 1:Nz]; bm[:, [1, Ny+1], :] .= 0
     cm = [0.2 * sin(0.5i + 0.2j + 2k) for i in 1:Nx, j in 1:Ny, k in 1:Nz+1]; cm[:, :, [1, Nz+1]] .= 0
     # scale 0.5: n = 2 (at scale 1 some cells would end the step with negative mass)
-    for scale in (0.1, 0.5), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()))
+    for scale in (0.1, 0.5), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter())),
+        midpoint in (Adv.NoMidpoint(), SurfaceScaleMidpoint())
         a, b, c = scale .* am, scale .* bm, scale .* cm
         n = Adv._structured_palindrome_subcycle_count(a, b, c, m0, AT.Parameters.DEFAULT_CFL_LIMIT)
         @test (n == 1) == (scale == 0.1)
         m = copy(m0); rm = reshape(q .* m0, Nx, Ny, Nz, 1)
-        Adv.strang_split_mt!(rm, m, a, b, c, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1))
+        Adv.strang_split_mt!(rm, m, a, b, c, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1); midpoint)
         mr = copy(m0); rr = reshape(q .* m0, Nx, Ny, Nz, 1); ws = Adv.AdvectionWorkspace(mr; n_tracers = 1)
         fs = 1.0 / n
         spare_r, spare_m = similar(rr), similar(mr)
         for sweeps in ((Adv.sweep_x_mt!, Adv.sweep_y_mt!, Adv.sweep_z_mt!),
                        (Adv.sweep_z_mt!, Adv.sweep_y_mt!, Adv.sweep_x_mt!))
             fluxes = sweeps[1] === Adv.sweep_x_mt! ? (a, b, c) : (c, b, a)
+            # The midpoint acts on the current buffer between the two halves.
+            sweeps[1] === Adv.sweep_z_mt! && midpoint isa SurfaceScaleMidpoint &&
+                (rr[:, :, end, :] .*= 1.25)
             for _ in 1:n, (sweep!, flux) in zip(sweeps, fluxes)
                 sweep!(rr, spare_r, mr, spare_m, flux, scheme, ws, fs)
                 rr, spare_r = spare_r, rr
@@ -415,6 +428,33 @@ end
     @test maximum(abs.(state.tracers_raw[:, :, 1] ./ state.air_mass .- 0.4)) < 1e-12
     @test maximum(abs.(state.tracers_raw[:, :, 2] ./ state.air_mass .- 0.1)) < 1e-12
     @test state.air_mass ≈ m0 atol = 1e-12
+
+    # The step is, per tracer from the step-start air mass, (H V)^n | midpoint |
+    # (V H)^n built from the sweep primitives; the midpoint receives the
+    # tracer's own index.
+    q = [0.4 + 0.1 * cos(2c + k) for c in 1:nc, k in 1:Nz]
+    raw0 = cat(q .* m0, (1 .- q) .* m0; dims = 3)
+    state = AT.CellState(AT.DryBasis, copy(m0); CO2 = raw0[:, :, 1], SF6 = raw0[:, :, 2])
+    AT.Operators.apply!(state, fluxes, grid, UpwindScheme(), 1.0;
+                        workspace = Adv.AdvectionWorkspace(state.air_mass),
+                        midpoint = SurfaceScaleMidpoint())
+    ref = copy(raw0); mr = copy(m0); ws = Adv.AdvectionWorkspace(mr)
+    hflux, cm = fluxes.horizontal_flux, fluxes.cm
+    for idx in 1:2
+        copyto!(mr, m0)
+        rr = view(ref, :, :, idx)
+        for _ in 1:n
+            Adv.sweep_horizontal!(rr, mr, hflux, mesh, UpwindScheme(), ws, 1.0 / n)
+            Adv.sweep_vertical!(rr, mr, cm, UpwindScheme(), ws, 1.0 / n)
+        end
+        rr[:, end] .*= 1 + 0.25 * idx
+        for _ in 1:n
+            Adv.sweep_vertical!(rr, mr, cm, UpwindScheme(), ws, 1.0 / n)
+            Adv.sweep_horizontal!(rr, mr, hflux, mesh, UpwindScheme(), ws, 1.0 / n)
+        end
+    end
+    @test isequal(state.tracers_raw, ref)
+    @test isequal(state.air_mass, mr)
 end
 
 # ---------------------------------------------------------------- footprint tape

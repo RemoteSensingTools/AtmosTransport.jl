@@ -228,15 +228,16 @@ struct UpwindScheme <: AbstractConstantScheme end
 """
     NoAdvection <: AbstractAdvectionScheme
 
-Identity scheme — `apply!` is a no-op. Default for runs that need to
-isolate other operators (convection, chemistry, diagnostics) from the
-advective transport block, e.g. a "convection-alone" timing
-experiment or a synthetic-state regression.
+Identity scheme for runs that need to isolate other operators
+(convection, chemistry, diagnostics) from the advective transport block,
+e.g. a "convection-alone" timing experiment or a synthetic-state
+regression. `StepPlans.transport_step!` composes it; Advection has no
+`apply!` method for it.
 
 When `NoAdvection` is selected:
 - The advection sweeps are skipped on all three topologies
   (`LatLonMesh`, `ReducedGaussianMesh`, `CubedSphereMesh`).
-- StepPlan composes diffusion separately: with no advection to wrap, the V(dt)
+- `transport_step!` composes diffusion separately: with no advection to wrap, the V(dt)
   diffusion step is applied directly through the mass-flux VMR
   kernels, which are mass-conserving on their own and need no
   Strang palindrome. This is the natural "diffusion-only"

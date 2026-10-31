@@ -95,8 +95,6 @@ end
 
 @inline _midpoint_names(names, ::Nothing) = names
 @inline _midpoint_names(names, tracer::Integer) = (names[tracer],)
-# NoSurfaceFlux never reads names; RG/Lin–Rood previously always had them.
-@inline _midpoint_names(::Nothing, tracer::Integer) = nothing
 
 @inline function _midpoint_emission!(h, rm::AbstractArray, tracer, dt)
     apply_surface_flux!(rm, h.emissions, h.workspace, dt, h.meteo, h.grid;
@@ -162,7 +160,8 @@ end
 end
 
 # NoAdvection is a diffusion-only composition, with no palindrome or midpoint
-# records. Keep the historical emission rejection and the CS recorder guard.
+# records. Advection has no `apply!` method for it: this is its only path, and
+# it holds the emission rejection and the CS recorder guard.
 function transport_step!(state, fluxes, grid, scheme::NoAdvection, dt;
                           workspace = nothing, diffusion_workspace = nothing,
                           diffusion_op = NoDiffusion(), emissions_op = NoSurfaceFlux(),

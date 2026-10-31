@@ -370,8 +370,8 @@ Apply one stage to `ops.state`.
 """
 function execute_stage! end
 
-# Transport. The production call (`NoStepRecorder`) is the plain topology
-# `apply!`; a recorder rides along on the cubed-sphere palindrome.
+# Transport. Production and adjoint replay both run `transport_step!`
+# (`midpoint.jl`); a recorder rides along on the cubed-sphere palindrome.
 execute_stage!(::TransportStage, ops::StepOperators, timing::StepTiming, meteo,
                recorder::AbstractStepRecorder) =
     _transport!(ops, timing.dt, meteo, recorder)
