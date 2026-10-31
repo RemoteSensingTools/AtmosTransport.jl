@@ -1,5 +1,5 @@
 """Lat-lon spectral staging, window contracts and daily preprocessing."""
-module LatLon
+module LatLonTarget
 
 import ..Spectral: era5_thermo_path
 
@@ -13,8 +13,7 @@ import ...MetDrivers: ReplayScratch,
 import ...MetDrivers.BinaryFormat: poisson_balance_target,
     set_transport_header_steps_per_window_schedule!
 import ...Parameters: DEFAULT_POSITIVITY_CFL_LIMIT
-# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
-import ...Preprocessing.Core: AbstractColumnWeights,
+import ..Common: AbstractColumnWeights,
     ERA5SpectralSettings,
     LatLonTargetGeometry,
     MassWeightedColumn,
@@ -163,4 +162,4 @@ include("latlon_workspaces.jl")
 include("latlon_contracts.jl")
 include("latlon_spectral.jl")
 
-end # module LatLon
+end # module LatLonTarget

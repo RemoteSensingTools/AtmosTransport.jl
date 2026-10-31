@@ -346,11 +346,14 @@ prognostic-moment scheme is postponed (see
 ## Validation
 
 - **Verification (synthetic-fixture suite):** GitHub CI runs the CPU core and
-  regridding tiers on pull requests and pushes to `main`, on Julia 1.10, 1.12 and
-  1.13. It covers uniform-tracer invariance, mass budgets and
+  regridding tiers on Julia 1.10 and 1.13 for pull requests that change more
+  than documentation, for pushes to `main` and nightly; documentation-only
+  pull requests run the quick set and the documentation build
+  ([`test/README.md`](test/README.md#ci-and-merging)). It covers
+  uniform-tracer invariance, mass budgets and
   cross-window replay. CUDA comparisons and the ten maintained GPU diagnostics
   run separately on GPU hardware; they are not exercised by the hosted CPU jobs.
-  The Julia 1 job uploads line coverage of `src/` and `ext/` to
+  The Julia 1.13 job uploads line coverage of `src/` and `ext/` to
   [Codecov](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl), where
   the CUDA and Metal extensions therefore appear uncovered.
 - **Performance:** synthetic cubed-sphere benchmarks of each operator are

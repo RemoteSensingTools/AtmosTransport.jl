@@ -5,7 +5,7 @@ Horizontal flux construction, wind rotation, Poisson balance and vertical mass-f
 ## File map
 
 - [`MassClosure.jl`](MassClosure.jl) — module imports, public API and include order.
-- [`column_weights.jl`](column_weights.jl) — hybrid and mass weights; Core interface implementations.
+- [`column_weights.jl`](column_weights.jl) — hybrid and mass weights; Common interface implementations.
 - [`cs_flux_reconstruction.jl`](cs_flux_reconstruction.jl) — panel-average and vector face construction.
 - [`cs_native_fluxes.jl`](cs_native_fluxes.jl) — GEOS native flux staggering and pressure-fixer closure.
 - [`cs_poisson_balance.jl`](cs_poisson_balance.jl) — layer/column balance and explicit-endpoint cm diagnosis.
@@ -18,9 +18,9 @@ Horizontal flux construction, wind rotation, Poisson balance and vertical mass-f
 
 ## Depends on
 
-Core supplies target geometry and the column-weight protocols. Grids owns face
+Common supplies target geometry and the column-weight protocols. Grids owns face
 indexing and geometry; Parameters supplies constants.
-This stage follows Core → Vertical → Spectral in pipeline order and imports no
+This stage follows Common → Vertical → Spectral in pipeline order and imports no
 parent facade, target, TransportBinary, source or PhysicsInputs implementation.
 
 ## Used by

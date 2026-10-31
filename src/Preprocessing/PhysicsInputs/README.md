@@ -14,7 +14,7 @@ Meteorological input conversion for convection and boundary-layer diffusion.
 
 Spectral supplies `normalize_lon_to_centered`; GriddedIO supplies surface source
 meshes; Grids, State and Parameters supply geometry, mass-basis tags and constants.
-Load order is Core → Vertical → Spectral → MassClosure → PhysicsInputs.
+Load order is Common → Vertical → Spectral → MassClosure → PhysicsInputs.
 PhysicsInputs does not depend on MassClosure; it imports no target, source,
 TransportBinary or parent-facade implementation.
 

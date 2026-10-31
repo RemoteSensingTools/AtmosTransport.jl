@@ -90,6 +90,7 @@ with the commit `main` had before the push (`github.event.before`). It falls
 back to `HEAD^1` when that commit is all zeros or cannot be fetched. A merge, including a multi-commit rebase merge, therefore validates
 its rows once more. Afterwards they are inert. No Julia code is specific to a
 past cleanup.
+Scheduled and manually dispatched CI runs compare with `HEAD^1`.
 
 ## Examples
 
@@ -125,3 +126,22 @@ exception: its siblings follow `Physics → Core → InitialConditionIO → Runn
 with driven stepping, forcing refresh and capture owned by Runner.
 
 Sibling order and all external dependencies still follow the ordinary rules.
+
+## CI and merge checks
+
+The `CI` workflow runs the full default suite on Ubuntu with **Julia 1.10
+(minimum supported/LTS) and 1.13** for every pull request that changes a file
+outside `docs/**` and `*.md`, on every push to `main`, nightly at 08:23 UTC
+and on `workflow_dispatch`. Nightly and manual runs use their own
+concurrency group, so they never delay or cancel the run of a push.
+Documentation-only pull requests skip that matrix. They still run
+`Quick tests (Julia 1)`, which includes this structure check and every test
+that reads `docs/` or `*.md` files, the strict documentation build and the
+benchmark smoke. The always-reporting `Full suite` job passes for a passed
+matrix or a documentation-only skip; a skipped matrix reports only under its
+unexpanded template name, never as `Julia 1.10 - ubuntu-latest` or
+`Julia 1.13 - ubuntu-latest`. Coverage is uploaded by the Julia 1.13 lane
+only, so documentation-only pull requests show no Codecov status. The rules,
+the merge criteria and the local `scripts/dev/quick_gate.sh` (which defaults
+`JULIA_NUM_THREADS` to `1`) are in
+[`test/README.md`](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/test/README.md#ci-and-merging).

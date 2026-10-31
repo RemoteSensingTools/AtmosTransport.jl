@@ -36,7 +36,7 @@ Two patterns dominate the current report count and are NOT bugs:
    auto-generates a zero-arg constructor for
    `struct Foo{FT}; x::FT = FT(1.0); end`, but `FT` is unbound at
    that call site. Users must call `Foo{Float64}()` explicitly.
-   Documented in `CLAUDE.md` under "Julia / language gotchas".
+   Documented in `CLAUDE.md` under "Testing And Gotchas".
 
 ## Escape hatch
 
@@ -78,15 +78,14 @@ const HOT_PATH_MODULES = (
 # PR-A merge: 115 reports. The drop from the former allowance reflects the
 # current Julia 1.12/JET inference stack; the remaining reports are the
 # known-tolerated patterns documented above.
-# Julia 1.10.12 / JET 0.9.14 and 0.9.18: renaming the inversion child
-# `Observations` to `ObservationBinding` removes its 62 load-time
-# UndefVarErrors (118 -> 56 reports). All 56 remaining reports are load-time
-# errors in src/Preprocessing/{Spectral,MassClosure,Vertical}: JET 0.9 resolves
-# the relative `..Core` imports to Julia's built-in Core, and the target module
-# names collide with package names. They stop JET before hot-path inference on
-# 1.10. With those modules renamed as well, the same run reports 0.
+# Julia 1.10.12 / JET 0.9.14: before the module renames every counted report was
+# a JET load-time UndefVarError (118), so no hot-path inference ran on 1.10.
+# JET 0.9 resolves a relative `..Core` import to Julia's built-in Core and a
+# child module named like a package-level module (Inversion.Observations) to
+# that module. Renaming Preprocessing.Core -> Common, the targets -> *Target
+# and Inversion.Observations -> ObservationBinding removes all of them: 0.
 # Keep these at the expected counts so the snapshot remains a real gate.
-const JET_HOT_PATH_BASELINE_1_10 = 56
+const JET_HOT_PATH_BASELINE_1_10 = 0
 const JET_HOT_PATH_BASELINE_1_12 = 115
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :

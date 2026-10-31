@@ -15,7 +15,7 @@ floor; pressure overlap remains the working spectral remap.
 
 ## Depends on
 
-Core (`package_path`), Grids hybrid coordinates and Parameters presets/pressure;
+Common (`package_path`), Grids hybrid coordinates and Parameters presets/pressure;
 TOML, Logging and the package data-path resolver.
 
 ## Used by

@@ -1,10 +1,13 @@
-# Preprocessing.Core
+# Preprocessing.Common
 
 Configuration parsing, logging, met-source and reader contracts, target
-geometry, and shared binary-pipeline interfaces. Core loads before Vertical
+geometry, and shared binary-pipeline interfaces. Common loads before Vertical
 and Spectral and imports no later preprocessing stage. Sources register native GRIB geometry and source traits on its generics;
 MassClosure registers the column-balance implementation. Target scratch has a concrete type parameter, preserving the same
-scratch allocation while keeping the closure implementation out of Core.
+scratch allocation while keeping the closure implementation out of Common.
+
+The module remains in `Core/Core.jl`; the folder and entry filename are kept
+to avoid moving shared implementation files for a module-only rename.
 
 ## File map
 

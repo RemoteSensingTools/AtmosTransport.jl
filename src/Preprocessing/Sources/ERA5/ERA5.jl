@@ -3,7 +3,7 @@ module ERA5
 
 import Printf: @sprintf
 
-import ..ReducedGaussian: allocate_reduced_spectral_thread_cache
+import ..ReducedGaussianTarget: allocate_reduced_spectral_thread_cache
 
 import ...State
 
@@ -43,8 +43,7 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     IFS_EARTH_RADIUS,
     STANDARD_GRAVITY
 
-# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
-import ...Preprocessing.Core: AbstractERA5GRIBSettings,
+import ..Common: AbstractERA5GRIBSettings,
     CubedSphereTargetGeometry,
     FLUX_CONSTRUCTION_KEYS,
     MAX_SPECIFIC_HUMIDITY,
@@ -69,7 +68,7 @@ import ...Preprocessing.Core: AbstractERA5GRIBSettings,
     windows_per_day,
     with_replay_record
 
-import ..CubedSphere: allocate_cs_preprocess_workspace,
+import ..CubedSphereTarget: allocate_cs_preprocess_workspace,
     derive_c180_dry_mass!,
     fill_cs_mass_delta_payload!,
     fill_cs_window_mass_tendency!,
@@ -122,7 +121,7 @@ import ..PhysicsInputs: BLDiffColumnScratch,
     reset_bldiff_diag!,
     tm5_bldiff_dkg_column!
 
-import ..ReducedGaussian: ReducedSpectralThreadCache,
+import ..ReducedGaussianTarget: ReducedSpectralThreadCache,
     spectral_to_reduced_scalar!
 
 import ..Spectral: ReducedSpectralSynthesis,

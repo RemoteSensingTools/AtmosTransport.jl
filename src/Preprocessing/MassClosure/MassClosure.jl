@@ -12,9 +12,9 @@ using ...Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_l
     cs_corner_xyz, PanelConnectivity, ncells, nfaces, cell_area, panel_cell_center_lonlat,
     panel_cell_local_tangent_basis, default_panel_connectivity, reciprocal_edge, EDGE_NORTH,
     EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ..Core: AbstractColumnWeights, MassWeightedColumn, ERA5SpectralSettings,
+using ..Common: AbstractColumnWeights, MassWeightedColumn, ERA5SpectralSettings,
     validate_column_balance_weights
-import ..Core: check_column_weight_levels, column_weights, spread_column_correction!,
+import ..Common: check_column_weight_levels, column_weights, spread_column_correction!,
     target_balance_geometry
 
 target_balance_geometry(ft::CSGlobalFaceTable) =

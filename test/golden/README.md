@@ -1,5 +1,8 @@
 # Golden outputs
 
+> A full `check` writes about 25 GB of case outputs into `<new>`; put it on a
+> large local disk and delete it once the comparison is recorded.
+
 A refactor must not change results. `run_goldens.jl` runs the production entry
 points (`scripts/preprocessing/preprocess_transport_binary.jl` and
 `scripts/run_transport.jl`) on the fixed cases of [`cases.toml`](cases.toml) and

@@ -37,8 +37,7 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     HORIZONTAL_BALANCE_TAG,
     STANDARD_GRAVITY
 
-# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
-import ...Preprocessing.Core: AbstractMetSettings,
+import ..Common: AbstractMetSettings,
     CubedSphereTargetGeometry,
     FLUX_CONSTRUCTION_KEYS,
     build_met_settings,
@@ -58,7 +57,7 @@ import ...Preprocessing.Core: AbstractMetSettings,
     windows_per_day,
     with_replay_record
 
-import ..CubedSphere: CSWorst,
+import ..CubedSphereTarget: CSWorst,
     CubedSpherePreprocessWorkspace,
     allocate_cs_preprocess_workspace,
     derive_c180_dry_mass!,

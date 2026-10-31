@@ -42,17 +42,23 @@ The quick gate runs `git diff --check`, a check that every call passes the
 keywords its function requires (`scripts/checks/check_keyword_calls.jl`, which
 also covers scripts and the literate docs that no test runs), and
 `--quick --changed` in one Julia process; it exits non-zero on any failure.
-CI runs the quick set as an early-feedback job, but a pull request merges only
-after the full suite passes on Julia 1.10 and the current release. The test
-tiers, opt-in flags, topics (`test/groups.toml`), and how to add a test file
-are described in [`test/README.md`](test/README.md).
+CI runs the quick set as an early-feedback job. A pull request that changes
+anything outside `docs/` and `*.md` files merges only after the full suite
+passes on Julia 1.10 and 1.13 (the `Full suite` check); a documentation-only
+pull request skips that matrix and needs the quick set and the documentation
+build. Tests that read `docs/` or `*.md` files therefore belong to the quick
+set. The merge criteria, test tiers, opt-in flags, topics
+(`test/groups.toml`), and how to add a test file are described in
+[`test/README.md`](test/README.md).
 
 ### Coverage
 
-CI records line coverage on every pull request and push to `main`; the
-Julia 1 job uploads the report for `src/` and `ext/` to
+CI records line coverage whenever the full suite runs: pull requests that
+change more than documentation, pushes to `main` and the nightly run. Only
+the Julia 1.13 job uploads the report for `src/` and `ext/` to
 [Codecov](https://codecov.io/gh/RemoteSensingTools/AtmosTransport.jl), which
-comments on pull requests and sets a status check. The thresholds and the
+comments on pull requests and sets its status checks; documentation-only pull
+requests upload nothing and show no Codecov status. The thresholds and the
 excluded folders are in [`codecov.yml`](codecov.yml). The hosted job runs the
 CPU tiers only, so code in the CUDA and Metal extensions shows as uncovered
 there; the GPU diagnostics in [`test/README.md`](test/README.md) exercise it

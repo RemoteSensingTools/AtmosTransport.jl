@@ -6,7 +6,7 @@ Meteorological input readers and transport-binary workflows for ERA5.
 
 - [`ERA5.jl`](ERA5.jl) — module imports and public reader/workflow API.
 - [`configuration.jl`](configuration.jl) — ERA5-N320 TOML constructor.
-- [`era5_grib_geometry.jl`](era5_grib_geometry.jl) — native reduced-Gaussian GRIB geometry, extending Core protocols.
+- [`era5_grib_geometry.jl`](era5_grib_geometry.jl) — native reduced-Gaussian GRIB geometry, extending Common protocols.
 - [`era5.jl`](era5.jl) — settings, stream paths and GRIB day handles.
 - [`era5_n320_window.jl`](era5_n320_window.jl) — N320 grid discovery, spectral synthesis, humidity and ARCO pressure.
 - [`era5_n320_mass_convection.jl`](era5_n320_mass_convection.jl) — native dry mass and forecast convection reader.
@@ -15,7 +15,7 @@ Meteorological input readers and transport-binary workflows for ERA5.
 
 ## Depends on
 
-Core source/target/factory protocols; Vertical transforms; Spectral synthesis
+Common source/target/factory protocols; Vertical transforms; Spectral synthesis
 and mass support; MassClosure flux/balance primitives; PhysicsInputs conversions;
 Targets/CubedSphere mass/pin/delta and window contracts; TransportBinary writers
 and fidelity. Geometry, binary IO, conservative regridding and constants come
@@ -28,7 +28,7 @@ Preprocessing entrypoint and public facade; preprocessing CLI and focused tests.
 ## Shared helpers owned here
 
 The exports in the module entry file are the source interface. New concrete
-settings/readers extend the imported Core protocols; day workflows extend
+settings/readers extend the imported Common protocols; day workflows extend
 TransportBinary.process_day. Private numerical helpers stay inside this source.
 
 ## Forward<->adjoint mirrors
