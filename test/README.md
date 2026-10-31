@@ -241,8 +241,42 @@ placed/window/retrieval-column reference and cost finite differences run in
 `core/test_cs_4dvar_retrieval_columns.jl`; their independent TM5 rebin and hat
 projection live in `helpers/cs_inversion_reference.jl`. Upward Upwind vertical
 flux and FV3 Lin–Rood footprint differences share the matrix in
-`core/test_cs_linrood_fv3_adjoint.jl`. Tape storage rejections share
-`core/test_cs_tape_path.jl`.
+`core/test_cs_linrood_fv3_adjoint.jl`. Tape storage values, rejections and the
+mmap tier's space reservation are in `core/test_cs_tape_storage.jl`.
+
+The adjoint tape's bitwise gate, `core/test_cs_adjoint_tape_bitwise.jl` (about
+2.5 minutes, adjoint footprint topic), runs `helpers/cs_adjoint_tape_harness.jl`
+in a `--threads=1` subprocess: every tape storage and checkpoint schedule must
+reproduce the device `FullCheckpoint` gradients bit for bit on rough fields
+that reach every limiter branch, and on the reference host the reference
+digests must equal `fixtures/cs_adjoint_tape_digests.toml`. A change that is
+meant to keep gradients bit for bit must pass it unchanged. The full matrix is
+the opt-in `diagnostic/test_cs_adjoint_tape_bitwise_full.jl` (about 10
+minutes). To A/B a branch against main on any host (any tier), or to
+re-record the core fixture on the reference host:
+
+```bash
+F="--startup-file=no --threads=1 --check-bounds=auto -O2 --inline=yes --code-coverage=none"
+H=test/helpers/cs_adjoint_tape_harness.jl
+# in a main checkout (with this harness file):
+julia $F --project=test $H --tier=full --reference-only --record=main.toml
+# on the branch:
+julia $F --project=test $H --tier=full --check=main.toml
+# re-record the fixture (core tier) on the reference host:
+julia $F --project=test $H --tier=core --reference-only --record=test/fixtures/cs_adjoint_tape_digests.toml
+```
+
+Only main's numerics may be recorded: record from a checkout of current main
+(for example after a dependency or Julia update on the reference host), never
+from a branch whose gradients differ from main without being meant to. A PR
+that changes gradients on purpose (a convection, diffusion or advection
+change, which also moves these digests) first runs `--check` against the
+current fixture, lists the quantities that change in its description as its
+delta (the harness prints one line per changed case, entry point and
+quantity), and then re-records the fixture in its last commit from the PR
+rebased on current main, which is what main will be after the merge. The
+fixture's header names the commit it was recorded from; update it with the
+recording.
 
 Models IC checks are in `core/test_initial_condition_io.jl`; surface-inventory
 calendar, coverage and species checks are in `core/test_surface_flux_ingestion.jl`,

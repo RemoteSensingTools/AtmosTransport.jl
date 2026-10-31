@@ -291,12 +291,17 @@ matching transpose kernel.
 | --- | --- |
 | `:device` | Default and simplest choice for short runs. |
 | `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. Reads come back through one device buffer per operand (air mass, tracer mass). |
-| `:mmap` | Store records under an on-disk directory for long or inspectable runs. |
+| `MmapCSTapeStorage(dir)` | Store the tape in a scratch file in `dir` (required) for tapes larger than memory. |
 
-With `:mmap`, pass `tape_path` when the files must persist beyond the API call.
-After finalization, reopen the directory with `load_mmap_tape(path)` and read
-records with `get_record`. An interrupted, unfinalized tape is rejected.
-Lin-Rood currently supports device tape storage only.
+An mmap tape is sized before it is recorded: the call counts its largest
+tape on the forward replay, checks that `dir` has that much space plus 10 %
+free (an `ArgumentError` with the required and available bytes otherwise,
+raised after this sizing pass), and reserves it with `fallocate` in one
+unlinked file that is unmapped and closed when the call returns. Use a local
+file system that can reserve blocks (ext4, XFS); others, such as ZFS or NFS
+without `fallocate`, are rejected by name. Tapes are not persisted. Every
+storage works with every checkpoint policy. Lin-Rood currently supports device
+tape storage only.
 
 The `checkpoint` keyword controls the memory/recompute trade-off:
 

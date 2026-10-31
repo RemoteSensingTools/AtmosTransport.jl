@@ -6,7 +6,6 @@ using JSON3
 import AtmosTransport
 const AT = AtmosTransport
 const MD = AT.MetDrivers
-const TapeMod = AT.Tape
 const PP = AT.Preprocessing
 
 using .AtmosTransport.Architectures: CPU
@@ -403,27 +402,4 @@ end
         IOBuffer(Vector{UInt8}(codeunits("{\"unterminated\":true}")));
         source="test binary",
     )
-end
-
-@testset "mmap tape manifest is atomic and cannot outlive its records" begin
-    mktempdir() do dir
-        panels = ntuple(_ -> ones(Float32, 2, 2, 1), 6)
-        first_storage = TapeMod.MmapCSTapeStorage(
-            dir=dir, cleanup_on_finalize=false)
-        TapeMod._stage_panels(first_storage, panels)
-        TapeMod.finalize_tape!(first_storage)
-        @test isfile(joinpath(dir, "manifest.toml"))
-
-        second_storage = TapeMod.MmapCSTapeStorage(
-            dir=dir, cleanup_on_finalize=false)
-        @test !ispath(joinpath(dir, "manifest.toml"))
-        @test filesize(joinpath(dir, "records.bin")) == 0
-        @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
-        TapeMod.finalize_tape!(second_storage)
-
-        open(joinpath(dir, "records.bin"), "a") do io
-            write(io, UInt8(0x01))
-        end
-        @test_throws ArgumentError TapeMod.load_mmap_tape(dir)
-    end
 end

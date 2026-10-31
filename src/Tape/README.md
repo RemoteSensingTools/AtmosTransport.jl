@@ -15,11 +15,11 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 
 - `Tape` is a real submodule. [`../AtmosTransport.jl`](../AtmosTransport.jl)
   includes `Tape/Tape.jl` and then `Adjoints/Adjoints.jl`, so `Tape` loads
-  first. It imports nothing from other AtmosTransport modules (only `Mmap`,
-  `TOML`, `Dates`).
+  first. It imports nothing from other AtmosTransport modules and no package
+  (the mmap tier calls POSIX `mmap`, `munmap` and `fallocate` directly).
 - [`../Adjoints/Adjoints.jl`](../Adjoints/Adjoints.jl) pulls the names in with
   `using ..Tape: ...` and re-exports the user-facing ones (storage types,
-  schedules, `finalize_tape!`, `load_mmap_tape`, `get_record`).
+  slot types, schedules).
 - `Tape` also exports several `_`-prefixed internals (`_stage_panels`,
   `_tape_panels`, `_allocate_tape_slot`, the `_CS*Record` types, ...).
   Because of `using .Tape`, they are reachable as `AtmosTransport.<name>`.
@@ -36,21 +36,29 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
     overrides `_allocate_tape_slot` and `stage_panels!` for `CuArray` panels
     to use `CUDA.pin` memory. The AMDGPU extension provides the same hooks
     for `ROCArray` panels using registered host arrays and ROCm synchronization.
-  - `MmapCSTapeStorage(; dir, cleanup_on_finalize)` in
-    [`MmapTapeStorage.jl`](MmapTapeStorage.jl): appends payloads to
-    `records.bin` and writes `manifest.toml` on `finalize_tape!`.
-- Symbol resolution: `_tape_storage(:device | :pinned_host | :mmap)`.
-  `_resolve_tape_path` and `_build_window_storage` turn the public
-  `tape_storage` / `tape_path` kwargs into one storage per tape or window.
+  - `MmapCSTapeStorage(dir)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl):
+    a scratch directory, required (no default, never `/tmp` implicitly).
+    Each reverse-pass call opens one anonymous `_MmapTapeFile` there, sized
+    to its largest tape, after checking the free space; nothing is persisted.
+- Storage lifecycle of one reverse-pass call (the drivers in
+  `../Adjoints/Footprint/`): `_validate_tape_storage(tape_storage)` before
+  any forward run; `_needs_tape_size(tape_storage)` says whether the driver
+  must count the tape bytes first; `_open_tape_storage(tape_storage, nbytes)`
+  returns the storage it records into (a fresh device or pinned-host storage
+  for `:device` / `:pinned_host`, a reserved `_MmapTapeFile` for
+  `MmapCSTapeStorage`, a pre-constructed storage as is); `_rewind_tape_storage!`
+  before each re-recorded window; `_release_opened_tape_storage!` when the call
+  ends, which releases what the call opened (`_release_tape_storage!`) but never
+  a caller's pre-constructed storage, which the call neither sizes nor
+  releases.
 - Slot API: `_stage_panels(storage, panels)` allocates and fills a slot;
   `_tape_panels(slot, role)` returns readable panels; `stage_panels!` refills.
   The read role (`AirMassRead()`, `TracerMassRead()`, subtypes of
   `AbstractTapeReadRole`) names the reverse-kernel operand the read feeds.
-  `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` (the
-  `AbstractHostCSTapeStorage` policies) keep one device read cache per role
-  and panel shape, so two reads for one kernel never share a buffer.
-- Persistence: `finalize_tape!`, `load_mmap_tape(dir)`,
-  `get_record(storage, id)` in [`MmapTapeStorage.jl`](MmapTapeStorage.jl).
+  `PinnedHostCSTapeStorage` and the `_MmapTapeFile` of an
+  `MmapCSTapeStorage` (the `AbstractHostCSTapeStorage` policies) keep one
+  device read cache per role and panel shape, so two reads for one kernel
+  never share a buffer.
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
   `_CSHaloRecord`, `_CSMidpointRecord` (step and emission interval),
   `_CSStepEndRecord`, `_CSDiffusionRecord`, `_CSConvectionRecord` (with the
@@ -69,13 +77,18 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 - [`TapeStorage.jl`](TapeStorage.jl) — abstract policies, read roles, the
   role- and shape-keyed device read caches of host-side storage
   (`_tape_read_cache!`), device and pinned-host policies, slot types,
-  staging hooks, `_resolve_tape_path`, no-op `finalize_tape!` fallback,
+  staging hooks, the storage lifecycle of a call (`_validate_tape_storage`,
+  `_open_tape_storage`, no-op `_rewind_tape_storage!` and
+  `_release_tape_storage!`, `_release_opened_tape_storage!`),
   `_bytes_per_panel_tuple`
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
   recorder
-- [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — on-disk policy: cursor
-  reservation, mmap reads (views on the CPU, the role- and shape-keyed device
-  caches on a GPU), manifest writer and loader, `_build_window_storage`
+- [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — on-disk policy:
+  `MmapCSTapeStorage(dir)`, the per-call `_MmapTapeFile` (file-system and
+  free-space checks, unlinked file, `fallocate` reservation, one POSIX
+  mapping unmapped on release),
+  `_tape_slot_bytes`, 64-byte aligned slot views into the mapping (returned on
+  the CPU, copied into the role- and shape-keyed device caches on a GPU)
 - [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
   stride window arithmetic
 
@@ -83,14 +96,12 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 
 - Adding a storage policy: subtype `AbstractCSTapeStorage` (or
   `AbstractHostCSTapeStorage` if reads copy into device caches), implement
-  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`, and (if
-  it holds resources) `finalize_tape!`; add a `_tape_storage(::Val{:name})`
-  method.
+  `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`, and the
+  lifecycle methods it needs (`_open_tape_storage`, `_needs_tape_size`,
+  `_rewind_tape_storage!`, `_release_tape_storage!`).
 - Adding a record type: define it in [`TapeRecords.jl`](TapeRecords.jl),
   add a branch in `_walk_window_reverse!`
   (`../Adjoints/Footprint/ReverseLoop.jl`).
-- Changing the on-disk format: bump `_MMAP_TAPE_FORMAT_VERSION`; the loader
-  rejects any other version.
 - Changing GPU staging: edit `../../ext/AtmosTransportCUDAExt.jl`, which
   overrides the pinned-host and mmap hooks for `CuArray` panels.
 - The driver code that uses `StrideCheckpoint` / `RevolveCheckpoint` is in
@@ -108,16 +119,31 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
   step, after convection). It carries no payload; the reverse loop adds the
   4D-Var observation forcing of that step there and does nothing without a
   forcing. `CSTapeByteEstimate.step_records` counts these markers.
-- Mmap manifests describe one finalised `records.bin`. The recording
-  constructor deletes any old manifest before truncating the binary.
-  `load_mmap_tape` rejects tapes that are not finalised, use another version
-  or byte order, or whose file size differs from `meta.total_bytes`.
-- The manifest is written only by an explicit `finalize_tape!`. The GC
-  finalizer only closes the file and deletes owned temp dirs.
-- Each mmap record stores its own eltype. The loader accepts only
-  `Float32`, `Float64`, and `Float16`. On the CPU, `_tape_panels` returns
-  mmap views without copying. On the GPU, it copies into a device cache
-  keyed by read role and shape.
+- An mmap tape never grows while it records: the driver counts the bytes of
+  the largest tape of the call on the replay (`_CSCountingRecorder`, in
+  `_tape_slot_bytes`), the file checks `diskstat(dir).available` against them
+  plus 10 % (re-measuring for up to 5 s after a GC when short, since XFS frees
+  an earlier tape's unlinked blocks lazily) and reserves them with `fallocate`
+  before the first record (zero fill off Linux). A full disk is an
+  `ArgumentError` with the required and available bytes; a file system that
+  cannot reserve blocks for in-place writes (no `fallocate`, ZFS) is an
+  `ArgumentError` naming it. Growth past the reservation is an error (a
+  counting bug), never a sparse extension. With the extent reserved on ext4 or
+  XFS, writes through the mapping cannot hit a full disk (no SIGBUS); the
+  off-Linux zero fill does not guarantee that on copy-on-write or compressing
+  file systems (APFS, btrfs with compression).
+- An `_MmapTapeFile` maps its extent once; slots are views into that mapping,
+  each panel on a 64-byte boundary. `_release_tape_storage!` unmaps and closes
+  it, so the unlinked file's blocks return to the file system when the call
+  returns (XFS reports them free about a second later), not at a later GC.
+  Views are invalid after the release.
+- One reverse-pass call records all its tapes into one storage: Stride
+  windows and Revolve base steps rewind it, so a pre-constructed storage
+  serves every schedule. Tapes are not persisted: nothing in `src/` or
+  `scripts/` read a saved tape back (the records' `ops` were never saved),
+  so the manifest, the loader and per-window tape directories were removed.
+- On the CPU, `_tape_panels` returns views of the mapping without copying. On
+  the GPU, it copies into a device cache keyed by read role and shape.
 - A host-side read stays valid until the next read with the same role. A
   reverse kernel that takes two staged states reads them with two roles:
   the limited-PPM sweep record reads `m` with `AirMassRead()` and `rm` with
@@ -128,9 +154,10 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 - `RevolveCheckpoint` is plain bisection, not optimal binomial Revolve.
   Every recorded step starts with production's step-start halo refresh, so a
   window that restarts at a step boundary records the states of the full
-  tape: `StrideCheckpoint` and `RevolveCheckpoint` agree with
-  `FullCheckpoint` within the tested `atol = 1e-12` for every scheme family,
-  with diffusion and convection. (The former ~1e-7 Revolve drift with
+  tape: `StrideCheckpoint` and `RevolveCheckpoint` reproduce
+  `FullCheckpoint` bit for bit on one CPU thread for every split-sweep scheme,
+  with diffusion, convection and air-mass resets (the bitwise gate), and to
+  `atol = 1e-12` with Lin–Rood and several threads. (The former ~1e-7 Revolve drift with
   monotone PPM plus convection was that refresh missing from the recorders,
   issue #60, not limiter flips.)
 
@@ -138,21 +165,24 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
 
 - API reference: [`../../docs/src/api/adjoints.md`](../../docs/src/api/adjoints.md);
   support matrix: [`../../docs/src/theory/adjoint_status.md`](../../docs/src/theory/adjoint_status.md)
-- [`../../test/core/test_cs_tape_mmap_roundtrip.jl`](../../test/core/test_cs_tape_mmap_roundtrip.jl):
-  slot staging, manifest, reload, `get_record`, byte estimate
-- [`../../test/core/test_cs_tape_path.jl`](../../test/core/test_cs_tape_path.jl):
-  `tape_path` handling and per-window subdirectories
+- [`../../test/core/test_cs_adjoint_tape_bitwise.jl`](../../test/core/test_cs_adjoint_tape_bitwise.jl):
+  the bitwise gate of every storage × checkpoint schedule on rough fields
+  (single-threaded subprocess, recorded reference digests, limiter-branch
+  coverage); the full matrix is the opt-in
+  [`../../test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`](../../test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl)
+- [`../../test/core/test_cs_tape_storage.jl`](../../test/core/test_cs_tape_storage.jl):
+  mmap reservation, free-space and overrun errors, slot staging and read
+  caches, accepted and rejected `tape_storage` values
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl):
   Stride and Revolve parity against `FullCheckpoint`, window arithmetic
-- [`../../test/core/test_persistence_hardening.jl`](../../test/core/test_persistence_hardening.jl):
-  a stale manifest cannot validate a re-recorded tape
 - [`../../test/core/test_public_api_surface.jl`](../../test/core/test_public_api_surface.jl):
   `CSTapeSlot` is reachable but not exported at top level
 
 ## Depends on
 
-Standard libraries Mmap, TOML and Dates. Tape contains storage and records;
-it imports no adjoint or inversion implementation.
+No packages (POSIX `mmap`, `munmap` and `fallocate` through `ccall`). Tape
+contains storage and records; it imports no adjoint or inversion
+implementation.
 
 ## Used by
 

@@ -20,7 +20,9 @@ Private = false
 ```
 
 The solver exposes the forward preconditioner and its adjoint. The unused
-inverse and tangent interfaces have been removed. Reopened mmap tapes are read-only.
+inverse and tangent interfaces have been removed. The on-disk tape storage
+`MmapCSTapeStorage(dir)` takes a required scratch directory; each call
+reserves its tape there before recording and releases it when it returns.
 
 ## Tape and checkpointing
 
