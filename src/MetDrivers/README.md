@@ -52,7 +52,7 @@ through BinaryFormat's section table.
 - `BinaryReaders/`: mmap readers, mesh reconstruction, runtime drivers and staging.
 
 ERA5 GRIB geometry is preprocessing-only and lives in
-`../Preprocessing/sources/era5_grib_geometry.jl`. Its three public geometry
+`../Preprocessing/Sources/ERA5/era5_grib_geometry.jl`. Its three public geometry
 names are now owned by Preprocessing and remain bound on the package facade.
 The test-only ERA5 pressure-fixer closure has been removed.
 

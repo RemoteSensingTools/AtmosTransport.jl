@@ -24,8 +24,7 @@ import AtmosTransport
 using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       open_geos_day, close_geos_day!,
                                       read_window!, allocate_raw_window,
-                                      detect_level_orientation,
-                                      endpoint_dry_mass, endpoint_dry_mass!,
+                                      detect_level_orientation, endpoint_dry_mass!,
                                       windows_per_day, has_convection
 
 const FT_TEST = Float64
@@ -184,11 +183,6 @@ end
         coefficients_file = coef_path,
     )
 
-    @testset "windows_per_day, has_convection defaults" begin
-        @test windows_per_day(settings, Date(2021,12,1)) == 24
-        @test has_convection(settings) === false
-    end
-
     # Override windows_per_day for our 2-window synthetic via dispatch on
     # a custom subtype is overkill; instead we just test win_idx=1 directly,
     # since our fixture only covers 2 windows. The reader still expects the
@@ -199,9 +193,6 @@ end
         @test handles.orientation === :bottom_up
         @test handles.next_ctm_i1 !== nothing
         close_day!(handles)
-    end
-
-    @testset "detect_level_orientation: bottom-up surface dominates" begin
         ds = NCDataset(a1_path1, "r")
         @test detect_level_orientation(ds) === :bottom_up
         close(ds)
@@ -271,7 +262,9 @@ end
         vc = AtmosTransport.Grids.HybridSigmaPressure(A, B)
         ps_total = fill(100_000.0, 4, 4)
         qv = fill(0.005, 4, 4, NZ)
-        delp_dry, ps_dry = endpoint_dry_mass(ps_total, qv, vc)
+        delp_dry = similar(qv)
+        ps_dry = similar(ps_total)
+        endpoint_dry_mass!(delp_dry, ps_dry, ps_total, qv, vc)
         @test all(isapprox.(ps_dry, (1 - 0.005) * 100_000.0; rtol = 1e-13))
         Σ_delp_dry = sum(delp_dry, dims=3)[:, :, 1]
         @test isapprox(Σ_delp_dry, ps_dry; rtol = 1e-13)

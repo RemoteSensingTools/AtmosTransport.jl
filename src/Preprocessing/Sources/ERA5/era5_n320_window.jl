@@ -162,13 +162,7 @@ function allocate_era5_n320_spectral_workspace(source_grid::ReducedGaussianTarge
     # caches (~18 MB each at T639) are negligible here.
     n_cells = ncells(mesh)
     n_caches = Threads.maxthreadid()
-    synth_caches = [ReducedSpectralThreadCache(
-        zeros(Float64, nc, nc),
-        Dict(n => zeros(ComplexF64, n) for n in buffer_lengths),
-        Dict(n => zeros(Float64, n)    for n in buffer_lengths),
-        zeros(ComplexF64, nc, nc),
-        zeros(ComplexF64, nc, nc),
-    ) for _ in 1:n_caches]
+    synth_caches = [allocate_reduced_spectral_thread_cache(T_int, buffer_lengths) for _ in 1:n_caches]
 
     (synthesis.grid.mesh.nlon_per_ring == mesh.nlon_per_ring && synthesis.grid.lats == source_grid.lats &&
      synthesis.T == T_int && synthesis.Nf == Nz_int) ||

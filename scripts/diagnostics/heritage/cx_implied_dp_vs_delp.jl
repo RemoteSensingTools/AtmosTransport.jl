@@ -32,9 +32,9 @@ function main()
     or = reader.handles.orientation
     @printf("Nc=%d Nz=%d win=%d  (CX_MIN=%.0e)\n", Nc, Nz, WIN, CX_MIN)
 
-    mfxc = P._read_panels_3d(reader.handles.ctm_a1, "MFXC", WIN, or; FT=FT)
-    cx   = P._read_panels_3d(reader.handles.ctm_a1, "CX",   WIN, or; FT=FT)
-    delp = P._read_panels_3d(reader.handles.ctm_a1, "DELP", WIN, or; FT=FT)
+    mfxc = P.GEOS._read_panels_3d(reader.handles.ctm_a1, "MFXC", WIN, or; FT=FT)
+    cx   = P.GEOS._read_panels_3d(reader.handles.ctm_a1, "CX",   WIN, or; FT=FT)
+    delp = P.GEOS._read_panels_3d(reader.handles.ctm_a1, "DELP", WIN, or; FT=FT)
 
     # dp_flux on the east face of cell i = MFXC[i]/CX[i]/area; the implied dp
     # (×const) the flux carried. Compare to the cell DELP (the analyzed dp).

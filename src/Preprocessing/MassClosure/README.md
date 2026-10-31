@@ -109,6 +109,9 @@ Deferred target and source workflows call these stage APIs.
 - `xface_length`
 - `yface_length`
 
+GEOS also uses `balance_cs_level!`, `cs_level_scratches` and
+`cs_column_convergence`; canonical face order and FT column sums are unchanged.
+
 ## Forward<->adjoint mirrors
 
 None. These are offline CPU preprocessing routines.

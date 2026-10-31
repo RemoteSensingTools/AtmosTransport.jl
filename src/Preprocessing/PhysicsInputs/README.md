@@ -51,6 +51,10 @@ Deferred target and source workflows call these stage APIs.
 - `tm5_bldiff_kvh_column!`
 - `tm5_convection_to_basis!`
 
+Shared source conversions also include `surface_flux_to_upward_wm2`,
+`moist_to_dry_cmfmc!`, `moist_to_dry_dtrain!`, `TM5ConvectionColumnScratch`
+and `allocate_tm5_convection_column_scratch`. These preserve the source arithmetic.
+
 ## Forward<->adjoint mirrors
 
 None. These are offline CPU preprocessing routines.

@@ -1,5 +1,7 @@
 module Spectral
 
+export era5_thermo_path
+
 using Dates
 using Logging
 using Printf

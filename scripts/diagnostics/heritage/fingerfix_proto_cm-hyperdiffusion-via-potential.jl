@@ -139,14 +139,14 @@ function read_window(s, FT)
     f0 = ctm_path(DATE); f1 = ctm_path(DATE + Day(1))
     ds0 = NCDataset(f0, "r"); or = P.detect_level_orientation(ds0)
     nt  = ds0.dim["time"]
-    mfxc = P._read_panels_3d(ds0, "MFXC", WIN, or; FT=FT)
-    mfyc = P._read_panels_3d(ds0, "MFYC", WIN, or; FT=FT)
-    dc   = P._read_panels_3d(ds0, "DELP", WIN, or; FT=FT)
+    mfxc = P.GEOS._read_panels_3d(ds0, "MFXC", WIN, or; FT=FT)
+    mfyc = P.GEOS._read_panels_3d(ds0, "MFYC", WIN, or; FT=FT)
+    dc   = P.GEOS._read_panels_3d(ds0, "DELP", WIN, or; FT=FT)
     if WIN < nt
-        dn = P._read_panels_3d(ds0, "DELP", WIN+1, or; FT=FT)
+        dn = P.GEOS._read_panels_3d(ds0, "DELP", WIN+1, or; FT=FT)
         close(ds0)
     else
-        ds1 = NCDataset(f1, "r"); dn = P._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
+        ds1 = NCDataset(f1, "r"); dn = P.GEOS._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
         close(ds0); close(ds1)
     end
     (mfxc=mfxc, mfyc=mfyc, dc=dc, dn=dn)
@@ -858,13 +858,13 @@ function read_window_at(s, ww::Int, FT)
     f0 = ctm_path(DATE); f1 = ctm_path(DATE + Day(1))
     ds0 = NCDataset(f0, "r"); or = P.detect_level_orientation(ds0)
     nt  = ds0.dim["time"]
-    mfxc = P._read_panels_3d(ds0, "MFXC", ww, or; FT=FT)
-    mfyc = P._read_panels_3d(ds0, "MFYC", ww, or; FT=FT)
-    dc   = P._read_panels_3d(ds0, "DELP", ww, or; FT=FT)
+    mfxc = P.GEOS._read_panels_3d(ds0, "MFXC", ww, or; FT=FT)
+    mfyc = P.GEOS._read_panels_3d(ds0, "MFYC", ww, or; FT=FT)
+    dc   = P.GEOS._read_panels_3d(ds0, "DELP", ww, or; FT=FT)
     if ww < nt
-        dn = P._read_panels_3d(ds0, "DELP", ww+1, or; FT=FT); close(ds0)
+        dn = P.GEOS._read_panels_3d(ds0, "DELP", ww+1, or; FT=FT); close(ds0)
     else
-        ds1 = NCDataset(f1, "r"); dn = P._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
+        ds1 = NCDataset(f1, "r"); dn = P.GEOS._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
         close(ds0); close(ds1)
     end
     (mfxc=mfxc, mfyc=mfyc, dc=dc, dn=dn)
@@ -876,13 +876,13 @@ function read_window_date(s, d::Date, ww::Int, FT)
     f0 = ctm_path(d); f1 = ctm_path(d + Day(1))
     ds0 = NCDataset(f0, "r"); or = P.detect_level_orientation(ds0)
     nt  = ds0.dim["time"]
-    mfxc = P._read_panels_3d(ds0, "MFXC", ww, or; FT=FT)
-    mfyc = P._read_panels_3d(ds0, "MFYC", ww, or; FT=FT)
-    dc   = P._read_panels_3d(ds0, "DELP", ww, or; FT=FT)
+    mfxc = P.GEOS._read_panels_3d(ds0, "MFXC", ww, or; FT=FT)
+    mfyc = P.GEOS._read_panels_3d(ds0, "MFYC", ww, or; FT=FT)
+    dc   = P.GEOS._read_panels_3d(ds0, "DELP", ww, or; FT=FT)
     if ww < nt
-        dn = P._read_panels_3d(ds0, "DELP", ww+1, or; FT=FT); close(ds0)
+        dn = P.GEOS._read_panels_3d(ds0, "DELP", ww+1, or; FT=FT); close(ds0)
     else
-        ds1 = NCDataset(f1, "r"); dn = P._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
+        ds1 = NCDataset(f1, "r"); dn = P.GEOS._read_panels_3d(ds1, "DELP", 1, or; FT=FT)
         close(ds0); close(ds1)
     end
     (mfxc=mfxc, mfyc=mfyc, dc=dc, dn=dn)

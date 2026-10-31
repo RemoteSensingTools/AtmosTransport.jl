@@ -1,4 +1,2 @@
-
-[allow."src/Preprocessing/transport_binary"]
-bytes = 238260
-reason = "Existing oversized folder; split by concepts in TARGET_LAYOUT.md and reduce this exact byte ceiling whenever source shrinks."
+# Existing oversized folders; exact ceilings may only shrink.
+[allow]

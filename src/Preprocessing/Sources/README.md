@@ -1,4 +1,4 @@
-# sources
+# Sources
 
 Native met-source readers and the TOML factory that builds their settings.
 
@@ -6,7 +6,7 @@ Each source file defines a settings type (`<: AbstractMetSettings`), a
 day-handle type with open and close functions, per-window readers on the native
 source grid, and the trait methods the entry point and writers query. The
 writers that turn these fields into transport binaries live in
-[`../transport_binary/`](../transport_binary/README.md). ERA5 spectral input
+[source day drivers](GEOS/README.md). ERA5 spectral input
 (VO/D/LNSP GRIB) does not go through this folder: `ERA5SpectralSettings` is in
 [`../Core/met_sources.jl`](../Core/met_sources.jl) and the GRIB reader in
 [`../Spectral/spectral_io.jl`](../Spectral/spectral_io.jl).
@@ -14,23 +14,23 @@ writers that turn these fields into transport binaries live in
 ## Entry Points
 
 - Factory: `load_met_settings(toml_path; root_dir, kwargs...)` in
-  [`loader.jl`](loader.jl). It reads `[source].name` from a
-  `config/met_sources/*.toml` file, maps it with `_settings_constructor`
+  [`../Core/source_factory.jl`](../Core/source_factory.jl). It reads `[source].name` from a
+  `config/met_sources/*.toml` file, maps it with `settings_constructor`
   (`"GEOS-IT"`, `"GEOS-FP"`, `"ERA5-N320"`, `"MERRA-2"`), and builds the
-  settings with `_build_met_settings` from `[grid]`, `[vertical]`, and
+  settings with `build_met_settings` from `[grid]`, `[vertical]`, and
   `[preprocessing]`. Keyword arguments override TOML values; the entry point
   passes `root_dir`, `include_*` flags, `physics_dir`, `physics_layout`, and
   `coefficients_file` from the run config.
-- GEOS ([`geos.jl`](geos.jl), [`geos_panels.jl`](geos_panels.jl), [`geos_read_window.jl`](geos_read_window.jl)): `GEOSITSettings`, `GEOSFPSettings`,
+- GEOS ([`geos.jl`](GEOS/geos.jl), [`geos_panels.jl`](GEOS/geos_panels.jl), [`geos_read_window.jl`](GEOS/geos_read_window.jl)): `GEOSITSettings`, `GEOSFPSettings`,
   `open_day` (`open_geos_day` / `open_geosfp_native_day`),
   `read_window!(raw::RawWindow, settings, handles, date, win)`,
   `endpoint_dry_mass!`, `detect_level_orientation`.
-- ERA5 N320 ([`era5.jl`](era5.jl) and the `era5_n320_*.jl` files): `ERA5N320Settings`, `open_era5_day`,
+- ERA5 N320 ([`era5.jl`](ERA5/era5.jl) and the `era5_n320_*.jl` files): `ERA5N320Settings`, `open_era5_day`,
   `read_era5_n320_window_fields!`, `derive_n320_dry_mass!`,
   `derive_c180_dry_mass!`, `regrid_n320_to_c180!`,
   `read_era5_n320_convection_window!`, and the per-window bundle
   `ERA5N320ToC180Pipeline` / `process_era5_n320_window!`.
-- MERRA-2 ([`merra2.jl`](merra2.jl)): `MERRA2Settings`, `NASAArchive`,
+- MERRA-2 ([`merra2.jl`](MERRA2/merra2.jl)): `MERRA2Settings`, `NASAArchive`,
   `GEOSChemArchive`, `open_merra2_day`, `read_merra2_window_fields`,
   `read_merra2_physics_window`, `read_merra2_next_day_endpoint`,
   `detect_merra2_level_order`, `validate_merra2_settings`.
@@ -49,54 +49,11 @@ writers that turn these fields into transport binaries live in
 
 ## File Map
 
-- [`geos.jl`](geos.jl) — `GEOSSettings`, GEOS-IT and GEOS-FP path resolution,
-  GEOS-FP physics fallback (`physics_dir`, `physics_layout`), day handles,
-  `detect_level_orientation`, `_native_output_filename`
-- [`geos_panels.jl`](geos_panels.jl) — per-panel slicers, physics level-order
-  validation, lat-lon coordinate normalization and cached interpolation
-  stencils, `endpoint_dry_mass!`, mass-flux scaling, settings traits
-- [`geos_read_window.jl`](geos_read_window.jl) — `read_window!` with optional
-  surface, VDIFF, and convection fields (3-hourly convection binding)
-- [`era5.jl`](era5.jl) — `ERA5GRIBSettings`, stream paths (`era5_grib_path`,
-  `era5_arco_sp_path`), `ERA5GRIBDayHandles`, source traits
-- [`era5_n320_window.jl`](era5_n320_window.jl) — N320 grid discovery, synthesis
-  of U/V/T/PS plus reduced-Gaussian Q, the window field reader
-- [`era5_n320_mass_convection.jl`](era5_n320_mass_convection.jl) — dry mass on
-  N320 and CS, convection forecast reader
-- [`era5_n320_to_cs.jl`](era5_n320_to_cs.jl) — N320-to-CS regrid, TM5 convection
-  derivation, the per-window pipeline
-- [`merra2.jl`](merra2.jl) — archive types, `MERRA2Settings`, path resolution,
-  `MERRA2DayHandles`, level-order detection, window, physics, and next-day readers
-- [`loader.jl`](loader.jl) — `load_met_settings`, `_settings_constructor`,
-  `_build_met_settings` per source, rejection of unsupported `[preprocessing]` keys
-
-## Common Tasks
-
-- Adding a source:
-  1. Define `NewSettings <: AbstractMetSettings` in a new file here and
-     include it from [`../Preprocessing.jl`](../Preprocessing.jl) before
-     `sources/loader.jl`.
-  2. In [`loader.jl`](loader.jl), add `_settings_constructor(::Val{Symbol("NAME")})`
-     and `_build_met_settings(::Type{NewSettings}, cfg, root_dir; kwargs...)`;
-     extend `_supported_flux_keys` if the source honors flux-construction keys.
-  3. Add `config/met_sources/<name>.toml` with `[source].name = "NAME"`.
-  4. Implement `open_day`, `close_day!`, `windows_per_day(::NewSettings, ::Date)`,
-     and the `has_surface` / `has_convection` / `has_vdiff_fields` traits.
-  5. Add the writer and its `process_day`, `preprocessor_pair_supported`, and
-     `_native_output_filename` methods (see [`../README.md`](../README.md)).
-- Level order looks wrong: set GEOS `[preprocessing].level_orientation` to
-  `"bottom_up"` or `"top_down"` to bypass detection. MERRA-2 detection errors
-  unless one end of the column has more than 100 times the mean `QV` of the other.
-- GEOS-FP surface or convection fields: set `physics_dir`; `physics_layout`
-  is `auto`, `cubed_sphere`, or `latlon_025`. Convection order is validated
-  from physical `lev` metadata or the matching physics I3 QV profile,
-  independently of CTM orientation (ambiguous/conflicting evidence errors).
-  Dimensionless A3 levels require I3 in the same layout; latitude/longitude
-  interpolation brackets actual coordinates with cached daily stencils.
-  See [OF-119](../../../docs/src/preprocessing/geos_native_cs.md): binaries
-  from the C720→CS720/CS180 configs with `latlon_025` must be regenerated.
-- MERRA-2 surface, convection, VDIFF, and cloud-base fields require
-  `layout = "geoschem"` (`GEOSChemArchive`).
+The children are direct `Preprocessing.GEOS`, `.ERA5` and `.MERRA2` modules,
+like the target submodules. This container holds no Julia implementation.
+See their file maps: [GEOS](GEOS/README.md), [ERA5](ERA5/README.md), [MERRA2](MERRA2/README.md).
+The TOML factory lives in [Core/source_factory.jl](../Core/source_factory.jl);
+source-specific constructors extend its protocols in each child's `configuration.jl`.
 
 ## Invariants
 
@@ -129,13 +86,33 @@ writers that turn these fields into transport binaries live in
 ## Tests
 
 In [`../../../test/core/`](../../../test/core/): `test_met_source_loader.jl`,
-`test_met_readers.jl`, `test_geos_reader.jl`,
+ `test_geos_reader.jl`,
 `test_geosfp_native_physics_fallback.jl`, `test_geos_convection.jl`,
 `test_era5_n320_reader.jl`, `test_era5_n320_window_reader.jl`,
 `test_era5_n320_dry_mass.jl`, `test_era5_n320_convection.jl`,
-`test_era5_n320_to_c180_regrid.jl`, `test_era5_c180_tm5_convection.jl`. The
-full per-window N320 → C180 pipeline needs the ERA5 N320 GRIB archive
-(`ATMOS_ERA5_N320_ROOT`) and is tested in
-[`../../../test/real_data/test_era5_n320_to_c180_pipeline.jl`](../../../test/real_data/test_era5_n320_to_c180_pipeline.jl).
+`test_era5_n320_to_c180_regrid.jl`, `test_era5_c180_tm5_convection.jl`. The non-ARCO decoder and pipeline allocation/coefficient guards need the ERA5
+N320 GRIB archive (`ATMOS_ERA5_N320_ROOT`) and run in the optional block of
+`test/core/test_era5_n320_to_c180_regrid.jl`. Full-day numerical output is guarded
+by the preprocessing goldens.
 
 - `era5_grib_geometry.jl`: native ERA5 reduced-Gaussian GRIB geometry and mesh readers (moved from MetDrivers.ERA5; preprocessing-only).
+
+## Depends on
+
+Sources depend on Core, Vertical, Spectral, MassClosure, PhysicsInputs, Targets
+and TransportBinary. The three sources have no dependencies on one another.
+Shared CS mass/pin/delta bodies moved to Targets/CubedSphere, dry CMFMC/DTRAIN
+conversion and TM5 column scratch to PhysicsInputs, and source-factory/naming
+protocols to Core. The lower stages never depend on sources.
+
+## Used by
+
+The Preprocessing root entrypoint and public facade; preprocessing scripts.
+
+## Shared helpers owned here
+
+None in this container. Each source declares its public reader/driver surface.
+
+## Forward<->adjoint mirrors
+
+No adjoint. All sources use the same target and binary replay contracts.

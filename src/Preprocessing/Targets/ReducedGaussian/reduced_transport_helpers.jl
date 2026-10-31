@@ -305,13 +305,7 @@ function allocate_reduced_transform_workspace(grid::ReducedGaussianTargetGeometr
     buffer_lengths = sort!(unique(vcat(collect(mesh.nlon_per_ring), collect(mesh.boundary_counts))))
     face_left, face_right = face_connectivity(mesh)
 
-    caches = [ReducedSpectralThreadCache(
-                 zeros(Float64, T + 1, T + 1),
-                 Dict(n => zeros(ComplexF64, n) for n in buffer_lengths),
-                 Dict(n => zeros(Float64, n) for n in buffer_lengths),
-                 zeros(ComplexF64, T + 1, T + 1),
-                 zeros(ComplexF64, T + 1, T + 1),
-             ) for _ in 1:nt_max]
+    caches = [allocate_reduced_spectral_thread_cache(T, buffer_lengths) for _ in 1:nt_max]
     sampler = ReducedFidelitySampler(grid, face_left, face_right)
 
     return ReducedTransformWorkspace(
@@ -612,4 +606,15 @@ function merge_reduced_window!(merged::ReducedMergeWorkspace{FT},
     merge_field_2d!(merged.fidelity_merged,
                     merged.fidelity_native_ft, vertical.merge_map)
     return nothing
+end
+
+"""Allocate one ring synthesis cache; the caller retains its thread-count policy."""
+function allocate_reduced_spectral_thread_cache(T::Int, buffer_lengths)
+    nc = T + 1
+    return ReducedSpectralThreadCache(
+        zeros(Float64, nc, nc),
+        Dict(n => zeros(ComplexF64, n) for n in buffer_lengths),
+        Dict(n => zeros(Float64, n) for n in buffer_lengths),
+        zeros(ComplexF64, nc, nc),
+        zeros(ComplexF64, nc, nc))
 end

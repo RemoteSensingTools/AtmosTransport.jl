@@ -96,9 +96,9 @@ end
     @test_throws ArgumentError Pre.resolve_column_balance_weights(Dict("column_balance_weights" => 1))
     @test Pre.with_column_weights_record(Dict{String, Any}(), :hybrid_b) ==
           Dict("column_balance_weights" => "hybrid_b")
-    @test Pre._with_geos_column_weights_record(Dict{String, Any}(), :hybrid_mass,
+    @test Pre.GEOS._with_geos_column_weights_record(Dict{String, Any}(), :hybrid_mass,
                                                :endpoint_balanced)["column_balance_weights"] == "hybrid_mass"
     for closure in (:endpoint_balanced, :moisture_filtered, :omega_regularized)
-        @test Pre._geos_effective_balance(closure) == "column"
+        @test Pre.GEOS._geos_effective_balance(closure) == "column"
     end
 end

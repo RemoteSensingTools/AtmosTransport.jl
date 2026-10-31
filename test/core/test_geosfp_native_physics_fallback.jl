@@ -123,12 +123,12 @@ end
             settings = GEOSFPSettings(; root_dir=tmp, Nc=FP_NC, coefficients_file=coefs)
             @test settings.mass_flux_dt == 450.0
             # Exercise the flat-root search alongside per-day directories.
-            inst0 = AtmosTransport.Preprocessing.geosfp_native_hourly_inst_path(settings, date, 0)
+            inst0 = AtmosTransport.Preprocessing.GEOS.geosfp_native_hourly_inst_path(settings, date, 0)
             mv(inst0, joinpath(tmp, basename(inst0)))
             handles = open_day(settings, date)
             try
                 @test handles.orientation === (bottom_up ? :bottom_up : :top_down)
-                @test AtmosTransport.Preprocessing._geos_next_endpoint_available(handles)
+                @test AtmosTransport.Preprocessing.GEOS._geos_next_endpoint_available(handles)
                 raw = allocate_raw_window(settings; FT=Float64, Nz=FP_NZ)
                 A, B = _fp_coefs(FP_NZ)
                 for win in (1, 4, 24)
@@ -171,7 +171,7 @@ end
             end
 
             for (missing_date, hour) in ((date, 7), (date+Day(1), 0))
-                path = AtmosTransport.Preprocessing.geosfp_native_hourly_inst_path(settings, missing_date, hour)
+                path = AtmosTransport.Preprocessing.GEOS.geosfp_native_hourly_inst_path(settings, missing_date, hour)
                 mv(path, path * ".hidden")
                 try
                     @test_throws Regex("instantaneous hourly CTM endpoint file not found:.*" * basename(path)) open_day(settings, date)
@@ -346,23 +346,23 @@ end
 
 
 @testset "OF-119 coordinate-aware physics interpolation" begin
-    pp = AtmosTransport.Preprocessing
+    pp = AtmosTransport.Preprocessing.GEOS
     lons = [-170.0, -80.0, 0.0, 45.0, 170.0] # nonuniform, seam spans 20 degrees
     lats = vcat(-89.9375, collect(-89.75:0.25:89.75), 89.9375)
     lat_ramp = [φ for λ in lons, φ in lats]
     lon_ramp = [λ for λ in lons, φ in lats]
     for λ in (-170.0, -100.0, -5.0, 32.52337311, 169.0),
         φ in (-90.0, -89.9, -89.8, -60.0, 0.0, 4.95077576, 89.8, 89.9, 90.0)
-        @test pp._interp_regular_ll(lat_ramp, lons, lats, λ, φ) ≈ clamp(φ, first(lats), last(lats)) atol=3e-14
-        @test pp._interp_regular_ll(lon_ramp, lons, lats, λ, φ) ≈ λ atol=3e-14
+        @test pp._apply_ll_stencil(lat_ramp, pp._ll_stencil(lons, lats, λ, φ)) ≈ clamp(φ, first(lats), last(lats)) atol=3e-14
+        @test pp._apply_ll_stencil(lon_ramp, pp._ll_stencil(lons, lats, λ, φ)) ≈ λ atol=3e-14
     end
     # Unwrap the field at the seam independently: 170..190 (= -170).
     seam = [λ == -170 ? 190.0 : λ for λ in lons, φ in lats]
     for λ in (175.0, 180.0, 185.0, -175.0, 535.0)
         expected = mod(λ-170, 360) + 170
-        @test pp._interp_regular_ll(seam, lons, lats, λ, 4.9) ≈ expected
+        @test pp._apply_ll_stencil(seam, pp._ll_stencil(lons, lats, λ, 4.9)) ≈ expected
     end
-    @test pp._interp_regular_ll(reshape([7.0],1,1), [0.0], [0.0], 720, -90) == 7
+    @test pp._apply_ll_stencil(reshape([7.0],1,1), pp._ll_stencil([0.0], [0.0], 720, -90)) == 7
     mktempdir() do tmp
         path = joinpath(tmp,"coordinate_ramps.nc")
         # Odd, nonuniform longitudes with a non-centred origin exercise the
@@ -388,15 +388,15 @@ end
             @test latfield == [φ for λ in xs,φ in ys]
             @test lonfield == [λ+k+200 for λ in xs,φ in ys,k in 1:2]
             for φ in (-89.9,4.95077576,89.9)
-                @test pp._interp_regular_ll(latfield,xs,ys,32.52337311,φ) ≈ φ
-                @test pp._interp_regular_ll(lonfield,xs,ys,32.52337311,φ,2) ≈ 234.52337311
+                @test pp._apply_ll_stencil(latfield, pp._ll_stencil(xs, ys, 32.52337311, φ)) ≈ φ
+                @test pp._apply_ll_stencil(view(lonfield, :, :, 2), pp._ll_stencil(xs, ys, 32.52337311, φ)) ≈ 234.52337311
             end
         end
     end
 end
 
 @testset "OF-119 independent physics/CTM orientations and humidity pairing" begin
-    pp = AtmosTransport.Preprocessing
+    pp = AtmosTransport.Preprocessing.GEOS
     date = Date(2021,12,1)
     for ctm_bottom_up in (false, true), physics_bottom_up in (false, true)
         mktempdir() do tmp
@@ -430,7 +430,7 @@ end
 end
 
 @testset "OF-119 L72 edge/layer formulas and validated CS order" begin
-    pp = AtmosTransport.Preprocessing
+    pp = AtmosTransport.Preprocessing.GEOS
     date = Date(2021,12,1)
     for layout in (:latlon_025, :cubed_sphere), bottom_up in (false,true)
         mktempdir() do tmp
@@ -502,7 +502,7 @@ end
 end
 
 @testset "OF-119 dual vertical axes use each field's dimension" begin
-    pp = AtmosTransport.Preprocessing
+    pp = AtmosTransport.Preprocessing.GEOS
     date = Date(2021, 12, 1)
     for bottom_up in (false, true)
         mktempdir() do tmp

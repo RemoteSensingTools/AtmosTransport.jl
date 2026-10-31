@@ -21,27 +21,27 @@ const P = AtmosTransport.Preprocessing
 
     @testset "pressure taper and validation" begin
         bounds = (50.0, 80.0, 300.0, 350.0)
-        @test P._omega_pressure_weight(40.0, bounds) == 0.0
-        @test P._omega_pressure_weight(50.0, bounds) == 0.0
-        @test P._omega_pressure_weight(80.0, bounds) == 1.0
-        @test P._omega_pressure_weight(200.0, bounds) == 1.0
-        @test P._omega_pressure_weight(350.0, bounds) == 0.0
-        @test P._omega_pressure_weight(500.0, bounds) == 0.0
-        @test_throws ArgumentError P._validate_omega_regularization(
-            P.OmegaRegularization(pressure_taper_hpa = (80.0, 50.0, 300.0, 350.0)))
-        @test_throws ArgumentError P._validate_omega_regularization(
-            P.OmegaRegularization(max_relative_flux_correction = 1.1))
-        @test_throws ArgumentError P._validate_omega_regularization(
-            P.OmegaRegularization(smoothing_fraction = 0.126))
-        @test_throws ArgumentError P._validate_omega_regularization(
-            P.OmegaRegularization(max_bottom_flux_correction = 1.1))
+        @test P.GEOS._omega_pressure_weight(40.0, bounds) == 0.0
+        @test P.GEOS._omega_pressure_weight(50.0, bounds) == 0.0
+        @test P.GEOS._omega_pressure_weight(80.0, bounds) == 1.0
+        @test P.GEOS._omega_pressure_weight(200.0, bounds) == 1.0
+        @test P.GEOS._omega_pressure_weight(350.0, bounds) == 0.0
+        @test P.GEOS._omega_pressure_weight(500.0, bounds) == 0.0
+        @test_throws ArgumentError P.GEOS.validate_omega_regularization(
+            P.GEOS.OmegaRegularization(pressure_taper_hpa = (80.0, 50.0, 300.0, 350.0)))
+        @test_throws ArgumentError P.GEOS.validate_omega_regularization(
+            P.GEOS.OmegaRegularization(max_relative_flux_correction = 1.1))
+        @test_throws ArgumentError P.GEOS.validate_omega_regularization(
+            P.GEOS.OmegaRegularization(smoothing_fraction = 0.126))
+        @test_throws ArgumentError P.GEOS.validate_omega_regularization(
+            P.GEOS.OmegaRegularization(max_bottom_flux_correction = 1.1))
     end
 
     @testset "seam-aware smoother is conservative" begin
         field = [sin(0.73 * c) + (isodd(c) ? 1.0 : -1.0) for c in 1:nc]
         initial = copy(field)
         scratch = similar(field)
-        smoothed = P._smooth_cs_graph_conservative!(field, scratch,
+        smoothed = P.GEOS._smooth_cs_graph_conservative!(field, scratch,
                                                      grid.face_table, 3, 0.10)
         @test sum(smoothed) ≈ sum(initial) atol = 1e-12
         @test sum(abs2, smoothed .- sum(smoothed) / nc) <
@@ -73,13 +73,13 @@ const P = AtmosTransport.Preprocessing
             panel
         end, 6)
         target = ntuple(_ -> zeros(Float64, Nc, Nc, Nz), 6)
-        scratch = P.OmegaRegularizationScratch(
+        scratch = P.GEOS.OmegaRegularizationScratch(
             ntuple(_ -> zeros(Float64, Nc, Nc, Nz + 1), 6),
             zeros(nc), zeros(nc), zeros(nc), zeros(nc),
             falses(Nz),
         )
-        options = P.OmegaRegularization()
-        P._regularize_omega_target!(target, native_cm, omega_vdiv, m, m, grid,
+        options = P.GEOS.OmegaRegularization()
+        P.GEOS._regularize_omega_target!(target, native_cm, omega_vdiv, m, m, grid,
                                     AtmosTransport.Parameters.STANDARD_GRAVITY, 1.0, options, scratch)
         @test scratch.active_levels == Bool[false, true, true, true, false]
 
@@ -118,12 +118,17 @@ const P = AtmosTransport.Preprocessing
             end
         end
 
-        P._OMEGA_LEVEL_PARALLEL[] = false
-        diagnostics = P._reconstruct_omega_target!(
-            am, bm, dm, vdiv, grid, 1.0;
-            max_relative_correction = 0.05,
-            active_levels = Bool[true, false],
-        )
+        previous_parallel = P.GEOS._OMEGA_LEVEL_PARALLEL[]
+        diagnostics = try
+            P.GEOS._OMEGA_LEVEL_PARALLEL[] = false
+            P.GEOS._reconstruct_omega_target!(
+                am, bm, dm, vdiv, grid, 1.0;
+                max_relative_correction = 0.05,
+                active_levels = Bool[true, false],
+            )
+        finally
+            P.GEOS._OMEGA_LEVEL_PARALLEL[] = previous_parallel
+        end
         @test diagnostics.max_relative_correction <= 0.05 * (1 + 1e-12)
         @test diagnostics.max_relative_correction > 0.049
         @test diagnostics.max_local_relative_correction > 0.0

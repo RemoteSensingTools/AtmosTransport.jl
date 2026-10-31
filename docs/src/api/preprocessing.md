@@ -16,7 +16,10 @@ Modules = [AtmosTransport.Preprocessing,
            AtmosTransport.Preprocessing.TransportBinary,
            AtmosTransport.Preprocessing.LatLon,
            AtmosTransport.Preprocessing.ReducedGaussian,
-           AtmosTransport.Preprocessing.CubedSphere]
+           AtmosTransport.Preprocessing.CubedSphere,
+           AtmosTransport.Preprocessing.GEOS,
+           AtmosTransport.Preprocessing.ERA5,
+           AtmosTransport.Preprocessing.MERRA2]
 Order   = [:module, :constant, :type, :function, :macro]
 Private = false
 ```
