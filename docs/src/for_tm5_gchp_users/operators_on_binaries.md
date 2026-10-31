@@ -509,10 +509,16 @@ Every operator has the same `apply!` shape:
 
 | Family | Signature |
 | --- | --- |
-| Advection | `apply!(state, fluxes, grid, scheme, dt; workspace, cfl_limit, diffusion_op, emissions_op, meteo)` |
+| Advection | `apply!(state, fluxes, grid, scheme, dt; workspace, cfl_limit, midpoint = NoMidpoint())` |
 | Diffusion | `apply!(state, meteo, grid, op::AbstractDiffusion, dt; workspace)` |
 | Convection | `apply!(state, forcing::ConvectionForcing, grid, op::AbstractConvection, dt; workspace)` |
 | SurfaceFlux | `apply!(state, sources::PerTracerFluxMap, grid, op::AbstractSurfaceFluxOperator, dt; workspace)` |
+
+Advection does not call diffusion or surface emissions itself. Between the two
+halves of the Strang palindrome it calls `apply_midpoint!(midpoint, ...)`; the
+default `NoMidpoint()` does nothing. `transport_step!` in `Operators.StepPlans`
+builds a `TransportMidpoint` that applies diffusion and emissions there, so
+diffusion and emission keywords belong to `transport_step!`, not to Advection.
 
 The second positional argument carries the time-resolved data the
 operator needs from the binary. Workspaces are pre-allocated

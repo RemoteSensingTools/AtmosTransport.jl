@@ -163,9 +163,9 @@ surface flux integrated over `τ`. Backward Euler is not a semigroup, so the
 two sequences differ at `O(dt²)` (see `ImplicitVerticalDiffusion`).
 
 This is the single definition of the center ordering. Production transport
-reaches it through `palindrome_center!` (`Operators.Advection`). The
-cubed-sphere adjoint forward replays call it with the same closures, and its
-tape recorders with closures that record each operation before applying it;
+reaches it through `TransportMidpoint` (`Operators.StepPlans`). The
+cubed-sphere adjoint forward replay uses the same typed hook and records
+each operation before applying it;
 the reverse walk visits those records backwards, so the adjoint transposes
 this composition.
 """

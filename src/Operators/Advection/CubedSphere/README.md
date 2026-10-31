@@ -24,7 +24,7 @@ This is a plain sub-folder of the Advection module; see the
 
 ## Depends on
 
-Reconstruction and Structured shared helpers, parent state dispatch and fenced workspace/Lin–Rood interfaces, Grids, State, Parameters, Architectures, SectionTimer and Operators recorder hooks. Diffusion/SurfaceFlux remain in the existing midpoint.
+Reconstruction and Structured shared helpers, parent state dispatch and fenced workspace/Lin–Rood interfaces, Grids, State, Parameters, Architectures, SectionTimer and Operators recorder hooks. StepPlan supplies physics through the abstract midpoint hook.
 
 ## Used by
 

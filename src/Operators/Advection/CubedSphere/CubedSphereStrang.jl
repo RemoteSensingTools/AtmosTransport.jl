@@ -94,13 +94,13 @@ function strang_split_cs_mt!(panels_rm_4d::NTuple{6},
                              flux_scale = one(eltype(panels_m[1])),
                              cfl_limit::Real = DEFAULT_CFL_LIMIT,
                              subcycle_count::Union{Nothing, Integer} = nothing,
-                             midpoint! = nothing,
+                             midpoint::AbstractMidpointHook = NoMidpoint(),
                              recorder::AbstractStepRecorder = NoStepRecorder())
     strang_split_cs_mt_pingpong!(panels_rm_4d, panels_m,
                                  workspace.rm_4d_pp_buf, workspace.m_pp_buf,
                                  panels_am, panels_bm, panels_cm, mesh, scheme,
                                  workspace; flux_scale, cfl_limit,
-                                 subcycle_count, midpoint!, recorder)
+                                 subcycle_count, midpoint, recorder)
     # One host synchronization per palindrome (the halo exchanges inside only
     # queue their launches): it bounds how far the host runs ahead of the
     # device, which leaves the window prefetch thread its CPU time.
@@ -145,7 +145,7 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
                                       flux_scale = one(eltype(panels_m[1])),
                                       cfl_limit::Real = DEFAULT_CFL_LIMIT,
                                       subcycle_count::Union{Nothing, Integer} = nothing,
-                                      midpoint! = nothing,
+                                      midpoint::AbstractMidpointHook = NoMidpoint(),
                                       recorder::AbstractStepRecorder = NoStepRecorder())
     Nc, Hp = mesh.Nc, mesh.Hp
     Nz = size(panels_m[1], 3)
@@ -203,17 +203,8 @@ function strang_split_cs_mt_pingpong!(panels_rm_4d::NTuple{6},
         active_m, spare_m = spare_m, active_m
     end
 
-    # The midpoint operators (diffusion / surface flux) must act on the CURRENT
-    # active ping-pong buffer, not `state.tracers_raw` (which is stale mid-
-    # palindrome). A 0-argument `midpoint!()` would silently mutate the wrong
-    # array, so require the buffer-aware 2-arg form and fail loudly otherwise.
-    if midpoint! !== nothing
-        applicable(midpoint!, active_rm, active_m) || throw(ArgumentError(
-            "strang_split_cs_mt_pingpong! requires a buffer-aware `midpoint!` " *
-            "accepting (active_rm, active_m); a 0-argument midpoint! would mutate " *
-            "the wrong (stale) buffer mid-palindrome."))
-        midpoint!(active_rm, active_m)
-    end
+    # Only the current ping-pong buffers contain the midpoint state.
+    apply_midpoint!(midpoint, active_rm, active_m)
 
     # Reverse half: (Z → Y → X)^n_pal.
     for _ in 1:n_pal

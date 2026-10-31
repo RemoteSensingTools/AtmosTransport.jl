@@ -25,27 +25,13 @@ include("AbstractOperators.jl")
 include("StepRecording.jl")
 include("OperatorState.jl")
 
-# Diffusion is included BEFORE Advection so `strang_split_mt!`
-# (palindrome integration) can import
-# `NoDiffusion`, `AbstractDiffusion`, and
-# `apply_vertical_diffusion_vmr!`. Diffusion has no dependency on
-# Advection; reordering preserves correctness.
+# Physics families load before StepPlans, which supplies the transport midpoint.
 include("Diffusion/Diffusion.jl")
 using .Diffusion
 
-# SurfaceFlux is included BEFORE Advection so `strang_split_mt!`
-# (palindrome integration) can import
-# `NoSurfaceFlux`, `AbstractSurfaceFluxOperator`, and
-# `apply_surface_flux!`.
 include("SurfaceFlux/SurfaceFlux.jl")
 using .SurfaceFlux
 
-# Convection is included before Advection. Convection
-# runs as a SEPARATE block in `TransportModel.step!`
-# (between the transport palindrome and the chemistry block), so
-# `strang_split_mt!` doesn't need the convection types. The include
-# order still puts Convection alongside Diffusion/SurfaceFlux (both
-# column/point-local physics) for consistency.
 include("Convection/Convection.jl")
 using .Convection
 

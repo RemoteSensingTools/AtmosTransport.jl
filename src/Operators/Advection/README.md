@@ -19,7 +19,7 @@ types. Separate submodules would introduce circular imports or require editing
 the fenced implementation. Shared-module assembly keeps the existing forward kernel
 and scheme identities; among the children dependencies point from CubedSphere
 to Structured to Reconstruction. Root assembly wires all three. A future
-LinRood folder and the separate StepPlan midpoint change can revisit this.
+LinRood folder can revisit this.
 
 `apply!` / `strang_split!` dispatch on state topology. Latitude-longitude uses
 `strang_split_mt!`; reduced Gaussian uses face sweeps; split CS schemes use
@@ -30,10 +30,13 @@ its production single-tracer `_sweep_z_panels!` and `_sweep_z!` helpers.
 
 ## Numerical contracts
 
-The midpoint stays inside the existing palindrome. `palindrome_center!`
-combines diffusion and surface flux with the configured coupling:
-`V(dt/2) → S(dt) → V(dt/2)` or `S(dt) → V(dt)`, and one `V(dt)` without
-surface flux. Moving this into StepPlan is a separate change.
+Advection calls `apply_midpoint!(hook, active_rm, active_m[, tracer])` between
+the two palindrome halves. `AbstractMidpointHook` is the interface and
+`NoMidpoint()` is the default, with no floating-point work. StepPlan supplies
+`TransportMidpoint` and owns diffusion/emission ordering and preflight.
+Per-tracer RG and Lin–Rood drivers pass the tracer index. Packed LL/CS
+drivers pass the active ping-pong buffers. Hooks are column-local and leave
+air mass unchanged; they must never use the stale step-start tracer arrays.
 
 CFL subcycling runs `(X Y Z)^n → midpoint → (Z Y X)^n`, or `(H V)^n →
 midpoint → (V H)^n` on reduced Gaussian, with flux divided by `n` and a
@@ -58,7 +61,9 @@ remain follow-ups. No policy unification belongs in this structural change.
 ## File map
 
 - `Advection.jl`: imports and include order.
-- `cs_dispatch.jl`: CS state dispatch and midpoint closures; the shared `apply!`
+- `midpoint.jl`: abstract midpoint, no-op default and the typed adapter for
+  the fenced Lin–Rood zero-argument callback.
+- `cs_dispatch.jl`: CS state dispatch and midpoint forwarding; the shared `apply!`
   and `strang_split!` facade methods call the CS drivers.
 - `cs_workspace.jl`: fenced CS workspace, scratch and subcycle logging.
 - `LinRood.jl`: fenced Lin–Rood workspaces and forward kernels.
@@ -75,9 +80,8 @@ The three sub-folder READMEs list every child file.
 Grids (meshes, panel connectivity and seam indices), State (tracer and flux
 containers), Parameters (defaults), Architectures (point operations),
 MetDrivers (`uses_binary_substep_contract`), SectionTimer and the parent
-Operators interfaces/recorder hooks. Diffusion owns `preflight_diffusion`;
-Diffusion and SurfaceFlux supply the existing midpoint operators. No dependency
-on Adjoints or Tape is introduced.
+Operators interfaces/recorder hooks. There are no Diffusion, SurfaceFlux,
+StepPlan, Adjoints or Tape imports.
 
 ## Used by
 
@@ -98,8 +102,8 @@ Adjoints keeps support policy, recording and reverse-walk wiring.
   `apply_linrood_horizontal_adjoint_single_panel!`, `apply_linrood_update_adjoint!`:
   the existing Lin–Rood reverse interface, implemented in fenced root files.
 - `fill_panel_halos!`, `copy_corners!`, `fill_cs_step_start_halos!`,
-  `palindrome_center!`, `strang_split!`, `strang_split_mt!`, `strang_split_cs_mt!`:
-  forward execution and shared center/halo contracts.
+  `AbstractMidpointHook`, `NoMidpoint`, `apply_midpoint!`, `strang_split!`, `strang_split_mt!`, `strang_split_cs_mt!`:
+  forward execution and shared midpoint/halo contracts.
 
 `_ppm_edge_value(..., FT)` is the common fourth-order edge expression for
 reconstruction, ORD5/ORD7 scalar edges and the split-sweep adjoint value.
