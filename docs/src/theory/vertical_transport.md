@@ -716,7 +716,9 @@ Convection and boundary-layer mixing add vertical transport that the met
 winds do not resolve. See the convection (CMFMC with the DQRCU cloud base;
 TM5 matrix convection) and diffusion (GEOS-Chem non-local VDIFF; TM5 `dkg`)
 documentation. In the benchmark, ERA5 runs use the TM5 schemes and MERRA-2
-runs the GEOS-Chem schemes.
+runs the GEOS-Chem schemes. A runtime transcription of TM5's live `Calc_Kzz`
+boundary-layer scheme is planned; see
+[TM5 boundary-layer diffusion](tm5_boundary_layer.md).
 
 ## 6. Summary
 

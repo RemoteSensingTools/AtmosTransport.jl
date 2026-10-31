@@ -254,6 +254,10 @@ function _merge_transport_extra_header!(header::Dict{String, Any}, extra_header)
             throw(ArgumentError(
                 "extra_header cannot set structural field $(repr(key)); " *
                 "use the typed surface_pressure_basis writer keyword"))
+        elseif key in _FLUX_CONSTRUCTION_HEADER_KEYS
+            throw(ArgumentError(
+                "extra_header cannot set flux-construction field $(repr(key)); " *
+                "use the typed flux_construction writer keyword"))
         elseif key in _TRANSPORT_STRUCTURAL_HEADER_KEYS && haskey(header, key) &&
                !isequal(header[key], value)
             throw(ArgumentError(
@@ -357,7 +361,8 @@ function _validate_transport_layout!(header::AbstractDict)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
     :kz in sections && throw(ArgumentError(
-        "Transport-binary contract violation — :kz is not part of format v$(TRANSPORT_BINARY_FORMAT_VERSION); " *
+        "Transport-binary contract violation — :kz is not part of transport-binary format " *
+        "v$(join(TRANSPORT_BINARY_FORMAT_VERSIONS, "/")); " *
         "write exact dry-air interface exchange as :dkg"))
     (:dkg in sections && basis != "dry") && throw(ArgumentError(
         "Transport-binary contract violation — exact :dkg requires mass_basis=dry"))
@@ -533,8 +538,11 @@ end
 
 Assert that `header` declares the current transport-binary contract and that
 the timing metadata is self-consistent. `format_version` is a hard boundary:
-only `TRANSPORT_BINARY_FORMAT_VERSION` is accepted. Older files are obsolete
-and must be regenerated rather than loaded through compatibility defaults.
+only `TRANSPORT_BINARY_FORMAT_VERSIONS` (4 and 5) are accepted. Older files are
+obsolete and must be regenerated rather than loaded through compatibility
+defaults; newer ones are rejected. The flux-construction identity is checked
+with [`parse_flux_construction_header`](@ref): version-5 keys in a version-4
+header are rejected, and a version-5 header must record a valid identity.
 
 Shared between `TransportBinaryDriver`, `TransportBinaryReader`, and the
 `scripts/diagnostics/inspect_transport_binary.jl` tool so there is ONE
@@ -555,10 +563,8 @@ function validate_transport_contract!(header::AbstractDict)
     catch
         throw(ArgumentError("Transport-binary contract violation — invalid format_version=$(repr(header["format_version"]))"))
     end
-    format_version == TRANSPORT_BINARY_FORMAT_VERSION || throw(ArgumentError(
-        "Obsolete transport binary format_version=$(format_version); current runtime requires " *
-        "format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate this file with the current " *
-        "preprocessor so the header carries the per-window substep schedule and runtime contract."))
+    _check_transport_format_version(format_version)
+    parse_flux_construction_header(header, format_version)
 
     radius = get(header, "planet_radius_m", nothing)       # absent in older binaries
     radius === nothing || (radius isa Real && !(radius isa Bool) && isfinite(radius) && radius > 0) ||

@@ -77,6 +77,8 @@ function binary_capabilities(reader::TransportBinaryReader)
         mass_basis       = hdr.mass_basis,
         surface_pressure_basis = surface_pressure_basis(reader),
         grid_type        = grid_type(hdr),
+        format_version   = hdr.format_version,
+        flux_construction = hdr.flux_construction,
         nlevel           = hdr.nlevel,
         nwindow          = hdr.nwindow,
         window_seconds   = hdr.dt_met_seconds,

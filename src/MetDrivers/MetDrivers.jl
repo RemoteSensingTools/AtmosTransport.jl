@@ -28,7 +28,8 @@ using .BinaryReaders
 export section_shape, section_elements, section_view, infer_surface_pressure_basis,
        poisson_balance_target, write_padded_header!
 
-export TRANSPORT_BINARY_FORMAT_VERSION
+export TRANSPORT_BINARY_FORMAT_VERSION, TRANSPORT_BINARY_FORMAT_VERSIONS,
+       FLUX_CONSTRUCTION_FORMAT_VERSION
 export TransportBinaryReader, TransportBinaryHeader, write_transport_binary
 export AbstractFidelityStatus, FidelityPassed, FidelityFailed,
        FidelityNotApplicable, FidelityUnavailable, FidelityReason
@@ -36,6 +37,8 @@ export AbstractFluxFidelityKind, WindRederivedFidelity,
        NativePassthroughFidelity, NoFluxFidelityKind
 export FluxFidelityHeader, OmegaFidelityHeader
 export AbstractColumnClosureHeader, ColumnClosureHeader, NoColumnClosureHeader
+export AbstractFluxConstructionHeader, NoFluxConstructionHeader,
+       PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader
 export AbstractTransportBinaryGeometry, LatLonBinaryGeometry
 export ReducedGaussianBinaryGeometry, CubedSphereBinaryGeometry, binary_geometry
 export TransportBinaryContract, canonical_window_constant_contract,

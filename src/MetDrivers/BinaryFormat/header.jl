@@ -1,4 +1,4 @@
-# Typed geometry metadata, common header schema, and version-4 parsing.
+# Typed geometry metadata, common header schema, and version-4/5 parsing.
 
 const PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
@@ -13,7 +13,39 @@ const CS_OPTIONAL_2D_SECTIONS = (:pbl_eflux, :cmfmc_cloud_base)
     section === :ps || _is_pbl_surface_payload_section(section) || section in CS_OPTIONAL_2D_SECTIONS
 const TM5_CONVECTION_PAYLOAD_SECTIONS = (:entu, :detu, :entd, :detd)
 const FLUX_DELTA_PAYLOAD_SECTIONS = (:dam, :dbm, :dcm, :dm, :dhflux)
+
+"""
+Transport-binary format version of a header that records no version-5 item.
+Every writer emits it unless it is given a flux-construction identity, so all
+existing outputs stay version 4.
+"""
 const TRANSPORT_BINARY_FORMAT_VERSION = 4
+
+"""
+Transport-binary format version of a header that records the flux-construction
+identity (`flux_construction` and its keys, see
+[`AbstractFluxConstructionHeader`](@ref)). Version 5 is version 4 plus these
+keys: payload layout, timing and sampling are unchanged.
+"""
+const FLUX_CONSTRUCTION_FORMAT_VERSION = 5
+
+"""Every transport-binary `format_version` this runtime reads."""
+const TRANSPORT_BINARY_FORMAT_VERSIONS =
+    (TRANSPORT_BINARY_FORMAT_VERSION, FLUX_CONSTRUCTION_FORMAT_VERSION)
+
+# Reject a format version this runtime cannot read: older files are obsolete
+# and must be regenerated; newer ones need a newer runtime.
+function _check_transport_format_version(format_version::Integer)
+    format_version in TRANSPORT_BINARY_FORMAT_VERSIONS && return Int(format_version)
+    supported = join(TRANSPORT_BINARY_FORMAT_VERSIONS, " and ")
+    format_version < first(TRANSPORT_BINARY_FORMAT_VERSIONS) && throw(ArgumentError(
+        "Obsolete transport binary format_version=$(format_version); this runtime reads " *
+        "format_version $(supported). Regenerate this file with the current preprocessor " *
+        "so the header carries the per-window substep schedule and runtime contract."))
+    throw(ArgumentError(
+        "Unsupported transport binary format_version=$(format_version); this runtime reads " *
+        "format_version $(supported). The file was written by a newer preprocessor."))
+end
 
 @inline _is_pbl_surface_payload_section(section::Symbol) =
     section in PBL_SURFACE_PAYLOAD_SECTIONS
@@ -32,9 +64,10 @@ end
 """
     AbstractTransportBinaryGeometry
 
-Geometry metadata embedded in a version-4 transport binary. Concrete geometry
-types carry only the fields meaningful for their topology; reader and grid
-construction code dispatches on this type instead of branching on string tags.
+Geometry metadata embedded in a transport binary (format versions 4 and 5).
+Concrete geometry types carry only the fields meaningful for their topology;
+reader and grid construction code dispatches on this type instead of branching
+on string tags.
 """
 abstract type AbstractTransportBinaryGeometry end
 
@@ -209,6 +242,180 @@ const _COLUMN_CLOSURE_KEYS = (
     :column_closure_projected_residual_max_kg, :column_closure_residual_to_tolerance_max,
     :column_closure_booked_residual_max_kg, :column_closure_cm_residual_to_tolerance_max)
 
+"""
+    AbstractFluxConstructionHeader
+
+Flux-construction identity of a transport binary: the method the preprocessor
+used to build the horizontal mass fluxes. A version-5 header records it in the
+key `flux_construction` (spelled by [`flux_construction_tag`](@ref)) plus the
+keys of the construction; a version-4 header records none and parses as
+[`NoFluxConstructionHeader`](@ref). Writers take it as the typed
+`flux_construction` keyword and write version 5 exactly when it is recorded.
+See `docs/src/concepts/binary_format.md`.
+"""
+abstract type AbstractFluxConstructionHeader end
+
+"""Version-4 header: the flux construction is not recorded."""
+struct NoFluxConstructionHeader <: AbstractFluxConstructionHeader end
+
+"""
+`flux_construction = "point_sampled_spectral"`: the ERA5 spectral lat-lon and
+reduced-Gaussian construction (winds synthesized at the target truncation and
+sampled on faces and centres, times the face pressure thickness). It has no
+further keys.
+"""
+struct PointSampledSpectralFluxesHeader <: AbstractFluxConstructionHeader end
+
+"""
+    TM5SpectralFluxesHeader(revision, spectral_truncation_used,
+                            quadrature_refinement_steps, vod2uv_radius_m)
+
+`flux_construction = "tm5_spectral"`: TM5-style spectral mass fluxes, integrated
+over the target cell faces from the retained spectrum
+(`docs/src/preprocessing/tm5_spectral_fluxes.md`). Header keys:
+
+- `flux_construction_revision`: revision of the construction (≥ 1);
+- `spectral_truncation_used`: triangular truncation T of the spectrum the
+  fluxes were integrated from (≥ 1);
+- `quadrature_refinement_steps`: `nstep` of TM5's `ShRefinement` rule (≥ 1);
+- `vod2uv_radius_m`: sphere radius of the vorticity/divergence-to-wind
+  conversion [m] (finite, positive). The radius of the target mesh stays in
+  `planet_radius_m`.
+"""
+struct TM5SpectralFluxesHeader <: AbstractFluxConstructionHeader
+    revision                    :: Int
+    spectral_truncation_used    :: Int
+    quadrature_refinement_steps :: Int
+    vod2uv_radius_m             :: Float64
+
+    function TM5SpectralFluxesHeader(revision::Integer, spectral_truncation_used::Integer,
+                                     quadrature_refinement_steps::Integer,
+                                     vod2uv_radius_m::Real)
+        for (key, value) in (("flux_construction_revision", revision),
+                             ("spectral_truncation_used", spectral_truncation_used),
+                             ("quadrature_refinement_steps", quadrature_refinement_steps))
+            !(value isa Bool) && value >= 1 ||
+                throw(ArgumentError("tm5_spectral `$key` must be an integer ≥ 1; got $value"))
+        end
+        radius = Float64(vod2uv_radius_m)
+        !(vod2uv_radius_m isa Bool) && isfinite(radius) && radius > 0 || throw(ArgumentError(
+            "tm5_spectral `vod2uv_radius_m` must be finite and positive; got $vod2uv_radius_m"))
+        return new(Int(revision), Int(spectral_truncation_used),
+                   Int(quadrature_refinement_steps), radius)
+    end
+end
+
+"""On-disk spelling (`flux_construction` value) of a flux-construction identity."""
+flux_construction_tag(::Type{PointSampledSpectralFluxesHeader}) = "point_sampled_spectral"
+flux_construction_tag(::Type{TM5SpectralFluxesHeader}) = "tm5_spectral"
+flux_construction_tag(construction::AbstractFluxConstructionHeader) =
+    flux_construction_tag(typeof(construction))
+
+const _FLUX_CONSTRUCTION_KEY = "flux_construction"
+const _FLUX_CONSTRUCTION_TYPES = (PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader)
+
+# The header keys of a construction, one per field and in field order: the one
+# list from which writers record, readers decode and validators reject keys.
+_flux_construction_keys(::Type{PointSampledSpectralFluxesHeader}) = ()
+_flux_construction_keys(::Type{TM5SpectralFluxesHeader}) =
+    ("flux_construction_revision", "spectral_truncation_used",
+     "quadrature_refinement_steps", "vod2uv_radius_m")
+
+# Every version-5-only header key.
+const _FLUX_CONSTRUCTION_HEADER_KEYS = (_FLUX_CONSTRUCTION_KEY,
+    Iterators.flatten(map(_flux_construction_keys, _FLUX_CONSTRUCTION_TYPES))...)
+
+# Header entries a writer records for a construction; `format_version` is set
+# by `_set_flux_construction!`.
+function flux_construction_header_entries(construction::T) where {T <: AbstractFluxConstructionHeader}
+    fields = ntuple(i -> _flux_construction_keys(T)[i] => getfield(construction, i),
+                    fieldcount(T))
+    return (_FLUX_CONSTRUCTION_KEY => flux_construction_tag(T), fields...)
+end
+
+# JSON3 reads an integral JSON number (also `639.0`) as an Int.
+function _construction_value(header::AbstractDict, key::String, ::Type{Int})
+    value = header[key]
+    value isa Integer && !(value isa Bool) || throw(ArgumentError(
+        "flux-construction key `$key` must be an integer; got $(repr(value))"))
+    return Int(value)
+end
+
+function _construction_value(header::AbstractDict, key::String, ::Type{Float64})
+    value = header[key]
+    value isa Real && !(value isa Bool) || throw(ArgumentError(
+        "flux-construction key `$key` must be a number; got $(repr(value))"))
+    return Float64(value)
+end
+
+_flux_construction_from_header(::Type{T}, header) where {T <: AbstractFluxConstructionHeader} =
+    T(ntuple(i -> _construction_value(header, _flux_construction_keys(T)[i], fieldtype(T, i)),
+             fieldcount(T))...)
+
+"""
+    parse_flux_construction_header(header, format_version) -> AbstractFluxConstructionHeader
+
+Decode and check the flux-construction identity of a String-keyed header. A
+version-4 header must carry none of the version-5 keys and returns
+[`NoFluxConstructionHeader`](@ref). A version-5 header must carry
+`flux_construction` with a known value, every key of that construction with a
+valid value, and no key of another construction.
+"""
+function parse_flux_construction_header(header::AbstractDict, format_version::Integer)
+    present = [key for key in _FLUX_CONSTRUCTION_HEADER_KEYS if haskey(header, key)]
+    if format_version == TRANSPORT_BINARY_FORMAT_VERSION
+        isempty(present) || throw(ArgumentError(
+            "format_version=$(format_version) header carries the version-5 key(s) " *
+            "$(join(("`$k`" for k in present), ", ")); a header that records the flux " *
+            "construction must declare format_version=$(FLUX_CONSTRUCTION_FORMAT_VERSION)"))
+        return NoFluxConstructionHeader()
+    end
+    format_version == FLUX_CONSTRUCTION_FORMAT_VERSION || throw(ArgumentError(
+        "no flux-construction identity is defined for format_version=$(format_version)"))
+    haskey(header, _FLUX_CONSTRUCTION_KEY) || throw(ArgumentError(
+        "format_version=$(format_version) requires `$(_FLUX_CONSTRUCTION_KEY)`"))
+    raw_tag = header[_FLUX_CONSTRUCTION_KEY]
+    raw_tag isa AbstractString || throw(ArgumentError(
+        "`$(_FLUX_CONSTRUCTION_KEY)` must be a string; got $(repr(raw_tag))"))
+    index = findfirst(T -> flux_construction_tag(T) == raw_tag, _FLUX_CONSTRUCTION_TYPES)
+    index === nothing && throw(ArgumentError(
+        "unsupported $(_FLUX_CONSTRUCTION_KEY)=$(repr(raw_tag)); expected one of " *
+        join((repr(flux_construction_tag(T)) for T in _FLUX_CONSTRUCTION_TYPES), ", ")))
+    construction_type = _FLUX_CONSTRUCTION_TYPES[index]
+    own_keys = _flux_construction_keys(construction_type)
+    missing_keys = [key for key in own_keys if !haskey(header, key)]
+    isempty(missing_keys) || throw(ArgumentError(
+        "$(_FLUX_CONSTRUCTION_KEY)=$(repr(raw_tag)) requires " *
+        join(("`$k`" for k in missing_keys), ", ")))
+    foreign = [key for key in present if key != _FLUX_CONSTRUCTION_KEY && !(key in own_keys)]
+    isempty(foreign) || throw(ArgumentError(
+        "$(_FLUX_CONSTRUCTION_KEY)=$(repr(raw_tag)) does not use " *
+        join(("`$k`" for k in foreign), ", ")))
+    return _flux_construction_from_header(construction_type, header)
+end
+
+# Writers: record a construction (version 5) or leave the header untouched
+# (version 4, byte-identical to a writer without the keyword).
+_set_flux_construction!(header::Dict{String, Any}, ::NoFluxConstructionHeader) = header
+function _set_flux_construction!(header::Dict{String, Any},
+                                 construction::AbstractFluxConstructionHeader)
+    header["format_version"] = FLUX_CONSTRUCTION_FORMAT_VERSION
+    for (key, value) in flux_construction_header_entries(construction)
+        header[key] = value
+    end
+    return header
+end
+
+"""One-line description of a flux-construction identity for reports."""
+flux_construction_summary(::NoFluxConstructionHeader) = "not recorded (format v4)"
+flux_construction_summary(::PointSampledSpectralFluxesHeader) =
+    flux_construction_tag(PointSampledSpectralFluxesHeader)
+flux_construction_summary(c::TM5SpectralFluxesHeader) = string(
+    flux_construction_tag(c), " (revision ", c.revision,
+    ", spectral_truncation_used=", c.spectral_truncation_used,
+    ", quadrature_refinement_steps=", c.quadrature_refinement_steps,
+    ", vod2uv_radius_m=", c.vod2uv_radius_m, ")")
+
 """Geometry metadata for a regular longitude-latitude binary."""
 struct LatLonBinaryGeometry <: AbstractTransportBinaryGeometry
     Nx                 :: Int
@@ -263,7 +470,8 @@ full-window mass amount.
 
 `flux_fidelity`, `omega_fidelity` and `column_closure` are the write-time
 certificate and column-closure record, checked for consistency when the header
-is parsed.
+is parsed. `flux_construction` is the flux-construction identity of a version-5
+header and `NoFluxConstructionHeader()` for version 4.
 """
 struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     format_version       :: Int
@@ -300,6 +508,7 @@ struct TransportBinaryHeader{G <: AbstractTransportBinaryGeometry}
     flux_fidelity        :: FluxFidelityHeader
     omega_fidelity       :: OmegaFidelityHeader
     column_closure       :: AbstractColumnClosureHeader
+    flux_construction    :: AbstractFluxConstructionHeader
     raw_header           :: Dict{String, Any}
 end
 
@@ -626,8 +835,8 @@ end
 function _parse_steps_per_window_schedule(hdr, nwindow::Integer,
                                           steps_per_window::Integer)
     haskey(hdr, :steps_per_window_by_window) ||
-        throw(ArgumentError("format_version=$(TRANSPORT_BINARY_FORMAT_VERSION) requires " *
-                            "`steps_per_window_by_window`; regenerate this binary"))
+        throw(ArgumentError("transport-binary format_version $(join(TRANSPORT_BINARY_FORMAT_VERSIONS, " and ")) " *
+                            "requires `steps_per_window_by_window`; regenerate this binary"))
     schedule = Int.(collect(hdr.steps_per_window_by_window))
     length(schedule) == Int(nwindow) ||
         throw(ArgumentError("steps_per_window_by_window length $(length(schedule)) " *
@@ -643,8 +852,8 @@ end
 function _parse_poisson_scale_schedule(hdr, nwindow::Integer,
                                        scalar_scale::Real)
     haskey(hdr, :poisson_balance_target_scale_by_window) ||
-        throw(ArgumentError("format_version=$(TRANSPORT_BINARY_FORMAT_VERSION) requires " *
-                            "`poisson_balance_target_scale_by_window`; regenerate this binary"))
+        throw(ArgumentError("transport-binary format_version $(join(TRANSPORT_BINARY_FORMAT_VERSIONS, " and ")) " *
+                            "requires `poisson_balance_target_scale_by_window`; regenerate this binary"))
     scales = Float64.(collect(hdr.poisson_balance_target_scale_by_window))
     length(scales) == Int(nwindow) ||
         throw(ArgumentError("poisson_balance_target_scale_by_window length $(length(scales)) " *
@@ -710,6 +919,7 @@ function Base.show(io::IO, h::TransportBinaryHeader)
           "├── humidity:      ", transport_qv_summary(h), "\n",
           "├── semantics:     ", transport_semantics_summary(h), "\n",
           "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
+          "├── construction:  ", flux_construction_summary(h.flux_construction), "\n",
           "└── header bytes:  ", h.header_bytes)
 end
 
@@ -867,10 +1077,7 @@ function parse_transport_header(raw_bytes::Vector{UInt8};
     # `validate_transport_contract!` (called by `TransportBinaryReader`
     # before we get here) has already verified the 8 fields are present —
     # before parsing the typed header.
-    format_version = Int(hdr.format_version)
-    format_version == TRANSPORT_BINARY_FORMAT_VERSION ||
-        throw(ArgumentError("Obsolete transport binary format_version=$(format_version); " *
-                            "current runtime requires format_version=$(TRANSPORT_BINARY_FORMAT_VERSION). Regenerate."))
+    format_version = _check_transport_format_version(Int(hdr.format_version))
     header_bytes = Int(hdr.header_bytes)
     disk_ft, float_bytes = _transport_parse_on_disk_float_type(hdr)
     grid_type = _transport_parse_grid_type(hdr)
@@ -907,6 +1114,7 @@ function parse_transport_header(raw_bytes::Vector{UInt8};
     omega_fidelity = parse_omega_fidelity_header(hdr)
     column_closure = parse_column_closure_header(hdr, nwindow)
     raw_header = Dict{String, Any}(String(k) => v for (k, v) in pairs(hdr))
+    flux_construction = parse_flux_construction_header(raw_header, format_version)
 
     return TransportBinaryHeader(
         format_version,
@@ -943,6 +1151,7 @@ function parse_transport_header(raw_bytes::Vector{UInt8};
         flux_fidelity,
         omega_fidelity,
         column_closure,
+        flux_construction,
         raw_header,
     )
 end

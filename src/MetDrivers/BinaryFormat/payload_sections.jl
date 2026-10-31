@@ -267,7 +267,7 @@ end
 
 function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
     haskey(window, :qv) && throw(ArgumentError(
-        "single-field qv is not part of the maintained version-4 contract; " *
+        "single-field qv is not part of the maintained version-4/5 contract; " *
         "provide qv_start and qv_end"))
     _transport_window_has_value(window, :qv_start) && push!(sections, :qv_start)
     _transport_window_has_value(window, :qv_end) && push!(sections, :qv_end)

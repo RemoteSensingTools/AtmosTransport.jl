@@ -118,11 +118,14 @@ end
 """
     write_transport_binary(path, grid, windows; kwargs...) -> path
 
-Write a canonical v4 lat-lon or reduced-Gaussian transport binary from an
+Write a canonical lat-lon or reduced-Gaussian transport binary from an
 AtmosGrid and an ordered vector of forcing windows. Window payloads must match
 the grid topology and declared mass basis. The typed `surface_pressure_basis`
 keyword is required and records whether `window.ps` is total or dry pressure;
-it is deliberately independent of `mass_basis`. The file is written through
+it is deliberately independent of `mass_basis`. The file is format version 4
+unless the typed `flux_construction` keyword records a flux-construction
+identity ([`AbstractFluxConstructionHeader`](@ref)); then it is version 5 with
+the same payload. The file is written through
 [`AtomicFiles.atomic_publish`](@ref AtmosTransport.AtomicFiles.atomic_publish):
 it replaces `path` only after the header and all payloads succeed, with mode
 `0o666 & ~umask`. A lat-lon mesh must have uniform latitude faces: the header
@@ -149,6 +152,8 @@ function write_transport_binary(path::AbstractString,
                                 tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                                                  Nothing, AbstractMassBasis} =
                                     _DEFAULT_TM5_CONVECTION_MASS_BASIS,
+                                flux_construction::AbstractFluxConstructionHeader =
+                                    NoFluxConstructionHeader(),
                                 extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}(),
                                 threaded::Bool = Threads.nthreads() > 1)
     _validate_eager_mesh(grid.horizontal, flux_kind)
@@ -192,6 +197,7 @@ function write_transport_binary(path::AbstractString,
     merge!(header, _eager_geometry_header(mesh, nlevel, payload_sections))
     _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
                                     tm5_convection_mass_basis)
+    _set_flux_construction!(header, flux_construction)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)

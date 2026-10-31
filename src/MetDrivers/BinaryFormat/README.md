@@ -1,7 +1,7 @@
 # BinaryFormat
 
-Version-4 transport metadata, payload layout, decoded windows, writers and
-inspection reports. Included as `MetDrivers.BinaryFormat`; application APIs
+Transport metadata (format versions 4 and 5), payload layout, decoded windows,
+writers and inspection reports. Included as `MetDrivers.BinaryFormat`; application APIs
 are re-exported by MetDrivers.
 
 ## Depends on
@@ -28,6 +28,19 @@ schedule. Physics tendency accumulation and rounding policies stay at callers.
 validation, seeking, flushing and publication remain caller responsibilities.
 Its string overload preserves already serialized LL header bytes.
 `dry_mass_pin_enabled` and `is_certificate_key` are public metadata helpers.
+`TRANSPORT_BINARY_FORMAT_VERSIONS` lists the readable versions (4 and 5);
+`_check_transport_format_version` is the one version gate of the contract
+validator and the typed header parser. Version 5 is version 4 plus the
+flux-construction identity: the typed records `NoFluxConstructionHeader` (v4),
+`PointSampledSpectralFluxesHeader` and `TM5SpectralFluxesHeader`, spelled by
+`flux_construction_tag` and decoded and checked by
+`parse_flux_construction_header`. Writers take a record through the typed
+`flux_construction` keyword and `_set_flux_construction!`, which leaves a v4
+header untouched; `extra_header` cannot set these keys. `_flux_construction_keys`
+is the one per-construction key list (field order) for writing, decoding and
+rejection. A version-5 header always records an identity, so a writer that adds
+a later version-5-only item (the planned `tm5_pbl` group) must also record the
+construction.
 `fidelity_tag` and `FLUX_FIDELITY_SAMPLE_SEED` keep writer/reader certificate
 spellings and deterministic sampling identical. Public `parse_*_fidelity_header`
 and `parse_column_closure_header` methods decode certificate blocks.
@@ -50,7 +63,8 @@ forward and adjoint forcing use the same `TransportWindow`.
 ## File map
 
 - `BinaryFormat.jl`: submodule imports, assembly and interface.
-- `header.jl`: geometry/header types, certificate parsing, sampling, common header.
+- `header.jl`: format versions, geometry/header types, certificate and
+  flux-construction parsing, sampling, common header.
 - `contract.jl`: contract validation, Poisson metadata, padded-header writes.
 - `payload_sections.jl`: section shape table, element counts, accessors and validation.
 - `window.jl`: decoded `TransportWindow`, replay deltas and Adapt rules.
@@ -64,6 +78,9 @@ forward and adjoint forcing use the same `TransportWindow`.
 Header keys, values, section order, per-element conversion and NUL padding are
 preserved. LL Preprocessing's `build_v4_header` remains a separate builder:
 unifying its key set is a stated-delta follow-up. Writers publish only complete
-atomic staging files. LL/RG reject CS-only sections; the current format is v4.
-Tests: binary inspector, persistence hardening, atomic files, binary planet
-radius, optional CS sections, and preprocessing writer/driver contracts.
+atomic staging files. LL/RG reject CS-only sections. Readers accept format
+versions 4 and 5; writers emit 4 unless given a flux-construction identity, so
+every default output stays version 4 with unchanged bytes.
+Tests: binary inspector, format versions 4 and 5 (`test_binary_format_v5.jl`),
+persistence hardening, atomic files, binary planet radius, optional CS sections,
+and preprocessing writer/driver contracts.

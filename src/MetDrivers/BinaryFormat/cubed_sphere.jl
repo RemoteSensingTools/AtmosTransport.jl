@@ -108,9 +108,11 @@ end
     open_streaming_cs_transport_binary(path, Nc, npanel, nlevel, nwindow, vc;
                                        kwargs...) -> StreamingTransportBinaryWriter
 
-Open a canonical v4 cubed-sphere binary for streaming window writes. `vc` is a
-`HybridSigmaPressure` vertical coordinate; the payload is per-panel structured
-arrays with `StructuredDirectional` topology. The header records the panel
+Open a canonical cubed-sphere binary for streaming window writes (format
+version 4, or 5 when the typed `flux_construction` keyword records a
+flux-construction identity). `vc` is a `HybridSigmaPressure` vertical
+coordinate; the payload is per-panel structured arrays with
+`StructuredDirectional` topology. The header records the panel
 convention (`"gnomonic"` or `"geos_native"`), the geometry law and
 `planet_radius` (the radius of the mesh on which the air masses were computed),
 so readers reconstruct the same mesh. Each subsequent window must match the
@@ -154,6 +156,7 @@ function open_streaming_cs_transport_binary(
         cs_center_law = nothing,
         longitude_offset_deg = nothing,
         planet_radius::Real,
+        flux_construction::AbstractFluxConstructionHeader = NoFluxConstructionHeader(),
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
     include_dtrain && !include_cmfmc &&
         throw(ArgumentError("CS transport binaries cannot include dtrain without cmfmc"))
@@ -268,6 +271,7 @@ function open_streaming_cs_transport_binary(
     ))
     _set_tm5_convection_mass_basis!(header, payload_sections, mass_basis,
                                     tm5_convection_mass_basis)
+    _set_flux_construction!(header, flux_construction)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
     header["panel_convention"] = panel_convention_tag(parse_panel_convention(header["panel_convention"]))
 

@@ -1,8 +1,8 @@
 """
     TransportBinaryDriver
 
-Meteorological driver backed by a validated version-4 transport binary.
-Geometry dispatch reconstructs the appropriate grid and loads structured,
+Meteorological driver backed by a validated transport binary (format version 4
+or 5). Geometry dispatch reconstructs the appropriate grid and loads structured,
 face-indexed, or panel-native windows through the same public interface.
 """
 struct TransportBinaryDriver{FT, ReaderT, GridT} <: AbstractMassFluxMetDriver
@@ -320,11 +320,12 @@ end
     TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1,
                           validate_windows=true, validate_replay=false)
 
-Open a version-4 binary and construct its runtime grid. `Hp` is the horizontal
-halo width for cubed-sphere grids and is ignored by other geometries. Optional
-validation checks vertical-flux magnitude for LL/RG and replay continuity for
-all geometries. The path constructor closes its internally opened reader if
-construction fails; callers retain ownership of a reader passed directly.
+Open a version-4 or version-5 binary and construct its runtime grid. `Hp` is the
+horizontal halo width for cubed-sphere grids and is ignored by other geometries.
+Optional validation checks vertical-flux magnitude for LL/RG and replay
+continuity for all geometries. The path constructor closes its internally opened
+reader if construction fails; callers retain ownership of a reader passed
+directly.
 """
 function TransportBinaryDriver(reader::TransportBinaryReader{FT};
                                arch = CPU(), Hp::Int = 1,

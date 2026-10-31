@@ -361,6 +361,11 @@ The synthetic-RG variant uses
 
 ## What's next
 
+- [TM5-style spectral mass fluxes](tm5_spectral_fluxes.md) — the planned
+  second construction for LL and RG targets: face fluxes as quadratures of the
+  retained spectral fields, an independent vertical flux, and a per-layer
+  balance as in TM5. This page describes the existing construction, which stays
+  the default.
 - [GEOS native cubed-sphere](@ref) — the FV3-native path (no
   spectral synthesis; a column-integrated Poisson correction closes fluxes against
   the raw next-hour dry endpoint).

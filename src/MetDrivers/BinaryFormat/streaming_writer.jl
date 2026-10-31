@@ -65,7 +65,8 @@ be written (e.g. `(m=..., hflux=..., cm=..., ps=...)`).  Its arrays must
 have the correct sizes but their *values* are ignored — it is only used to
 determine `payload_sections` and to validate dimensions.
 The typed `surface_pressure_basis` keyword is required; it is not inferred
-from the air-mass basis.
+from the air-mass basis. The optional typed `flux_construction` keyword records
+a flux-construction identity and makes the file format version 5.
 
 Returns a [`StreamingTransportBinaryWriter`](@ref).
 """
@@ -90,6 +91,7 @@ function open_streaming_transport_binary(
         tm5_convection_mass_basis::Union{_DefaultTM5ConvectionMassBasis,
                                          Nothing, AbstractMassBasis} =
             _DEFAULT_TM5_CONVECTION_MASS_BASIS,
+        flux_construction::AbstractFluxConstructionHeader = NoFluxConstructionHeader(),
         extra_header::AbstractDict{<:AbstractString,<:Any} = Dict{String,Any}())
 
     flux_kind === :substep_mass_amount || throw(ArgumentError(
@@ -139,6 +141,7 @@ function open_streaming_transport_binary(
     ))
     _set_tm5_convection_mass_basis!(header, payload_sections, basis_sym,
                                     tm5_convection_mass_basis)
+    _set_flux_construction!(header, flux_construction)
     isempty(extra_header) || _merge_transport_extra_header!(header, extra_header)
 
     validate_transport_contract!(header)
