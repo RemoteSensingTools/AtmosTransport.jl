@@ -11,7 +11,7 @@ import AMDGPU
 import AtmosTransport.Tape:
     PinnedHostCSTapeStorage,
     PinnedHostCSTapeSlot,
-    MmapCSTapeStorage,
+    _MmapTapeFile,
     _allocate_tape_slot,
     _register_tape_read_backend!,
     _mmap_prepare_for_panels!,
@@ -68,7 +68,7 @@ end
 # The generic tape path copies via its role-specific ROCArray read caches.
 # Its synchronization hook waits for H2D transfers before a cache is reused
 # and D2H transfers before the mmap payload is consumed.
-function _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
+function _mmap_prepare_for_panels!(storage::_MmapTapeFile,
                                    panels::NTuple{6,<:ROCArray})
     storage.synchronize = AMDGPU.synchronize
     _register_tape_read_backend!(storage, panels)

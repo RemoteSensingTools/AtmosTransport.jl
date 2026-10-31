@@ -1,0 +1,133 @@
+# Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
+# recorded from main (04a38b6d5) on the [host] below; see test/README.md.
+
+[cases.f32_cw84_matrixwin_split_none.footprint]
+footprints = "9f036e24e0d090e6872045b0e11bf7ac31c61d33"
+initial_adjoint = "7443662990c067279ac77c6d42ba0ac6f9b12623"
+
+[cases.f32_cw84_matrixwin_split_none.fourdvar]
+cost = "7559186a2c49d7a68c37de905c082b4d671fe954"
+gradients = "2ab2ac2297dc8b042df97e05c4b4488b237bd8bb"
+simulated = "9c20e66fcfff5dbdb92a00a8190f609e0e07fce9"
+
+[cases.f32_cw84_matrixwin_split_none.jacobian]
+footprints = "6debd94b4edbc3786a0498590c0f7205cff0b799"
+initial_adjoint = "72cb29481f6893712ccf32aeac0b51f893da8d11"
+windows = "65dbde98599dcb318d37f6fd57ecaf3f7b62ce03"
+
+[cases.f32_cw84_matrixwin_split_none.seeded]
+footprints = "dc61f7521f02d6592021907537508793a493b147"
+initial_adjoint = "bad176b350e6cc9228d3613f652bd38b09f334ef"
+
+[cases.f32_monotone_tm5sub_boundary_vmr.footprint]
+footprints = "8d14d00c5365dcff15a9b0d8678fe983c1247bca"
+initial_adjoint = "09c44ff9ff40fd627737f58e79a0b140e400a53c"
+
+[cases.f32_monotone_tm5sub_boundary_vmr.fourdvar]
+cost = "649aa42e6ac9ab7d8ab76e6143925bb7ca3ea1cd"
+gradients = "b95f90e3b9f8ca07fe4b07cb1c570f31341f6b86"
+simulated = "93d83f903b95b5ff0dc58b51d7523fdbfec8c439"
+
+[cases.f32_monotone_tm5sub_boundary_vmr.jacobian]
+footprints = "c95302032071ad840d268824455217c6309539fd"
+initial_adjoint = "f71ff881ef0b619ac7332cad134d2781d8ebad62"
+windows = "e96e029013f162b0e2f8d0fe3561a4ee7c48d9cd"
+
+[cases.f32_monotone_tm5sub_boundary_vmr.seeded]
+footprints = "6143e7cae6eed7299651a5e30379ef01bf32374b"
+initial_adjoint = "4366762b8a67b1624ce8bac49f9ffdabcd3de185"
+
+[cases.f32_ppm_none_boundary_mass.footprint]
+footprints = "814e9398585860a72c6c692a0272b28721bfd4f7"
+initial_adjoint = "4281692f93869003df4643a24bfd5b3ee3e0087f"
+
+[cases.f32_ppm_none_boundary_mass.fourdvar]
+cost = "8f93b2b6d777f0e2f3c1a70044e6794a762cda68"
+gradients = "b0115d47c209534729115d20ef07745bef5c07c4"
+simulated = "45ccadfea4f1061b483d636ce2188b7841c111e1"
+
+[cases.f32_ppm_none_boundary_mass.jacobian]
+footprints = "7eb3a8176656190e68c5ee39e01de1f1fae6641f"
+initial_adjoint = "1be3c388ecdd8dbfff89787205bf322e00700bcf"
+windows = "728a06447bf56d325c996beac2d8b2c39077b839"
+
+[cases.f32_ppm_none_boundary_mass.seeded]
+footprints = "890cd40a7bcd48442d08383221fa4ae894367874"
+initial_adjoint = "99659f3d93d0d11f4d08e302800185c01961d560"
+
+[cases.f64_cw84_tm5win_boundary_vmr.footprint]
+footprints = "b1ef89f47c484c9e8d4a824a0fdfd57572b2fd2d"
+initial_adjoint = "c282d5c1f68a9406edffedc8fee50b782d8bd26d"
+
+[cases.f64_cw84_tm5win_boundary_vmr.fourdvar]
+cost = "bc7c5c71fefabae64ab0e6af8b967393a3d5e589"
+gradients = "adddd4fa80a3dc870e9ebb3802af38b588c022a2"
+simulated = "5e37e46aeff98b5fd12cb18e47ea74c87b8dcec0"
+
+[cases.f64_cw84_tm5win_boundary_vmr.jacobian]
+footprints = "857772b06228223135ccd4bcbe07825b32165032"
+initial_adjoint = "73b0da4a691ee9f738ac741debf8474182ac3d3b"
+windows = "cb597821a5634c7fb6d39f08194cd56b1b9434dc"
+
+[cases.f64_cw84_tm5win_boundary_vmr.seeded]
+footprints = "63c64f034e9ab1ea9ac8c16e9219b34e3ab378cd"
+initial_adjoint = "7e41a3a68f4f3c7aba8d2cdc190c2d947b4c427b"
+
+[cases.f64_monotone_cmfmcsub_split_mass_cfl.footprint]
+footprints = "976380b00132cfeec852396c14dc927adf235fcd"
+initial_adjoint = "2f3a7519dca85ec3e0f97ac357f379ee392f6a50"
+
+[cases.f64_monotone_cmfmcsub_split_mass_cfl.fourdvar]
+cost = "841ecefceb5ec9761e82b18e8a4fa6dd5f3eb573"
+gradients = "21dac29fdf4c0a00eb4b3fc66f581f11b182579b"
+simulated = "ad81545094775ffe5f2c8a3e511a8faeaccbce56"
+
+[cases.f64_monotone_cmfmcsub_split_mass_cfl.jacobian]
+footprints = "34187f55ede1e6a4c40477defbde8d4dac93d56e"
+initial_adjoint = "24420dc951dffb323c285c3cbfdadbc79c80c574"
+windows = "71c89f287b6215a8684f422e3f847c7205325612"
+
+[cases.f64_monotone_cmfmcsub_split_mass_cfl.seeded]
+footprints = "3d353448e3c20e2a39a60e518c8a7813788ae587"
+initial_adjoint = "d168d249a36ed54bae9755c382aab641737cb97a"
+
+[cases.f64_slopes_tm5sub_boundary_none_cfl.footprint]
+footprints = "85f8c2d8698a67098f397a58f73341c40e6ab452"
+initial_adjoint = "bb4d7bd5567127dbac0fe28bfce9e9f89ad57871"
+
+[cases.f64_slopes_tm5sub_boundary_none_cfl.fourdvar]
+cost = "799796602e1f2d800506d7c6f08783234424346d"
+gradients = "b36e4bd601819d3cd560310b8a5bc2f49fca61c5"
+simulated = "19df200e79e5368c91f8b19d5c15e87bb7e5dfaa"
+
+[cases.f64_slopes_tm5sub_boundary_none_cfl.jacobian]
+footprints = "d5cfb05f7013ea60db2790f67d1316cebbbd9806"
+initial_adjoint = "e35464735de95f9ec26b30389bf5a3d82058dae1"
+windows = "3dcc497923dc3f3b4dee3ccac6a760feaab57ca3"
+
+[cases.f64_slopes_tm5sub_boundary_none_cfl.seeded]
+footprints = "ba6e263ff9ce8638b3f5d43e5d98f991503b12df"
+initial_adjoint = "ded68a4bf1f341c6fa3254911b0271bb330924af"
+
+[cases.f64_upwind_cmfmcwin_split_vmr.footprint]
+footprints = "c6e4d2b3c96e07c0f39a935325b612b55a900631"
+initial_adjoint = "5be15d641853a7f5c1c8ea9f406bcc8d8658cd3c"
+
+[cases.f64_upwind_cmfmcwin_split_vmr.fourdvar]
+cost = "d049d0cfd4fe3f29ad67452b1d698ad8038cbdce"
+gradients = "60e0cf18b6a8aedeb79ea6be8aaf74fe68d4fe7e"
+simulated = "5470fc51fa70a4797139ee703ca6d1fd79d5f866"
+
+[cases.f64_upwind_cmfmcwin_split_vmr.jacobian]
+footprints = "e654d3e17a5c77772a9c05b5f28ac374a7c59587"
+initial_adjoint = "58c7facba98136a354e13871a33002292df04277"
+windows = "1a5856683a76e4b5a41e78ec7b66daf7f5ff892c"
+
+[cases.f64_upwind_cmfmcwin_split_vmr.seeded]
+footprints = "334bd8f3cdd40052685203e2348b564ff38f636b"
+initial_adjoint = "a5d6c8016da69a594f14c6cd145d066b8d1106d5"
+[host]
+arch = "x86_64"
+cpu = "sapphirerapids"
+julia = "1.12.6"
+kernelabstractions = "0.9.44"

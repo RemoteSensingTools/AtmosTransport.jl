@@ -52,7 +52,7 @@ else
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-            tape_storage=:mmap)
+            tape_storage=AT.MmapCSTapeStorage(mktempdir()))
         @test mmap_result.footprints[1][1] isa CUDA.CuArray
         @test Array(mmap_result.footprints[1][1]) ==
               Array(pinned_result.footprints[1][1])
@@ -84,7 +84,7 @@ else
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
             diffusion_workspace=diffusion_ws,
-            tape_storage=:mmap)
+            tape_storage=AT.MmapCSTapeStorage(mktempdir()))
         @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(mmap_diff_result.footprints[1][1]) ==
               Array(pinned_diff_result.footprints[1][1])
@@ -138,7 +138,7 @@ else
     end
 
     @testset "GPU host tape storage keeps limited-PPM m and rm reads apart (#57)" begin
-        # `:pinned_host` and `:mmap` read staged states back through
+        # `:pinned_host` and `MmapCSTapeStorage` read staged states back through
         # device caches; a limited-PPM sweep record reads its air mass and
         # tracer mass together, so one shared cache handed the reverse
         # kernel `m === rm` (footprint error ~0.8). NoLimiter tapes no rm
@@ -188,7 +188,7 @@ else
             reference = footprint(:device)
             @test reference.footprints[1][1] isa CUDA.CuArray
             @test maxrel(footprint(:pinned_host), reference) <= 1e-12
-            @test maxrel(footprint(:mmap), reference) <= 1e-12
+            @test maxrel(footprint(AT.MmapCSTapeStorage(mktempdir())), reference) <= 1e-12
         end
     end
 

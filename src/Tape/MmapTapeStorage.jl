@@ -1,235 +1,315 @@
 # ---------------------------------------------------------------------------
-# Memory-mapped, on-disk cubed-sphere tape storage policy.
+# On-disk cubed-sphere tape storage: the eviction tier of the adjoint tape.
 #
-# `MmapCSTapeStorage` is a sibling of `DeviceCSTapeStorage` and
-# `PinnedHostCSTapeStorage` that evicts staged
-# panel snapshots from working memory onto a raw appended binary file
-# (`records.bin`). A separate human-readable manifest (`manifest.toml`)
-# is written at finalisation time and used during resume / inspection.
+# `MmapCSTapeStorage(dir)` is the value a caller passes as `tape_storage`: it
+# names the scratch directory and nothing else. Each reverse-pass call opens one
+# `_MmapTapeFile` in that directory (`_open_tape_storage`), sized to the
+# largest tape the call records, and releases it when the call returns. The file
 #
-# Layout summary (v1):
+#   * checks the free space of `dir` (statvfs) before anything is written and
+#     throws with the required and available byte counts;
+#   * is unlinked as soon as it is created, so no name is left behind, also
+#     after a crash;
+#   * reserves its whole extent at once (`fallocate` on Linux, zero fill
+#     elsewhere), so a full disk fails at the reservation, before the forward
+#     run is recorded, not as a SIGBUS from a sparse mmap page; a file system
+#     that cannot reserve blocks for in-place writes (no `fallocate`, ZFS) is
+#     an error naming it;
+#   * maps the extent once (POSIX `mmap`); slots are views into that one
+#     mapping, and `_release_tape_storage!` unmaps it (`munmap`) and closes the
+#     file, so the space goes back to the file system when the call returns,
+#     without waiting for a GC.
 #
-#   tape/<run-id>/
-#   ├── manifest.toml      # written on finalize_tape!
-#   └── records.bin        # grown via truncate as slots are allocated
-#
-# Each slot reserves a contiguous span of `records.bin` and holds six
-# `(record_id, panel_offset, panel_shape)` triplets. `stage_panels!`
-# copies the source panels into `Mmap.mmap` views over the reserved
-# region; `_tape_panels(slot, role)` returns mmap views (CPU runs) or
-# copies them into a device-side read cache, one per read role and panel
-# shape (GPU runs, see CUDA extension).
+# `stage_panels!` copies the six panels into a slot's views; `_tape_panels(slot,
+# role)` returns the views (CPU panels) or copies them into a device read cache
+# per read role and panel shape (GPU panels, see the CUDA and AMDGPU
+# extensions). Nothing is persisted: a tape lives for one call.
 # ---------------------------------------------------------------------------
 
-using Mmap: Mmap
-using TOML: TOML
-using Dates: now
+"""
+    MmapCSTapeStorage(dir)
 
-const _MMAP_TAPE_FORMAT_VERSION = "v1"
+Tape storage policy that keeps staged adjoint mass states in a scratch file in
+`dir`, for tapes larger than device and host memory. `dir` is required (there
+is no default: a tape can be tens to hundreds of GB) and is created if it does
+not exist; a relative path is resolved when the storage is constructed.
 
-# One forward record's locator into records.bin. Kept inside the storage
-# so the manifest emitter has a single source of truth at finalise time.
-struct MmapTapeRecordEntry
-    record_id::Int
-    eltype::DataType
-    offsets::NTuple{6, Int64}
-    nbytes::NTuple{6, Int64}
-    shapes::NTuple{6, NTuple{3, Int}}
+Each reverse-pass call (footprint, Jacobian, 4D-Var gradient) first sizes its
+largest tape by running the forward replay with a counting recorder (one extra
+forward run with `FullCheckpoint`; the checkpoint propagation pass with
+`StrideCheckpoint` and `RevolveCheckpoint`). It then checks that `dir` has that
+many bytes plus 10 % free, and reserves them with `fallocate` in one anonymous
+(unlinked) file before recording. Too little space is an `ArgumentError`
+naming the required and available bytes, raised after the sizing pass and
+before the tape is recorded. A file system that cannot reserve blocks for
+in-place writes (no `fallocate`, e.g. some NFS mounts, or ZFS) is an
+`ArgumentError` naming it; use a directory on a local file system such as ext4
+or XFS. The file is unmapped, closed and its space returned to the file system
+when the call returns; tapes are not persisted.
+
+On a GPU, reads come back through device-side read caches keyed by read role
+(`AirMassRead`, `TracerMassRead`) and panel shape, so the air mass and tracer
+mass that one reverse kernel reads together are distinct buffers.
+"""
+struct MmapCSTapeStorage <: AbstractCSTapeStorage
+    dir::String
+    function MmapCSTapeStorage(dir::AbstractString)
+        isempty(dir) && throw(ArgumentError(
+            "MmapCSTapeStorage needs a scratch directory; got an empty path"))
+        return new(abspath(dir))
+    end
 end
 
+# Free space required beside the tape itself, as a fraction of the tape: the
+# scratch file system keeps headroom for other writers (logs, output).
+const _MMAP_TAPE_HEADROOM = 0.1
+
+# Seconds the free-space check waits for space that is being released (an
+# earlier tape's blocks: XFS frees unlinked inodes lazily) before it fails.
+const _MMAP_TAPE_FREE_WAIT = 5.0
+
+# Every panel of a slot starts on a 64-byte boundary of the mapping, so its
+# view is aligned for any element type, also when slots of different element
+# types share one file.
+const _MMAP_TAPE_ALIGN = 64
+_align_tape_bytes(n::Integer) = cld(Int64(n), _MMAP_TAPE_ALIGN) * _MMAP_TAPE_ALIGN
+
 """
-    MmapCSTapeStorage(; dir = mktempdir(prefix="atmostransport-cstape-"),
-                       cleanup_on_finalize = (dir == ""))
+    _tape_slot_bytes(panels::NTuple{6}) -> Int64
 
-Tape storage policy that streams staged adjoint mass states onto a
-single appended raw binary file (`records.bin`) inside `dir` and emits a
-TOML manifest (`manifest.toml`) at finalisation. `dir` is created if it
-does not exist; if omitted, a unique temporary directory is created and
-deleted when the storage object is garbage-collected.
-
-The policy is backend-agnostic: CPU source panels yield in-place
-`Mmap.mmap` views at read time; GPU source panels go through
-device-side read caches keyed by the read role (`AirMassRead`,
-`TracerMassRead`) and the panel shape signature
-(`NTuple{6, NTuple{3, Int}}`). The role keeps the air mass and the
-tracer mass that one reverse kernel reads together in distinct
-buffers; the shape lets a reverse loop that alternates between slot
-shapes reuse each cache instead of reallocating six device buffers on
-every read.
-
-The on-disk format is the `manifest.toml` metadata plus appended raw
-panel payloads in `records.bin`.
+Bytes one staged state of `panels` takes in an mmap tape (each panel padded
+to the 64-byte alignment). The counting recorder sums these to size the
+reservation.
 """
-mutable struct MmapCSTapeStorage <: AbstractHostCSTapeStorage
-    bin_path::String
-    manifest_path::String
+_tape_slot_bytes(panels::NTuple{6}) =
+    sum(p -> _align_tape_bytes(sizeof(eltype(panels[p])) * length(panels[p])), 1:6)
+
+# The open scratch file of one reverse-pass call: its reserved extent
+# (`capacity`) mapped once at `mapping` (`C_NULL` when empty or unmapped), the
+# bytes handed out so far (`cursor`), and the device read caches of
+# `AbstractHostCSTapeStorage`.
+mutable struct _MmapTapeFile <: AbstractHostCSTapeStorage
     dir::String
-    bin_io::IOStream
+    io::IOStream
+    mapping::Ptr{UInt8}
+    capacity::Int64
     cursor::Int64
-    records::Vector{MmapTapeRecordEntry}
-    # Zero-size array on the source backend, set by
-    # `_mmap_prepare_for_panels!` for non-`Array` panel sources. It
-    # stays `nothing` for CPU runs, so `_tape_panels` returns mmap
-    # views directly (zero-copy through the page cache).
+    # Zero-size array on the source backend, set by `_mmap_prepare_for_panels!`
+    # for non-`Array` panels; `nothing` on the CPU, where reads return views.
     read_template::Union{Nothing, AbstractArray}
-    # Device-side read caches keyed by (read role, panel shapes).
     read_caches::Dict{CSTapeReadCacheKey, CSPanelCache}
     synchronize::CSSynchronizeHook
-    finalised::Bool
     closed::Bool
-    cleanup_on_finalize::Bool
-    # Read-only tapes block `_allocate_tape_slot` / `_bump_cursor!`.
-    # `load_mmap_tape` opens an existing tape read-only;
-    # the forward-recording constructor leaves this false.
-    readonly::Bool
-
-    # Forward-recording constructor: opens a fresh records.bin in
-    # read+write mode. `cleanup_on_finalize` defaults to true when
-    # `dir` is empty (temp dir) and false when the user supplies one.
-    function MmapCSTapeStorage(; dir::AbstractString = "",
-                               cleanup_on_finalize::Union{Nothing,Bool} = nothing)
-        if isempty(dir)
-            dir = mktempdir(; prefix = "atmostransport-cstape-")
-            cleanup = cleanup_on_finalize === nothing ? true : cleanup_on_finalize
-        else
-            isdir(dir) || mkpath(dir)
-            cleanup = cleanup_on_finalize === nothing ? false : cleanup_on_finalize
-        end
-        bin_path = joinpath(dir, "records.bin")
-        manifest_path = joinpath(dir, "manifest.toml")
-        # A manifest describes one immutable, finalised records.bin. Remove it
-        # before truncating that file so a crash during a new recording can
-        # never make fresh bytes look like the previous completed tape.
-        ispath(manifest_path) && rm(manifest_path; force = true)
-        bin_io = open(bin_path, "w+")
-        local storage
-        try
-            storage = new(bin_path, manifest_path, String(dir), bin_io, Int64(0),
-                          MmapTapeRecordEntry[],
-                          nothing, Dict{CSTapeReadCacheKey, CSPanelCache}(),
-                          nothing,
-                          false, false, cleanup, false)
-            finalizer(_mmap_storage_gc_close!, storage)
-        catch
-            close(bin_io)
-            rethrow()
-        end
-        return storage
-    end
-
-    # Read-only constructor used by `load_mmap_tape` (the actual
-    # parser lives in a free function below so it can throw clean
-    # errors before any IOStream is opened). All slot bookkeeping
-    # is restored from a finalised manifest; `cursor` reflects the
-    # total bytes written by the original forward pass.
-    function MmapCSTapeStorage(dir::AbstractString, records::Vector{MmapTapeRecordEntry},
-                               cursor::Int64)
-        isdir(dir) || throw(ArgumentError("tape directory $(repr(dir)) does not exist"))
-        bin_path = joinpath(dir, "records.bin")
-        manifest_path = joinpath(dir, "manifest.toml")
-        isfile(bin_path) || throw(ArgumentError(
-            "tape directory $(repr(dir)) is missing records.bin"))
-        bin_io = open(bin_path, "r")
-        local storage
-        try
-            storage = new(bin_path, manifest_path, String(dir), bin_io, cursor,
-                          records,
-                          nothing, Dict{CSTapeReadCacheKey, CSPanelCache}(),
-                          nothing,
-                          true, false, false, true)
-            finalizer(_mmap_storage_gc_close!, storage)
-        catch
-            close(bin_io)
-            rethrow()
-        end
-        return storage
-    end
 end
 
-_tape_storage(::Val{:mmap}) = MmapCSTapeStorage()
-
 """
-    _build_window_storage(tape_storage, tape_path, subdir) -> AbstractCSTapeStorage
+    _MmapTapeFile(dir, capacity) -> _MmapTapeFile
 
-Construct a fresh tape storage instance for one window (Stride) or one
-base-case step (Revolve). When `tape_path === nothing` this falls
-through to `_tape_storage(tape_storage)` and inherits its temp-dir /
-cleanup behaviour. When `tape_path !== nothing`, `tape_storage` must
-be `:mmap`; the function builds an [`MmapCSTapeStorage`](@ref) rooted
-at `joinpath(tape_path, subdir)` with `cleanup_on_finalize = false` so
-the caller-owned directory is preserved past `finalize_tape!`.
-
-An empty `subdir` (the default) is used by the single-tape
-`FullCheckpoint` path: the storage is rooted directly at `tape_path`
-with no extra nesting. The checkpoint drivers pass per-window /
-per-step subdirectory names (e.g. `"window_00007"`, `"step_00042"`) so
-multiple windows can coexist under the same user-supplied tree.
+Create an anonymous scratch file of `capacity` bytes in `dir`: check the file
+system and its free space, create and unlink the file, reserve the extent and
+map it. Throws an `ArgumentError` with the required and available bytes when
+the file system cannot hold it, and one naming the file system when it cannot
+reserve blocks. `_release_tape_storage!` unmaps and closes it (without it, the
+GC does).
 """
-function _build_window_storage(tape_storage::Symbol,
-                                tape_path::Union{Nothing, AbstractString},
-                                subdir::AbstractString = "")
-    tape_path === nothing && return _tape_storage(tape_storage)
-    tape_storage === :mmap || throw(ArgumentError(
-        "tape_path requires tape_storage = :mmap; got " *
-        "$(repr(tape_storage))"))
-    dir = isempty(subdir) ? String(tape_path) : joinpath(tape_path, subdir)
-    return MmapCSTapeStorage(; dir = dir, cleanup_on_finalize = false)
+function _MmapTapeFile(dir::AbstractString, capacity::Integer)
+    capacity >= 0 || throw(ArgumentError("tape capacity must be ≥ 0; got $(capacity)"))
+    isdir(dir) || mkpath(dir)
+    _check_tape_filesystem(dir, _filesystem_type(dir))
+    _check_tape_free_space(dir, Int64(capacity))
+    path, io = mktemp(dir; cleanup = false)
+    local mapping
+    try
+        rm(path)
+        _reserve_tape_extent!(io, Int64(capacity), dir)
+        mapping = _map_tape_extent(io, Int64(capacity), dir)
+    catch
+        close(io)
+        rethrow()
+    end
+    storage = _MmapTapeFile(String(dir), io, mapping, Int64(capacity), Int64(0), nothing,
+                            Dict{CSTapeReadCacheKey, CSPanelCache}(), nothing, false)
+    # A storage dropped without `_release_tape_storage!`: the GC unmaps it (and
+    # the stream's own finalizer closes the file).
+    finalizer(_unmap_tape_extent!, storage)
+    return storage
 end
 
-# Pre-constructed storage: identity pass-through. The user owns the
-# storage's lifecycle, so the caller (`cs_surface_emission_footprint`)
-# must skip its own `finalize_tape!` for this branch. Stride / Revolve
-# already reject pre-constructed storage up front (they build a fresh
-# one per window), so this method only fires through the
-# `FullCheckpoint` path.
-_build_window_storage(storage::AbstractCSTapeStorage,
-                       ::Nothing,
-                       ::AbstractString = "") = storage
+# POSIX mmap of the whole extent, read-write and shared with the file.
+const _PROT_READ_WRITE = Cint(0x1 | 0x2)
+const _MAP_SHARED = Cint(0x01)
+const _MAP_FAILED = reinterpret(Ptr{Cvoid}, typemax(UInt))
 
-# ---------------------------------------------------------------------------
-# Slot type — minimal descriptor; all data lives on disk.
-# ---------------------------------------------------------------------------
+function _map_tape_extent(io::IOStream, capacity::Int64, dir)
+    capacity == 0 && return Ptr{UInt8}(C_NULL)
+    ptr = ccall(:mmap, Ptr{Cvoid}, (Ptr{Cvoid}, Csize_t, Cint, Cint, Cint, Int64),
+                C_NULL, capacity, _PROT_READ_WRITE, _MAP_SHARED, fd(io), 0)
+    ptr == _MAP_FAILED && throw(ArgumentError(
+        "MmapCSTapeStorage: could not map $(_format_tape_bytes(capacity)) of the tape in " *
+        "$(repr(dir)): $(Libc.strerror(Libc.errno()))"))
+    return Ptr{UInt8}(ptr)
+end
 
-struct MmapCSTapeSlot{S <: MmapCSTapeStorage}
+function _unmap_tape_extent!(storage::_MmapTapeFile)
+    if storage.mapping != C_NULL
+        ccall(:munmap, Cint, (Ptr{Cvoid}, Csize_t), storage.mapping, storage.capacity)
+        storage.mapping = Ptr{UInt8}(C_NULL)
+    end
+    return nothing
+end
+
+_format_tape_bytes(n) = n < 1024 ? "$(n) bytes" : "$(n) bytes ($(Base.format_bytes(n)))"
+
+# The type of the file system holding `path` (Linux: the longest mount point
+# of /proc/self/mounts that contains it), or "unknown".
+function _filesystem_type(path::AbstractString)
+    Sys.islinux() && isfile("/proc/self/mounts") || return "unknown"
+    target = realpath(path)
+    best, fstype = "", "unknown"
+    for line in eachline("/proc/self/mounts")
+        fields = split(line)
+        length(fields) >= 3 || continue
+        mount = replace(fields[2], "\\040" => " ")
+        inside = target == mount || startswith(target, rstrip(mount, '/') * "/")
+        if inside && length(mount) >= length(best)
+            best, fstype = mount, String(fields[3])
+        end
+    end
+    return fstype
+end
+
+# File systems whose `fallocate` does not reserve blocks for in-place writes:
+# a later write through the mapping can still fail with a SIGBUS.
+const _MMAP_TAPE_UNRESERVING_FS = ("zfs",)
+
+_check_tape_filesystem(dir, fstype::AbstractString) =
+    fstype in _MMAP_TAPE_UNRESERVING_FS && throw(ArgumentError(
+        "MmapCSTapeStorage: $(repr(dir)) is on $(fstype), whose fallocate does not " *
+        "reserve blocks for in-place writes; choose a scratch directory on a local file " *
+        "system such as ext4 or XFS"))
+
+function _check_tape_free_space(dir, capacity::Int64)
+    required = Base.checked_add(capacity, ceil(Int64, _MMAP_TAPE_HEADROOM * capacity))
+    stat = diskstat(dir)
+    available = Int64(stat.available)
+    if available < required && required <= stat.total
+        # The blocks of a tape released just before can come back late: XFS
+        # frees unlinked inodes lazily, and stray mappings wait for the GC.
+        GC.gc()
+        deadline = time() + _MMAP_TAPE_FREE_WAIT
+        while available < required && time() < deadline
+            sleep(0.25)
+            available = Int64(diskstat(dir).available)
+        end
+    end
+    available >= required || throw(ArgumentError(
+        "MmapCSTapeStorage: the adjoint tape needs $(_format_tape_bytes(capacity)) " *
+        "plus $(round(Int, 100 * _MMAP_TAPE_HEADROOM)) % headroom, " *
+        "$(_format_tape_bytes(required)) in total, in $(repr(dir)), but only " *
+        "$(_format_tape_bytes(available)) are available. Free space there, choose " *
+        "another scratch directory, or record a shorter tape (StrideCheckpoint)."))
+    return nothing
+end
+
+# Allocate the file's blocks now, so writes through the mapping can never hit
+# a full file system. Linux calls `fallocate` itself rather than
+# `posix_fallocate`, whose glibc fallback writes one byte per block when the
+# file system has no `fallocate`, slowly and without a guarantee.
+function _reserve_tape_extent!(io::IOStream, capacity::Int64, dir)
+    capacity == 0 && return io
+    @static if Sys.islinux()
+        rc = ccall(:fallocate, Cint, (Cint, Cint, Int64, Int64), fd(io), 0, 0, capacity)
+        if rc != 0
+            err = Libc.errno()
+            fstype = _filesystem_type(dir)
+            err == Libc.EOPNOTSUPP && throw(ArgumentError(
+                "MmapCSTapeStorage: $(repr(dir)) is on $(fstype), which cannot reserve " *
+                "space (fallocate: $(Libc.strerror(err))); choose a scratch directory on " *
+                "a local file system such as ext4 or XFS"))
+            throw(ArgumentError(
+                "MmapCSTapeStorage: could not reserve $(_format_tape_bytes(capacity)) in " *
+                "$(repr(dir)) ($(fstype), $(_format_tape_bytes(Int64(diskstat(dir).available))) " *
+                "available): $(Libc.strerror(err))"))
+        end
+    else
+        _zero_fill_tape_extent!(io, capacity, dir)
+    end
+    return io
+end
+
+# Portable reservation: write zeros over the extent (does not reserve on
+# copy-on-write or compressing file systems).
+function _zero_fill_tape_extent!(io::IOStream, capacity::Int64, dir)
+    chunk = zeros(UInt8, min(capacity, Int64(64) << 20))
+    try
+        seekstart(io)
+        remaining = capacity
+        while remaining > 0
+            n = min(remaining, Int64(length(chunk)))
+            written = write(io, view(chunk, 1:n))
+            written == n || throw(SystemError("short write ($(written) of $(n) bytes)"))
+            remaining -= n
+        end
+        flush(io)
+    catch err
+        err isa SystemError || rethrow()
+        throw(ArgumentError(
+            "MmapCSTapeStorage: could not reserve $(_format_tape_bytes(capacity)) in " *
+            "$(repr(dir)): $(sprint(showerror, err))"))
+    end
+    return io
+end
+
+_needs_tape_size(::MmapCSTapeStorage) = true
+
+_open_tape_storage(storage::MmapCSTapeStorage, nbytes::Integer) =
+    _MmapTapeFile(storage.dir, nbytes)
+
+# Drivers that record several tapes in a row (one per stride window or
+# bisection base step) reuse the extent.
+_rewind_tape_storage!(storage::_MmapTapeFile) = (storage.cursor = 0; storage)
+
+# Unmap and close now: with the mapping and the descriptor gone, the unlinked
+# file's blocks return to the file system. Views handed out before are invalid
+# afterwards (their reverse-pass call has returned).
+function _release_tape_storage!(storage::_MmapTapeFile)
+    storage.closed && return nothing
+    storage.closed = true
+    _unmap_tape_extent!(storage)
+    close(storage.io)
+    # Drops the references; device buffers are freed by the next GC.
+    empty!(storage.read_caches)
+    return nothing
+end
+
+"""
+    MmapCSTapeSlot
+
+One staged state in an `_MmapTapeFile`: the element type, the byte offset and
+the shape of each of the six panels.
+"""
+struct MmapCSTapeSlot{S <: _MmapTapeFile}
     storage::S
-    record_id::Int
     eltype::DataType
     offsets::NTuple{6, Int64}
     shapes::NTuple{6, NTuple{3, Int}}
 end
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+_require_open(storage::_MmapTapeFile) = storage.closed && throw(ArgumentError(
+    "the mmap tape in $(repr(storage.dir)) is closed: its reverse-pass call has returned"))
 
-_mmap_file_size(io::IOStream) = stat(io).size
-
-# NOTE: this assumes POSIX semantics — growing the file via
-# `Base.truncate` while earlier mmap views are still alive is
-# well-defined on Linux/macOS (existing pages stay valid; the kernel
-# refcounts the file). Windows is not supported.
-"""
-    _bump_cursor!(storage, nbytes)
-
-Reserve `nbytes` of contiguous space at the end of `records.bin`, extending
-the file via `truncate` (sparse on filesystems that support it) so that
-subsequent `Mmap.mmap` calls find the region backed.
-Returns the base offset of the reserved region.
-"""
-function _bump_cursor!(storage::MmapCSTapeStorage, nbytes::Int64)
-    storage.readonly && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot extend records.bin"))
-    storage.closed && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is closed; cannot extend records.bin"))
+# The base offset of `nbytes` more bytes of the reserved extent.
+function _bump_cursor!(storage::_MmapTapeFile, nbytes::Int64)
+    _require_open(storage)
     base = storage.cursor
-    storage.cursor += nbytes
-    if storage.cursor > _mmap_file_size(storage.bin_io)
-        Base.truncate(storage.bin_io, storage.cursor)
-    end
+    base + nbytes <= storage.capacity || error(
+        "the mmap adjoint tape in $(repr(storage.dir)) needs more than its reserved " *
+        "$(_format_tape_bytes(storage.capacity)): the tape byte count of the reverse-pass " *
+        "driver disagrees with the recorder")
+    storage.cursor = base + nbytes
     return base
 end
 
-# Build per-panel offsets from the record base.
 function _panel_offsets(base::Int64, nbytes_per::NTuple{6, Int64})
     o1 = base
     o2 = o1 + nbytes_per[1]
@@ -240,129 +320,64 @@ function _panel_offsets(base::Int64, nbytes_per::NTuple{6, Int64})
     return (o1, o2, o3, o4, o5, o6)
 end
 
-_mmap_view(io::IOStream, ::Type{T}, shape::NTuple{3, Int}, offset::Int64) where {T} =
-    Mmap.mmap(io, Array{T, 3}, shape, offset; grow = false, shared = true)
-
-# Register the slot in the manifest queue. Called from the type-specialised
-# `_allocate_tape_slot` methods so the queue is consistent across backends.
-function _push_record!(storage::MmapCSTapeStorage, ::Type{T},
-                       offsets, nbytes_per, shapes) where {T}
-    record_id = length(storage.records) + 1
-    push!(storage.records,
-          MmapTapeRecordEntry(record_id, T, offsets, nbytes_per, shapes))
-    return record_id
-end
-
-# ---------------------------------------------------------------------------
-# Slot allocation + staging — CPU path.
-# ---------------------------------------------------------------------------
+# A panel of a slot: an array over the storage's one mapping (no new mapping).
+_tape_view(storage::_MmapTapeFile, ::Type{T}, shape::NTuple{3, Int}, offset::Int64) where {T} =
+    unsafe_wrap(Array, Ptr{T}(storage.mapping + offset), shape)
 
 """
     _mmap_prepare_for_panels!(storage, panels)
 
-Hook called once per slot allocation, **before** the disk reservation,
-that lets the storage install per-policy state (the backend of the
-device-side read caches, a backend `synchronize` callback).
+Hook called once per slot allocation, before the span is handed out, that
+lets the storage install per-backend state (the backend of the device-side
+read caches, a backend `synchronize` callback).
 
-The **default** method assumes the source panels are non-`Array`
-device-resident buffers (CuArray, MtlArray, …) and records their backend
-via `_register_tape_read_backend!`, so the read caches are allocated
-there on first read. The specialised method for `NTuple{6, <:Array}` is a
-no-op so the CPU read path can return mmap views directly without an
-intermediate copy.
-
-The CUDA extension layers a `synchronize = CUDA.synchronize` hook on top
-of the default to amortise asynchronous device transfers; correctness
-of mmap → device traffic does **not** depend on that extension because
-`copyto!(::CuArray, ::Array)` is synchronous on CUDA.jl.
+The default method assumes non-`Array` device panels (CuArray, ROCArray, …)
+and records their backend via `_register_tape_read_backend!`, so the read
+caches are allocated there on first read. The method for
+`NTuple{6, <:Array}` is a no-op, so the CPU read path returns views of the
+mapping without an intermediate copy. The CUDA and AMDGPU extensions add their
+`synchronize` hooks.
 """
-function _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
-                                   panels::NTuple{6})
+function _mmap_prepare_for_panels!(storage::_MmapTapeFile, panels::NTuple{6})
     _register_tape_read_backend!(storage, panels)
     return storage
 end
 
-_mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
-                          _panels::NTuple{6, <:Array}) = storage
+_mmap_prepare_for_panels!(storage::_MmapTapeFile, _panels::NTuple{6, <:Array}) = storage
 
-"""
-    _allocate_tape_slot(storage::MmapCSTapeStorage, panels)
-
-Reserve a span of `records.bin` for one tape record (six panel arrays)
-and return a slot that can be staged into and later read from. The disk
-bookkeeping is backend-agnostic; backend-specific setup (read-cache
-allocation, synchronisation hooks) happens in
-`_mmap_prepare_for_panels!`, which the CUDA extension specialises for
-`NTuple{6, <:CuArray}`.
-"""
-function _allocate_tape_slot(storage::MmapCSTapeStorage,
-                             panels::NTuple{6})
-    storage.readonly && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot allocate new slot"))
-    storage.finalised && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is finalised; cannot allocate new slot"))
-    storage.closed && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is closed; cannot allocate new slot"))
+function _allocate_tape_slot(storage::_MmapTapeFile, panels::NTuple{6})
+    _require_open(storage)
     _mmap_prepare_for_panels!(storage, panels)
     T = eltype(panels[1])
     shapes = ntuple(p -> size(panels[p]), 6)
-    nbytes_per = ntuple(p -> Int64(sizeof(T)) * Int64(prod(shapes[p])), 6)
+    nbytes_per = ntuple(p -> _align_tape_bytes(sizeof(T) * prod(shapes[p])), 6)
     base = _bump_cursor!(storage, sum(nbytes_per))
-    offsets = _panel_offsets(base, nbytes_per)
-    record_id = _push_record!(storage, T, offsets, nbytes_per, shapes)
-    return MmapCSTapeSlot(storage, record_id, T, offsets, shapes)
+    return MmapCSTapeSlot(storage, T, _panel_offsets(base, nbytes_per), shapes)
 end
 
-"""
-    stage_panels!(slot::MmapCSTapeSlot, src)
-
-Write the six source panels into the slot's reserved region of
-`records.bin` via `Mmap.mmap` views. Works uniformly for CPU `Array` and
-GPU `CuArray` sources because `copyto!(::Array, ::CuArray)` performs a
-device→host transfer.
-"""
+# Works for CPU `Array` and GPU sources alike: `copyto!(::Array, ::CuArray)`
+# is a device→host transfer.
 function stage_panels!(slot::MmapCSTapeSlot, src::NTuple{6})
     storage = slot.storage
-    storage.readonly && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is readonly; cannot stage panels"))
-    storage.finalised && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is finalised; cannot stage panels. " *
-        "A reopened tape (`load_mmap_tape`) is for inspection only; slot " *
-        "reuse and overwrite are unsupported."))
-    storage.closed && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is closed; cannot stage panels"))
+    _require_open(storage)
     @inbounds for p in 1:6
-        view = _mmap_view(storage.bin_io, slot.eltype, slot.shapes[p],
-                          slot.offsets[p])
-        copyto!(view, src[p])
+        copyto!(_tape_view(storage, slot.eltype, slot.shapes[p], slot.offsets[p]), src[p])
     end
     _after_tape_stage!(storage)
     return slot
 end
 
-# ---------------------------------------------------------------------------
-# Slot read — CPU returns mmap views; GPU is overloaded in the CUDA ext.
-# ---------------------------------------------------------------------------
-
-# Single-reader during reverse pass: the `_walk_window_reverse!`
-# loop in Footprint/ReverseLoop.jl consumes slots sequentially. Each
-# read cache is mutated in place across reads, so this method is not
-# safe under concurrent multi-threaded reverse walks against the same
-# storage.
-#
-# GPU runs (`read_template` set by `_mmap_prepare_for_panels!`) copy the
-# mmap views into the device cache of `(role, slot.shapes)`
-# (`_tape_read_cache!` in TapeStorage.jl). The role keeps the air mass
-# and the tracer mass that one limited-PPM sweep record hands the
-# reverse kernel in two buffers; with one cache per shape they were the
-# same buffer (issue #57). The shape key lets slots of different shapes
-# share one storage. The caches are allocated on first read, `similar`
-# to the device template, never `similar(::Array)` of the mmap views.
-# CPU runs return the views themselves: every read is a distinct view.
+# The reverse walk reads slots one at a time; each read cache is overwritten
+# by the next read with the same role and shape, so this is not safe for
+# concurrent reverse walks on one storage. GPU runs (`read_template` set)
+# copy the views into the cache of `(role, slot.shapes)`: the role keeps the
+# air mass and tracer mass of one limited-PPM sweep record in two buffers
+# (issue #57). CPU runs return the views, a distinct array per read, valid
+# until the storage is released.
 function _tape_panels(slot::MmapCSTapeSlot, role::AbstractTapeReadRole)
     storage = slot.storage
-    views = ntuple(p -> _mmap_view(storage.bin_io, slot.eltype,
-                                   slot.shapes[p], slot.offsets[p]), 6)
+    _require_open(storage)
+    views = ntuple(p -> _tape_view(storage, slot.eltype, slot.shapes[p], slot.offsets[p]), 6)
     storage.read_template === nothing && return views
     cache = _tape_read_cache!(storage, role, views)
     @inbounds for p in 1:6
@@ -372,308 +387,7 @@ function _tape_panels(slot::MmapCSTapeSlot, role::AbstractTapeReadRole)
     return cache
 end
 
-# ---------------------------------------------------------------------------
-# Finalisation + cleanup
-# ---------------------------------------------------------------------------
-
-"""
-    finalize_tape!(storage::MmapCSTapeStorage; quiet = false, strict = false)
-
-Sync any pending mmap state, write the TOML manifest, and close the
-underlying `records.bin` handle. Safe to call more than once; subsequent
-calls are no-ops. If the storage owns its temp directory and
-`cleanup_on_finalize` is true, the directory is also removed after
-manifest emission.
-
-By default (`strict = false`), failures during manifest emission, IO
-close, or temp-dir cleanup are caught and surfaced via `@warn` (or
-suppressed if `quiet = true`). This matches the temp-dir use case
-where leaving a partially-finalised storage behind is benign — the
-directory gets cleaned up by GC or by the caller's `mktempdir do`
-block anyway.
-
-With `strict = true`, manifest- and close-failures are still caught
-into local error slots (so the IO handle and device cache are released
-before throwing), but the first such error is rethrown at the end of
-the function. This is the right setting whenever the storage is rooted
-at a caller-supplied `tape_path` and a missing/corrupt `manifest.toml`
-would defeat the purpose of persisting the tape.
-"""
-function finalize_tape!(storage::MmapCSTapeStorage; quiet::Bool = false,
-                        strict::Bool = false)
-    storage.closed && return storage
-    manifest_err = nothing
-    if !storage.finalised && isdir(storage.dir)
-        try
-            _write_manifest(storage)
-            storage.finalised = true
-        catch err
-            manifest_err = err
-            !quiet && !strict &&
-                @warn "MmapCSTapeStorage: manifest emission failed" exception = err
-        end
-    end
-    close_err = nothing
-    try
-        close(storage.bin_io)
-    catch err
-        close_err = err
-        !quiet && !strict &&
-            @warn "MmapCSTapeStorage: bin close failed" exception = err
-    end
-    # Drop the device read caches so any device-resident buffers are
-    # released promptly. This matters for long-running 4D-Var loops that
-    # reuse one Julia session across many tapes.
-    empty!(storage.read_caches)
-    storage.closed = true
-    if storage.cleanup_on_finalize && isdir(storage.dir)
-        try
-            rm(storage.dir; recursive = true, force = true)
-        catch err
-            !quiet && !strict &&
-                @warn "MmapCSTapeStorage: temp dir cleanup failed" exception = err
-        end
-    end
-    if strict
-        manifest_err !== nothing && throw(manifest_err)
-        close_err !== nothing && throw(close_err)
-    end
-    return storage
-end
-
-# GC-driven close. Closes the IOStream and optionally removes the temp
-# directory, but does **not** emit the TOML manifest — emitting that
-# from the GC thread risks running TOML.print across a task switch
-# inside a finalizer. Manifest emission requires an explicit
-# `finalize_tape!(storage)` call by the user.
-function _mmap_storage_gc_close!(storage::MmapCSTapeStorage)
-    storage.closed && return nothing
-    try
-        close(storage.bin_io)
-    catch
-        # Finaliser must never throw.
-    end
-    storage.closed = true
-    if storage.cleanup_on_finalize && isdir(storage.dir)
-        try
-            rm(storage.dir; recursive = true, force = true)
-        catch
-            # Finaliser must never throw.
-        end
-    end
-    return nothing
-end
-
-function _write_manifest(storage::MmapCSTapeStorage)
-    meta = Dict{String, Any}(
-        "version"             => _MMAP_TAPE_FORMAT_VERSION,
-        "created_at"          => string(now()),
-        "endianness"          => _machine_endianness(),
-        "julia_version"       => string(VERSION),
-        "total_bytes"         => storage.cursor,
-        "record_count"        => length(storage.records),
-        "finalised"           => true,
-    )
-    records = [
-        Dict{String, Any}(
-            "id"      => r.record_id,
-            "eltype"  => string(r.eltype),
-            "offsets" => collect(r.offsets),
-            "nbytes"  => collect(r.nbytes),
-            "shapes"  => [collect(s) for s in r.shapes],
-        ) for r in storage.records
-    ]
-    tmp_path, io = mktemp(storage.dir; cleanup = false)
-    try
-        TOML.print(io, Dict{String, Any}("meta" => meta, "record" => records))
-        flush(io)
-        close(io)
-        mv(tmp_path, storage.manifest_path; force = true)
-    catch
-        isopen(io) && close(io)
-        rm(tmp_path; force = true)
-        rethrow()
-    end
-    return storage.manifest_path
-end
-
-_machine_endianness() =
-    ENDIAN_BOM == 0x04030201 ? "little" :
-    ENDIAN_BOM == 0x01020304 ? "big" : "unknown"
-
-# ---------------------------------------------------------------------------
-# Resume / inspection API
-# ---------------------------------------------------------------------------
-
-# Manifest stores `eltype` as a string for human-readability + portability.
-# The loader maps that string back to a Julia type via this whitelist
-# rather than `eval(Meta.parse(...))`, since the manifest is data, not
-# code, and tape files may have come from another machine.
-function _parse_mmap_eltype(s::AbstractString)
-    s == "Float32" && return Float32
-    s == "Float64" && return Float64
-    s == "Float16" && return Float16
-    throw(ArgumentError("unsupported tape eltype $(repr(s)); " *
-                        "expected Float32, Float64, or Float16"))
-end
-
-function _parse_mmap_record(d::AbstractDict, cursor::Int64)
-    haskey(d, "id") && haskey(d, "eltype") && haskey(d, "offsets") &&
-        haskey(d, "nbytes") && haskey(d, "shapes") ||
-        throw(ArgumentError(
-            "mmap tape manifest record is missing one of " *
-            "id/eltype/offsets/nbytes/shapes; got keys $(collect(keys(d)))"))
-    raw_offsets = d["offsets"]
-    raw_nbytes = d["nbytes"]
-    raw_shapes = d["shapes"]
-    length(raw_offsets) == 6 || throw(ArgumentError(
-        "mmap tape record id=$(d["id"]) has $(length(raw_offsets)) offsets; expected 6"))
-    length(raw_nbytes) == 6 || throw(ArgumentError(
-        "mmap tape record id=$(d["id"]) has $(length(raw_nbytes)) nbytes entries; expected 6"))
-    length(raw_shapes) == 6 || throw(ArgumentError(
-        "mmap tape record id=$(d["id"]) has $(length(raw_shapes)) shape entries; expected 6"))
-    offsets = ntuple(p -> Int64(raw_offsets[p]), 6)
-    nbytes = ntuple(p -> Int64(raw_nbytes[p]), 6)
-    shapes = ntuple(6) do p
-        s = raw_shapes[p]
-        length(s) == 3 || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) shape has $(length(s)) entries; expected 3"))
-        (Int(s[1]), Int(s[2]), Int(s[3]))
-    end
-    et = _parse_mmap_eltype(d["eltype"])
-
-    # Per-panel sanity: offsets and lengths must fit inside records.bin
-    # (cursor is meta.total_bytes), nbytes must agree with shape × sizeof(et),
-    # and no field may be negative. Caught here at load time so the user
-    # gets a tape-aware diagnostic rather than an opaque `Mmap.mmap` error
-    # at first read.
-    bytes_per_elt = Int64(sizeof(et))
-    @inbounds for p in 1:6
-        offsets[p] >= 0 || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) has negative offset $(offsets[p])"))
-        nbytes[p] >= 0 || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) has negative nbytes $(nbytes[p])"))
-        all(>=(0), shapes[p]) || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) has negative-shape entry $(shapes[p])"))
-        offsets[p] + nbytes[p] <= cursor || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) extends past records.bin: " *
-            "offset=$(offsets[p]) + nbytes=$(nbytes[p]) > total_bytes=$(cursor)"))
-        expected = bytes_per_elt * Int64(prod(shapes[p]))
-        nbytes[p] == expected || throw(ArgumentError(
-            "mmap tape record id=$(d["id"]) panel $(p) nbytes=$(nbytes[p]) " *
-            "disagrees with shape $(shapes[p]) × sizeof($(et))=$(expected)"))
-    end
-    return MmapTapeRecordEntry(Int(d["id"]), et, offsets, nbytes, shapes)
-end
-
-"""
-    load_mmap_tape(dir) -> MmapCSTapeStorage
-
-Reopen a finalised `MmapCSTapeStorage` directory written by an earlier
-session. The loader parses `manifest.toml`, validates the format
-version and machine endianness, and rebuilds the in-memory record
-table so callers can fetch slots via [`get_record`](@ref) and read
-them through `_tape_panels`.
-
-The returned storage has `finalised = true` and `cleanup_on_finalize
-= false`; it never touches the on-disk files except through mmap reads
-on the existing slots. `_bump_cursor!`, `_allocate_tape_slot`, and
-`stage_panels!` reject mutation. Reopened tapes are inspection-only.
-
-Validation:
-
-* `manifest.toml` and `records.bin` must both exist under `dir`.
-* Format version must equal `$(_MMAP_TAPE_FORMAT_VERSION)`.
-* Endianness must match the loading machine.
-* `meta.finalised` must be `true`; a torn tape from an interrupted
-  run is rejected.
-* `records.bin` must be at least `meta.total_bytes` long; the cursor
-  is restored from `meta.total_bytes`.
-"""
-function load_mmap_tape(dir::AbstractString)
-    isdir(dir) || throw(ArgumentError(
-        "tape directory $(repr(dir)) does not exist"))
-    manifest_path = joinpath(dir, "manifest.toml")
-    bin_path = joinpath(dir, "records.bin")
-    isfile(manifest_path) || throw(ArgumentError(
-        "tape directory $(repr(dir)) is missing manifest.toml"))
-    isfile(bin_path) || throw(ArgumentError(
-        "tape directory $(repr(dir)) is missing records.bin"))
-
-    manifest = TOML.parsefile(manifest_path)
-    haskey(manifest, "meta") || throw(ArgumentError(
-        "mmap tape manifest at $(manifest_path) is missing the [meta] section"))
-    meta = manifest["meta"]
-
-    version = get(meta, "version", nothing)
-    version === _MMAP_TAPE_FORMAT_VERSION || throw(ArgumentError(
-        "mmap tape manifest version $(repr(version)) does not match " *
-        "supported version $(repr(_MMAP_TAPE_FORMAT_VERSION))"))
-
-    endian = get(meta, "endianness", nothing)
-    local_endian = _machine_endianness()
-    endian === local_endian || throw(ArgumentError(
-        "mmap tape endianness $(repr(endian)) does not match host endianness " *
-        "$(repr(local_endian)); cross-endian replay is not supported"))
-
-    finalised = get(meta, "finalised", false)
-    finalised === true || throw(ArgumentError(
-        "mmap tape at $(dir) is not marked finalised; refusing to load. " *
-        "Run finalize_tape!(storage) on the writer before reloading."))
-
-    total_bytes = get(meta, "total_bytes", nothing)
-    total_bytes isa Integer || throw(ArgumentError(
-        "mmap tape manifest missing integer meta.total_bytes; got $(repr(total_bytes))"))
-    cursor = Int64(total_bytes)
-    file_size = filesize(bin_path)
-    file_size == cursor || throw(ArgumentError(
-        "mmap tape records.bin is $(file_size) bytes but manifest reports " *
-        "total_bytes = $(cursor); refusing a truncated or trailing-data tape"))
-
-    raw_records = get(manifest, "record", Any[])
-    raw_records isa AbstractVector || throw(ArgumentError(
-        "mmap tape manifest [[record]] section is not a list; got $(typeof(raw_records))"))
-    record_count = get(meta, "record_count", length(raw_records))
-    length(raw_records) == record_count || throw(ArgumentError(
-        "mmap tape manifest reports record_count = $(record_count) but " *
-        "contains $(length(raw_records)) [[record]] entries"))
-
-    records = MmapTapeRecordEntry[_parse_mmap_record(r, cursor) for r in raw_records]
-    for (i, r) in enumerate(records)
-        r.record_id == i || throw(ArgumentError(
-            "mmap tape manifest record at position $(i) has id $(r.record_id); " *
-            "ids must be 1-indexed and contiguous"))
-    end
-
-    return MmapCSTapeStorage(dir, records, cursor)
-end
-
-"""
-    get_record(storage::MmapCSTapeStorage, record_id::Integer) -> MmapCSTapeSlot
-
-Return a slot descriptor for an existing record in `storage`. The slot
-exposes the same `offsets`/`shapes`/`eltype` fields as one produced by
-`_allocate_tape_slot`, so `_tape_panels(slot, role)` returns mmap views over
-the recorded panels.
-"""
-function get_record(storage::MmapCSTapeStorage, record_id::Integer)
-    storage.closed && throw(ArgumentError(
-        "MmapCSTapeStorage at $(storage.dir) is closed; cannot fetch records"))
-    1 <= record_id <= length(storage.records) ||
-        throw(BoundsError(storage.records, record_id))
-    r = storage.records[record_id]
-    return MmapCSTapeSlot(storage, r.record_id, r.eltype, r.offsets, r.shapes)
-end
-
-# ---------------------------------------------------------------------------
-# Display
-# ---------------------------------------------------------------------------
-
-function Base.show(io::IO, storage::MmapCSTapeStorage)
-    print(io, "MmapCSTapeStorage(dir=", repr(storage.dir),
-          ", records=", length(storage.records),
-          ", bytes=", storage.cursor,
-          ", read_caches=", length(storage.read_caches),
-          storage.closed ? ", closed" : "",
-          ")")
+function Base.show(io::IO, storage::_MmapTapeFile)
+    print(io, "_MmapTapeFile(dir=", repr(storage.dir), ", bytes=", storage.cursor, "/",
+          storage.capacity, storage.closed ? ", closed" : "", ")")
 end

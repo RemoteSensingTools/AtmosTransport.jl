@@ -270,29 +270,32 @@ end
     scheme = AT.UpwindScheme()
     controls = _controls(P64)
     observations = _observations(P64; last = 3)
-    # Rejections come before the forward run and create no `tape_path`.
+    # Rejections come before the forward run and create no scratch directory.
     mktempdir() do root
         dir = joinpath(root, "tape")
         duplicate = [controls[1], controls[1]]          # duplicate control names
         @test_throws ArgumentError _fourdvar(P64, observations, duplicate; scheme,
-                                             tape_storage = :mmap, tape_path = dir)
+                                             tape_storage = AT.MmapCSTapeStorage(dir))
         @test_throws ArgumentError _fourdvar(P64, observations, controls; scheme,
-                                             tape_storage = :device, tape_path = dir)
+                                             tape_storage = :mmap)
         # Lin-Rood tapes are device-only.
         @test_throws ArgumentError _fourdvar(P64, observations, controls;
                                              scheme = AT.LinRoodPPMScheme(),
-                                             tape_storage = :mmap, tape_path = dir)
+                                             tape_storage = AT.MmapCSTapeStorage(dir))
         @test_throws ArgumentError _fourdvar(P64, observations, controls;
                                              scheme = AT.LinRoodPPMScheme(),
                                              tape_storage = :pinned_host)
         @test !ispath(dir)
     end
-    # Stride and Revolve build one storage per window.
+    # A pre-constructed storage serves Stride and Revolve too: one storage per
+    # call, every step staged once, as with FullCheckpoint.
+    full = _CountingTapeStorage()
+    reference = _fourdvar(P64, observations, controls; scheme, tape_storage = full)
     for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
         storage = _CountingTapeStorage()
-        @test_throws ArgumentError _fourdvar(P64, observations, controls; scheme,
-                                             checkpoint, tape_storage = storage)
-        @test storage.stages == 0
+        result = _fourdvar(P64, observations, controls; scheme, checkpoint, tape_storage = storage)
+        @test storage.stages == full.stages
+        @test _relerr(result.gradients, reference.gradients) <= 1e-13
     end
 end
 
@@ -324,7 +327,7 @@ _same_footprints(a, b) = _BITWISE ? _footprint_difference(a, b) == 0 :
             (AT.UpwindScheme(), :tm5, :device),
             (AT.UpwindScheme(), :split, :pinned_host),
             (AT.PPMScheme(AT.MonotoneLimiter()), :cmfmc, :device),
-            (AT.PPMScheme(AT.MonotoneLimiter()), :boundary, :mmap),
+            (AT.PPMScheme(AT.MonotoneLimiter()), :boundary, AT.MmapCSTapeStorage(mktempdir())),
             (AT.LinRoodPPMScheme(), :tm5, :device))
         base = scheme isa AT.UpwindScheme ? nothing : rates
         jac = AT.cs_surface_flux_jacobian(P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh,

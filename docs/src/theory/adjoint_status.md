@@ -165,15 +165,54 @@ three schedules share one driver per policy for every scheme family; a
 checkpoint is a replay snapshot (tracer and air mass with halos plus the
 persistent operator state), so a restart inside a met window runs that
 window's remaining steps and window-end stages exactly as the recording run.
+On one CPU thread every schedule and tape storage reproduces `FullCheckpoint`
+with device storage bit for bit; the bitwise gate below checks it.
 
 ### Tape storage backends
 
 Split-sweep tape records can live on the device (the default), in pinned-host
-memory, or on disk via mmap — selectable via the `tape_storage`
-kwarg (`:device` / `:pinned_host` / `:mmap`). Storage backends are
-defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`;
-the mmap path is covered by `test_cs_tape_mmap_roundtrip.jl`. LinRood tape
-records currently require `:device` storage.
+memory, or on disk, selected by the `tape_storage` keyword: `:device`,
+`:pinned_host`, a pre-constructed `DeviceCSTapeStorage()` or
+`PinnedHostCSTapeStorage()`, or `MmapCSTapeStorage(dir)`. Every storage works
+with every checkpoint schedule: one call records all its tapes (the stride
+windows, the bisection base steps) into one storage. Storage backends are
+defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`.
+LinRood tape records currently require device storage.
+
+The on-disk tier needs a scratch directory; there is no default (a C90 day of
+PPM tape is tens of GB, more than a typical `/tmp`). Before recording, the
+call counts the bytes of the largest tape it records on the forward replay
+(one extra forward run with `FullCheckpoint`; the propagation pass of
+`StrideCheckpoint` and `RevolveCheckpoint` counts at no extra cost), checks
+that `dir` has them plus 10 % free, and reserves them with `fallocate` in one
+file, which is unlinked at once, mapped once, and unmapped and closed when the
+call returns, so its space goes back to the file system then. Too little space
+is an `ArgumentError` naming the required and available bytes, raised after
+the sizing pass and before the tape is recorded; with the extent reserved
+(ext4, XFS), the mmap writes can no longer end in a SIGBUS on a full file
+system. A file system that cannot reserve blocks for in-place writes (no
+`fallocate`, ZFS) is rejected by name. Tapes are not persisted.
+
+### Bitwise gate of the tape
+
+`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of seven
+configurations in a single-threaded subprocess
+(`test/helpers/cs_adjoint_tape_harness.jl`): upwind, unlimited slopes and
+PPM, monotone and CW84 PPM, Float64 and Float32, TM5, CMFMC and CMFMC-matrix
+convection at substep and window cadence, both diffusion couplings, every
+air-mass reset mode and CFL subcycles. The fields are rough (random values,
+spikes, exact zeros and ties, sign changes; fluxes from a random
+streamfunction per panel plus noise; nonzero emission rates), and the test
+requires every branch of the monotone profile limiter and of the CW84 minmod
+slopes to occur on the recorded tape, per axis and next to the panel seams.
+Footprints, initial adjoints, seeded and multi-objective footprints and the
+4D-Var cost, simulated values and gradient (with a co-sample after the last
+assimilated step) of every storage × schedule variant must equal the device
+`FullCheckpoint` reference bit for bit, and the reference must equal the
+SHA-1 digests recorded from main on the reference host
+(`test/fixtures/cs_adjoint_tape_digests.toml`). The full matrix of 50
+configurations is the opt-in
+`test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
 
 ### Inversion scaffold
 
@@ -260,7 +299,7 @@ and the weights, one taped forward run to the last observation step, and one
 reverse pass; `StrideCheckpoint` adds its checkpoint propagation pass and
 `RevolveCheckpoint` its ``O(\log N)`` recomputation, as for a footprint. Steps
 after the last observation do not affect the cost and get a zero gradient.
-`checkpoint`, `tape_storage` and `tape_path` choose how that one taped run is
+`checkpoint` and `tape_storage` choose how that one taped run is
 stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
 against one footprint per observation (the previous algorithm, rebuilt in the
 test) for upwind, unlimited slopes and PPM, monotone PPM and Lin–Rood with
@@ -845,7 +884,7 @@ For the lower-level Julia API, start with the
 Use `RevolveCheckpoint()` (without arguments)
 for recursive bisection, or `StrideCheckpoint(K)` for an explicit interval.
 LinRood checkpoints currently require `tape_storage = :device`; split-sweep
-schemes also support `:pinned_host` and `:mmap`.
+schemes also support `:pinned_host` and `MmapCSTapeStorage(dir)`.
 
 ## Where to read next
 

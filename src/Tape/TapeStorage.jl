@@ -16,6 +16,9 @@
 #   * `CSTapeSlot` / `PinnedHostCSTapeSlot` — per-state slot containers.
 #   * `_stage_panels`, `stage_panels!`, `_tape_panels(slot, role)`,
 #     `_allocate_tape_slot` — public-ish staging API.
+#   * `_validate_tape_storage`, `_open_tape_storage`, `_rewind_tape_storage!`,
+#     `_release_opened_tape_storage!` — the storage lifecycle of one
+#     reverse-pass call.
 #
 # The on-disk policy `MmapCSTapeStorage` lives in `MmapTapeStorage.jl`.
 # ---------------------------------------------------------------------------
@@ -26,7 +29,8 @@ abstract type AbstractCSTapeStorage end
     AbstractHostCSTapeStorage <: AbstractCSTapeStorage
 
 Tape storage whose staged slots live off the source device: host memory for
-`PinnedHostCSTapeStorage`, a file for `MmapCSTapeStorage`. Reading a slot
+`PinnedHostCSTapeStorage`, the scratch file that a reverse-pass call opens
+for an `MmapCSTapeStorage` (`_MmapTapeFile`). Reading a slot
 copies it into a device-side read cache and returns that cache. There is one
 cache per `(read role, panel shapes)` pair, so the two operands that one
 reverse kernel reads together (the air mass and tracer mass of a limited-PPM
@@ -110,71 +114,64 @@ struct PinnedHostCSTapeSlot{S <: PinnedHostCSTapeStorage, H}
 end
 
 # ---------------------------------------------------------------------------
-# Policy resolution
+# Policy resolution: from the `tape_storage` argument of a reverse-pass call
+# to the storage its driver records into
 # ---------------------------------------------------------------------------
 
-_tape_storage(storage::AbstractCSTapeStorage) = storage
-_tape_storage(::Val{:device}) = DeviceCSTapeStorage()
-_tape_storage(::Val{:pinned_host}) = PinnedHostCSTapeStorage()
-_tape_storage(storage::Symbol) = _tape_storage(Val(storage))
-_tape_storage(storage) = throw(ArgumentError(
-    "unsupported CS adjoint tape storage $(storage); " *
-    "supported: :device, :pinned_host, :mmap"))
+function _tape_storage(storage::Symbol)
+    storage === :device && return DeviceCSTapeStorage()
+    storage === :pinned_host && return PinnedHostCSTapeStorage()
+    return _unsupported_tape_storage(storage)
+end
+
+_unsupported_tape_storage(storage) = throw(ArgumentError(
+    "unsupported CS adjoint tape storage $(repr(storage)); supported: :device, " *
+    ":pinned_host, a DeviceCSTapeStorage() or PinnedHostCSTapeStorage() instance, or " *
+    "MmapCSTapeStorage(dir) with a scratch directory"))
 
 """
-    _resolve_tape_path(tape_storage, tape_path) -> Union{Nothing, String}
+    _validate_tape_storage(tape_storage)
 
-Validate that `tape_path` is compatible with `tape_storage`. Returns
-`nothing` when `tape_path === nothing` (use a temp dir / no disk
-backing). Returns the path string (after `mkpath`) when `tape_storage`
-is `:mmap` and a path is supplied. Throws an `ArgumentError` if a path
-is supplied with non-`:mmap` storage (since `:device` and
-`:pinned_host` keep tape state in memory, a path has no meaning), or
-if `tape_storage` is a pre-constructed `AbstractCSTapeStorage` (the
-storage's own configuration already determines where the tape lives).
+Reject an unsupported `tape_storage` argument of a reverse-pass call before
+its forward run: a Symbol other than `:device` and `:pinned_host`, or a value
+that is not an `AbstractCSTapeStorage`.
 """
-function _resolve_tape_path(tape_storage::Union{Symbol, AbstractCSTapeStorage},
-                            tape_path::Union{Nothing, AbstractString})
-    _validate_tape_path(tape_storage, tape_path)
-    tape_path === nothing && return nothing
-    isdir(tape_path) || mkpath(tape_path)
-    return String(tape_path)
-end
+_validate_tape_storage(storage::Symbol) = (_tape_storage(storage); nothing)
+_validate_tape_storage(::AbstractCSTapeStorage) = nothing
+_validate_tape_storage(storage) = _unsupported_tape_storage(storage)
 
-# The checks of `_resolve_tape_path` without creating the directory, for
-# callers that must reject a bad combination before other validation that can
-# still fail, and so before any filesystem side effect.
-function _validate_tape_path(tape_storage::Symbol,
-                             tape_path::Union{Nothing, AbstractString})
-    tape_path === nothing && return nothing
-    tape_storage === :mmap || throw(ArgumentError(
-        "tape_path requires tape_storage = :mmap; got tape_storage = " *
-        "$(repr(tape_storage)). The :device and :pinned_host policies " *
-        "keep tape state in memory and have no on-disk path."))
-    isempty(tape_path) && throw(ArgumentError(
-        "tape_path is empty; pass a non-empty directory path or omit the kwarg"))
-    return nothing
-end
+"""
+    _needs_tape_size(tape_storage) -> Bool
 
-function _validate_tape_path(::AbstractCSTapeStorage,
-                             tape_path::Union{Nothing, AbstractString})
-    tape_path === nothing && return nothing
-    throw(ArgumentError(
-        "tape_path is not compatible with a pre-constructed " *
-        "AbstractCSTapeStorage; the storage's own configuration already " *
-        "determines where the tape lives. Pass a Symbol (:mmap) plus " *
-        "tape_path, or pass the storage instance alone."))
-end
+Whether opening the storage needs the byte size of the largest tape the call
+records (`MmapCSTapeStorage` reserves its file extent up front); the
+checkpoint drivers count it on the replay only then.
+"""
+_needs_tape_size(_storage) = false
 
-# Generic no-op fallback so the strided checkpoint driver can call
-# `finalize_tape!(storage)` once per window without dispatching on
-# storage type. `MmapCSTapeStorage` overrides this in
-# `MmapTapeStorage.jl` to sync + emit manifest + close the bin handle.
-# `DeviceCSTapeStorage` and `PinnedHostCSTapeStorage` hold their state
-# in plain Julia arrays and do not need an explicit teardown — GC
-# handles release once the storage drops out of scope.
-finalize_tape!(::AbstractCSTapeStorage; quiet::Bool = false,
-                strict::Bool = false) = nothing
+"""
+    _open_tape_storage(tape_storage, nbytes) -> AbstractCSTapeStorage
+
+The storage one reverse-pass call records all its tapes into: a fresh
+`DeviceCSTapeStorage` or `PinnedHostCSTapeStorage` for a Symbol, an
+`_MmapTapeFile` reserving `nbytes` in the directory of an `MmapCSTapeStorage`,
+or a pre-constructed storage as is: the caller owns it, so the call neither
+sizes nor releases it. Drivers that record several tapes in a row call
+`_rewind_tape_storage!` before each, and `_release_opened_tape_storage!` when
+the call ends.
+"""
+_open_tape_storage(storage::Symbol, _nbytes::Integer) = _tape_storage(storage)
+_open_tape_storage(storage::AbstractCSTapeStorage, _nbytes::Integer) = storage
+
+# Device and pinned-host slots are separate arrays released by the GC, so
+# rewinding and releasing them is a no-op.
+_rewind_tape_storage!(storage::AbstractCSTapeStorage) = storage
+_release_tape_storage!(::AbstractCSTapeStorage) = nothing
+
+# Release the storage a call opened (`storage`, from `_open_tape_storage(
+# tape_storage, nbytes)`), but not a caller's pre-constructed storage.
+_release_opened_tape_storage!(storage, tape_storage) =
+    storage === tape_storage ? nothing : _release_tape_storage!(storage)
 
 # ---------------------------------------------------------------------------
 # Slot read / staging hooks
