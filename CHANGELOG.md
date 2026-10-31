@@ -55,8 +55,12 @@
   any forward run. `[adjoint.tape] content` in `scripts/inversions/cs_4dvar.jl`
   takes `"state"` (default) or `"air_mass"`. Measured on one CPU thread (C32
   L20 Float64, 8 steps, upwind with TM5 convection and diffusion, three
-  evaluations): an evaluation takes 0.4 % less time with a device-array tape
-  and 1.5 % less with an mmap tape, with the same costs bit for bit. The adjoint tape's bitwise gate
+  evaluations, before position-weighted checksums): no measurable difference
+  with the CPU device-array tape (min-of-three −0.4 %, within run-to-run spread);
+  1.5 % less time with mmap, with the same costs bit for bit. Identity checks
+  now use position-weighted device reductions and one host transfer per
+  evaluation; holding a tape rejects tracer payloads. Device limiter-code
+  slots need no scratch state. GPU timings remain pending. The adjoint tape's bitwise gate
   gains a Lin–Rood case (both tiers) and `AirMassTape` variants of the linear
   cases; its fixture adds the Lin–Rood digests from main, every earlier digest
   unchanged.

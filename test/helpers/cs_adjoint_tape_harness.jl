@@ -677,8 +677,13 @@ function limiter_code_counts(ops, Nc, Nz)
         for p in 1:6
             c = codes[p]
             if op.direction === :z
-                for k in 1:Nz, j in HP+1:HP+Nc, i in HP+1:HP+Nc
-                    count!("z", c[i, j, k])
+                for k in 3:Nz-2, j in HP+1:HP+Nc, i in HP+1:HP+Nc
+                    bump!("profile_z", c[i, j, k] & 0x03)
+                end
+                if cw84
+                    for k in 2:Nz-1, j in HP+1:HP+Nc, i in HP+1:HP+Nc
+                        bump!("slope_z", (c[i, j, k] >> 2) & 0x03)
+                    end
                 end
                 continue
             end

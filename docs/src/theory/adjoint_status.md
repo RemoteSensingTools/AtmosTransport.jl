@@ -271,16 +271,24 @@ the recording's: the grid, the number of taped steps, the met windows (window,
 step length and clock of every step), the scheme, step plan and operators, and
 content checksums of the met inputs (initial air mass, face fluxes, convection
 forcing, diffusion layer thickness, and the interiors of the reset targets,
-whose halos a reset refreshes in place; a wrapping integer sum of the bit
-patterns, the same on any backend); and the tape pool's generation. A
+whose halos a reset refreshes in place; a position-weighted wrapping sum of
+bit patterns, the same on any backend); and the tape pool's generation.
+Device reductions collect all checksums into one result vector with one
+host transfer per evaluation. The checksums detect permutations but remain a
+within-runtime guard, not a collision-free fingerprint. Holding the tape
+also rejects records with tracer payloads. A
 difference is an `ArgumentError` naming it. Limited PPM and Lin–Rood
 (`TracerDependence`) with `AirMassTape()` are an `ArgumentError` before any
 forward run, as is `AirMassTape()` with `StrideCheckpoint` (its windows are
 re-recorded from tracer-dependent checkpoints in every reverse pass). On one
 CPU thread (C32 L20 Float64, 8 steps, upwind with TM5 convection and diffusion,
-a three-evaluation optimization) an evaluation takes 0.4 % less time with a
-device-array tape and 1.5 % less with an mmap tape, the recording being a small
-part of an evaluation there; the costs are the same bit for bit.
+a three-evaluation optimization, before the position-weighted checksum change)
+there was no measurable difference with a CPU device-array tape (min-of-three
+−0.4 %, within run-to-run spread), and an mmap evaluation took 1.5 % less time;
+the costs were the same bit for bit. GPU timings remain pending. With
+`flux_scale ≠ 1`, the held tape retains the first evaluation's scaled flux
+copies throughout the optimization; later evaluations allocate another set,
+so peak scaled-flux memory is twice one set.
 
 ### Checkpoint schedules
 

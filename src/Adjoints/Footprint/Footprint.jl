@@ -1,6 +1,7 @@
 module Footprint
 
-using KernelAbstractions: @Const, @index, @kernel, get_backend, synchronize
+using KernelAbstractions: @Const, @index, @kernel, @localmem, @synchronize, get_backend, synchronize
+using KernelAbstractions: CPU as KACPU
 using ...Grids: AtmosGrid, CubedSphereMesh, HybridSigmaPressure
 using ...Operators.Advection: CSAdjointFV3Vertical, CSAdjointLinearScheme, CSAdjointNonlinearScheme,
     CSAdjointWorkspace, CSLinRoodStyle, CSSplitSweepStyle, NoLimiter, PPMScheme,

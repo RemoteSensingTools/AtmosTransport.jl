@@ -286,21 +286,23 @@ end
 _same_shapes(slab::NTuple{6}, panels::NTuple{6}) =
     all(p -> size(slab[p]) == size(panels[p]), 1:6)
 
-# The next slab for `panels`: the one at the cursor when it has their type and
-# shapes, else a new one (`similar`) in its place.
-function _take_slab!(pool::_DeviceSlabPool, panels::NTuple{6, A}) where {A <: AbstractArray}
+# The next slab for `panels`: the one at the cursor when its type and shapes
+# match (or the requested element type for a computed slot), else a new one.
+function _take_slab!(pool::_DeviceSlabPool, panels::NTuple{6, A},
+                     ::Type{T} = eltype(first(panels))) where {A <: AbstractArray, T}
     i = (pool.cursor += 1)
     if i <= length(pool.slabs)
         old = pool.slabs[i]
-        old isa NTuple{6, A} && _same_shapes(old, panels) && return old
+        compatible = T === eltype(A) ? old isa NTuple{6, A} : old isa NTuple{6, <:AbstractArray{T}}
+        compatible && _same_shapes(old, panels) && return old
         # Allocate before freeing: if the allocation fails, the pool still owns
         # the old slab (and frees it once, on release).
-        fresh = ntuple(p -> similar(panels[p]), 6)
+        fresh = ntuple(p -> similar(panels[p], T), 6)
         pool.slabs[i] = fresh
         _free_tape_panels!(old)
         return fresh
     end
-    fresh = ntuple(p -> similar(panels[p]), 6)
+    fresh = ntuple(p -> similar(panels[p], T), 6)
     push!(pool.slabs, fresh)
     return fresh
 end
@@ -338,15 +340,19 @@ function _stage_panels(pool, panels::NTuple{6})
 end
 
 """
-    _stage_computed(fill_panels!, pool, scratch) -> slot
+    _stage_computed(fill_panels!, pool, template[, T]) -> slot
 
-Allocate a slot shaped like `scratch` (six panels on the source backend) and
+Allocate a slot shaped like `template` (six panels on the source backend) and
 fill it with `fill_panels!(dest)`, which writes six panels of that shape (a
-kernel queued on the backend). A device slot is filled in place; any other
-pool's slot (host memory) is filled through `scratch`, which is then staged.
+kernel queued on the backend). Device pools accept an element type `T`, so
+the source panels can template a code slot without a scratch allocation.
+A device slot is filled in place; any other pool's slot (host memory) is
+filled through `template` as scratch, which is then staged.
 """
-function _stage_computed(fill_panels!, pool::_DeviceSlabPool, scratch::NTuple{6})
-    slot = _allocate_tape_slot(pool, scratch)
+function _stage_computed(fill_panels!, pool::_DeviceSlabPool, template::NTuple{6},
+                         ::Type{T} = eltype(first(template))) where {T}
+    _require_open(pool)
+    slot = CSTapeSlot(pool, _take_slab!(pool, template, T), pool.generation)
     fill_panels!(slot.panels)
     return slot
 end

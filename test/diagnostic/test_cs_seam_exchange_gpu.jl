@@ -60,12 +60,22 @@ else
             gpu_ws = Adj.CSAdjointWorkspace(mesh, gm[1])
             if scheme isa PPMScheme{MonotoneLimiter}
                 # The limiter branches the tape records: one fused launch for
-                # the six panels, the same codes on the device as on the CPU.
+                # the six panels. Keep the exact check as a diagnostic: if
+                # GPU FMA changes a near-tie predicate, inspect the differing
+                # cell's profile/slope predicates and its reverse weight
+                # before attributing a gradient bug (see TP5 GPU acceptance).
                 codes = CSSeamAdv.record_ppm_limiter_codes!(map(a -> similar(a, UInt8), m), m, rm,
                                                             symbol, scheme)
                 gcodes = CSSeamAdv.record_ppm_limiter_codes!(map(a -> similar(a, UInt8), gm), gm, gr,
                                                              symbol, scheme)
-                @test all(p -> Array(gcodes[p]) == codes[p], 1:6)
+                host_codes = map(Array, gcodes)
+                for p in 1:6
+                    mismatches = findall(host_codes[p] .!= codes[p])
+                    if !isempty(mismatches)
+                        @info "Limiter code mismatch: inspect near-tie predicates and reverse weights" FT axis p cells = first(mismatches, 10) count = length(mismatches)
+                    end
+                    @test host_codes[p] == codes[p]
+                end
                 CSSeamAdv._adjoint_scheme_sweep!(gradient, m, codes, flux, symbol, scheme, mesh, cpu_ws, FT(1))
                 CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gcodes, gf, symbol, scheme, mesh, gpu_ws, FT(1))
             else

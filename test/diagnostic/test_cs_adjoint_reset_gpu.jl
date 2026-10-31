@@ -68,4 +68,50 @@ else
                                rtol = 1e-13) for s in eachindex(full.footprints), p in 1:6)
         end
     end
+
+    @testset "CUDA AirMassTape preserve_vmr reset identity and reuse" begin
+        FP = ADJ.Footprint
+        for conv in (:cmfmc, :tm5)
+            c = Case(; conv, diffusion = :split, reset = :preserve_vmr, steps = [2, 2])
+            # Fresh capture: no earlier forward has refreshed target halos.
+            inp = AT.cs_adjoint_inputs(_gpu_reset_simulation(c))
+            objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
+            starts = [FP._ObjectiveStart(objective)]
+            replay() = FP._cs_replay_for_call(inp.panels_rm0, inp.panels_m0,
+                inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh;
+                inp.kwargs...)
+            # Includes non-contiguous device target interiors, convection
+            # forcing and layer thickness, with scalar indexing forbidden.
+            r, _ = replay()
+            I = (inp.mesh.Hp + 1):(inp.mesh.Hp + inp.mesh.Nc)
+            target = inp.kwargs.schedule.window_end_air_mass[1][1]
+            arrays = Any[inp.panels_m0[1], view(target, I, I, :)]
+            FP._push_met_arrays!(arrays, IdDict{Any, Nothing}(), r.convection_forcing)
+            @test FP._met_checksums(arrays) == FP._met_checksums(Any[Array(a) for a in arrays])
+            FP._with_tape_runtime(AT.AdjointTape(; content = AT.AirMassTape())) do runtime
+                r, dt = replay()
+                first = only(FP._collect_footprints(r, starts, dt, runtime))
+                held = runtime.held
+                @test any(op -> op isa AT.Tape._CSAirMassResetRecord, held.ops)
+                r, dt = replay()
+                reused = only(FP._collect_footprints(r, starts, dt, runtime))
+                @test runtime.held === held
+                reference = AT.cs_surface_emission_footprint(inp.panels_rm0, inp.panels_m0,
+                    inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh,
+                    objective; Base.structdiff(inp.kwargs, NamedTuple{(:surface_flux, :emission_rates)})...,
+                    base_emission_rates = inp.kwargs.emission_rates)
+                for result in (first, reused)
+                    @test all(isapprox(Array(result.initial_adjoint[p]), Array(reference.initial_adjoint[p]);
+                                       rtol = 1e-12) for p in 1:6)
+                    @test all(isapprox(Array(result.footprints[s][p]), Array(reference.footprints[s][p]);
+                                       rtol = 1e-12) for s in eachindex(reference.footprints), p in 1:6)
+                end
+                # Halo refreshes above are legal, an interior edit is not.
+                view(target, I, I, :) .*= 1.001
+                r, _ = replay()
+                @test_throws ArgumentError FP._held_air_mass_tape(runtime, FP._tape_identity(r, sum(c.steps)))
+            end
+        end
+    end
+
 end

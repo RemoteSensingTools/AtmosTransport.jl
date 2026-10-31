@@ -126,8 +126,8 @@ end
 What an `AirMassTape` recording depends on (a reuse compares `grid`, `steps`,
 `window`, `scheme`, then `met`):
 
-- `met`: content checksums (a wrapping sum of the bit patterns, the same on
-  every backend and thread count) of the met inputs the records read or the
+- `met`: content checksums (a position-weighted wrapping sum of bit patterns,
+  the same on every backend and thread count) of the met inputs the records read or the
   air-mass trajectory follows: the initial air mass, every step's face fluxes,
   convection forcing and diffusion layer thickness, and the interiors of the
   air-mass reset targets (whose halos the forward run refreshes in place),
@@ -169,25 +169,102 @@ _bits64(x::Float32) = UInt64(reinterpret(UInt32, x))
 _bits64(x::Float16) = UInt64(reinterpret(UInt16, x))
 _bits64(x::Integer) = x % UInt64
 
-# Order-independent (a wrapping integer sum), so a device reduction gives the
-# same checksum whatever its order.
-_content_checksum(a::AbstractArray) = mapreduce(_bits64, +, a; init = zero(UInt64))
+# Position-weighted wrapping sum: integer addition is independent of reduction
+# order, while moving unequal bit patterns between cells changes the checksum.
+# This is a within-runtime guard, not a collision-free content fingerprint.
+@inline function _checksum_weight(i)
+    x = UInt64(i) + 0x9e3779b97f4a7c15
+    x = (x ⊻ (x >> 30)) * 0xbf58476d1ce4e5b9
+    x = (x ⊻ (x >> 27)) * 0x94d049bb133111eb
+    return x ⊻ (x >> 31)
+end
+@inline _checksum_term(a, i) = _bits64(a[i]) * _checksum_weight(i)
+_content_checksum(a::AbstractArray) =
+    mapreduce(i -> _checksum_term(a, i), +, 1:length(a); init = zero(UInt64))
+
+# Each met array writes one column of partial sums, without a host read or
+# barrier. Linear indexing also handles non-contiguous reset-interior views.
+# At most 128 workgroups per array; each lane sums a disjoint strided subset.
+@kernel function _met_checksum_partials!(partials, @Const(a), slot, ngroups)
+    lane = @index(Local, Linear)
+    group = @index(Group, Linear)
+    scratch = @localmem UInt64 (256,)
+    value = zero(UInt64)
+    for i in ((group - 1) * 256 + lane):(ngroups * 256):length(a)
+        @inbounds value += _checksum_term(a, i)
+    end
+    scratch[lane] = value
+    @synchronize
+    for offset in (128, 64, 32, 16, 8, 4, 2, 1)
+        if lane <= offset
+            @inbounds scratch[lane] += scratch[lane + offset]
+        end
+        @synchronize
+    end
+    if lane == 1
+        @inbounds partials[group, slot] = scratch[1]
+    end
+end
+
+@kernel function _met_checksum_finish!(sums, @Const(partials))
+    slot = @index(Global, Linear)
+    value = zero(UInt64)
+    for group in axes(partials, 1)
+        @inbounds value += partials[group, slot]
+    end
+    @inbounds sums[slot] = value
+end
+
+# Host arrays are reduced on the host. All device arrays feed one result
+# vector; its single D2H copy is the only host synchronization of the check.
+function _met_checksums(arrays)
+    sums = Vector{UInt64}(undef, length(arrays))
+    device = Int[]
+    for (i, a) in enumerate(arrays)
+        if get_backend(a) isa KACPU
+            sums[i] = _content_checksum(a)
+        else
+            push!(device, i)
+        end
+    end
+    if !isempty(device)
+        template = arrays[first(device)]
+        backend = get_backend(template)
+        partials = similar(template, UInt64, 128, length(device))
+        device_sums = similar(template, UInt64, length(device))
+        try
+            fill!(partials, zero(UInt64))
+            for (slot, i) in enumerate(device)
+                a = arrays[i]
+                ngroups = min(128, max(1, cld(length(a), 256)))
+                _met_checksum_partials!(backend, 256)(partials, a, slot, ngroups;
+                                                       ndrange = 256 * ngroups)
+            end
+            _met_checksum_finish!(backend, 256)(device_sums, partials; ndrange = length(device))
+            sums[device] = Array(device_sums)
+        finally
+            _free_tape_array!(device_sums)
+            _free_tape_array!(partials)
+        end
+    end
+    return UInt64[hash((size(a), eltype(a), sums[i])) for (i, a) in enumerate(arrays)]
+end
 
 # The float arrays of a met input (a panel tuple, a flux state, a convection
 # forcing, a vector of reset targets), each checksummed once per replay, in a
 # fixed order.
-function _push_met_checksums!(sums::Vector{UInt64}, seen::IdDict{Any, Nothing}, a::AbstractArray)
+function _push_met_arrays!(arrays::Vector{Any}, seen::IdDict{Any, Nothing}, a::AbstractArray)
     eltype(a) <: Union{Base.IEEEFloat, Integer} ||
-        return (foreach(x -> _push_met_checksums!(sums, seen, x), a); sums)   # arrays of arrays
-    haskey(seen, a) && return sums
+        return (foreach(x -> _push_met_arrays!(arrays, seen, x), a); arrays)   # arrays of arrays
+    haskey(seen, a) && return arrays
     seen[a] = nothing
-    push!(sums, hash((size(a), eltype(a), _content_checksum(a))))
-    return sums
+    push!(arrays, a)
+    return arrays
 end
-_push_met_checksums!(sums, seen, x::Union{Tuple, NamedTuple}) =
-    (foreach(y -> _push_met_checksums!(sums, seen, y), x); sums)
-_push_met_checksums!(sums, seen, f::CubedSphereFaceFluxState) =
-    _push_met_checksums!(sums, seen, (f.am, f.bm, f.cm))
+_push_met_arrays!(arrays, seen, x::Union{Tuple, NamedTuple}) =
+    (foreach(y -> _push_met_arrays!(arrays, seen, y), x); arrays)
+_push_met_arrays!(arrays, seen, f::CubedSphereFaceFluxState) =
+    _push_met_arrays!(arrays, seen, (f.am, f.bm, f.cm))
 
 # The interiors of the air-mass reset targets (a vector of six-panel tuples,
 # one per window). A reset refreshes its target's halos in place before it
@@ -196,21 +273,21 @@ _push_met_checksums!(sums, seen, f::CubedSphereFaceFluxState) =
 # the reset's reverse multiplies the target's halos only by the adjoint state
 # the following halo record has just zeroed there, so the tape does not
 # depend on them.
-function _push_reset_target_checksums!(sums::Vector{UInt64}, seen::IdDict{Any, Nothing}, targets,
+function _push_reset_target_arrays!(arrays::Vector{Any}, seen::IdDict{Any, Nothing}, targets,
                                        mesh::CubedSphereMesh)
-    targets === nothing && return sums
+    targets === nothing && return arrays
     I = (mesh.Hp + 1):(mesh.Hp + mesh.Nc)
     for target in targets, a in target
         haskey(seen, a) && continue
         seen[a] = nothing
         interior = view(a, I, I, :)
-        push!(sums, hash((size(interior), eltype(a), _content_checksum(interior))))
+        push!(arrays, interior)
     end
-    return sums
+    return arrays
 end
-_push_met_checksums!(sums, seen, f::ConvectionForcing) =
-    _push_met_checksums!(sums, seen, (f.cmfmc, f.dtrain, f.tm5_fields, f.cloud_base))
-_push_met_checksums!(sums, _seen, ::Nothing) = sums
+_push_met_arrays!(arrays, seen, f::ConvectionForcing) =
+    _push_met_arrays!(arrays, seen, (f.cmfmc, f.dtrain, f.tm5_fields, f.cloud_base))
+_push_met_arrays!(arrays, _seen, ::Nothing) = arrays
 
 """
     _tape_identity(replay, taped_steps) -> _TapeIdentity
@@ -219,17 +296,17 @@ The identity of a forward run of `replay` (at its initial state) that tapes
 steps `1:taped_steps`.
 """
 function _tape_identity(replay::_CSReplay, taped_steps::Int)
-    sums = UInt64[]
+    arrays = Any[]
     seen = IdDict{Any, Nothing}()
-    _push_met_checksums!(sums, seen, _replay_m(replay))
+    _push_met_arrays!(arrays, seen, _replay_m(replay))
     for s in 1:taped_steps
-        _push_met_checksums!(sums, seen, replay.fluxes[s])
-        _push_met_checksums!(sums, seen, _forcing_at(replay.convection_forcing, s))
+        _push_met_arrays!(arrays, seen, replay.fluxes[s])
+        _push_met_arrays!(arrays, seen, _forcing_at(replay.convection_forcing, s))
         diffusion_ws = _sequence_at(replay.diffusion_user_ws, s)
-        diffusion_ws === nothing || _push_met_checksums!(sums, seen, diffusion_ws.layer_thickness)
+        diffusion_ws === nothing || _push_met_arrays!(arrays, seen, diffusion_ws.layer_thickness)
     end
-    _push_reset_target_checksums!(sums, seen, replay.start_targets, replay.mesh)
-    _push_reset_target_checksums!(sums, seen, replay.end_targets, replay.mesh)
+    _push_reset_target_arrays!(arrays, seen, replay.start_targets, replay.mesh)
+    _push_reset_target_arrays!(arrays, seen, replay.end_targets, replay.mesh)
     steps = replay.steps
     n = 1:taped_steps
     window = (steps.window[n], steps.first[n], steps.last[n], steps.dt[n], steps.start_time[n],
@@ -239,7 +316,7 @@ function _tape_identity(replay::_CSReplay, taped_steps::Int)
               objectid(replay.diffusion_user_ws), objectid(replay.meteo.diffusion_meteo))
     m = _replay_m(replay)
     grid = (replay.mesh.Nc, replay.mesh.Hp, size(m[1], 3), eltype(m[1]))
-    return _TapeIdentity(sums, window, scheme, grid, taped_steps)
+    return _TapeIdentity(_met_checksums(arrays), window, scheme, grid, taped_steps)
 end
 
 const _TAPE_IDENTITY_FIELDS = (
@@ -277,6 +354,11 @@ end
 
 # Hold the tape a runtime's first `AirMassTape` forward run recorded.
 function _hold_air_mass_tape!(runtime::_TapeRuntime, ops, identity::_TapeIdentity)
+    for op in ops
+        if (op isa _CSSweepRecord && op.panels_tracer !== nothing) || op isa _CSLinRoodHorizRecord
+            throw(ArgumentError("AirMassTape cannot hold tracer-dependent records ($(typeof(op)))."))
+        end
+    end
     runtime.held = _HeldAirMassTape(ops, identity, runtime.pool.generation)
     return nothing
 end

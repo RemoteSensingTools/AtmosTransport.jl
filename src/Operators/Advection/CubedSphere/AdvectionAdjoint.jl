@@ -129,7 +129,8 @@ end
 # cells are equal, so a clamped stencil gives the same code at every face that
 # reads the cell. The reverse then needs no tracer mass: `_ppm_face_coeffs`
 # applies the derivatives below with the operation order of the forward
-# linearization, bit for bit.
+# linearization, bit for bit. In z, only cells 3:Nz-2 carry profile weight
+# and cells 2:Nz-1 carry slope weight; clamped end codes have zero weight.
 # ---------------------------------------------------------------------------
 
 # The minmod of the van Leer slope (`_limited_slope(…, MonotoneLimiter())`)
@@ -415,7 +416,7 @@ end
 
 # Limited PPM: `codes` are the sweep's limiter branch codes (`PPMLimiterCodes`).
 Base.@propagate_inbounds function _add_x_face_adjoint!(lambda_in, m, codes, face_i, j, k, F, scale,
-                                      scheme::PPMScheme{<:_PPMTapedLimiter}, Nx)
+                                      scheme::PPMScheme{<:_PPMTapedLimiter}, Nx::_HaloPaddedAxis)
     i_3  = _wrap_periodic(face_i - Int32(3), Nx)
     i_2  = _wrap_periodic(face_i - Int32(2), Nx)
     i_1  = _wrap_periodic(face_i - Int32(1), Nx)

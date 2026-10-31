@@ -22,6 +22,7 @@
 # That the shared slots and the codes give the gradients of the uncompacted
 # tape bit for bit is the bitwise gate (`test_cs_adjoint_tape_bitwise.jl`).
 using Test
+using KernelAbstractions: get_backend, synchronize
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_adjoint_tape_harness.jl"))
 using .CSAdjointTapeHarness: Case
@@ -200,5 +201,58 @@ end
         @test reused.last.gradients == fresh.last.gradients
     else
         @test reused.cost_history ≈ fresh.cost_history rtol = 1e-12
+    end
+end
+
+
+@testset "met checksum reductions preserve bit patterns and cell positions" begin
+    for FT in (Float32, Float64, Int32, UInt64)
+        a = reshape(FT.(mod.(0:40039, 97)), 13, 22, 140)
+        if FT <: AbstractFloat
+            a[1:4] .= (FT(0.0), FT(-0.0), FT(Inf), FT(NaN))
+        end
+        arrays = Any[a, view(a, 2:11, 3:20, :), FT[], reshape(FT[1], 1, 1, 1)]
+        partials = zeros(UInt64, 128, length(arrays))
+        result = zeros(UInt64, length(arrays))
+        backend = get_backend(a)
+        for (slot, x) in enumerate(arrays)
+            ngroups = min(128, max(1, cld(length(x), 256)))
+            FP._met_checksum_partials!(backend, 256)(partials, x, slot, ngroups;
+                                                       ndrange = 256 * ngroups)
+        end
+        FP._met_checksum_finish!(backend, 256)(result, partials; ndrange = length(arrays))
+        synchronize(backend)
+        # The device algorithm (executed here on KA's CPU backend) agrees
+        # exactly with the scalar host reduction, including strided views.
+        @test result == map(FP._content_checksum, arrays)
+        @test FP._met_checksums(arrays) ==
+              [hash((size(x), eltype(x), result[i])) for (i, x) in enumerate(arrays)]
+        permuted = reverse(a; dims = 3)
+        @test FP._content_checksum(a) != FP._content_checksum(permuted)
+    end
+end
+
+@testset "AirMassTape hold checks the recorded payload" begin
+    for c in (SPLIT_CASES[1], LINROOD_CASE, SPLIT_CASES[3])
+        P = H.problem(c)
+        ops, pool = _record(P)
+        runtime = FP._TapeRuntime(AT.AdjointTape(; content = AT.AirMassTape()))
+        runtime.pool = pool
+        try
+            identity = FP._tape_identity(_replay(P), P.nsteps)
+            if H._limited(c.scheme) || c === LINROOD_CASE
+                @test_throws ArgumentError FP._hold_air_mass_tape!(runtime, ops, identity)
+                @test runtime.held === nothing
+            else
+                FP._hold_air_mass_tape!(runtime, ops, identity)
+                @test runtime.held.ops === ops
+            end
+        finally
+            # These StateTape records own their Lin–Rood arrays, even when
+            # the air-mass hold rejected them.
+            runtime.held = nothing
+            FP._release_records!(ops)
+            FP._release_tape_runtime!(runtime)
+        end
     end
 end

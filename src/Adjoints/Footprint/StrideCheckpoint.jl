@@ -148,9 +148,13 @@ end
 _taped_steps(run::Union{_FullTapedRun, _ReplayedTapedRun}) = run.taped_steps
 
 function _run_taped_steps!(run::_FullTapedRun, replay, on_step_end)
-    _replay_steps!(replay, _taped_range(run); recorder = run.recorder, on_step_end)
-    _finish_recording!(run.recorder)
-    _hold_tape!(run.hold, run.recorder.ops)
+    try
+        _replay_steps!(replay, _taped_range(run); recorder = run.recorder, on_step_end)
+        _finish_recording!(run.recorder)
+        _hold_tape!(run.hold, run.recorder.ops)
+    finally
+        _free_recorder_scratch!(run.recorder)
+    end
     return nothing
 end
 _run_taped_steps!(run::_ReplayedTapedRun, replay, on_step_end) =

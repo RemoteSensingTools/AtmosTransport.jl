@@ -142,6 +142,13 @@ function _stage_codes!(r::_CSTapeRecorder, direction::Symbol, scheme, panels_m, 
     return _stage_computed(codes -> record_ppm_limiter_codes!(codes, panels_m, panels_rm, direction, scheme),
                            r.storage, scratch)
 end
+# A device slot is the output buffer: template its shape from the air mass
+# and request UInt8 directly, without allocating a redundant scratch state.
+function _stage_codes!(r::_CSTapeRecorder{C, S}, direction::Symbol, scheme, panels_m, panels_rm) where
+        {C <: AbstractTapeContent, S <: _DeviceSlabPool}
+    return _stage_computed(codes -> record_ppm_limiter_codes!(codes, panels_m, panels_rm, direction, scheme),
+                           r.storage, panels_m, UInt8)
+end
 _stage_codes!(r::_CSCountingRecorder, _direction, _scheme, panels_m, _panels_rm) =
     (_count_state!(r, _bytes_per_panel_tuple(UInt8, panels_m), _tape_slot_bytes(UInt8, panels_m)); nothing)
 

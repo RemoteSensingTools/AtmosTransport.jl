@@ -43,6 +43,8 @@ function _record_cs_tape!(replay::_CSReplay, steps::AbstractUnitRange,
     catch
         _release_records!(recorder.ops)
         rethrow()
+    finally
+        _free_recorder_scratch!(recorder)
     end
     return recorder.ops
 end

@@ -147,6 +147,11 @@ end
 @testset "PPM face adjoint matches finite differences" begin
     rng = MersenneTwister(1984)
     N = 10
+    # Coded x faces require halo-padded axes; periodic rows cannot use
+    # clamped codes near their wrap.
+    m_test = ones(N, 1, 1)
+    @test_throws MethodError _add_x_face_adjoint!(zero(m_test), m_test, zeros(UInt8, N, 1, 1),
+        Int32(4), 1, 1, 0.1, 1.0, PPMScheme(CW84Limiter()), Int32(N))
     for limiter in (MonotoneLimiter(), CW84Limiter()), trial in 1:40
         scheme = PPMScheme(limiter)
         m = 1 .+ rand(rng, N)
@@ -166,7 +171,7 @@ end
                           dir === :y ? (r -> _yface_tracer_flux(1, face, 1, r, M, F, scheme, Int32(N))) :
                                        (r -> _zface_tracer_flux(1, 1, face, r, M, F, scheme, Int32(N)))
                 adj = zero(RM)
-                dir === :x && _add_x_face_adjoint!(adj, M, codes, face, 1, 1, F, 1.0, scheme, Int32(N))
+                dir === :x && _add_x_face_adjoint!(adj, M, codes, face, 1, 1, F, 1.0, scheme, AtmosTransport.Operators.Advection._HaloPaddedAxis())
                 dir === :y && _add_y_face_adjoint!(adj, M, codes, 1, face, 1, F, 1.0, scheme, Int32(N))
                 dir === :z && _add_z_face_adjoint!(adj, M, codes, 1, 1, face, F, 1.0, scheme, Int32(N))
                 @test adj ≈ fd_face_gradient(flux_of, RM) atol = 1e-6

@@ -76,7 +76,15 @@ recording stages a convection air mass still waiting for a slot at its end
 (`_finish_recording!`). With `AirMassTape` (linear schemes) the first forward
 run of a runtime records the tape and later ones reuse it after comparing
 their identity (grid, taped steps, windows, scheme and operators, met
-checksums) and the pool generation with the recording's. Every step ends with a
+checksums) and the pool generation with the recording's. Checksums weight bit
+patterns by cell position; device reductions feed one result vector, copied
+to the host once per evaluation (reset targets cover interiors only). Holding
+a tape also rejects tracer payloads in sweep or Lin–Rood horizontal records.
+Device code slots use air-mass shapes directly; only host staging needs code
+scratch, freed even if recording throws. With `flux_scale ≠ 1`, a held tape
+retains the first evaluation's scaled flux copies; later evaluations also
+allocate their own copies, so peak scaled-flux memory is twice one set.
+Every step ends with a
 forcing marker; one emission record per step stores the surface footprint.
 Full and Stride give the same gradients bit for bit on one CPU thread
 (`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape pool

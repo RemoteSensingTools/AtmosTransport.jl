@@ -78,7 +78,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Adjoints/Footprint`
 
-Size: **123206 bytes / 35201.7 tokens**. Public names: **7**.
+Size: **126978 bytes / 36279.4 tokens**. Public names: **7**.
 
 Depends on: `src`, `src/Adjoints`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/Tape`.
 
@@ -86,16 +86,16 @@ Used by: `src/Adjoints`, `src/Adjoints/Inversion/ObservationBinding`, `src/Adjoi
 
 Files:
 
-- `Footprint.jl` (3751 bytes)
+- `Footprint.jl` (3815 bytes)
 - `FootprintAPI.jl` (17227 bytes)
 - `FootprintResult.jl` (3406 bytes)
 - `ReplaySupport.jl` (664 bytes)
 - `ReverseLoop.jl` (14917 bytes)
 - `StepReplay.jl` (24406 bytes)
-- `StrideCheckpoint.jl` (15947 bytes)
-- `TapeRecorder.jl` (18708 bytes)
-- `TapeRecording.jl` (9653 bytes)
-- `TapeRuntime.jl` (14527 bytes)
+- `StrideCheckpoint.jl` (16033 bytes)
+- `TapeRecorder.jl` (19188 bytes)
+- `TapeRecording.jl` (9707 bytes)
+- `TapeRuntime.jl` (17615 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -630,7 +630,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Advection/CubedSphere`
 
-Size: **150906 bytes / 43116.0 tokens**. Public names: **4**.
+Size: **151043 bytes / 43155.1 tokens**. Public names: **4**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Parameters`.
 
@@ -638,7 +638,7 @@ Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Operators/Advecti
 
 Files:
 
-- `AdvectionAdjoint.jl` (38837 bytes)
+- `AdvectionAdjoint.jl` (38974 bytes)
 - `CubedSphereSeams.jl` (12818 bytes)
 - `CubedSphereSeamsAdjoint.jl` (3569 bytes)
 - `CubedSphereStrang.jl` (16157 bytes)
@@ -1261,7 +1261,7 @@ None recorded.
 
 ## `src/Tape`
 
-Size: **55284 bytes / 15795.4 tokens**. Public names: **50**.
+Size: **55727 bytes / 15922.0 tokens**. Public names: **50**.
 
 Depends on: none.
 
@@ -1275,7 +1275,7 @@ Files:
 - `MmapTapeStorage.jl` (13733 bytes)
 - `Tape.jl` (2008 bytes)
 - `TapeRecords.jl` (4819 bytes)
-- `TapeStorage.jl` (19124 bytes)
+- `TapeStorage.jl` (19567 bytes)
 
 Forward ↔ adjoint mirrors:
 

@@ -67,8 +67,9 @@ contains no transport physics and no reverse-loop logic; recording lives in
     freed, the mmap file unmapped and closed, now rather than at a later GC.
 - Slot API: `_stage_panels(pool, panels)` allocates and fills a slot;
   `_stage_computed(fill!, pool, scratch)` allocates a slot shaped like
-  `scratch` and lets a kernel write it (in place in a device slot, through
-  `scratch` for host slots; the limiter codes); `_tape_panels(slot, role)`
+  `scratch` and lets a kernel write it; device pools accept a fourth element-type
+  argument to template UInt8 slots directly from air-mass panels. Device slots
+  are filled in place; host slots stage through `scratch`. `_tape_panels(slot, role)`
   returns readable panels; `stage_panels!` refills.
   Every slot carries the generation of its pool; using a slot after a rewind
   or release throws `StaleTapeSlotError`. The read role (`AirMassRead()`,
