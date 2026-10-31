@@ -1,8 +1,7 @@
 """Reduced-Gaussian spectral staging, window contracts and daily preprocessing."""
 module ReducedGaussian
 
-import AtmosTransport: Grids,
-    State
+import ...Grids, ...State
 import ...Architectures: CPU
 import ...Grids: AtmosGrid,
     cell_areas,
@@ -28,8 +27,8 @@ import ...Parameters: DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POSITIVITY_CFL_LIMIT,
     HORIZONTAL_BALANCE_TAG,
     STANDARD_GRAVITY
-# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
-import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: AbstractColumnWeights,
     ERA5SpectralSettings,
     MAX_SPECIFIC_HUMIDITY,
     MassWeightedColumn,
