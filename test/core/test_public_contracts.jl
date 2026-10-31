@@ -22,7 +22,7 @@ const AT = AtmosTransport
         radius=6.372f6)
     cs_grid_1 = AT.AtmosGrid(AT.CubedSphereMesh(Nc=2, Hp=1), vc, AT.CPU())
     cs_grid_2 = AT.AtmosGrid(AT.CubedSphereMesh(Nc=2, Hp=2), vc, AT.CPU())
-    @test_throws ArgumentError AT.Models._check_grid_compatibility(cs_grid_1, cs_grid_2)
+    @test_throws ArgumentError AT.Models.Runner._check_grid_compatibility(cs_grid_1, cs_grid_2)
 end
 
 @testset "chemistry and inversion inputs are finite and unambiguous" begin

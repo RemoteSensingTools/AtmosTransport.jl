@@ -7,7 +7,7 @@
 # `:reduced_gaussian`, `:cubed_sphere`), and runs the loop. All
 # topology-specific logic (IC pipeline, surface flux, snapshot output,
 # GPU residency check, capability validation) lives in
-# `src/Models/Runner/DrivenRunner.jl` and dispatches on mesh type via
+# `src/Models/Runner/DrivenRunner/DrivenRunner.jl` and dispatches on mesh type via
 # multiple dispatch.
 #
 # The TOML `[input]` block accepts either shape:

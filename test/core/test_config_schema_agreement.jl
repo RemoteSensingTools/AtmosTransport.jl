@@ -10,7 +10,8 @@ using AtmosTransport
 using JSON3
 
 const RunnerKeys = AtmosTransport.Models.DrivenRunner
-const Specs = AtmosTransport.Models
+const Specs = AtmosTransport.Models.Physics
+const Plans = AtmosTransport.Operators.StepPlans
 const SCHEMA = JSON3.read(read(joinpath(@__DIR__, "..", "..", "schemas",
                                         "atmos_transport_run.schema.json"), String))
 
@@ -34,8 +35,8 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test enum_of(p.convection.properties.kind) == Set(string.(Specs._CONVECTION_KINDS))
     @test enum_of(p.convection.properties.cloud_base) == Set(string.(keys(Specs._CLOUD_BASE_RULES)))
     @test enum_of(p.chemistry.properties.kind) == Set(string.(Specs._CHEMISTRY_KINDS))
-    @test enum_of(p.run.properties.air_mass_reset_mode) == Set(string.(Specs._AIR_MASS_RESET_MODES))
-    @test enum_of(p.run.properties.physics_cadence) == Set(string.(Specs._PHYSICS_CADENCES))
+    @test enum_of(p.run.properties.air_mass_reset_mode) == Set(string.(Plans._AIR_MASS_RESET_MODES))
+    @test enum_of(p.run.properties.physics_cadence) == Set(string.(Plans._PHYSICS_CADENCES))
     @test enum_of(p.logging.properties.level) == Set(keys(AtmosTransport.LogLevels.LOG_LEVELS))
     @test all(k -> RunnerKeys.run_logging(Dict("logging" => Dict("progress" => k))) isa
                    RunnerKeys.RunLogging, enum_of(p.logging.properties.progress))

@@ -38,7 +38,7 @@ mass basis, supported operators, and load-time consistency gates.
 ## Code Map
 
 - Entry point: `scripts/run_transport.jl` ->
-  `run_driven_simulation(cfg)` in `src/Models/Runner/DrivenRunner.jl`
+  `run_driven_simulation(cfg)` in `src/Models/Runner/DrivenRunner/DrivenRunner.jl`
 - Top-level include order follows `src/AtmosTransport.jl`:
   `Architectures -> SectionTimer -> ConfigChecks -> LogLevels -> AtomicFiles ->`
   `Quantities -> Parameters ->`

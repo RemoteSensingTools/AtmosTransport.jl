@@ -146,7 +146,7 @@ end
             @test caps.pbl_diffusion === false
             @test caps.gchp_vdiff === false
             driver = TransportBinaryDriver(reader)
-            @test AtmosTransport.Models._runtime_has_surface(driver) === false
+            @test AtmosTransport.Models.Physics._runtime_has_surface(driver) === false
             close(driver)
         end
     end

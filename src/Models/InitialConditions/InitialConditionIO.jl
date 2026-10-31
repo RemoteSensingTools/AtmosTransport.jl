@@ -46,9 +46,9 @@ helper names remain reachable.
 """
 module InitialConditionIO
 
-using ..Grids: bilinear_bracket, uniform_periodic_bilinear_bracket
+using ...Grids: bilinear_bracket, uniform_periodic_bilinear_bracket
 
-using ..Grids: cell_areas
+using ...Grids: cell_areas
 
 using NCDatasets
 using Dates
@@ -58,17 +58,17 @@ import ...expand_data_path
 using ...ConfigChecks: key_suggestion
 using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS,
                      DEFAULT_BACKGROUND_VMR, DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
-using ..State: AbstractMassBasis, DryBasis, MoistBasis,
+using ...State: AbstractMassBasis, DryBasis, MoistBasis,
                AbstractSurfacePressureBasis, TotalSurfacePressure,
                DrySurfacePressure
-using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
+using ...Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
                 nrings, ring_longitudes, cell_index, cell_area,
                 gravity, panel_cell_center_lonlat
 # Regridding supplies LL→CS conservative weights; Grids owns panel unpacking.
-using ..Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir, source_coverage
-using ..Grids: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
+using ...Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir, source_coverage
+using ...Grids: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
-using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
+using ...Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
                                StepwiseFlux, flux_temporal_scheme
 # The conventions of native gridded input files (coordinates, orientation,
 # fill values, source meshes, time axes, flux units) and the `cs_native` flux
@@ -91,7 +91,7 @@ using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, Vert
                     mass_rate_factor, cs_native_flux_info, read_cs_native_flux!,
                     check_latlon_cell_area
 # Grid accessors used by both LL/RG and CS surface-flux builders
-using ..Grids: AbstractHorizontalMesh, nx, ny, ncells
+using ...Grids: AbstractHorizontalMesh, nx, ny, ncells
 
 using Printf: @sprintf
 

@@ -1,25 +1,41 @@
-# Reviewed identity migrations for scripts/checks/check_structure.jl.
-# A PR that moves, renames or splits a module or source folder declares each
-# budget transfer here; see test/structure/README.md for the semantics. Rows
-# already in the base are inert: the checker warns, and a PR that edits this
-# file must delete them.
-#
-# [[migration]]
-# from = "src/Old"
-# to = ["src/New/Lower", "src/New/Upper"]
-# reason = "Why the split keeps the old dependency budget"
+# Reviewed identity migrations; see test/structure/README.md.
 
 [[migration]]
-from = "AtmosTransport.Preprocessing"
-to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.GEOS", "AtmosTransport.Preprocessing.ERA5", "AtmosTransport.Preprocessing.MERRA2"]
-reason = "PP4: native source readers and day drivers become independent submodules above the pipeline stages and targets"
+from = "AtmosTransport.Models"
+to = ["AtmosTransport.Models", "AtmosTransport.Models.Physics", "AtmosTransport.Models.Core", "AtmosTransport.Models.Runner"]
+reason = "MD2: specs, model and driven implementation become ordered submodules behind the existing facade"
 
 [[migration]]
-from = "src/Preprocessing/sources"
-to = ["src/Preprocessing/Sources/ERA5"]
-reason = "PP4: ERA5 GRIB geometry retains the former reader-folder users and dependency budget; GEOS/MERRA2 are covered by the driver-folder split"
+from = "AtmosTransport.Models.BinaryPathExpander"
+to = ["AtmosTransport.Models.Runner.BinaryPathExpander"]
+reason = "MD2: binary paths are owned by Runner; preserve the old facade alias"
 
 [[migration]]
-from = "src/Preprocessing/transport_binary"
-to = ["src/Preprocessing/Sources/GEOS", "src/Preprocessing/Sources/ERA5", "src/Preprocessing/Sources/MERRA2"]
-reason = "PP4: the seven remaining native-source day drivers/helpers join their readers; the deferred folder disappears"
+from = "AtmosTransport.Models.InputStaging"
+to = ["AtmosTransport.Models.Runner.InputStaging"]
+reason = "MD2: input staging is owned by Runner; preserve the old facade alias"
+
+[[migration]]
+from = "AtmosTransport.Models.DrivenRunner"
+to = ["AtmosTransport.Models.Runner.DrivenRunner"]
+reason = "MD2: configured runtime is owned by Runner and imports lower siblings directly"
+
+[[migration]]
+from = "src/Models"
+to = ["src/Models", "src/Models/Physics"]
+reason = "MD2: the specs own the operator imports previously supplied by the Models module"
+
+[[migration]]
+from = "src/Models/Core"
+to = ["src/Models/Core", "src/Models/Runner"]
+reason = "MD2: driven stepping and capture move beside DrivenSimulation; model support and shared stepping generics remain in Core"
+
+[[migration]]
+from = "src/Models/Physics"
+to = ["src/Models/Physics", "src/Models/Runner"]
+reason = "MD2: forcing refresh dispatches on the driven runtime in Runner"
+
+[[migration]]
+from = "src/Models/Runner"
+to = ["src/Models/Runner/DrivenRunner"]
+reason = "MD2: the existing configured-runner child gets its own folder so driven runtime and orchestration each remain below the folder budget"

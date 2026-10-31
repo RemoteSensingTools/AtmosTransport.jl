@@ -110,7 +110,7 @@ submodules before assuming it is cosmetic.
   `current_time`, and convection forcing containers
 - [`../Models/Core/TransportModel.jl`](../Models/Core/TransportModel.jl) decides
   block ordering and which operator families are actually executed
-- [`../Models/Core/driven_stepping.jl`](../Models/Core/driven_stepping.jl) (the
+- [`../Models/Runner/driven_stepping.jl`](../Models/Runner/driven_stepping.jl) (the
   `DrivenSimulation` constructor) installs operator configuration into the
   model runtime
 
