@@ -23,8 +23,8 @@
 # `_release_tape_pool!` frees the memory now, not at a later GC.
 #
 # Host pools (`_AbstractHostTapePool`) copy every read into a device read
-# cache per read role (`AirMassRead`, `TracerMassRead`) and panel shape; their
-# slot views never leave the pool.
+# cache per read role (`AirMassRead`, `TracerMassRead`, `LimiterCodeRead`) and
+# panel shape; their slot views never leave the pool.
 # ---------------------------------------------------------------------------
 
 """
@@ -100,11 +100,20 @@ struct AirMassRead <: AbstractTapeReadRole end
 """
     TracerMassRead()
 
-Read role of the staged tracer-mass state of a limited-PPM or FV3-profile
-sweep record, which the reverse sweep reads together with the record's air
-mass.
+Read role of the staged tracer-mass state of an FV3-profile sweep record,
+which the reverse sweep reads together with the record's air mass, and of the
+target air mass of a `:preserve_vmr` reset record.
 """
 struct TracerMassRead <: AbstractTapeReadRole end
+
+"""
+    LimiterCodeRead()
+
+Read role of the limiter branch codes of a limited-PPM sweep record (six
+`UInt8` panels), which the reverse sweep reads together with the record's air
+mass.
+"""
+struct LimiterCodeRead <: AbstractTapeReadRole end
 
 """
     StaleTapeSlotError(msg)
@@ -328,6 +337,20 @@ function _stage_panels(pool, panels::NTuple{6})
     return stage_panels!(slot, panels)
 end
 
+"""
+    _stage_computed(fill_panels!, pool, scratch) -> slot
+
+Allocate a slot shaped like `scratch` (six panels on the source backend) and
+fill it with `fill_panels!(dest)`, which writes six panels of that shape (a
+kernel queued on the backend). A device slot is filled in place; any other
+pool's slot (host memory) is filled through `scratch`, which is then staged.
+"""
+function _stage_computed(fill_panels!, pool::_DeviceSlabPool, scratch::NTuple{6})
+    slot = _allocate_tape_slot(pool, scratch)
+    fill_panels!(slot.panels)
+    return slot
+end
+
 # ---------------------------------------------------------------------------
 # Host pools: slots are views into host memory, read through device caches
 # ---------------------------------------------------------------------------
@@ -370,6 +393,9 @@ reservation.
 """
 _tape_slot_bytes(panels::NTuple{6}) =
     sum(p -> _align_tape_bytes(sizeof(eltype(panels[p])) * length(panels[p])), 1:6)
+# ... of six panels of element type `T` shaped like `like`.
+_tape_slot_bytes(::Type{T}, like::NTuple{6}) where T =
+    sum(p -> _align_tape_bytes(sizeof(T) * length(like[p])), 1:6)
 
 # The six panel views of a slot whose memory starts at `base` (64-byte aligned).
 function _host_views(base::Ptr{UInt8}, panels::NTuple{6})
@@ -444,6 +470,11 @@ function stage_panels!(slot::HostCSTapeSlot, src::NTuple{6})
     return slot
 end
 
+function _stage_computed(fill_panels!, pool, scratch::NTuple{6})
+    fill_panels!(scratch)
+    return _stage_panels(pool, scratch)
+end
+
 function _tape_panels(slot::HostCSTapeSlot, role::AbstractTapeReadRole)
     pool = slot.pool
     _require_current(pool, slot.generation)
@@ -461,3 +492,5 @@ end
 
 _bytes_per_panel_tuple(panels::NTuple{6}) =
     sum(sizeof(eltype(panels[p])) * length(panels[p]) for p in 1:6)
+_bytes_per_panel_tuple(::Type{T}, like::NTuple{6}) where T =
+    sum(sizeof(T) * length(like[p]) for p in 1:6)

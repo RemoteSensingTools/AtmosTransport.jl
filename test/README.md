@@ -300,19 +300,26 @@ flux and FV3 Lin–Rood footprint differences share the matrix in
 `core/test_cs_linrood_fv3_adjoint.jl`. The tape pools (reuse across tapes,
 explicit release, stale slots, the pinned-host arena), `tape` values and
 rejections, and the mmap tier's space reservation are in
-`core/test_cs_tape_storage.jl`.
+`core/test_cs_tape_storage.jl`; what a split-sweep tape stages (shared center
+and convection slots, limiter codes, exact byte counts, bytes per step) in
+`core/test_cs_tape_compaction.jl`; `AirMassTape` (legality, one recording per
+optimization, every identity mismatch an error) in
+`core/test_cs_4dvar_single_sweep.jl`.
 
 The adjoint tape's bitwise gate, `core/test_cs_adjoint_tape_bitwise.jl` (about
 4 minutes, adjoint footprint topic), runs `helpers/cs_adjoint_tape_harness.jl`
 in a `--threads=1` subprocess: every `AdjointTape` storage and checkpoint
-schedule must reproduce the default tape's (device, `FullCheckpoint`)
-gradients bit for bit on rough fields that reach every limiter branch, for
-every entry point including a Jacobian under `StrideCheckpoint` and a
-two-iteration 4D-Var optimization (`optimize`, one tape pool for all its
-evaluations), and on the reference host the reference digests must equal
-`fixtures/cs_adjoint_tape_digests.toml`. The reference variant passes no
-`tape` keyword, so `--reference-only` also records on a checkout with an
-older tape API. Two core cases
+schedule (and, for the linear schemes, `AirMassTape`) must reproduce the
+default tape's (`StateTape`, device, `FullCheckpoint`) gradients bit for bit
+on rough fields that reach every limiter branch (counted in the limiter codes
+of the recorded tape), for every entry point including a Jacobian under
+`StrideCheckpoint` and a two-iteration 4D-Var optimization (`optimize`, one
+tape pool for all its evaluations), and on the reference host the reference
+digests must equal `fixtures/cs_adjoint_tape_digests.toml`. A Lin–Rood case
+(device tape, Full and Stride) runs in both tiers. The reference variant
+passes no `tape` keyword, so `--reference-only` also records on a checkout
+with an older tape API (it skips the limiter-code histograms, which read this
+tree's tape). Two core cases
 (`operators = true`) also run every 4D-Var observation operator, including a
 screened averaging-kernel column that ends the reverse pass before the tape
 (`fourdvar_operators`). Two cases in both tiers (`CapturedInputs`) take their
@@ -321,7 +328,7 @@ mock met driver of `helpers/cs_adjoint_step_plan.jl` (included as a
 submodule), with rough met windows, so the gate also covers the capture. A
 change that is meant to keep gradients bit for bit must pass it unchanged.
 The full matrix is the opt-in `diagnostic/test_cs_adjoint_tape_bitwise_full.jl`
-(about 10 minutes). To A/B a branch against main on any host (any tier), or to
+(about 12 minutes). To A/B a branch against main on any host (any tier), or to
 re-record the core fixture on the reference host:
 
 ```bash

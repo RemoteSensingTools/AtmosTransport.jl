@@ -53,7 +53,7 @@ None recorded.
 
 ## `src/Adjoints`
 
-Size: **70834 bytes / 20238.3 tokens**. Public names: **10**.
+Size: **72609 bytes / 20745.4 tokens**. Public names: **14**.
 
 Depends on: `src/Adjoints/Footprint`, `src/Adjoints/Inversion`, `src/Grids`, `src/MetDrivers`, `src/Observations`, `src/Observations/Retrievals`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`, `src/Tape`.
 
@@ -61,8 +61,8 @@ Used by: `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observations`,
 
 Files:
 
-- `AdjointSupport.jl` (5176 bytes)
-- `Adjoints.jl` (7895 bytes)
+- `AdjointSupport.jl` (7003 bytes)
+- `Adjoints.jl` (7843 bytes)
 - `ConvectionAdjoint.jl` (9972 bytes)
 - `DiffusionAdjoint.jl` (5216 bytes)
 - `LinRoodTape.jl` (9985 bytes)
@@ -78,7 +78,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Adjoints/Footprint`
 
-Size: **102170 bytes / 29191.4 tokens**. Public names: **7**.
+Size: **123200 bytes / 35200.0 tokens**. Public names: **7**.
 
 Depends on: `src`, `src/Adjoints`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/Tape`.
 
@@ -86,16 +86,16 @@ Used by: `src/Adjoints`, `src/Adjoints/Inversion/Observations`, `src/Adjoints/In
 
 Files:
 
-- `Footprint.jl` (3474 bytes)
+- `Footprint.jl` (3751 bytes)
 - `FootprintAPI.jl` (17227 bytes)
-- `FootprintResult.jl` (3099 bytes)
+- `FootprintResult.jl` (3406 bytes)
 - `ReplaySupport.jl` (664 bytes)
-- `ReverseLoop.jl` (14645 bytes)
+- `ReverseLoop.jl` (14911 bytes)
 - `StepReplay.jl` (24406 bytes)
-- `StrideCheckpoint.jl` (13105 bytes)
-- `TapeRecorder.jl` (11012 bytes)
-- `TapeRecording.jl` (9003 bytes)
-- `TapeRuntime.jl` (5535 bytes)
+- `StrideCheckpoint.jl` (15947 bytes)
+- `TapeRecorder.jl` (18708 bytes)
+- `TapeRecording.jl` (9653 bytes)
+- `TapeRuntime.jl` (14527 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -630,7 +630,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Advection/CubedSphere`
 
-Size: **143940 bytes / 41125.7 tokens**. Public names: **4**.
+Size: **150906 bytes / 43116.0 tokens**. Public names: **4**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Advection/Structured`, `src/Parameters`.
 
@@ -638,9 +638,9 @@ Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Operators/Advecti
 
 Files:
 
-- `AdvectionAdjoint.jl` (32029 bytes)
+- `AdvectionAdjoint.jl` (38837 bytes)
 - `CubedSphereSeams.jl` (12818 bytes)
-- `CubedSphereSeamsAdjoint.jl` (3411 bytes)
+- `CubedSphereSeamsAdjoint.jl` (3569 bytes)
 - `CubedSphereStrang.jl` (16157 bytes)
 - `HaloAdjoint.jl` (3043 bytes)
 - `HaloExchange.jl` (11428 bytes)
@@ -1261,7 +1261,7 @@ None recorded.
 
 ## `src/Tape`
 
-Size: **50600 bytes / 14457.1 tokens**. Public names: **47**.
+Size: **55284 bytes / 15795.4 tokens**. Public names: **50**.
 
 Depends on: none.
 
@@ -1269,13 +1269,13 @@ Used by: `ext`, `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/I
 
 Files:
 
-- `AdjointTape.jl` (3146 bytes)
+- `AdjointTape.jl` (6060 bytes)
 - `CheckpointSchedule.jl` (3531 bytes)
 - `HostTapeArena.jl` (6009 bytes)
 - `MmapTapeStorage.jl` (13733 bytes)
-- `Tape.jl` (1965 bytes)
-- `TapeRecords.jl` (4377 bytes)
-- `TapeStorage.jl` (17839 bytes)
+- `Tape.jl` (2008 bytes)
+- `TapeRecords.jl` (4819 bytes)
+- `TapeStorage.jl` (19124 bytes)
 
 Forward ↔ adjoint mirrors:
 

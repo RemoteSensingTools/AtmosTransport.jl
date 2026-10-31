@@ -59,8 +59,15 @@ else
             cpu_ws = Adj.CSAdjointWorkspace(mesh, m[1])
             gpu_ws = Adj.CSAdjointWorkspace(mesh, gm[1])
             if scheme isa PPMScheme{MonotoneLimiter}
-                CSSeamAdv._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, cpu_ws, FT(1))
-                CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gr, gf, symbol, scheme, mesh, gpu_ws, FT(1))
+                # The limiter branches the tape records: one fused launch for
+                # the six panels, the same codes on the device as on the CPU.
+                codes = CSSeamAdv.record_ppm_limiter_codes!(map(a -> similar(a, UInt8), m), m, rm,
+                                                            symbol, scheme)
+                gcodes = CSSeamAdv.record_ppm_limiter_codes!(map(a -> similar(a, UInt8), gm), gm, gr,
+                                                             symbol, scheme)
+                @test all(p -> Array(gcodes[p]) == codes[p], 1:6)
+                CSSeamAdv._adjoint_scheme_sweep!(gradient, m, codes, flux, symbol, scheme, mesh, cpu_ws, FT(1))
+                CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gcodes, gf, symbol, scheme, mesh, gpu_ws, FT(1))
             else
                 CSSeamAdv._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, cpu_ws, FT(1))
                 CSSeamAdv._adjoint_scheme_sweep!(actual, gm, gf, symbol, scheme, mesh, gpu_ws, FT(1))

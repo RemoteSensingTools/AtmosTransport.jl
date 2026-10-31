@@ -3,8 +3,9 @@
 # `PPMScheme(CW84Limiter())`: the complete Colella–Woodward (1984) PPM, with
 # van Leer-limited edges and the parabolic swept-mean flux. Its 1-D update is
 # monotone, so it keeps non-negative tracers non-negative, which the default
-# `PPMScheme()` does not. The face-flux adjoint (`_ppm_face_coeffs`) is checked
-# against finite differences of the forward.
+# `PPMScheme()` does not. The face-flux adjoint (`_ppm_face_coeffs`, at the
+# limiter branch codes the tape records, `_ppm_limiter_code`) is checked against
+# finite differences of the forward.
 
 using Test
 using Random
@@ -13,7 +14,7 @@ using .AtmosTransport.Operators: PPMScheme, SlopesScheme, MonotoneLimiter, CW84L
 using .AtmosTransport.Operators.Advection: _xface_tracer_flux, _yface_tracer_flux,
     _zface_tracer_flux, _ppm_edge_value
 using .AtmosTransport.Operators.Advection: _add_x_face_adjoint!, _add_y_face_adjoint!,
-    _add_z_face_adjoint!
+    _add_z_face_adjoint!, _ppm_limiter_code
 using .AtmosTransport.Models: advection_spec, materialize, LatLonRuntimeRecipeStyle,
     CubedSphereRuntimeRecipeStyle, PPMAdvectionSpec
 using .AtmosTransport.Operators: FV3ScalarProfile
@@ -151,17 +152,23 @@ end
         m = 1 .+ rand(rng, N)
         rm = m .* (1 .+ 0.3 .* randn(rng, N))
         F = (trial % 2 == 0 ? 1 : -1) * 0.9 * rand(rng)
-        for (dir, shape) in ((:x, (N, 1, 1)), (:y, (1, N, 1)), (:z, (1, 1, N)))
+        for (axis, dir, shape) in ((1, :x, (N, 1, 1)), (2, :y, (1, N, 1)), (3, :z, (1, 1, N)))
             M, RM = reshape(m, shape), reshape(rm, shape)
-            for f in 2:N
+            # The limiter branches the tape records for this state (y and z
+            # clamp the stencil at the ends, as the reverse does).
+            codes = [_ppm_limiter_code(M, RM, I[1], I[2], I[3], Val(axis), limiter)
+                     for I in CartesianIndices(RM)]
+            # A cubed-sphere x sweep reads halo cells, never a periodic wrap:
+            # faces whose stencil lies inside the row.
+            for f in (dir === :x ? (4:N - 2) : (2:N))
                 face = Int32(f)
                 flux_of = dir === :x ? (r -> _xface_tracer_flux(face, 1, 1, r, M, F, scheme, Int32(N))) :
                           dir === :y ? (r -> _yface_tracer_flux(1, face, 1, r, M, F, scheme, Int32(N))) :
                                        (r -> _zface_tracer_flux(1, 1, face, r, M, F, scheme, Int32(N)))
                 adj = zero(RM)
-                dir === :x && _add_x_face_adjoint!(adj, M, RM, face, 1, 1, F, 1.0, scheme, Int32(N))
-                dir === :y && _add_y_face_adjoint!(adj, M, RM, 1, face, 1, F, 1.0, scheme, Int32(N))
-                dir === :z && _add_z_face_adjoint!(adj, M, RM, 1, 1, face, F, 1.0, scheme, Int32(N))
+                dir === :x && _add_x_face_adjoint!(adj, M, codes, face, 1, 1, F, 1.0, scheme, Int32(N))
+                dir === :y && _add_y_face_adjoint!(adj, M, codes, 1, face, 1, F, 1.0, scheme, Int32(N))
+                dir === :z && _add_z_face_adjoint!(adj, M, codes, 1, 1, face, F, 1.0, scheme, Int32(N))
                 @test adj ≈ fd_face_gradient(flux_of, RM) atol = 1e-6
             end
         end

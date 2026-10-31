@@ -27,17 +27,19 @@
     _CSSweepRecord{FT, T, R, F3, S}
 
 Forward-recorded per-direction advection sweep. `direction ∈ (:x, :y, :z)`,
-`scheme` is the advection scheme used, `panels_m` / `panels_rm` are the
-staged air-mass / tracer-mass tape slots (the latter is `nothing` for
-linear schemes that don't need a tracer tape), `panels_flux` is the
-per-panel face-flux tuple, `flux_scale` is the scaling applied during
-the subcycle.
+`scheme` is the advection scheme used, `panels_m` is the tape slot of the air
+mass entering the sweep, and `panels_tracer` the slot of what the scheme's
+reverse reads of the tracer: `nothing` for the linear schemes, the limiter
+branch codes of a monotone or CW84 PPM sweep (six `UInt8` panels, read with
+`LimiterCodeRead()`), the tracer mass entering an FV3-profile sweep (read with
+`TracerMassRead()`). `panels_flux` is the per-panel face-flux tuple,
+`flux_scale` the scaling applied during the subcycle.
 """
 struct _CSSweepRecord{FT, T, R, F3, S}
     direction::Symbol
     scheme::S
     panels_m::T
-    panels_rm::R
+    panels_tracer::R
     panels_flux::NTuple{6, F3}
     flux_scale::FT
 end
@@ -104,7 +106,10 @@ Forward-recorded convection application. `op` is the convection operator
 the `ConvectionForcing` it read, `panels_m` is the air-mass tape slot, `dt`
 the interval it integrated over (the advection step or the met window) and
 `substeps` the CFL sub-step count the forward call used (`CMFMCConvection`;
-1 for the others).
+1 for the others). The convection reverse reads interior cells only, so a
+split-sweep tape's record shares the slot of the next air mass staged with
+the same interior: the next step's first sweep, or the old air mass of a
+`:preserve_vmr` reset.
 """
 struct _CSConvectionRecord{FT, T, C, F}
     op::C

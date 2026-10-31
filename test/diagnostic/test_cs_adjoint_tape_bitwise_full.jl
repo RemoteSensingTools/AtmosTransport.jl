@@ -1,11 +1,13 @@
 #!/usr/bin/env julia
 #
 # Bitwise gate of the cubed-sphere adjoint tape, full matrix (opt-in, about
-# 10 minutes on one CPU thread): every split-sweep scheme (upwind, slopes, PPM,
+# 12 minutes on one CPU thread): every split-sweep scheme (upwind, slopes, PPM,
 # monotone and CW84 PPM) × Float64 and Float32 × five physics families
 # (convection operator, cadence, diffusion coupling, reset mode, CFL
-# subcycles), each with both host storages, and the two cases whose inputs
-# `cs_adjoint_inputs` captures from a production simulation. Variants must
+# subcycles), each with both host storages (and `AirMassTape` for the linear
+# schemes), two Lin–Rood cases (device tape, ORD 5 upwind and ORD 7 FV3
+# vertical) and the two cases whose inputs `cs_adjoint_inputs` captures from a
+# production simulation. Variants must
 # equal the reference variant bit for bit and the limited schemes must meet
 # every limiter branch;
 # the core set (`core/test_cs_adjoint_tape_bitwise.jl`) also compares

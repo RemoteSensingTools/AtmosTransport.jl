@@ -9,11 +9,14 @@
 # windows, placed points, averaging-kernel columns with the rebin and the hat
 # projection, a cell average, a column the surface-pressure screen leaves out,
 # background terms and the preconditioned space), and a two-iteration 4D-Var
-# optimization, whose evaluations share one tape pool.
+# optimization, whose evaluations share one tape pool. The linear schemes also
+# run every entry point with `AirMassTape` (one recording reused by every
+# evaluation of the optimization) and the Lin–Rood cases with its device tape.
 # The cases use rough fields (random values, spikes, exact zeros and ties, sign
 # changes, nonzero emission rates), so the limited PPM reverse meets every
-# branch of its limiters; `limiter_code_counts` histograms those branches on
-# the recorded tape and the test requires each one to occur. Most cases pass
+# branch of its limiters; `limiter_code_counts` histograms the limiter codes
+# the production code kernel wrote on the recorded tape and the test requires
+# each branch to occur on every axis and next to the seams. Most cases pass
 # their inputs directly; the `CapturedInputs` cases capture them with
 # `cs_adjoint_inputs` from a production `DrivenSimulation` (rough met windows
 # on the mock driver of `cs_adjoint_step_plan.jl`), so the gate also covers
@@ -34,14 +37,16 @@
 #     --check=FILE        compare the reference digests with a recorded FILE
 #     --reference-only    run only the reference variant, which passes no tape
 #                         keyword (so it also runs on a checkout whose tape
-#                         API differs, e.g. to record main)
+#                         API differs, e.g. to record main), and skip the
+#                         limiter-code histograms (they read this tree's tape)
 #
 # It prints every problem (an entry point that throws, a variant that differs
 # from the reference, a limiter branch that never occurs, a digest that differs
 # from `--check`) and exits with status 1 if there is one; a failing entry point
 # does not stop the run. Every array the tape frees explicitly is filled with
-# NaN when it is freed (`poison_freed_tape_arrays!`), so a free before the last
-# read of an array (a use-after-free on a GPU) changes the digests. A same-host A/B of a branch against
+# NaN (limiter codes: 0xff) when it is freed (`poison_freed_tape_arrays!`), so
+# a free before the last read of an array (a use-after-free on a GPU) changes
+# the digests. A same-host A/B of a branch against
 # main: `--record=main.toml` on main, `--check=main.toml` on the branch, both
 # with `SUBPROCESS_FLAGS` (the flags of the test).
 module CSAdjointTapeHarness
@@ -202,6 +207,9 @@ end
 
 _limited(scheme) = scheme isa AT.PPMScheme &&
                    (scheme.limiter isa AT.MonotoneLimiter || scheme.limiter isa AT.CW84Limiter)
+# The schemes whose reverse reads the air mass only (`AirMassTape`).
+_linear(scheme) = scheme isa Union{AT.UpwindScheme, AT.SlopesScheme{AT.NoLimiter},
+                                   AT.PPMScheme{AT.NoLimiter}}
 
 # The cases whose inputs `cs_adjoint_inputs` captures from a production
 # simulation, in both tiers. The first shares each met window's fluxes under
@@ -219,6 +227,18 @@ const CAPTURED_CASES = [
          conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, stride = 3, storages = ["pinned_host"],
          inputs = CapturedInputs(flux_kind = :substep_mass_amount)),
 ]
+
+# Lin–Rood (device tape only; its horizontal records are device copies the
+# drivers free explicitly): ORD 5 with upwind vertical sweeps, window TM5
+# convection, boundary diffusion and a `:preserve_vmr` reset (both tiers); ORD
+# 7 with FV3-profile vertical sweeps, substep CMFMC, split diffusion and a
+# `:preserve_tracer_mass` reset under CFL subcycles (full tier).
+const LINROOD_CORE = Case(name = "f64_linrood5_tm5win_boundary_vmr", scheme = AT.LinRoodPPMScheme(5),
+                          conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, storages = ["device"])
+const LINROOD_FULL = Case(name = "f64_linrood7fv3_cmfmcsub_split_mass_cfl",
+                          scheme = AT.LinRoodPPMScheme(7; vertical = AT.PPMScheme(; vertical = Adv.FV3ScalarProfile())),
+                          conv = :cmfmc, diffusion = :split, cadence = :substep, contract = false,
+                          reset = :preserve_tracer_mass, flow = 0.6, stride = 3, storages = ["device"])
 
 # The pairwise core set: each scheme, both float types, every convection
 # operator and diffusion coupling, both cadences, every reset mode, CFL
@@ -247,6 +267,7 @@ const CORE_CASES = [
          storages = ["pinned_host"]),
     Case(name = "f32_ppm_none_boundary_mass", FT = Float32, scheme = AT.PPMScheme(AT.NoLimiter()),
          diffusion = :boundary, reset = :preserve_tracer_mass, storages = ["mmap"]),
+    LINROOD_CORE,
     CAPTURED_CASES...,
 ]
 
@@ -266,7 +287,7 @@ function full_cases()
                          (ph.contract ? "" : "_cfl"))
         push!(cases, Case(; name, FT, scheme, ph...))
     end
-    return append!(cases, CAPTURED_CASES)
+    return append!(cases, [LINROOD_CORE, LINROOD_FULL], CAPTURED_CASES)
 end
 
 # The inputs of a case: the step's fluxes, schedule, reset targets, surface
@@ -398,11 +419,14 @@ physics_kwargs(P, inputs::CapturedInputs) =
 
 # ---------------------------------------------------------------------------
 # Variants `checkpoint/storage` of the `AdjointTape`: the reference is the
-# default tape (device storage, FullCheckpoint), passed as no keyword.
-# `strideK` is the case's stride (2 and 3 both cross the met windows
+# default tape (`StateTape`, device storage, FullCheckpoint), passed as no
+# keyword. `strideK` is the case's stride (2 and 3 both cross the met windows
 # [2, 3, 2]) and `S` each of its host storages. The Jacobian's two objectives
 # share each stride window's recording; the optimization's evaluations share
 # one tape pool (rewound, and an mmap file counted and reserved once).
+# `airmass/S` is an `AirMassTape` (FullCheckpoint) for the linear schemes: one
+# recording, reused by the optimization's later evaluations after its
+# identity check.
 # ---------------------------------------------------------------------------
 
 const REFERENCE = "full/device"
@@ -420,9 +444,11 @@ const VARIANT_TEMPLATES = (
 entries(c::Case) = c.operators ? keys(VARIANT_TEMPLATES) :
                    filter(!=(:fourdvar_operators), keys(VARIANT_TEMPLATES))
 
-variants(c::Case, entry::Symbol) =
-    unique!([replace(t, "K" => string(c.stride), "S" => s)
-             for t in VARIANT_TEMPLATES[entry] for s in c.storages])
+function variants(c::Case, entry::Symbol)
+    vs = [replace(t, "K" => string(c.stride), "S" => s) for t in VARIANT_TEMPLATES[entry] for s in c.storages]
+    _linear(c.scheme) && append!(vs, ["airmass/device"; ["airmass/$s" for s in c.storages]])
+    return unique!(vs)
+end
 
 const STORAGES = Dict("device" => () -> AT.DeviceCSTapeStorage(),
                       "pinned_host" => () -> AT.PinnedHostCSTapeStorage())
@@ -430,10 +456,11 @@ const STORAGES = Dict("device" => () -> AT.DeviceCSTapeStorage(),
 function _variant_kwargs(variant::AbstractString, scratch::AbstractString)
     variant == REFERENCE && return (;)
     schedule, storage = split(variant, '/')
-    checkpoint = schedule == "full" ? AT.FullCheckpoint() :
+    content = schedule == "airmass" ? AT.AirMassTape() : AT.StateTape()
+    checkpoint = schedule in ("full", "airmass") ? AT.FullCheckpoint() :
                  AT.StrideCheckpoint(parse(Int, chopprefix(schedule, "stride")))
     storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
-    return (; tape = AT.AdjointTape(; storage, checkpoint))
+    return (; tape = AT.AdjointTape(; content, storage, checkpoint))
 end
 
 # ---------------------------------------------------------------------------
@@ -630,92 +657,49 @@ end
 # Limiter branches of the recorded tape
 # ---------------------------------------------------------------------------
 
-_basis(FT, i) = Adv._d6_basis(FT, i, one(FT))
-
-# The branch `_ppm_limit_profile_monotone_ad` takes at a cell (0 extremum,
-# 1 left edge fixed, 2 right edge fixed, 3 unchanged), read from its
-# derivative with unit basis derivatives of the left edge, cell and right edge.
-function _profile_code(q_L, c, q_R)
-    FT = typeof(c)
-    b1, b2, b3 = _basis(FT, 1), _basis(FT, 2), _basis(FT, 3)
-    _, dq_L, _, dq_R = Adv._ppm_limit_profile_monotone_ad(q_L, b1, c, b2, q_R, b3)
-    dq_L == b2 && dq_R == b2 && return 0
-    dq_L == b1 && dq_R == b3 && return 3
-    dq_R == b3 && return 1
-    return 2
-end
-
-# The minmod branch `_limited_slope_monotone_ad` takes (0 zero slope, 1
-# centred, 2 forward, 3 backward), read from its derivative.
-function _slope_code(c_m, c_0, c_p)
-    FT = typeof(c_0)
-    _, d = Adv._limited_slope_monotone_ad(c_m, _basis(FT, 1), c_0, _basis(FT, 2), c_p, _basis(FT, 3))
-    d == Adv._d6_zero(FT) && return 0
-    d[2] == 0 && return 1
-    d[1] == 0 && return 2
-    return 3
-end
-
-function _edge(c_ll, c_l, c_r, c_rr, limiter)
-    z = Adv._d6_zero(typeof(c_l))
-    return first(Adv._ppm_edge_value_ad(c_ll, z, c_l, z, c_r, z, c_rr, z, limiter))
-end
-
-# Branch counts at the cells a limited sweep's reverse reads, per axis: x and
-# y split into the cells next to a panel edge (whose stencils read the halo,
-# "seam") and the others; z clamps the stencil at the column ends as the z
-# reverse does. `profile` counts the profile branches of every limited scheme,
-# `slope` the minmod branches of the CW84 edge slopes.
+# Branch counts of the limiter codes a limited sweep record holds (written by
+# the production code kernel, `PPMLimiterCodes`), at the cells its reverse
+# reads, per axis: x and y split into the cells next to a panel edge (whose
+# stencils read the halo, "seam") and the others; z over the interior columns.
+# `profile` counts the profile branches (bits 0-1: 0 extremum, 1 left edge
+# reset, 2 right edge reset, 3 unchanged) of every limited scheme, `slope` the
+# minmod branches of the CW84 edge slopes (bits 2-3: 0 zero, 1 centred,
+# 2 forward, 3 backward).
 function limiter_code_counts(ops, Nc, Nz)
     counts = Dict{String, Vector{Int}}()
     bump!(key, code) = (get!(() -> zeros(Int, 4), counts, key)[code + 1] += 1)
-    air, tracer = TapeMod.AirMassRead(), TapeMod.TracerMassRead()
     for op in ops
-        op isa TapeMod._CSSweepRecord && op.panels_rm !== nothing || continue
-        limiter = op.scheme.limiter
-        m = TapeMod._tape_panels(op.panels_m, air)
-        rm = TapeMod._tape_panels(op.panels_rm, tracer)
-        FT = eltype(m[1])
-        floor = Adv._advection_mass_floor(FT)
-        cw84 = limiter isa AT.CW84Limiter
+        op isa TapeMod._CSSweepRecord && _limited(op.scheme) || continue
+        codes = TapeMod._tape_panels(op.panels_tracer, TapeMod.LimiterCodeRead())
+        cw84 = op.scheme.limiter isa AT.CW84Limiter
+        count!(key, code) = (bump!("profile_$key", code & 0x03);
+                             cw84 && bump!("slope_$key", (code >> 2) & 0x03))
         for p in 1:6
-            c = rm[p] ./ max.(m[p], floor)
+            c = codes[p]
             if op.direction === :z
                 for k in 1:Nz, j in HP+1:HP+Nc, i in HP+1:HP+Nc
-                    at(o) = c[i, j, clamp(k + o, 1, Nz)]
-                    eL = _edge(at(-2), at(-1), at(0), at(1), limiter)
-                    eR = _edge(at(-1), at(0), at(1), at(2), limiter)
-                    bump!("profile_z", _profile_code(eL, at(0), eR))
-                    cw84 && bump!("slope_z", _slope_code(at(-1), at(0), at(1)))
+                    count!("z", c[i, j, k])
                 end
                 continue
             end
             axis = String(op.direction)
             for k in 1:Nz, a in HP:HP+Nc+1, b in HP+1:HP+Nc
-                cell(o) = op.direction === :x ? c[a + o, b, k] : c[b, a + o, k]
                 region = a in (HP, HP + 1, HP + Nc, HP + Nc + 1) ? "seam" : "interior"
-                eL = _edge(cell(-2), cell(-1), cell(0), cell(1), limiter)
-                eR = _edge(cell(-1), cell(0), cell(1), cell(2), limiter)
-                bump!("profile_$(axis)_$(region)", _profile_code(eL, cell(0), eR))
-                cw84 && bump!("slope_$(axis)_$(region)", _slope_code(cell(-1), cell(0), cell(1)))
+                count!("$(axis)_$(region)", op.direction === :x ? c[a, b, k] : c[b, a, k])
             end
         end
     end
     return counts
 end
 
+# The limiter codes of a case's device tape.
 function case_limiter_codes(P)
     replay, _ = ADJ.Footprint._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
                                                   _common(P)..., base_emission_rates = P.rates)
-    return limiter_code_counts(_device_tape!(replay, 1:P.nsteps), P.case.Nc, P.case.Nz)
+    pool = TapeMod._open_tape_pool(TapeMod.DeviceCSTapeStorage(), 0)
+    ops = ADJ.Footprint._record_cs_tape!(replay, 1:P.nsteps, TapeMod.StateTape(), pool)
+    return limiter_code_counts(ops, P.case.Nc, P.case.Nz)
 end
-
-# The device tape of `steps` (`--reference-only` on a checkout from before the
-# tape pools records with the storage descriptor itself).
-_device_tape!(replay, steps) = isdefined(TapeMod, :_open_tape_pool) ?
-    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.FullStateTape(),
-                                   TapeMod._open_tape_pool(TapeMod.DeviceCSTapeStorage(), 0)) :
-    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.DeviceCSTapeStorage())
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -753,7 +737,7 @@ function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
             end
         end
         entry = Dict{String, Any}("digests" => digests)
-        if _limited(c.scheme)
+        if _limited(c.scheme) && !reference_only
             entry["limiter"] = c.scheme.limiter isa AT.CW84Limiter ? "cw84" : "monotone"
             entry["limiter_codes"] = case_limiter_codes(P)
         end
@@ -836,17 +820,19 @@ end
 # ---------------------------------------------------------------------------
 
 # On a GPU the tape frees its arrays explicitly (`_free_tape_array!`:
-# `unsafe_free!` of device slabs, read caches, stride checkpoints and Lin–Rood
-# records) and the memory is handed out again, so a free placed before the last
-# read of an array is a use-after-free. On the CPU the free is a no-op, so the
-# bitwise gate fills every freed float array with NaN at that moment instead:
-# a premature free then changes the digests. The method is added in the
+# `unsafe_free!` of device slabs, read caches, stride checkpoints, the
+# recorder's limiter-code scratch and Lin–Rood records) and the memory is
+# handed out again, so a free placed before the last read of an array is a
+# use-after-free. On the CPU the free is a no-op, so the bitwise gate fills
+# every freed float array with NaN, and every freed limiter-code array with
+# 0xff, at that moment instead: a premature free then changes the digests. The method is added in the
 # harness's own subprocess only (`main`), never in the test process, and is a
 # no-op on trees without the hook.
 const POISONED = Ref(0)
 function poison_freed_tape_arrays!()
     isdefined(TapeMod, :_free_tape_array!) || return false
     @eval TapeMod._free_tape_array!(a::Array{<:AbstractFloat}) = (fill!(a, NaN); $POISONED[] += 1; nothing)
+    @eval TapeMod._free_tape_array!(a::Array{UInt8}) = (fill!(a, 0xff); $POISONED[] += 1; nothing)
     return true
 end
 

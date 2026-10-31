@@ -39,7 +39,7 @@ else
             ADJ.Footprint._replay_steps!(forward, 1:sum(c.steps))
             @test map(Array, _interior(ADJ.Footprint._replay_rm(forward))) == expected
             recorded = replay()
-            tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.FullStateTape(),
+            tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.StateTape(),
                                                   AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
             @test map(Array, _interior(ADJ.Footprint._replay_rm(recorded))) == expected
             resets = filter(op -> op isa AT.Tape._CSAirMassResetRecord, tape)

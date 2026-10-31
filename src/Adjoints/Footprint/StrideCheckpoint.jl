@@ -110,23 +110,62 @@ _taped_range(run) = 1:_taped_steps(run)
 # the runtime's pool. A storage that reserves its extent is sized first by a
 # counting run of the taped steps (once per runtime), from which the replay
 # restarts at its initial snapshot; that reproduces the recording run bit for
-# bit.
+# bit. With `AirMassTape` content the runtime holds the first forward run's
+# tape and every later forward run of the runtime (a later evaluation of an
+# optimization) runs without a recorder and walks the held tape, after its
+# identity is checked (`_held_air_mass_tape`).
 # ---------------------------------------------------------------------------
 
-struct _FullTapedRun{R <: _CSTapeRecorder}
+struct _FullTapedRun{R <: _CSTapeRecorder, H}
     taped_steps :: Int
     recorder    :: R       # records into the runtime's pool
+    hold        :: H       # `AirMassTape`: the runtime and identity to hold the tape with; else nothing
 end
 
-function _begin_taped_run(::FullCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int)
+# A forward run that reuses the air-mass tape its runtime holds.
+struct _ReplayedTapedRun
+    taped_steps :: Int
+    ops         :: Vector{Any}
+end
+
+_begin_taped_run(::FullCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int) =
+    _begin_full_run(runtime.tape.content, replay, runtime, taped_steps)
+
+function _begin_full_run(content::StateTape, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int)
     pool = _tape_pool!(runtime, _counted_tape_bytes!(runtime, replay, 1:taped_steps))
-    return _FullTapedRun(taped_steps, _CSTapeRecorder(runtime.tape.content, pool))
+    return _FullTapedRun(taped_steps, _CSTapeRecorder(content, pool, replay.advection), nothing)
 end
 
-_taped_steps(run::_FullTapedRun) = run.taped_steps
-_run_taped_steps!(run::_FullTapedRun, replay, on_step_end) =
-    (_replay_steps!(replay, _taped_range(run); recorder = run.recorder, on_step_end); nothing)
-_end_taped_run!(run::_FullTapedRun) = _release_records!(run.recorder.ops)
+function _begin_full_run(content::AirMassTape, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int)
+    identity = _tape_identity(replay, taped_steps)
+    held = _held_air_mass_tape(runtime, identity)
+    held === nothing || return _ReplayedTapedRun(taped_steps, held)
+    pool = _tape_pool!(runtime, _counted_tape_bytes!(runtime, replay, 1:taped_steps))
+    return _FullTapedRun(taped_steps, _CSTapeRecorder(content, pool, replay.advection),
+                         (; runtime, identity))
+end
+
+_taped_steps(run::Union{_FullTapedRun, _ReplayedTapedRun}) = run.taped_steps
+
+function _run_taped_steps!(run::_FullTapedRun, replay, on_step_end)
+    _replay_steps!(replay, _taped_range(run); recorder = run.recorder, on_step_end)
+    _finish_recording!(run.recorder)
+    _hold_tape!(run.hold, run.recorder.ops)
+    return nothing
+end
+_run_taped_steps!(run::_ReplayedTapedRun, replay, on_step_end) =
+    (_replay_steps!(replay, _taped_range(run); on_step_end); nothing)
+
+_hold_tape!(::Nothing, _ops) = nothing
+_hold_tape!(hold::NamedTuple, ops) = _hold_air_mass_tape!(hold.runtime, ops, hold.identity)
+
+# A held air-mass tape lives until its runtime is released.
+_end_taped_run!(run::_FullTapedRun{<:_CSTapeRecorder, Nothing}) = _release_records!(run.recorder.ops)
+_end_taped_run!(::_FullTapedRun) = nothing
+_end_taped_run!(::_ReplayedTapedRun) = nothing
+
+_tape_ops(run::_FullTapedRun) = run.recorder.ops
+_tape_ops(run::_ReplayedTapedRun) = run.ops
 
 # The records of the tape through the end of step `nsteps` (its end-of-step
 # marker); the whole tape when `nsteps` is its last step.
@@ -136,8 +175,9 @@ function _tape_through(ops, nsteps::Int)
     return view(ops, 1:last_record)
 end
 
-function _reverse_taped_run(run::_FullTapedRun, replay::_CSReplay, starts, dt; nsteps::Int, forcing)
-    ops = _tape_through(run.recorder.ops, nsteps)
+function _reverse_taped_run(run::Union{_FullTapedRun, _ReplayedTapedRun}, replay::_CSReplay, starts, dt;
+                            nsteps::Int, forcing)
+    ops = _tape_through(_tape_ops(run), nsteps)
     return map(starts) do start
         lambda, footprints, ws = _start_reverse(replay, start, nsteps)
         _walk!(footprints, lambda, ops, replay, ws, forcing)
@@ -166,7 +206,7 @@ end
 
 # The first checkpoint is the state the forward run starts from.
 _begin_taped_run(schedule::StrideCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int) =
-    _StrideTapedRun(schedule, taped_steps, runtime, _tape_size_counter(runtime, taped_steps),
+    _StrideTapedRun(schedule, taped_steps, runtime, _tape_size_counter(runtime, replay, taped_steps),
                     [_replay_snapshot(replay)])
 
 _taped_steps(run::_StrideTapedRun) = run.taped_steps
@@ -191,8 +231,7 @@ end
 function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt; nsteps::Int, forcing)
     windows = _stride_windows(run.schedule, nsteps)
     runtime = run.runtime
-    through = runtime.slot_bytes_through_step
-    pool = _tape_pool!(runtime, maximum(steps -> _counted_slot_bytes(through, steps), windows))
+    pool = _tape_pool!(runtime, maximum(steps -> _counted_slot_bytes(runtime, steps), windows))
     reverses = [_start_reverse(replay, start, nsteps) for start in starts]
     for w in reverse(eachindex(windows))
         _rewind_tape_pool!(pool)
@@ -247,9 +286,24 @@ end
 
 # The tape checks the drivers rely on, made before any forward run: the
 # Lin–Rood tape is device-only (its records hold device copies, not pool
-# slots; the check is the fenced Lin–Rood validator). The 4D-Var gradient
-# calls this before its forward run, so a rejected combination does not waste
-# that run.
-_require_tape_supported(::CSAdjointLinRoodScheme, tape::AdjointTape) =
-    _linrood_validate_tape_storage(tape.storage)
-_require_tape_supported(_scheme, ::AdjointTape) = nothing
+# slots; the check is the fenced Lin–Rood validator), and an `AirMassTape`
+# needs a scheme whose reverse reads the air mass only (`tape_dependence`).
+# The 4D-Var gradient calls this before its forward run, so a rejected
+# combination does not waste that run.
+function _require_tape_supported(scheme, tape::AdjointTape)
+    _require_tape_storage(scheme, tape.storage)
+    _require_tape_content(tape.content, scheme)
+    return nothing
+end
+
+_require_tape_storage(::CSAdjointLinRoodScheme, storage) = _linrood_validate_tape_storage(storage)
+_require_tape_storage(_scheme, _storage) = nothing
+
+_require_tape_content(::StateTape, _scheme) = nothing
+_require_tape_content(::AirMassTape, scheme) = _require_air_mass_dependence(tape_dependence(scheme), scheme)
+_require_air_mass_dependence(::AirMassDependence, _scheme) = nothing
+_require_air_mass_dependence(::TracerDependence, scheme) = throw(ArgumentError(
+    "AirMassTape needs an advection scheme whose reverse reads the air mass only " *
+    "(tape_dependence(scheme) isa AirMassDependence: UpwindScheme(), SlopesScheme(NoLimiter()), " *
+    "PPMScheme(NoLimiter())); the reverse of $(nameof(typeof(scheme))) replays limiter branches " *
+    "of the tracer (TracerDependence), so every forward run records its own tape: use StateTape()."))

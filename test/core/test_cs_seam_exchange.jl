@@ -170,7 +170,10 @@ end
         end
         gradient = map(copy, seed)
         if scheme isa PPMScheme{MonotoneLimiter}
-            CSSeamAdv._adjoint_scheme_sweep!(gradient, m, rm, flux, symbol, scheme, mesh, aws, 1.0)
+            # The limiter branches the tape records for this sweep.
+            codes = CSSeamAdv.record_ppm_limiter_codes!(map(a -> similar(a, UInt8), m), m, rm,
+                                                        symbol, scheme)
+            CSSeamAdv._adjoint_scheme_sweep!(gradient, m, codes, flux, symbol, scheme, mesh, aws, 1.0)
         else
             CSSeamAdv._adjoint_scheme_sweep!(gradient, m, flux, symbol, scheme, mesh, aws, 1.0)
         end
