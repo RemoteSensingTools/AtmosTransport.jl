@@ -5,15 +5,15 @@
 #
 # Verifies the regrid surface for ERA5 → cubed sphere:
 #
-#   1. Output struct + workspace allocate with the right shapes.
+#   1. The physical N320 sphere (IFS radius) stays distinct from the
+#      target regrid sphere.
 #   2. Regrid of a uniform PS field returns the same value on every C-target
-#      cell to floating-point roundoff (idempotency check).
+#      cell to floating-point roundoff (Float32 and Float64).
 #   3. Regrid is mass-conserving: ∫ PS · dA preserved between the N320 source
 #      and the C-target destination.
-#   4. Per-panel mean PS lands in a physical range after regridding real PS.
-#   5. (opt-in, real GRIB) End-to-end smoke for 2021-12-01 hour 0:
-#      regrid PS / U / V / T / Q from the actual N320 archive to a small CS
-#      target and check physical ranges + means.
+#   4. (opt-in, real GRIB via ATMOS_ERA5_N320_ROOT) N320 decode of
+#      2021-12-01 hour 0 (grid discovery, T/Q/PS/U/V ranges and means) and
+#      the pipeline allocator's coefficient-file vs Nz guard.
 #
 # A small `Nc = 8` CS target keeps the hermetic regridder build under a few
 # seconds.
@@ -25,23 +25,18 @@ using Dates
 import AtmosTransport
 
 using .AtmosTransport.Preprocessing: ERA5N320Settings, open_era5_day, close_era5_day!,
-    allocate_era5_n320_to_c180_pipeline, discover_era5_spectral_truncation,
-    discover_era5_n320_source_grid, allocate_era5_n320_spectral_workspace,
-    read_era5_n320_window_fields!,
- ERA5N320Settings, ERA5GRIBDayHandles,
-                                      ERA5N320WindowFields,
-                                      ERA5C180RegridFields, ERA5C180RegridWorkspace,
-                                      allocate_era5_n320_spectral_workspace,
-                                      allocate_era5_n320_window_fields,
-                                      allocate_era5_c180_regrid_fields,
-                                      allocate_era5_c180_regrid_workspace,
-                                      regrid_n320_to_c180!,
-                                      discover_era5_n320_source_grid,
-                                      discover_era5_spectral_truncation,
-                                      read_era5_n320_window_fields!,
-                                      open_era5_day, close_era5_day!,
-                                      build_target_geometry,
-                                      CubedSphereTargetGeometry
+                                     allocate_era5_n320_to_c180_pipeline,
+                                     discover_era5_spectral_truncation,
+                                     discover_era5_n320_source_grid,
+                                     allocate_era5_n320_spectral_workspace,
+                                     read_era5_n320_window_fields!, ERA5GRIBDayHandles,
+                                     ERA5N320WindowFields, ERA5C180RegridFields,
+                                     ERA5C180RegridWorkspace,
+                                     allocate_era5_n320_window_fields,
+                                     allocate_era5_c180_regrid_fields,
+                                     allocate_era5_c180_regrid_workspace,
+                                     regrid_n320_to_c180!, build_target_geometry,
+                                     CubedSphereTargetGeometry
 using .AtmosTransport.Grids: ncells, nrings, cell_area
 using .AtmosTransport.Parameters: EARTH_RADIUS, IFS_EARTH_RADIUS
 

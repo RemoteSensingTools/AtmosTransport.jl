@@ -31,7 +31,9 @@ import AtmosTransport.MetDrivers.BinaryFormat: close_streaming_transport_binary!
     open_streaming_cs_transport_binary,
     set_streaming_steps_per_window_schedule!
 
-import AtmosTransport.MetDrivers.BinaryReaders: has_pbl_eflux
+import AtmosTransport.MetDrivers.BinaryReaders: has_pbl_eflux,
+    has_surface,
+    has_vdiff_fields
 
 import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     DEFAULT_GEOS_SMOOTHING_SWEEPS,
@@ -63,6 +65,7 @@ import AtmosTransport.Preprocessing.Core: check_native_closure_config,
     close_reader!,
     column_balance_weights_option,
     column_weights,
+    has_convection,
     native_output_prefix,
     open_day,
     open_preprocessing_staging,

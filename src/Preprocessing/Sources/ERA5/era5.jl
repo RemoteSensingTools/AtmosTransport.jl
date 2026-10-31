@@ -163,8 +163,6 @@ ERA5GRIBDayHandles(settings::S, date, core_path, convection_path, surface_path, 
     ERA5GRIBDayHandles{S}(settings, date, core_path, convection_path, surface_path, next_core_path,
                           prev_convection_path, arco_sp_path, Ref{Union{Nothing, GRIB.Index}}(nothing))
 
-
-
 """
     open_era5_day(settings, date; next_day_handle=true) -> ERA5GRIBDayHandles
 

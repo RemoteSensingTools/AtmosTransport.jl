@@ -1,5 +1,5 @@
 # GEOS native CS preprocessing: global dry-mass pin, panel-convention check, native → target resolution strategies and payloads.
-# Split from cubed_sphere_geos.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Split from cubed_sphere_geos.jl (refactor phase 4); included by GEOS.jl in this order.
 
 _validate_geos_native_panel_convention(::GEOSNativePanelConvention) = nothing
 function _validate_geos_native_panel_convention(conv)

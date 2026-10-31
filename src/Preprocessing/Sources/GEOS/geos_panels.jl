@@ -253,10 +253,6 @@ end
                      wi       * wj       * src[i1, j1]
 end
 
-
-
-
-
 function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                     src::AbstractMatrix{FT},
                                     physics::GEOSFPLatLonPhysicsFallback) where FT
@@ -282,8 +278,6 @@ function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Array{FT,3}},
     end
     return dst
 end
-
-
 
 function _validate_geos_surface_panels!(surface, path::String, win_idx::Int)
     for field in (surface.pblh, surface.ustar, surface.hflux, surface.t2m)
@@ -399,8 +393,6 @@ function endpoint_dry_mass!(delp_dry::AbstractArray{FT,3},
     return delp_dry, ps_dry
 end
 
-
-
 # ---------------------------------------------------------------------------
 # Mass-flux scaling.
 #
@@ -439,6 +431,9 @@ native_output_prefix(::AbstractGEOSSettings) = "geos_"
 # the orchestrator threads them into the v4 binary's `:cmfmc` / `:dtrain`
 # payload sections, and the runtime `CMFMCConvection` operator consumes
 # them via `ConvectionForcing` (GCHP RAS / Grell-Freitas, dry-basis).
+has_convection(s::GEOSSettings) = s.include_convection
+has_surface(s::GEOSSettings) = s.include_surface || s.include_vdiff_fields
+has_vdiff_fields(s::GEOSSettings) = s.include_vdiff_fields
 # GEOS-IT A1 carries EFLUX, which GEOS-Chem's non-local PBL needs alongside the
 # VDIFF profiles. The GEOS-FP fallback readers do not read it.
 has_pbl_eflux(s::GEOSSettings{:geosit}) = s.include_vdiff_fields

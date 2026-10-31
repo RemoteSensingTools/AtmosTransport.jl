@@ -14,7 +14,7 @@
 #       --start 2021-12-02 --end 2021-12-31
 #
 # Per-window pipeline (8 × 3-hourly windows; wired in
-# `transport_binary/merra2_latlon_regrid.jl`):
+# `src/Preprocessing/Sources/MERRA2/merra2_latlon_regrid.jl`):
 #
 #   1. Read native MERRA-2 LL fields — PS/QV from inst3 slice `win`
 #      (instantaneous mass endpoint), U/V from tavg3 slice `win`

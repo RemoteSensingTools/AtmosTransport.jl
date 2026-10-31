@@ -360,7 +360,7 @@ files = [
     "core/test_met_source_loader.jl",
 ]
 paths = [
-    "src/Preprocessing/**", # also covers deleted source paths during folder moves
+    "src/Preprocessing/**",
     "config/met_sources/**",
 ]
 

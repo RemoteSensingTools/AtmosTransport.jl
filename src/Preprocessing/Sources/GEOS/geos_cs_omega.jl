@@ -413,7 +413,6 @@ function _regularize_omega_target!(
     return target
 end
 
-
 # Single-level OMEGA-consistent flux-potential correction. Independent per level
 # (touches only `am[:,:,k]`/`bm[:,:,k]` and the supplied per-thread `scratch`),
 # so the Nz levels can be solved concurrently. Returns the per-level correction

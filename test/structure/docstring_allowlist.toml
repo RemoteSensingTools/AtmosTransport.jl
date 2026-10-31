@@ -1,2 +1,2 @@
-# Existing structure debt; shrink only. PP4 transfers source identities and removes resolved entries.
+# Existing debt only; resolved entries removed by the owning cleanup.
 [allow]

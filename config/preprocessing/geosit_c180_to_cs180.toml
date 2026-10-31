@@ -3,7 +3,7 @@
 #
 # Passthrough preprocessing: source mesh == target mesh, no horizontal
 # regrid, no Poisson balance. Stored mass uses FV3's pressure-fixer chained
-# evolution (see src/Preprocessing/transport_binary/cubed_sphere_geos.jl
+# evolution (see src/Preprocessing/Sources/GEOS/cubed_sphere_geos.jl
 # module header for rationale).
 #
 # Usage:

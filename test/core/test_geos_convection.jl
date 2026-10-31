@@ -249,6 +249,8 @@ end
     end
 
     @testset "surface PBL fields are read and written" begin
+        @test !has_convection(settings_off)
+        @test has_convection(settings_on)
         handles = open_day(settings_full, Date(2021, 12, 1))
         try
             raw = allocate_raw_window(settings_full; FT = FT_TEST, Nz = NZ)

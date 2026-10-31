@@ -1,7 +1,6 @@
 """Cubed-sphere spectral staging, conservative regridding, coarsening and contracts."""
 module CubedSphere
 
-import ..Core: MAX_SPECIFIC_HUMIDITY
 import ..Spectral: mass_target_offset
 
 import AtmosTransport: State
@@ -61,6 +60,7 @@ import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
     CubedSphereTargetGeometry,
     ERA5SpectralSettings,
     LatLonTargetGeometry,
+    MAX_SPECIFIC_HUMIDITY,
     build_target_geometry,
     column_weights,
     nlat,

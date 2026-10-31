@@ -24,8 +24,7 @@ import AtmosTransport
 using .AtmosTransport.Preprocessing: GEOSITSettings, open_day, close_day!,
                                       open_geos_day, close_geos_day!,
                                       read_window!, allocate_raw_window,
-                                      detect_level_orientation,
-                                       endpoint_dry_mass!,
+                                      detect_level_orientation, endpoint_dry_mass!,
                                       windows_per_day, has_convection
 
 const FT_TEST = Float64
@@ -184,7 +183,6 @@ end
         coefficients_file = coef_path,
     )
 
-
     # Override windows_per_day for our 2-window synthetic via dispatch on
     # a custom subtype is overkill; instead we just test win_idx=1 directly,
     # since our fixture only covers 2 windows. The reader still expects the
@@ -199,8 +197,6 @@ end
         @test detect_level_orientation(ds) === :bottom_up
         close(ds)
     end
-
-
 
     @testset "read_window! produces both endpoints, top-down" begin
         handles = open_day(settings, Date(2021,12,1))

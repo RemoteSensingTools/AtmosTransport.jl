@@ -74,9 +74,10 @@ native_output_prefix(::AbstractMetSettings) = ""
 """
     native_output_filename(settings, date, FT) -> String
 
-Per-source output filename for native-source preprocessing. Concrete
-sources override this in their own files (e.g. `Sources/GEOS/geos_panels.jl`); the
-default is a source-agnostic prefix.
+Output filename for native-source preprocessing:
+`<prefix>transport_YYYYMMDD_float32.bin` (or `float64`). Concrete sources
+extend `native_output_prefix` (`geos_`, `era5_n320_`, `merra2_`); the default
+prefix is empty.
 """
 native_output_filename(settings::AbstractMetSettings, date::Date, FT::Type) =
     "$(native_output_prefix(settings))transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"

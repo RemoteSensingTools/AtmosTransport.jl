@@ -406,10 +406,6 @@ function _native_preprocessing_plan(cfg::AbstractDict)
             configured_mass_fix_target_ps_dry_pa)
 end
 
-# Closure-specific config checks of a native source; only GEOS has `cm`
-# closures (its method is in `cubed_sphere_geos.jl`).
-
-
 function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
                              start_date   = nothing,

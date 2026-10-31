@@ -154,8 +154,10 @@ function compute_cs_cm_pressure_fixer!(cm_panels::NTuple{CS_PANEL_COUNT, Array{F
     return nothing
 end
 
+# `@propagate_inbounds`: the callers' `@inbounds` loops cover this sum, as
+# they did when it was written inline.
 """Sum native horizontal convergence in ascending level order and the flux element type."""
-@inline function cs_column_convergence(am::AbstractArray{FT,3}, bm, i, j, Nz) where FT
+Base.@propagate_inbounds function cs_column_convergence(am::AbstractArray{FT,3}, bm, i, j, Nz) where FT
     pit = zero(FT)
     for k in 1:Nz
         pit += (am[i, j, k] - am[i + 1, j, k]) +

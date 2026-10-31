@@ -144,10 +144,8 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
 import ..State
 using ..State: AbstractMassBasis, DryBasis, MoistBasis,
                TotalSurfacePressure, DrySurfacePressure
-# The GEOS block-coarsen strategy (`Sources/GEOS/geos_cs_resolution.jl`)
-# sums nested faces with `coarsen_xface_sum!` / `coarsen_yface_sum!`.
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
-                    coarsen_xface_sum!, coarsen_yface_sum!, default_regrid_cache_dir
+                    default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
 using ..GriddedIO: source_latlon_mesh, SnappedFaces, find_coordinate, LongitudeAxis, LatitudeAxis
 using ..MetDrivers: poisson_balance_target, write_padded_header!, section_elements,
@@ -727,6 +725,8 @@ export endpoint_dry_mass!
 # ERA5 native-GRIB reader: settings, day handles, and the
 # per-window spectral-synthesis surface for the N320 source grid.
 export AbstractERA5GRIBSettings, ERA5GRIBSettings, ERA5N320Settings
+export ERA5ReducedGaussianGeometry, read_era5_reduced_gaussian_geometry,
+       read_era5_reduced_gaussian_mesh
 export ERA5GRIBDayHandles, open_era5_day, close_era5_day!
 export era5_grib_path
 export ERA5N320SpectralWorkspace, ERA5N320WindowFields
