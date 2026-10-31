@@ -43,7 +43,7 @@ tracer, so `h` is linear in `rm` and its gradient is the weight vector; a
 window observation's entries carry its time-sampling weights. `offset` holds
 terms that do not depend on the transported tracer (for example an averaging
 kernel's prior term); it is zero for the built-in objectives. Built by
-`_linear_functional` (one step) and `_observe_cs_forward` (an observation's
+`_linear_functional` (one step) and `_observe_cs_forward!` (an observation's
 sampled steps).
 """
 struct CSLinearFunctional{FT}
@@ -239,15 +239,15 @@ function _assemble_step_forcing(functionals::AbstractVector{<:CSLinearFunctional
         device(seg_i), device(seg_j), device(seg_k), w_d)
 end
 
-# A forcing must not reference steps beyond the taped run (their entries would
-# never be reached) and must match the adjoint state's level count.
+# A forcing must not reference steps beyond the reverse pass (their entries
+# would never be reached) and must match the adjoint state's level count.
 _validate_step_forcing(::NoStepForcing, ::Int, ::Int) = nothing
 function _validate_step_forcing(forcing::CSStepForcing, nsteps::Int, Nz::Int)
     forcing.nz == Nz || throw(DimensionMismatch(
         "step forcing has $(forcing.nz) levels; the adjoint state has $Nz"))
     size(forcing.first_segment, 1) <= nsteps || throw(ArgumentError(
         "step forcing references step $(size(forcing.first_segment, 1)), but the " *
-        "taped run has $nsteps steps"))
+        "reverse pass has $nsteps steps"))
     return nothing
 end
 

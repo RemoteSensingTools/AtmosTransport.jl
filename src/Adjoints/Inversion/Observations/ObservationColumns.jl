@@ -9,7 +9,7 @@
 #   * `_sample_objective(objective, step, panels_rm, panels_m, mesh, met,
 #     build)` — the objective's value on the state after `step`, its linear
 #     functional of that state (weights from `panels_m`, when `build`), and
-#     the level it read. The forward replay `_observe_cs_forward` calls it
+#     the level it read. The forward replay `_observe_cs_forward!` calls it
 #     once per sampled step of every observation.
 #
 # A placed point objective's layer comes from the shared rule of the forward

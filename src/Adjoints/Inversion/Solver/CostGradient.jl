@@ -16,8 +16,10 @@
 #     `_gradient_step_panel_kernel!`).
 #   * Vector flatten helpers (`_observation_vector`, `_control_vector`).
 #   * `cs_surface_flux_4dvar` — the main cost/gradient entry point: one
-#     forward run, one taped run and one reverse pass with every
-#     observation's weighted departure injected at its sampled steps.
+#     forward run that samples the observations and records the tape, and
+#     one reverse pass with every observation's weighted departure injected
+#     at its sampled steps (`CSCostAndGradient`); the forward run alone for a
+#     `CSCostOnly` evaluation.
 # ---------------------------------------------------------------------------
 
 function _validate_control_windows(controls, nsteps::Int)
@@ -320,8 +322,63 @@ function _physical_gradient_to_chi!(chi_gradient,
 end
 
 # ---------------------------------------------------------------------------
-# Step-sequence truncation helpers + 4D-Var entry
+# The observation forward run and reverse pass of one evaluation + 4D-Var entry
 # ---------------------------------------------------------------------------
+
+# The forward run of an evaluation (a checkpoint driver's run on the
+# observation replay). A cost-only evaluation keeps nothing. A gradient tapes
+# through the last step of an observation with `assimilate = true`: the
+# surface-pressure screen, applied after the run, only removes observations,
+# so this bounds the reverse pass, and co-samples after it do not extend the
+# tape. Without such an observation there is no reverse pass to tape for.
+_observation_run(::CSCostOnly, _checkpoint, _replay, _tape_storage, _observations) = _UntapedRun()
+function _observation_run(::CSCostAndGradient, checkpoint, replay, tape_storage, observations)
+    taped_steps = maximum(obs -> obs.assimilate ? obs.step : 0, observations)
+    taped_steps == 0 && return _UntapedRun()
+    return _begin_taped_run(checkpoint, replay, tape_storage, taped_steps)
+end
+
+# Only a gradient needs the observations' linear functionals.
+_builds_functionals(::CSCostAndGradient) = true
+_builds_functionals(::CSCostOnly) = false
+
+# ∂J_obs/∂x of each control into `gradients`: one reverse pass of the forward
+# run, from a zero adjoint state through the last assimilated step, adding each
+# step's forcing at the step's end. Footprint `t` is then ∂J_obs/∂E_t for every
+# step through that step; each control's window collects its steps (window
+# steps after it do not affect the cost, `ignore_future`). Without any
+# assimilated observation the observation gradient is zero.
+_add_observation_gradients!(_gradients, ::CSCostOnly, _run, _replay, _dt, _controls, _departures) = nothing
+function _add_observation_gradients!(gradients, ::CSCostAndGradient, run, replay, dt, controls, departures)
+    (; observations, functionals, scales, active, mesh, prototype) = departures
+    isempty(active) && return nothing
+    FT = eltype(prototype)
+    forcing = _assemble_step_forcing(functionals[active], scales[active], mesh, size(prototype, 3), prototype)
+    footprint = _forced_reverse(run, replay, dt; forcing,
+                                nsteps = maximum(idx -> observations[idx].step, active))
+    @inbounds for idx in eachindex(controls)
+        _add_window_gradient!(gradients[idx], footprint, controls[idx].window, one(FT);
+                              ignore_future = true)
+    end
+    return nothing
+end
+
+# The χ-space gradient ∂J/∂χ = T'(χ)ᵀ ∂J_obs/∂x + χ of each control
+# (preconditioned mode); none for a cost-only evaluation.
+_chi_gradients(::CSCostOnly, _preconditioners, _controls, _physical_controls, _physical_gradients) = nothing
+function _chi_gradients(::CSCostAndGradient, preconditioners, controls, physical_controls,
+                        physical_gradients)
+    gradients = [_zero_panel_tuple_like(control.value) for control in controls]
+    @inbounds for idx in eachindex(controls)
+        _physical_gradient_to_chi!(gradients[idx], preconditioners[idx], controls[idx],
+                                   physical_controls[idx], physical_gradients[idx])
+    end
+    return gradients
+end
+
+# The reported gradients: every control's, or none for a cost-only evaluation.
+_reported_gradients(::CSCostAndGradient, gradients, _template) = gradients
+_reported_gradients(::CSCostOnly, _gradients, template) = typeof(template)[]
 
 # Count the observations left out of the cost by the surface-pressure screen of
 # averaging-kernel columns (`SkipUnplaced`); co-samples (`assimilate = false`)
@@ -359,28 +416,43 @@ simulated and reported the same way, never in the cost or the gradient, and
 do not extend the taped run: adding them leaves the cost and the reverse
 pass's forcing unchanged, bit for bit.
 
-One cost-and-gradient evaluation is two forward runs and one reverse pass
-(with `FullCheckpoint`; the other schedules add their recomputation), whatever
-the number of observations, as in TM5-4DVAR:
+One cost-and-gradient evaluation is one forward run and one reverse pass
+(with `FullCheckpoint`; the other schedules add their recomputation, and a
+`MmapCSTapeStorage` adds the counting run that sizes its file), whatever the
+number of observations, as in TM5-4DVAR:
 
-1. a forward run gives the simulated values `Hᵢ(x) = Σₛ ωᵢₛ hᵢ(rₛ)`, each
+1. the forward run gives the simulated values `Hᵢ(x) = Σₛ ωᵢₛ hᵢ(rₛ)`, each
    observation's stencil (`CSObservationStencil`: steps, weights, levels) and
    its linear functional (weights from the replayed air mass at each sampled
-   step, times `ωᵢₛ`);
+   step, times `ωᵢₛ`), and records the tape of its `checkpoint` schedule
+   through the last step of an observation with `assimilate = true` (the
+   whole tape with `FullCheckpoint`, the K-step checkpoints with
+   `StrideCheckpoint(K)`);
 2. each observation contributes `(Hᵢ(x) − yᵢ)/σᵢ²` times its functional's
    weights to the adjoint forcing of each sampled step;
-3. one taped forward run to the last sampled step and one reverse pass,
-   which adds each step's forcing at that step's end, give `∂J_obs/∂E` for
-   every step; each control's window collects its steps.
+3. one reverse pass from the last assimilated step (after the
+   surface-pressure screen) back to the first, which adds each step's forcing
+   at that step's end, gives `∂J_obs/∂E` for every step; each control's
+   window collects its steps.
 
-Both runs replay the production step plan of `schedule` (a
+The run replays the production step plan of `schedule` (a
 [`CSStepSchedule`](@ref AtmosTransport.Adjoints.Footprint.CSStepSchedule);
 default: one step of `dt` per met window, the full
 operator suite every step), with the controls' rates in its surface-flux
-operator. Steps after the last sampled step do not affect the cost and get a
-zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
-`RevolveCheckpoint()`) and `tape_storage` select how the one taped run is
-stored, as in `cs_surface_emission_footprint`.
+operator. Steps after the last assimilated step do not affect the cost and
+get a zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
+`RevolveCheckpoint()`) and `tape_storage` select how the tape is stored, as in
+`cs_surface_emission_footprint`.
+
+An averaging-kernel column the surface-pressure screen leaves out after the
+last assimilated step is taped but not walked: the tape (and the reservation
+of a `MmapCSTapeStorage`) covers the steps through the last observation with
+`assimilate = true`.
+
+`evaluation = CSCostOnly()` computes the cost and the simulated values only:
+the forward run without a tape and no reverse pass (the result's `gradients`
+are empty; `checkpoint` and `tape_storage` are validated but not used); the
+default `CSCostAndGradient()` computes both.
 
 `scheme` is required: inversion callers must name the advection operator whose
 forward and adjoint they intend to use; there is no hidden numerical default.
@@ -432,6 +504,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                convection_workspace = nothing,
                                tape_storage = :device,
                                checkpoint::AbstractCheckpointSchedule = FullCheckpoint(),
+                               evaluation::AbstractCS4DVarEvaluation = CSCostAndGradient(),
                                preconditioner = nothing,
                                column_met = nothing)
     FT = eltype(panels_rm0[1])
@@ -474,76 +547,53 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     end
 
     emission_rates = _surface_rates_from_controls(physical_controls, nsteps, mesh, panels_rm0[1])
-    # (1) Simulated values and each observation's linear functional from one
-    # forward run.
-    simulated, functionals, stencils = _observe_cs_forward(
+    # (1) One forward run: the simulated values and each observation's linear
+    # functional, and, for a gradient, the tape of its reverse pass (recorded
+    # while the observations are sampled).
+    replay, step_dt = _observation_replay(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
-        scheme = scheme,
-        dt = dt,
-        schedule = schedule,
+        scheme, dt, schedule,
         flux_scale = FT(flux_scale),
-        cfl_limit = cfl_limit,
-        emission_rates = emission_rates,
-        diffusion_op = diffusion_op,
-        diffusion_workspace = diffusion_workspace,
-        diffusion_meteo = diffusion_meteo,
-        convection_op = convection_op,
-        convection_forcing = convection_forcing,
-        convection_workspace = convection_workspace,
-        column_met = column_met,
-        build_functionals = true)
-
-    # (2) Weighted departures (H(x) − y)/σ² scale each functional's weights.
-    # An observation that is not assimilated (a co-sample, or an
-    # averaging-kernel column screened out by its surface-pressure mismatch)
-    # keeps its residual but adds nothing to the cost or the forcing.
-    residuals = Vector{FT}(undef, length(observation_vec))
-    scales = Vector{FT}(undef, length(observation_vec))
-    observation_cost = zero(FT)
-    @inbounds for obs_idx in eachindex(observation_vec)
-        obs = observation_vec[obs_idx]
-        residual = simulated[obs_idx] - FT(obs.value)
-        sigma = FT(obs.sigma)
-        residuals[obs_idx] = residual
-        stencils[obs_idx].assimilated || (scales[obs_idx] = zero(FT); continue)
-        observation_cost += FT(0.5) * (residual / sigma)^2
-        scales[obs_idx] = residual / (sigma * sigma)
-    end
-    active = findall(s -> s.assimilated, stencils)
-    _log_unassimilated(observation_vec, stencils)
-
-    # (3) One taped run to the last sampled step and one reverse pass that
-    # adds each step's forcing at the step's end. Footprint `t` is then
-    # ∂J_obs/∂E_t for every step up to the last sampled step. Without any
-    # assimilated observation the observation gradient is zero.
+        cfl_limit, emission_rates,
+        diffusion_op, diffusion_workspace, diffusion_meteo,
+        convection_op, convection_forcing, convection_workspace,
+        column_met)
     physical_gradients = [_zero_panel_tuple_like(control.value) for control in physical_controls]
-    if !isempty(active)
-        last_step = maximum(idx -> observation_vec[idx].step, active)
-        forcing = _assemble_step_forcing(functionals[active], scales[active], mesh,
-                                         size(panels_rm0[1], 3), panels_rm0[1])
-        # The taped run stops at the last sampled step of the same schedule:
-        # a step inside a met window has not run that window's end stages.
-        footprint = only(_cs_surface_footprints(
-            panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
-            mesh, [_ZeroStart()];
-            scheme, checkpoint, dt, schedule, nsteps = last_step,
-            flux_scale = FT(flux_scale),
-            cfl_limit,
-            base_emission_rates = emission_rates,
-            diffusion_op, diffusion_workspace, diffusion_meteo,
-            convection_op, convection_forcing, convection_workspace,
-            tape_storage, forcing))
+    run = _observation_run(evaluation, checkpoint, replay, tape_storage, observation_vec)
+    observed = try
+        sampled = _observe_cs_forward!(run, replay, mesh, observation_vec; column_met,
+                                       build_functionals = _builds_functionals(evaluation))
 
-        # Physical-space gradient. In preconditioned mode this is
-        # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
-        # final reported gradient `∂J/∂x`. Window steps after the last
-        # observation do not affect the cost (`ignore_future`).
-        @inbounds for control_idx in eachindex(physical_controls)
-            _add_window_gradient!(physical_gradients[control_idx], footprint,
-                                  physical_controls[control_idx].window, one(FT);
-                                  ignore_future = true)
+        # (2) Weighted departures (H(x) − y)/σ² scale each functional's
+        # weights. An observation that is not assimilated (a co-sample, or an
+        # averaging-kernel column screened out by its surface-pressure
+        # mismatch) keeps its residual but adds nothing to the cost or the
+        # forcing.
+        residuals = Vector{FT}(undef, length(observation_vec))
+        scales = Vector{FT}(undef, length(observation_vec))
+        observation_cost = zero(FT)
+        @inbounds for obs_idx in eachindex(observation_vec)
+            obs = observation_vec[obs_idx]
+            residual = sampled.simulated[obs_idx] - FT(obs.value)
+            sigma = FT(obs.sigma)
+            residuals[obs_idx] = residual
+            sampled.stencils[obs_idx].assimilated || (scales[obs_idx] = zero(FT); continue)
+            observation_cost += FT(0.5) * (residual / sigma)^2
+            scales[obs_idx] = residual / (sigma * sigma)
         end
+        active = findall(s -> s.assimilated, sampled.stencils)
+        _log_unassimilated(observation_vec, sampled.stencils)
+
+        # (3) The reverse pass of the forward run. In preconditioned mode this
+        # is `∂J_obs/∂x` per control; in unconditioned mode it doubles as the
+        # final reported gradient `∂J/∂x`.
+        _add_observation_gradients!(physical_gradients, evaluation, run, replay, step_dt, physical_controls,
+                                    (; observations = observation_vec, sampled.functionals, scales, active,
+                                     mesh, prototype = panels_rm0[1]))
+        (; sampled.simulated, residuals, observation_cost, sampled.stencils)
+    finally
+        _end_taped_run!(run)
     end
 
     # Either: (a) apply T'^T to physical gradient and add χ for the
@@ -556,34 +606,28 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
             background_cost += FT(_background_cost_and_gradient!(gradients[idx],
                                                                   control_vec[idx]))
         end
-        reported_controls = control_vec
     else
-        gradients = [_zero_panel_tuple_like(control.value) for control in control_vec]
-        @inbounds for idx in eachindex(control_vec)
-            _physical_gradient_to_chi!(gradients[idx],
-                                       preconditioner_vec[idx],
-                                       control_vec[idx],
-                                       physical_controls[idx],
-                                       physical_gradients[idx])
-        end
+        gradients = _chi_gradients(evaluation, preconditioner_vec, control_vec, physical_controls,
+                                   physical_gradients)
         background_cost = FT(_half_chi_squared_norm(control_vec))
-        reported_controls = control_vec
     end
+    reported_controls = control_vec
+    gradients = _reported_gradients(evaluation, gradients, physical_gradients[1])
 
-    gradient_by_name = Dict{Symbol, typeof(gradients[1])}()
-    @inbounds for idx in eachindex(reported_controls)
+    gradient_by_name = Dict{Symbol, eltype(gradients)}()
+    @inbounds for idx in eachindex(gradients)
         gradient_by_name[reported_controls[idx].window.name] = gradients[idx]
     end
-    A2 = typeof(gradients[1][1])
+    A2 = typeof(physical_gradients[1][1])
     return CS4DVarResult{FT, A2}(
-        observation_cost + background_cost,
-        observation_cost,
+        observed.observation_cost + background_cost,
+        observed.observation_cost,
         background_cost,
-        simulated,
-        residuals,
+        observed.simulated,
+        observed.residuals,
         gradients,
         gradient_by_name,
         reported_controls,
         observation_vec,
-        stencils)
+        observed.stencils)
 end

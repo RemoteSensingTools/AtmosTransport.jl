@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **The 4D-Var evaluation runs the forward model once.** The forward run of
+  `cs_surface_flux_4dvar` that samples the observations now also records what
+  the reverse pass needs (the tape with `FullCheckpoint`, the K-step
+  checkpoints with `StrideCheckpoint`, the initial state with
+  `RevolveCheckpoint`), through the last step of an observation with
+  `assimilate = true`; the reverse pass starts at the last assimilated step
+  after the surface-pressure screen, once the observation forcing is
+  assembled. A cost-and-gradient evaluation (every optimizer step) is one
+  forward run and one reverse pass instead of two forward runs and one
+  reverse pass with `FullCheckpoint` (two runs instead of three with
+  `MmapCSTapeStorage`, which still counts its tape first), and one forward
+  run fewer with `StrideCheckpoint` and `RevolveCheckpoint` (their
+  propagation pass is the observation forward run). A column the screen
+  leaves out after the last assimilated step is taped but not walked. On a
+  C90 GPU (L40S, 48 steps, convection and diffusion) an evaluation takes
+  33–35 % less time with device `FullCheckpoint`, 25–26 % less with device
+  `StrideCheckpoint`, 7–29 % less with pinned-host `FullCheckpoint` and 0–9 %
+  less with mmap tapes. Cost, simulated values and gradients are bit-identical,
+  for every storage and schedule (on the GPU the cost is bit-identical and
+  the gradient agrees to the atomics' run-to-run spread). New keyword
+  `evaluation`: `CSCostAndGradient()` (the default) or `CSCostOnly()`, the
+  forward run alone (no tape, no reverse pass, empty `gradients`), which
+  `scripts/inversions/synthetic_experiment.jl` uses for its probe
+  observations; `cs_surface_flux_4dvar_optimize` rejects it (every optimizer
+  step needs the gradient). The adjoint tape's bitwise gate gains a 4D-Var
+  case with every observation operator, background terms and the
+  preconditioned space; its fixture is re-recorded from main, with every
+  earlier digest unchanged.
 - `[output]` settings are validated more strictly: `layers`, `split` and
   `format` must be strings, numeric settings reject Booleans, floats where an
   integer is required (e.g. `deflate_level = 1.0`) and numbers given as

@@ -40,7 +40,7 @@ _mesh() = AT.CubedSphereMesh(; Nc = NC_TEST, FT = Float64)
 _dc_at(offset::Real) = (t = T0_TEST + Second(round(Int, offset));
                         (year(t), month(t), day(t), hour(t), minute(t), second(t)))
 
-# The stencil `_observe_cs_forward` gives a column-mean observation.
+# The stencil `_observe_cs_forward!` gives a column-mean observation.
 _column_stencil(o) = AT.CSObservationStencil(o.objective.panel, o.objective.i, o.objective.j,
                                              o.sampling.steps, o.sampling.weights,
                                              zeros(Int, length(o.sampling.steps)),

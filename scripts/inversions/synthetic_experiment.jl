@@ -179,8 +179,9 @@ function _generate_observations(cfg::SyntheticExperimentConfig{FT},
     truth_window = AT.CSSurfaceFluxWindow(:truth_emission, 1)
     truth_control = AT.CSSurfaceFluxControl(truth_window, truth_emissions)
 
-    # Probe observations at every selected location — we don't need
-    # the cost / gradient, just `result.simulated` at each obs.
+    # Probe observations at every selected location — we need only
+    # `result.simulated` at each obs, so the evaluation is cost-only (one
+    # forward run, no tape, no reverse pass).
     locations = _observation_locations(cfg)
     probe_sigma = FT(1.0)   # placeholder; the cost computation is unused
     probe_obs = [AT.CSObservation(loc.step,
@@ -191,7 +192,7 @@ function _generate_observations(cfg::SyntheticExperimentConfig{FT},
     forward = AT.cs_surface_flux_4dvar(
         panels_rm, panels_m, panels_am, panels_bm, panels_cm,
         mesh, probe_obs, truth_control;
-        scheme = cfg.scheme, dt = cfg.dt)
+        scheme = cfg.scheme, dt = cfg.dt, evaluation = AT.CSCostOnly())
     clean = forward.simulated  # one Float per observation
 
     peak_signal = maximum(abs, clean)

@@ -3,8 +3,9 @@
 # Issue #20: the 4D-Var gradient in one reverse sweep.
 #
 # `cs_surface_flux_4dvar` evaluates `J_obs = ½ Σᵢ ((Hᵢ(x) − yᵢ)/σᵢ)²` and its
-# gradient with one taped forward run to the last observation step and one
-# reverse pass. Each observation is a fixed sparse linear functional of the
+# gradient with one forward run, which samples the observations and records
+# the tape through the last assimilated observation step, and one reverse
+# pass. Each observation is a fixed sparse linear functional of the
 # tracer mass after its step (weights from the replayed air mass), and its
 # weighted departure (Hᵢ − yᵢ)/σᵢ² times those weights is added to the adjoint
 # state at that step's end-of-step marker (`_CSStepEndRecord`, after
@@ -18,6 +19,7 @@
 # must agree to rounding: rtol 1e-12 in Float64 and 1e-5 in Float32.
 
 using Test
+using Logging: NullLogger, with_logger
 import AtmosTransport
 const AT = AtmosTransport
 const ADJ = AT.Adjoints
@@ -297,6 +299,105 @@ end
         @test storage.stages == full.stages
         @test _relerr(result.gradients, reference.gradients) <= 1e-13
     end
+end
+
+# ---------------------------------------------------------------------------
+# One forward run per evaluation: the observation forward records the tape
+# ---------------------------------------------------------------------------
+
+# Diffusion meteorology whose clock counts the steps the replay runs: the replay
+# reads `current_time` once at the start of each step, and without a diffusion
+# operator nothing else reads it.
+mutable struct _StepCountingClock
+    reads::Int
+end
+AT.MetDrivers.current_time(c::_StepCountingClock) = (c.reads += 1; 0.0)
+
+function _replayed_steps(f)
+    clock = _StepCountingClock(0)
+    result = f(clock)
+    return clock.reads, result
+end
+
+@testset "one forward run per evaluation; CSCostOnly runs it without a tape" begin
+    scheme = AT.PPMScheme(AT.MonotoneLimiter())
+    controls = _controls(P64)
+    # Assimilated observations through step 3 and a co-sample at step 4: the
+    # forward runs 4 steps, the tape and the reverse pass 3.
+    observations = [_observations(P64; last = 3);
+                    AT.CSObservation(4, AT.CSColumnMeanObjective(2, 2, 3), 0.08, 0.001; assimilate = false)]
+    evaluate(clock; kw...) = _fourdvar(P64, observations, controls; scheme, diffusion_meteo = clock, kw...)
+    n, footprint = _replayed_steps(clock -> AT.cs_surface_emission_footprint(
+        P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, AT.CSColumnMeanObjective(2, 2, 3);
+        scheme, dt = DT, diffusion_meteo = clock))
+    @test n == P64.nsteps                       # a footprint records during its one forward run
+    n, full = _replayed_steps(evaluate)
+    @test n == 4                                # one forward run, recording steps 1-3 (was 4 + 3)
+    storage = _CountingTapeStorage()
+    _fourdvar(P64, observations, controls; scheme, tape_storage = storage)
+    est = AT.cs_tape_byte_estimate(P64.m, P64.am[1:3], P64.bm[1:3], P64.cm[1:3], P64.mesh, scheme)
+    @test storage.stages == est.state_records    # the co-sample's step is not taped
+    n, stride = _replayed_steps(clock -> evaluate(clock; checkpoint = AT.StrideCheckpoint(2)))
+    @test n == 4 + 3                            # the forward run saves the checkpoints; windows re-record 3 steps
+    mktempdir() do root
+        n, mmap = _replayed_steps(clock -> evaluate(clock; tape_storage = AT.MmapCSTapeStorage(joinpath(root, "full"))))
+        @test n == 3 + 4                        # the counting run sizes the file, then one forward run
+        dir = joinpath(root, "cost")
+        n, cost = _replayed_steps(clock -> evaluate(clock; tape_storage = AT.MmapCSTapeStorage(dir),
+                                                    evaluation = AT.CSCostOnly()))
+        @test n == 4                            # the forward run alone: no tape, no reverse pass
+        @test !ispath(dir)                      # and no tape storage
+        @test cost.cost == full.cost && cost.observation_cost == full.observation_cost
+        @test cost.simulated == full.simulated && cost.residuals == full.residuals
+        @test [s.assimilated for s in cost.stencils] == [s.assimilated for s in full.stencils]
+        @test isempty(cost.gradients) && isempty(cost.gradient_by_name)
+        for result in (stride, mmap)
+            @test result.simulated == full.simulated
+            # Bit for bit on one thread (CPU atomics otherwise).
+            @test Threads.nthreads() == 1 ? result.gradients == full.gradients :
+                                            _relerr(result.gradients, full.gradients) <= 1e-13
+        end
+    end
+    # The optimizers need the gradient at every point.
+    @test_throws ArgumentError AT.cs_surface_flux_4dvar_optimize(
+        P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, observations, controls;
+        scheme, dt = DT, evaluation = AT.CSCostOnly())
+    # Background terms and the preconditioned space: the same costs without the
+    # gradient.
+    background = [AT.CSSurfaceFluxControl(c.window, c.value; background = map(zero, c.value), sigma = 2e-5)
+                  for c in controls]
+    @test _fourdvar(P64, observations, background; scheme, evaluation = AT.CSCostOnly()).cost ==
+          _fourdvar(P64, observations, background; scheme).cost
+    prec = AT.CSSurfaceFluxPreconditioner(AT.DiagonalCSCovariance(ntuple(_ -> fill(2e-5, P64.Nc, P64.Nc), 6)),
+                                          ntuple(_ -> zeros(P64.Nc, P64.Nc), 6), AT.LinearOptimType())
+    chi = [AT.CSSurfaceFluxControl(c.window, map(v -> v ./ 2e-5, c.value)) for c in controls]
+    chi_cost = _fourdvar(P64, observations, chi; scheme, preconditioner = prec, evaluation = AT.CSCostOnly())
+    chi_full = _fourdvar(P64, observations, chi; scheme, preconditioner = prec)
+    @test chi_cost.cost == chi_full.cost && isempty(chi_cost.gradients)
+end
+
+@testset "the reverse pass stops at the last assimilated step" begin
+    # An averaging-kernel column at step 4 that the surface-pressure screen
+    # rejects (retrieval surface at 2000 hPa, model about 1000 hPa): the
+    # forward run tapes step 4 too, but the walk starts at step 3.
+    O = AT.Observations
+    scheme, controls, met = AT.UpwindScheme(), _controls(P64), AT.CSObservationColumnMet(; p_top = 1000.0)
+    column = O.RetrievalColumn(; pressure_pa = [2e5, 1e5, 0.0], pressure_weight = [0.5, 0.5],
+                               averaging_kernel = [1.0, 1.0], prior_profile = [0.08, 0.08])
+    screened = AT.CSObservation(4, AT.CSRetrievalColumnObjective(3, 2, 2, 1.36e-3, column, O.DryInterfaces();
+        max_surface_pressure_mismatch_pa = 1000.0, mismatch_policy = O.SkipUnplaced()), 0.08, 0.001)
+    counted(observations) = (storage = _CountingTapeStorage();
+        r = _fourdvar(P64, observations, controls; scheme, tape_storage = storage, column_met = met); (storage, r))
+    kept, r_kept = counted(_observations(P64; last = 3))
+    taped, r_taped = with_logger(NullLogger()) do
+        counted([_observations(P64; last = 3); screened])
+    end
+    @test !r_taped.stencils[end].assimilated
+    states(n) = AT.cs_tape_byte_estimate(P64.m, P64.am[1:n], P64.bm[1:n], P64.cm[1:n], P64.mesh, scheme).state_records
+    @test kept.stages == states(3) && taped.stages == states(4)    # step 4 is taped ...
+    @test taped.reads == kept.reads == states(3)                    # ... but not walked
+    @test Threads.nthreads() == 1 ? r_taped.gradients == r_kept.gradients :
+                                    _relerr(r_taped.gradients, r_kept.gradients) <= 1e-13
 end
 
 # ---------------------------------------------------------------------------

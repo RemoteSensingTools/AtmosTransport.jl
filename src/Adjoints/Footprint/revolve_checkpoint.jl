@@ -25,22 +25,34 @@
 # Griewank-Walther Algorithm 799.
 # ---------------------------------------------------------------------------
 
-# The storage of the call holds one base step at a time: it is opened after
-# the initial propagation (which counts the step tapes for a storage that
-# reserves its extent) and rewound before each base step.
-function _collect_footprints(::RevolveCheckpoint, replay::_CSReplay, starts, dt;
-                             tape_storage, forcing)
-    n = _replay_nsteps(replay)
-    initial = _replay_snapshot(replay)
-    counter = _tape_size_counter(tape_storage)
-    _replay_steps!(replay, 1:n; recorder = counter)
+# The forward run keeps the initial state (and counts the step tapes for a
+# storage that reserves its extent); the storage of the call holds one base
+# step at a time: it is opened when the reverse pass starts and rewound before
+# each base step.
+struct _RevolveTapedRun{T, C, S}
+    taped_steps  :: Int
+    tape_storage :: T
+    counter      :: C
+    initial      :: S     # the replay state before step 1
+end
+
+_begin_taped_run(::RevolveCheckpoint, replay::_CSReplay, tape_storage, taped_steps::Int) =
+    _RevolveTapedRun(taped_steps, tape_storage, _tape_size_counter(tape_storage),
+                     _replay_snapshot(replay))
+
+_taped_steps(run::_RevolveTapedRun) = run.taped_steps
+_run_taped_steps!(run::_RevolveTapedRun, replay, on_step_end) =
+    (_replay_steps!(replay, _taped_range(run); recorder = run.counter, on_step_end); nothing)
+_end_taped_run!(::_RevolveTapedRun) = nothing
+
+function _reverse_taped_run(run::_RevolveTapedRun, replay::_CSReplay, starts, dt; nsteps::Int, forcing)
     final = _replay_snapshot(replay)
-    storage = _open_tape_storage(tape_storage,
-                                 maximum(s -> _counted_slot_bytes(counter, s:s), 1:n))
+    storage = _open_tape_storage(run.tape_storage,
+                                 maximum(s -> _counted_slot_bytes(run.counter, s:s), 1:nsteps))
     try
         return map(starts) do start
             _replay_restore!(replay, final)
-            lambda, footprints, ws = _start_reverse(replay, start)
+            lambda, footprints, ws = _start_reverse(replay, start, nsteps)
 
             function reverse_range!(snap_lo, lo, hi)
                 if hi == lo
@@ -61,10 +73,10 @@ function _collect_footprints(::RevolveCheckpoint, replay::_CSReplay, starts, dt;
                 return nothing
             end
 
-            reverse_range!(initial, 0, n)
+            reverse_range!(run.initial, 0, nsteps)
             _footprint_result(start, footprints, lambda, dt, replay)
         end
     finally
-        _release_opened_tape_storage!(storage, tape_storage)
+        _release_opened_tape_storage!(storage, run.tape_storage)
     end
 end
