@@ -10,7 +10,11 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 env:
-  ATMOSTR_STRUCTURE_BASE: origin/${{ github.base_ref || 'main' }}
+  # Pull requests compare with their target branch. A push to main compares
+  # with the commit main had before the push (HEAD^1 if that is unknown or
+  # cannot be fetched), so a merge, including a multi-commit rebase merge,
+  # validates the migration rows it adds.
+  ATMOSTR_STRUCTURE_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || github.event.before || 'HEAD^1' }}
 
 jobs:
   # Early feedback: the quick set of test/groups.toml (metadata gates, Aqua,
@@ -24,8 +28,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # HEAD^1 fallback for pushes
       - name: Fetch structure base
-        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
+        run: |
+          if [[ "$ATMOSTR_STRUCTURE_BASE" == origin/* ]]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
+          elif [[ "$ATMOSTR_STRUCTURE_BASE" =~ ^0*$ ]] ||
+               ! git fetch --no-tags --depth=1 origin "$ATMOSTR_STRUCTURE_BASE"; then
+            # New branch (all-zero SHA), unknown or unfetchable previous tip.
+            echo "ATMOSTR_STRUCTURE_BASE=HEAD^1" >> "$GITHUB_ENV"
+          fi
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
@@ -50,8 +63,17 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # HEAD^1 fallback for pushes
       - name: Fetch structure base
-        run: git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
+        run: |
+          if [[ "$ATMOSTR_STRUCTURE_BASE" == origin/* ]]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/${ATMOSTR_STRUCTURE_BASE#origin/}:refs/remotes/${ATMOSTR_STRUCTURE_BASE}"
+          elif [[ "$ATMOSTR_STRUCTURE_BASE" =~ ^0*$ ]] ||
+               ! git fetch --no-tags --depth=1 origin "$ATMOSTR_STRUCTURE_BASE"; then
+            # New branch (all-zero SHA), unknown or unfetchable previous tip.
+            echo "ATMOSTR_STRUCTURE_BASE=HEAD^1" >> "$GITHUB_ENV"
+          fi
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
