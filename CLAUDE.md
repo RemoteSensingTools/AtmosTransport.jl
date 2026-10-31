@@ -20,7 +20,11 @@ provides CPU/GPU portability.
   file maps, workflows, or setup; if so, update the relevant `README.md` or
   reference docs.
 - Before committing any non-trivial change, review the diff critically and get
-  a Codex review.
+  an independent review (Codex or a separate Claude agent, never the
+  implementer itself); physics changes get a physics-focused review.
+- Physics is documented first: equations, rationale, references and the
+  differences from TM5/GCHP go into the manual (`docs/src/theory/`,
+  `docs/src/for_tm5_gchp_users/`) before or with the code.
 - Prefer production fixes. If a shortcut is unavoidable, mark it `# HACK:` with
   a TODO and the intended clean replacement.
 
@@ -41,17 +45,32 @@ mass basis, supported operators, and load-time consistency gates.
   `run_driven_simulation(cfg)` in `src/Models/Runner/DrivenRunner/DrivenRunner.jl`
 - Top-level include order follows `src/AtmosTransport.jl`:
   `Architectures -> SectionTimer -> ConfigChecks -> LogLevels -> AtomicFiles ->`
-  `Quantities -> Parameters ->`
-  `Grids -> State -> Output -> Observations -> MetDrivers -> Operators -> Tape -> Adjoints ->`
-  `Regridding -> GriddedIO -> Preprocessing -> Visualization -> Models ->`
-  `Analysis -> Downloads`. `Adjoints.Footprint` and `Adjoints.Inversion` are submodules; Inversion
-  separates observation binding/IO from the solver.
+  `Quantities -> Parameters -> Grids -> State -> Output -> Observations ->`
+  `MetDrivers -> Operators -> Tape -> Adjoints -> Regridding -> GriddedIO ->`
+  `Preprocessing -> Models -> Diagnostics -> Extras`.
+- Submodules, in dependency order:
+  - `Operators`: `Diffusion -> SurfaceFlux -> Convection -> Advection ->
+    Chemistry -> StepPlans`. `StepPlans` composes a step and owns the
+    emission/diffusion midpoint of the advection Strang palindrome; Advection
+    only calls the abstract `apply_midpoint!` hook (`NoMidpoint` by default).
+  - `Adjoints`: core -> `Footprint` -> `Inversion` (`Observations`, `Solver`).
+  - `Preprocessing`, in pipeline order: `Common -> Vertical -> Spectral ->
+    MassClosure -> PhysicsInputs -> TransportBinary -> LatLonTarget /
+    ReducedGaussianTarget / CubedSphereTarget -> Sources (GEOS, ERA5, MERRA2)`;
+    the root only dispatches to sources.
+  - `Models`: `Physics -> Core -> InitialConditionIO -> Runner`.
+- `src/Extras` (Visualization, Analysis, Downloads) is non-core: no tests,
+  excluded from coverage.
 - `GriddedIO` owns the conventions of native gridded input files (coordinate
   names, fill policy, lat-lon orientation, source meshes, time decoding, flux
   units, `cs_native` and lat-lon flux-file schemas); initial-condition and
   surface-flux loaders read files through it, never with private helpers.
 
 - Later modules may depend on earlier ones, never the reverse.
+  `scripts/checks/check_structure.jl` enforces this against `src/LAYERS.toml`;
+  a PR that moves, renames or splits a folder or module declares it as rows in
+  `test/structure/migrations.toml` and regenerates the code map
+  (`--write-code-map`). See `docs/src/development/structure.md`.
 - Each `src/` folder has a `README.md` (purpose, entry points, file map,
   common tasks, invariants; `Downloads/sources/` is covered by its parent's);
   read it before editing the folder.
@@ -119,19 +138,34 @@ mass basis, supported operators, and load-time consistency gates.
   source mapping in `config/met_sources/`.
 - New operator: ship a `No<Operator>` default, keep the
   `apply!(state, meteo, grid, op, dt; workspace)` contract, wire it through
-  `TransportModel`, and test that the default path is bit-exact to the explicit
-  no-op path.
+  `TransportModel` and `Operators.StepPlans` (operators applied at the
+  palindrome midpoint go through its `TransportMidpoint`), and test that the
+  default path is bit-exact to the explicit no-op path.
 
 ## Testing And Gotchas
 
 - Tests should observe state through `get_tracer(state, name)` or
   `state.tracers.name`, not through input arrays cached before construction.
 - Prefer focused test files around the touched module before running full
-  `Pkg.test()`. Before pushing, run `scripts/dev/quick_gate.sh` (about 5 min:
-  quick set, `--changed` topics, required-keyword call check); the full suite
-  remains the requirement for merging into main.
+  `Pkg.test()`. Before pushing, run `scripts/dev/quick_gate.sh` (about 10 min:
+  quick set, `--changed` topics, structure check, required-keyword call check).
+- CI runs the full suite on Julia 1.10 (LTS) and 1.13 for every PR that changes
+  more than documentation; docs-only PRs run the quick set, the docs build and
+  the structure check. A PR merges when its own CI and codecov are green.
 - Refactors must reproduce the golden outputs bit for bit: `julia --project=. test/golden/run_goldens.jl check <ref> <new>`
   (see `test/golden/README.md`); a change that alters results states its deltas.
+  A golden check writes about 25 GB; use a large local disk (set `TMPDIR`
+  there as well; mmap adjoint tapes also need an explicit large directory).
+- Adjoint and tape changes keep gradients bitwise identical on CPU (Float64
+  and Float32, one thread): `test/helpers/cs_adjoint_tape_harness.jl` compares
+  against digests recorded from main (see `test/README.md`). GPU gradients
+  differ run to run (atomic adds), so bitwise checks run on CPU.
+- Imports between package modules are relative (`..X`, `...Preprocessing.Y`);
+  never `import AtmosTransport.X` inside `src/` (tests that load a sandboxed
+  copy of the package then bind the real one). Do not name a module like a
+  Base/Core/stdlib module or a package dependency: JET 0.9 rewrites `..Core` to
+  Julia's built-in `Core`. `test/core/test_undefined_names.jl` catches names
+  lost when code moves between modules.
 - Do not add `Real -> FT` outer constructors unless there is a real ambiguity;
   Julia already converts through synthesized constructors.
 - Parametric kwarg defaults like `Foo{FT}()` inside a `where FT` signature fail
@@ -149,4 +183,7 @@ mass basis, supported operators, and load-time consistency gates.
 - Preprocessing and binary formats: `docs/src/preprocessing/overview.md`,
   `docs/src/concepts/binary_format.md`
 - TM5/GCHP mappings: `docs/src/for_tm5_gchp_users/`
+- Code structure, migration rows and the code map: `docs/src/development/structure.md`,
+  `docs/src/development/code_map.md`
+- Test tiers, the adjoint bitwise harness and CI policy: `test/README.md`
 - Historical design and debugging records: `docs/memos/`, `docs/resources/`
