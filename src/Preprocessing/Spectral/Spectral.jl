@@ -15,7 +15,7 @@ using ...Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, GLOBAL_MEAN_DRY_SURFACE
     GLOBAL_MEAN_SPECIFIC_HUMIDITY, ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
 using ...Grids: HybridSigmaPressure, ncells, nrings, nlevels, n_levels
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis
-using ..Core: check_column_weight_levels, spread_column_correction!, AbstractColumnWeights,
+using ..Common: check_column_weight_levels, spread_column_correction!, AbstractColumnWeights,
     LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY, MassWeightedColumn, ReducedGaussianTargetGeometry,
     nlat, nlon, target_spectral_truncation
 using LinearAlgebra: mul!

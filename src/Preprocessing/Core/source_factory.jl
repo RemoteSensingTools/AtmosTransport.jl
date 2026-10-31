@@ -61,7 +61,7 @@ function reject_unsupported_flux_keys(ctor::Type, cfg)
     return nothing
 end
 
-# Parse common choices in Core; native validation still follows overrides.
+# Parse common choices in Common; native validation still follows overrides.
 column_balance_weights_option(pre_cfg) =
     parse_column_balance_weights(pre_cfg, "[preprocessing]")
 flux_construction_kwargs(pre_cfg) =

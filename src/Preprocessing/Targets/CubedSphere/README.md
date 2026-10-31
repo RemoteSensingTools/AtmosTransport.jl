@@ -1,4 +1,4 @@
-# CubedSphere
+# Preprocessing.CubedSphereTarget
 
 Cubed-sphere spectral preprocessing, conservative LL-binary regridding, nested coarsening and contracts.
 
@@ -15,7 +15,7 @@ Cubed-sphere spectral preprocessing, conservative LL-binary regridding, nested c
 
 ## Depends on
 
-Core, Spectral, MassClosure and TransportBinary; LatLon spectral staging/logging; lower geometry, conservative regridding, binary IO and replay APIs. No parent or source implementation.
+Common, Spectral, MassClosure and TransportBinary; LatLonTarget spectral staging/logging; lower geometry, conservative regridding, binary IO and replay APIs. No parent or source implementation.
 
 ## Used by
 

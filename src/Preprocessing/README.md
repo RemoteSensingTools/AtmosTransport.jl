@@ -118,10 +118,10 @@ ERA5 N320 and MERRA-2 to CS:
 
 - [`Preprocessing.jl`](Preprocessing.jl) — module wiring and public facade.
 - [`entrypoint.jl`](entrypoint.jl) — TOML/configuration dispatch, date iteration and cross-day carry.
-- [Core](Core/README.md), [Vertical](Vertical/README.md), [Spectral](Spectral/README.md),
+- [Common](Core/README.md), [Vertical](Vertical/README.md), [Spectral](Spectral/README.md),
   [MassClosure](MassClosure/README.md), [PhysicsInputs](PhysicsInputs/README.md) — ordered pipeline stages.
 - [TransportBinary](TransportBinary/README.md) — writer, evidence and window protocols.
-- [Targets](Targets/README.md) — LatLon, ReducedGaussian and CubedSphere submodules.
+- [Targets](Targets/README.md) — `LatLonTarget`, `ReducedGaussianTarget` and `CubedSphereTarget` submodules.
 - [Sources](Sources/README.md) — independent GEOS, ERA5 and MERRA2 submodules.
 
 ## Common Tasks
@@ -216,7 +216,7 @@ is required. Binary metadata and payload sizes delegate to MetDrivers.BinaryForm
 
 ## Depends on
 
-Core → Vertical → Spectral → MassClosure → PhysicsInputs, then TransportBinary
+Common → Vertical → Spectral → MassClosure → PhysicsInputs, then TransportBinary
 and Targets, then the independent GEOS/ERA5/MERRA2 sources. Sources import lower
 stages directly. No lower stage imports a source or the parent facade.
 
@@ -227,7 +227,7 @@ The preprocessing CLI and package facade; existing public script and model impor
 ## Shared helpers owned here
 
 Only the configuration entrypoint and dispatch. Source-factory protocols and
-filename formatting live in Core; concrete readers and native day drivers live
+filename formatting live in Common; concrete readers and native day drivers live
 in their source modules. Shared CS endpoint mass/pin/delta helpers live in
 Targets/CubedSphere; shared dry convection conversion lives in PhysicsInputs.
 

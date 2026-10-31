@@ -1,4 +1,4 @@
-# LatLon
+# Preprocessing.LatLonTarget
 
 Lat-lon spectral workspaces, humidity staging, contracts and the daily binary workflow.
 
@@ -11,7 +11,7 @@ Lat-lon spectral workspaces, humidity staging, contracts and the daily binary wo
 
 ## Depends on
 
-Core, Vertical/Spectral, MassClosure, PhysicsInputs and TransportBinary; lower binary IO, replay, mass basis, atomic publication, FFTW and NetCDF/GRIB APIs. No parent, source, RG or CS implementation.
+Common, Vertical/Spectral, MassClosure, PhysicsInputs and TransportBinary; lower binary IO, replay, mass basis, atomic publication, FFTW and NetCDF/GRIB APIs. No parent, source, RG or CS implementation.
 
 ## Used by
 

@@ -57,8 +57,9 @@ mass construction or regridding, flux balancing, and `cm` diagnosis (with an
 optional dry-mass pin where the source has one); every path ends in the same
 write-time replay and positivity gates.
 
-Target workflows live in `Targets/LatLon`, `Targets/ReducedGaussian` and
-`Targets/CubedSphere`; shared binary APIs live in `TransportBinary`. Native
+Target workflows are the submodules `LatLonTarget`, `ReducedGaussianTarget` and
+`CubedSphereTarget` (folders `Targets/LatLon`, `Targets/ReducedGaussian`,
+`Targets/CubedSphere`); shared binary APIs live in `TransportBinary`. Native
 readers and day drivers live in the independent `GEOS`, `ERA5` and `MERRA2`
 submodules under `Sources/`. The parent owns only entrypoint dispatch.
 
@@ -235,7 +236,7 @@ export coarsen_nested_cs_transport_binary
 
 # Pipeline stages load in dependency order. The facade preserves script names.
 include("Core/Core.jl")
-import .Core: check_native_closure_config, AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings,
+import .Common: check_native_closure_config, AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings,
     AbstractGEOSSettings, AbstractMetReader, AbstractMetSettings, AbstractTargetGeometry,
     COLUMN_WEIGHT_NAMES, ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings,
     FlushingLogger, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY,
@@ -515,7 +516,7 @@ import .TransportBinary: AbstractBinaryWriter,
     writer_final_path,
     writer_staging_path
 include("Targets/LatLon/LatLon.jl")
-import .LatLon: AbstractQVWorkspace,
+import .LatLonTarget: AbstractQVWorkspace,
     LLNextDayFields,
     LLSpectralUnifiedDriverContext,
     LLWorst,
@@ -557,7 +558,7 @@ import .LatLon: AbstractQVWorkspace,
     verify_ll_window_contract!,
     verify_substep_positivity_ll!
 include("Targets/ReducedGaussian/ReducedGaussian.jl")
-import .ReducedGaussian: RGSpectralUnifiedDriverContext,
+import .ReducedGaussianTarget: RGSpectralUnifiedDriverContext,
     RGWorst,
     ReducedFidelitySampler,
     ReducedGaussianContract,
@@ -597,7 +598,7 @@ import .ReducedGaussian: RGSpectralUnifiedDriverContext,
     verify_rg_window_contract!,
     verify_substep_positivity_rg!
 include("Targets/CubedSphere/CubedSphere.jl")
-import .CubedSphere: CSSpectralUnifiedDriverContext,
+import .CubedSphereTarget: CSSpectralUnifiedDriverContext,
     CSWorst,
     CubedSphereContract,
     CubedSpherePreprocessWorkspace,
@@ -704,8 +705,8 @@ import .MERRA2: GEOSChemArchive,
     read_merra2_window_fields,
     validate_merra2_settings
 
-import .Core: ALL_FLUX_KEYS, FLUX_CONSTRUCTION_KEYS, build_met_settings, column_balance_weights_option, flux_construction_kwargs, load_met_settings, native_output_filename, reject_unsupported_flux_keys, settings_constructor, supported_flux_keys
-import .CubedSphere: cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
+import .Common: ALL_FLUX_KEYS, FLUX_CONSTRUCTION_KEYS, build_met_settings, column_balance_weights_option, flux_construction_kwargs, load_met_settings, native_output_filename, reject_unsupported_flux_keys, settings_constructor, supported_flux_keys
+import .CubedSphereTarget: cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
 import .PhysicsInputs: TM5ConvectionColumnScratch, allocate_tm5_convection_column_scratch, moist_to_dry_cmfmc!, moist_to_dry_dtrain!
 include("entrypoint.jl")
 
