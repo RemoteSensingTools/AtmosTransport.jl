@@ -75,12 +75,8 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
                        grid::AtmosGrid{<:LatLonMesh},
                        scheme::AbstractAdvectionScheme;
                        workspace::AdvectionWorkspace,
-                       diffusion_workspace = nothing,
                        cfl_limit::Real = DEFAULT_CFL_LIMIT,
-                       diffusion_op::AbstractDiffusion = NoDiffusion(),
-                       emissions_op::AbstractSurfaceFluxOperator = NoSurfaceFlux(),
-                       meteo = nothing,
-                       dt::Union{Nothing, Real} = nothing) where {B <: AbstractMassBasis}
+                       midpoint::AbstractMidpointHook = NoMidpoint()) where {B <: AbstractMassBasis}
     m = state.air_mass
     am, bm, cm = fluxes.am, fluxes.bm, fluxes.cm
 
@@ -90,36 +86,6 @@ function strang_split!(state::CellState{B}, fluxes::StructuredFaceFluxState{B},
 
     strang_split_mt!(state.tracers_raw, m, am, bm, cm, scheme, workspace;
                      cfl_limit = cfl_limit,
-                     diffusion_op = diffusion_op,
-                     diffusion_workspace = diffusion_workspace,
-                     emissions_op = emissions_op,
-                     tracer_names = state.tracer_names,
-                     meteo = meteo,
-                     grid = grid,
-                     dt = dt)
+                     midpoint = midpoint)
     return nothing
 end
-
-"""
-    palindrome_center!(diffuse!, emit!, diffusion_op, emissions_op, dt)
-
-Physics at the center of one transport palindrome of length `dt`. Without a
-surface-flux operator (`NoSurfaceFlux`) the center is one vertical diffusion
-solve, `diffuse!(dt)` (a no-op for `NoDiffusion`). With one, the diffusion
-operator's coupling orders the two through `surface_flux_center!`:
-`V(dt/2) → S(dt) → V(dt/2)` (`SplitSurfaceFluxCoupling`) or `S(dt) → V(dt)`
-(`DiffusiveSurfaceFluxBoundary`).
-
-`diffuse!(τ)` and `emit!(τ)` apply vertical diffusion and the surface flux
-over `τ` to the caller's state. Every production palindrome (cubed-sphere,
-lat-lon and reduced-Gaussian) builds its center with this function. The
-cubed-sphere adjoint replays a run with a surface-flux operator (a footprint
-is the derivative with respect to its emissions), so it calls
-`surface_flux_center!` with the same coupling.
-"""
-@inline palindrome_center!(diffuse!::D, emit!::E, _diffusion_op, ::NoSurfaceFlux,
-                           dt) where {D, E} = (diffuse!(dt); nothing)
-
-@inline palindrome_center!(diffuse!::D, emit!::E, diffusion_op,
-                           ::AbstractSurfaceFluxOperator, dt) where {D, E} =
-    surface_flux_center!(diffuse!, emit!, surface_flux_coupling(diffusion_op), dt)

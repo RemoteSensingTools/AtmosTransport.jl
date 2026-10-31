@@ -424,6 +424,13 @@ rather than rely on the operator to subcycle internally.
 
 ## Strang palindrome and temporal accuracy
 
+StepPlan owns emission/diffusion composition. Advection calls the abstract
+`apply_midpoint!` hook on its active buffers between palindrome halves; the
+default `NoMidpoint` performs no work. StepPlan supplies `TransportMidpoint`,
+including physics workspaces, tracer selection, timing and CS recorder hooks.
+The adjoint replays the same plan and transposes its records in reverse order.
+Direct advection callers compose physics through `StepPlans.transport_step!`.
+
 The full transport step is the time-symmetric composition
 
 ```text

@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
 using Test
+using AtmosTransport.Operators.StepPlans: transport_step!
 using Logging, Random
 
 using AtmosTransport
@@ -305,16 +306,7 @@ end
             @test rm_final === rm_ping
             @test m_final === m_ping
 
-            # Contract: the ping-pong path needs a buffer-aware (2-arg) midpoint!;
-            # a 0-arg midpoint! would silently mutate the stale buffer, so it must
-            # error loudly instead.
-            rm_bad = ntuple(p -> cat(panels_rm0[p], panels_rm2[p]; dims = 4), 6)
-            m_bad = deepcopy(panels_m0)
-            ws_bad = CSAdvectionWorkspace(mesh, Nz; n_tracers = Nt)
-            @test_throws ArgumentError strang_split_cs_mt_pingpong!(
-                rm_bad, m_bad, ws_bad.rm_4d_pp_buf, ws_bad.m_pp_buf,
-                panels_am, panels_bm, panels_cm,
-                mesh, scheme, ws_bad; subcycle_count = 1, midpoint! = () -> nothing)
+
         end
     end
 
@@ -479,12 +471,11 @@ end
         initial_air = total_air_mass(state)
         expected = zero(FT)
         for _ in 1:6
-            strang_split!(state, fluxes, grid, PPMScheme();
+            transport_step!(state, fluxes, grid, PPMScheme(), dt;
                           workspace=ws,
                           cfl_limit=FT(0.95),
                           diffusion_op=NoDiffusion(),
-                          emissions_op=emissions,
-                          dt=dt)
+                          emissions_op=emissions)
             expected += source_rate * dt
             storage = total_mass(state, :FossilCO2)
             @test isapprox(storage, expected; rtol=1e-12, atol=1e-8)

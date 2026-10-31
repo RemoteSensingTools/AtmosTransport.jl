@@ -199,8 +199,9 @@ function _fields_string(fields::OutputFieldSpec, tracer_keys)
            "written_tracers=$(written)"
 end
 
-function _validate_snapshot_inputs(frames, mesh, mass_basis_sym::Symbol)
-    isempty(frames) && throw(ArgumentError("write_snapshot_netcdf requires at least one SnapshotFrame"))
+function _validate_snapshot_inputs(frames, mesh, mass_basis_sym::Symbol;
+                                   writer::AbstractString = "write_snapshot_netcdf")
+    isempty(frames) && throw(ArgumentError("$(writer) requires at least one SnapshotFrame"))
     _check_same_keys(frames)
     _check_mass_basis(frames, mass_basis_sym)
     _check_frame_shapes(frames, mesh)
@@ -261,8 +262,10 @@ end
 
 Write topology-aware runtime snapshots to NetCDF.
 
-The output contains full per-level VMR fields, stored air mass, layer
-mass-per-area diagnostics, column air mass per area, and tracer column means.
+By default the output contains full per-level VMR fields, stored air mass, layer
+mass-per-area diagnostics, column air mass per area, and tracer column means;
+`fields` (an `OutputFieldSpec`) selects tracers, layers and diagnostics. Every
+written tracer also gets its Float64 `<tracer>_total_mass(time)`.
 Reduced-Gaussian files also carry a legacy lon/lat raster view for quick plots.
 Cubed-sphere files carry panel lon/lat coordinates and a `cubed_sphere`
 grid-mapping variable modeled after GEOS-Chem diagnostics.

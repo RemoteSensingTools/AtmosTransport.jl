@@ -37,15 +37,18 @@ For each ✅ combination, the authoritative dispatch method:
 
 ### Advection
 
-- **LatLon** — rank-4 Strang palindrome `X→Y→Z→V(dt)→Z→Y→X` in
+- **LatLon** — rank-4 Strang palindrome `X→Y→Z→midpoint→Z→Y→X` in
   [`Advection/Structured/StrangSplitting.jl`](Advection/Structured/StrangSplitting.jl)
-- **RG** — face-indexed `H→V(dt)→H` with `UpwindScheme` in
+- **RG** — face-indexed `H→Z→midpoint→Z→H` with `UpwindScheme` in
   [`Advection/Structured/strang_apply.jl`](Advection/Structured/strang_apply.jl);
   higher-order schemes are rejected
 - **CS** — panel-oriented packed-tracer
   [`strang_split_cs_mt!`](Advection/CubedSphere/CubedSphereStrang.jl) for split-sweep
   schemes. Lin–Rood uses its own H/Z palindrome and retains the single-tracer
   vertical sweep helpers in Advection/CubedSphere
+
+The midpoint physics is supplied by [`StepPlan/midpoint.jl`](StepPlan/midpoint.jl)
+through Advection’s `AbstractMidpointHook`; the default `NoMidpoint` does no work.
 
 ### Diffusion
 

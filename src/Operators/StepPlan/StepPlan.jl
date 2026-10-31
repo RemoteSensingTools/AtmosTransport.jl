@@ -25,20 +25,28 @@ module StepPlans
 
 using ...SectionTimer
 using ...Architectures: copy_arrays!
-using ...State: CellState, CubedSphereState, ConstantField, ntracers
+using ...State: CellState, CubedSphereState, ConstantField, ntracers, FaceIndexedFluxState
 using ...Grids: AtmosGrid, CubedSphereMesh
 import ..apply!
+import ..Advection: apply_midpoint!
+using ..Advection: AbstractMidpointHook
 import ..operator_state, ..restore_operator_state!, ..reset_operator_state!
 using ..Operators: _copy_state, _copy_state!, _zero_state!
 import ..AbstractStepRecorder, ..NoStepRecorder,
+       ..record_center!, ..record_diffusion!, ..record_emission!,
        ..record_convection!, ..record_air_mass_reset!, ..record_chemistry!
 using ..Advection: fill_panel_halos!, AbstractAdvectionScheme, LinRoodPPMScheme, NoAdvection,
                    CSAdvectionWorkspace, CSLinRoodAdvectionWorkspace, needs_column_scratch,
                    AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck
-using ..Diffusion: NoDiffusion, DiffusionWorkspace
-using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator
+using ..Diffusion: AbstractDiffusion, NoDiffusion, DiffusionWorkspace,
+                   apply_vertical_diffusion_vmr!, preflight_diffusion,
+                   uses_diffusive_surface_flux_boundary, surface_flux_coupling, surface_flux_center!
+using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator,
+                     apply_surface_flux!, center_emission_deposit
 using ..Convection: AbstractConvection, NoConvection
 using ..Chemistry: AbstractChemistryOperator, NoChemistry, ExponentialDecay, CompositeChemistry
+
+include("midpoint.jl")
 
 export StepPlan, StepOperators, StepTiming
 export AbstractStepStage, TransportStage, ConvectionStage, ChemistryBeforeStage,
@@ -362,30 +370,20 @@ Apply one stage to `ops.state`.
 """
 function execute_stage! end
 
-# Transport. The production call (`NoStepRecorder`) is the plain topology
-# `apply!`; a recorder rides along on the cubed-sphere palindrome.
+# Transport. Production and adjoint replay both run `transport_step!`
+# (`midpoint.jl`); a recorder rides along on the cubed-sphere palindrome.
 execute_stage!(::TransportStage, ops::StepOperators, timing::StepTiming, meteo,
                recorder::AbstractStepRecorder) =
     _transport!(ops, timing.dt, meteo, recorder)
 
-function _transport!(ops::StepOperators, dt, meteo, ::NoStepRecorder)
-    SectionTimer.@section :advection apply!(ops.state, ops.fluxes, ops.grid, ops.advection, dt;
-           workspace = ops.advection_workspace,
-           diffusion_workspace = ops.diffusion_workspace,
-           diffusion_op = ops.diffusion,
-           emissions_op = ops.emissions,
-           meteo = meteo)
-    return nothing
-end
-
 function _transport!(ops::StepOperators, dt, meteo, recorder::AbstractStepRecorder)
-    SectionTimer.@section :advection apply!(ops.state, ops.fluxes, ops.grid, ops.advection, dt;
-           workspace = ops.advection_workspace,
-           diffusion_workspace = ops.diffusion_workspace,
-           diffusion_op = ops.diffusion,
-           emissions_op = ops.emissions,
-           meteo = meteo,
-           recorder = recorder)
+    SectionTimer.@section :advection transport_step!(
+        ops.state, ops.fluxes, ops.grid, ops.advection, dt;
+        workspace = ops.advection_workspace,
+        diffusion_workspace = ops.diffusion_workspace,
+        diffusion_op = ops.diffusion,
+        emissions_op = ops.emissions,
+        meteo, recorder)
     return nothing
 end
 

@@ -45,9 +45,12 @@ Geometry and topology decisions come from
   `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order
 - `SectionTimer.jl` — foundation timing and optional NVTX instrumentation,
   loaded before operators and models
-- `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), dates
-  (`config_date`, accepting TOML dates or strings), the `float_type` parser, and
-  known-key checks with "did you mean" suggestions, shared by `Output`, `Preprocessing` and `Models`
+- `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), reals
+  (`config_float`, rejecting Booleans), dates (`config_date`, accepting TOML
+  dates or strings), string choices from a NamedTuple table with alias keys
+  (`parse_choice`), the `float_type` parser, and known-key
+  checks with "did you mean" suggestions, shared by `Output`, `Preprocessing`
+  and `Models`
 - `AtomicFiles.jl` — publish a file only when it is complete: a sibling
   staging file created with `O_EXCL` and mode `0o666 & ~umask`, moved onto
   the target by one replacing rename on success, removed on error or when the
@@ -151,3 +154,10 @@ convection and diffusion. Its residual, deposit and carry helpers retain the
 original precision and compensated-sum policy.
 
 # shared: _ledger_residual, _ledger_deposit, _load_ledger_carry, _store_ledger_carry!
+
+`_total_accumulator_type(backend)` is the backend trait for the precision that
+diagnostic reduction kernels may use (Float64, Float32 on Metal, set by the
+Metal extension). Output's snapshot column sums select their device or
+host-slab path with it, as `compensated_total` does.
+
+# shared: _total_accumulator_type
