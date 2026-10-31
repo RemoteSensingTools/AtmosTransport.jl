@@ -16,6 +16,33 @@
 - `DrivenSimulation` no longer interpolates `sim.expected_air_mass` every
   step (one point-operation launch per step on device); the window-end
   air-mass reset, its only reader, computes it. Results are unchanged.
+- **Breaking (adjoint API): on-disk tapes need an explicit scratch
+  directory and reserve their space before recording.** `tape_storage = :mmap`
+  and the `tape_path` keyword are removed; pass
+  `tape_storage = MmapCSTapeStorage(dir)` (to `cs_surface_emission_footprint`,
+  `cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian` and
+  `cs_surface_flux_4dvar`). The temporary-directory default, which put tens
+  of GB in `TMPDIR` or `/tmp` and ended in a SIGBUS when that volume filled,
+  is gone. Each call counts its largest tape on the forward replay (one extra
+  forward run with `FullCheckpoint`), checks that `dir` has that much space
+  plus 10 % free, and reserves it with `fallocate` in an unlinked file that is
+  mapped once and unmapped and closed when the call returns (no mapping per
+  slot access, no space held until a GC); too little space is an
+  `ArgumentError` with the required and available bytes, before recording,
+  and a file system that cannot reserve blocks (no `fallocate`, ZFS) is
+  rejected by name.
+  Tape persistence is removed with it: `load_mmap_tape`, `get_record`,
+  `finalize_tape!`, the manifest and the per-window `window_NNNNN/` and
+  `step_NNNNN/` tape directories (nothing read a saved tape back). Stride and
+  Revolve now record all windows of a call into one storage, so a
+  pre-constructed `DeviceCSTapeStorage` or `PinnedHostCSTapeStorage` serves
+  every checkpoint schedule. Gradients are bit-identical.
+- `test/core/test_cs_adjoint_tape_bitwise.jl` gates the adjoint tape: every
+  tape storage and checkpoint schedule must reproduce the device
+  `FullCheckpoint` gradients (footprints, seeded and multi-objective
+  footprints, 4D-Var cost and gradient) bit for bit on rough fields that reach
+  every PPM limiter branch, and the digests recorded from main on the
+  reference host.
 
 ## 0.6.0 — 2026-10-20
 

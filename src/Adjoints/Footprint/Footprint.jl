@@ -25,9 +25,9 @@ using ...Parameters: DEFAULT_CFL_LIMIT
 using ...Tape: AbstractCSTapeStorage, AbstractCheckpointSchedule, AirMassRead, DeviceCSTapeStorage,
     FullCheckpoint, RevolveCheckpoint, StrideCheckpoint, TracerMassRead, _CSAirMassResetRecord,
     _CSConvectionRecord, _CSDiffusionRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
-    _CSSweepRecord, _build_window_storage, _bytes_per_panel_tuple, _resolve_tape_path,
-    _stage_panels, _tape_panels, _tape_storage, checkpoint_window_count, checkpoint_window_range,
-    finalize_tape!
+    _CSSweepRecord, _bytes_per_panel_tuple, _needs_tape_size, _open_tape_storage,
+    _release_opened_tape_storage!, _rewind_tape_storage!, _stage_panels, _tape_panels,
+    _tape_slot_bytes, _validate_tape_storage, checkpoint_window_count, checkpoint_window_range
 import ..Adjoints: require_adjoint_support
 using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, CSAdjointLinRoodScheme,
     CSAdjointSupportedScheme, CSCellAverageObjective, CSPlacedPointObjective,

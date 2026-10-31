@@ -379,8 +379,8 @@ default: one step of `dt` per met window, the full
 operator suite every step), with the controls' rates in its surface-flux
 operator. Steps after the last sampled step do not affect the cost and get a
 zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
-`RevolveCheckpoint()`) and `tape_storage` / `tape_path` select how the one
-taped run is stored, as in `cs_surface_emission_footprint`.
+`RevolveCheckpoint()`) and `tape_storage` select how the one taped run is
+stored, as in `cs_surface_emission_footprint`.
 
 `scheme` is required: inversion callers must name the advection operator whose
 forward and adjoint they intend to use; there is no hidden numerical default.
@@ -431,7 +431,6 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                convection_forcing = nothing,
                                convection_workspace = nothing,
                                tape_storage = :device,
-                               tape_path::Union{Nothing, AbstractString} = nothing,
                                checkpoint::AbstractCheckpointSchedule = FullCheckpoint(),
                                preconditioner = nothing,
                                column_met = nothing)
@@ -445,11 +444,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     _validate_control_shapes(control_vec, mesh, "surface-flux control")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
-    # Schedule, storage and tape-path checks before the forward run, not after
-    # it. They create nothing: the taped run below creates `tape_path`.
-    _require_tape_storage_supported(scheme, checkpoint, tape_storage)
-    _require_tape_path_supported(scheme, tape_path)
-    _validate_tape_path(tape_storage, tape_path)
+    # Storage checks before the forward run, not after it.
+    _require_tape_storage_supported(scheme, tape_storage)
 
     seen = Set{Symbol}()
     for control in control_vec
@@ -537,7 +533,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
             base_emission_rates = emission_rates,
             diffusion_op, diffusion_workspace, diffusion_meteo,
             convection_op, convection_forcing, convection_workspace,
-            tape_storage, tape_path, forcing))
+            tape_storage, forcing))
 
         # Physical-space gradient. In preconditioned mode this is
         # `∂J_obs/∂x` per control; in unconditioned mode it doubles as the

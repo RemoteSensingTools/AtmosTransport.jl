@@ -33,12 +33,12 @@ using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractU
     ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
 using ..Tape: AbstractCheckpointSchedule, CSTapeSlot, DeviceCSTapeStorage, FullCheckpoint,
     MmapCSTapeSlot, MmapCSTapeStorage, PinnedHostCSTapeSlot, PinnedHostCSTapeStorage,
-    RevolveCheckpoint, StrideCheckpoint, finalize_tape!, get_record, load_mmap_tape
+    RevolveCheckpoint, StrideCheckpoint
 
 export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
     CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
     CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
-    MmapCSTapeSlot, PinnedHostCSTapeSlot, finalize_tape!, load_mmap_tape, get_record,
+    MmapCSTapeSlot, PinnedHostCSTapeSlot,
     AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint,
     evaluate_objective, require_adjoint_support, adjoint_support
 

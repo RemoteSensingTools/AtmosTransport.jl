@@ -11,7 +11,7 @@ import CUDA
 import AtmosTransport.Tape:
     PinnedHostCSTapeStorage,
     PinnedHostCSTapeSlot,
-    MmapCSTapeStorage,
+    _MmapTapeFile,
     _allocate_tape_slot,
     _register_tape_read_backend!,
     _mmap_prepare_for_panels!,
@@ -79,9 +79,10 @@ function stage_panels!(slot::PinnedHostCSTapeSlot,
     return slot
 end
 
-# Plan 26 Phase A.1 — Mmap tape policy on GPU. `_mmap_prepare_for_panels!`
-# is called from `_allocate_tape_slot(::MmapCSTapeStorage, panels)` BEFORE
-# disk reservation; it records the CuArray backend of the per-role read
+# Mmap tape policy on GPU. `_mmap_prepare_for_panels!` is called from
+# `_allocate_tape_slot(::_MmapTapeFile, panels)` (the scratch file an
+# `MmapCSTapeStorage` call opens) before the span is handed out; it records
+# the CuArray backend of the per-role read
 # caches (allocated on first read) and installs the CUDA.synchronize hook
 # so subsequent `copyto!(::Array, ::CuArray)` and
 # `copyto!(::CuArray, ::Array)` operations against the mmap views are
@@ -89,7 +90,7 @@ end
 # `stage_panels!` is needed: both default to mmap-write / mmap-read,
 # and CUDA.jl provides synchronous `copyto!` between `Array` and
 # `CuArray` of matching element type and shape.
-function _mmap_prepare_for_panels!(storage::MmapCSTapeStorage,
+function _mmap_prepare_for_panels!(storage::_MmapTapeFile,
                                    panels::NTuple{6,<:CuArray})
     storage.synchronize = CUDA.synchronize
     _register_tape_read_backend!(storage, panels)

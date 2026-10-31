@@ -136,7 +136,8 @@ end
                 scheme, dt = 1.0, kwargs...)
         full = run()
         @test _footprints_equal(full, run(; checkpoint = AT.FullCheckpoint()))
-        storages = scheme isa AT.LinRoodPPMScheme ? (:device,) : (:device, :mmap)
+        storages = scheme isa AT.LinRoodPPMScheme ? (:device,) :
+                   (:device, AT.MmapCSTapeStorage(mktempdir()))
         for checkpoint in (AT.StrideCheckpoint.((1, 2, 3, 5, 6, 12))..., AT.RevolveCheckpoint()),
             tape_storage in storages
             result = run(; checkpoint, tape_storage)

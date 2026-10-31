@@ -100,10 +100,12 @@ because none of them compress the payload:
   * `tape_storage = :pinned_host` — `state_bytes` is the pinned host
     RAM cost; at most two staged panel sets (one per read role: air
     mass and tracer mass) are mirrored on the device at a time.
-  * `tape_storage = :mmap` — `state_bytes` is the on-disk footprint
-    of `records.bin`. On a GPU the device read caches hold one
-    `NTuple{6, T}` per read role and distinct shape signature on top
-    of that.
+  * `tape_storage = MmapCSTapeStorage(dir)` — `state_bytes` is the size of
+    the scratch file with `FullCheckpoint` (`StrideCheckpoint` reserves its
+    largest window, `RevolveCheckpoint` its largest step), which needs 10 %
+    more free space in `dir`; it is reserved before recording. On a GPU the
+    device read caches hold one `NTuple{6, T}` per read role and distinct
+    shape signature on top of that.
 
 `bytes_per_state` is the size of one full-panel state tuple. Lin-Rood's
 `state_bytes` also includes the face-panel tuples of its horizontal records,

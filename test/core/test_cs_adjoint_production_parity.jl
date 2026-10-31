@@ -54,13 +54,16 @@ _footprint_maxrel(a, b) =
             for s in eachindex(a.footprints), p in 1:6) /
     maximum(maximum(abs.(b.footprints[s][p])) for s in eachindex(b.footprints), p in 1:6)
 
-# An mmap tape that reads through device-side caches, as the CUDA extension
-# sets it up for `CuArray` panels: the generic `_mmap_prepare_for_panels!`
-# (the CPU method returns mmap views instead).
+# The scratch file of an mmap tape that reads through device-side caches, as
+# the CUDA extension sets it up for `CuArray` panels: the generic
+# `_mmap_prepare_for_panels!` (the CPU method returns mmap views instead).
+# Passed as `tape_storage` it is the caller's: the call neither sizes nor
+# releases it. 64 MiB holds the tapes of this problem.
+const SCRATCH = mktempdir()
 function _mmap_with_read_cache()
-    storage = TapeMod.MmapCSTapeStorage()
+    storage = TapeMod._MmapTapeFile(SCRATCH, 1 << 26)
     invoke(TapeMod._mmap_prepare_for_panels!,
-           Tuple{TapeMod.MmapCSTapeStorage, NTuple{6}}, storage, PB57.m)
+           Tuple{TapeMod._MmapTapeFile, NTuple{6}}, storage, PB57.m)
     return storage
 end
 
@@ -79,7 +82,7 @@ end
         # A read stays valid until the next read with the same role.
         TapeMod._tape_panels(rm_slot, TapeMod.TracerMassRead())
         @test all(m_read[p] == PB57.m[p] for p in 1:6)
-        TapeMod.finalize_tape!(storage)
+        TapeMod._release_tape_storage!(storage)
     end
 
     objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
@@ -93,16 +96,14 @@ end
             scheme, dt = 30.0, tape_storage = storage, kw...)
         for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
             reference = footprint(:device; checkpoint)
-            for storage in (:pinned_host, :mmap)
+            for storage in (:pinned_host, AT.MmapCSTapeStorage(SCRATCH))
                 @test _footprint_maxrel(footprint(storage; checkpoint), reference) <= 1e-12
             end
         end
-        # Stride and Revolve build their own storage per window, so the
-        # device-cache read path of a GPU mmap tape is exercised with a
-        # pre-built storage under FullCheckpoint.
-        mmap_storage = _mmap_with_read_cache()
-        @test _footprint_maxrel(footprint(mmap_storage), footprint(:device)) <= 1e-12
-        TapeMod.finalize_tape!(mmap_storage)
+        # The device-cache read path of a GPU mmap tape, on its scratch file.
+        mmap_file = _mmap_with_read_cache()
+        @test _footprint_maxrel(footprint(mmap_file), footprint(:device)) <= 1e-12
+        TapeMod._release_tape_storage!(mmap_file)
 
         seed = ntuple(p -> (a = zeros(size(PB57.rm[p])); a[HP + 2, HP + 2, NZ] = 1.0; a), 6)
         from_seed(storage; kw...) = AT.cs_surface_emission_footprint_from_seed(
@@ -134,10 +135,10 @@ end
         fd = (fourdvar(shifted(h)).cost - fourdvar(shifted(-h)).cost) / 2h
         reference = gd(fourdvar(control))
         @test abs(reference - fd) <= 1e-8 * abs(fd)
-        mmap_storage = _mmap_with_read_cache()
-        for storage in (:pinned_host, mmap_storage)
+        mmap_file = _mmap_with_read_cache()
+        for storage in (:pinned_host, mmap_file)
             @test abs(gd(fourdvar(control; storage)) - reference) <= 1e-12 * abs(reference)
         end
-        TapeMod.finalize_tape!(mmap_storage)
+        TapeMod._release_tape_storage!(mmap_file)
     end
 end

@@ -40,12 +40,12 @@ else
         @test all(p -> slot.host_panels[p] == Array(panels[p]), 1:6)
         @test map(Array, T._tape_panels(slot, T.TracerMassRead())) == map(Array, panels)
         mktempdir() do dir
-            storage = T.MmapCSTapeStorage(; dir)
+            storage = T._MmapTapeFile(dir, sum(p -> sizeof(eltype(p)) * length(p), panels))
             try
                 slot = T._stage_panels(storage, panels)
                 @test map(Array, T._tape_panels(slot, T.TracerMassRead())) == map(Array, panels)
             finally
-                T.finalize_tape!(storage)
+                T._release_tape_storage!(storage)
             end
         end
         A.reclaim_backend_pool!(panels)
