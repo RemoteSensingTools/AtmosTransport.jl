@@ -1,9 +1,9 @@
 # AtmosTransport.jl - Project Guide
 
-GPU-accelerated offline atmospheric transport model in Julia. Supports ERA5 /
-MERRA latitude-longitude runs and GEOS cubed-sphere runs with mass-conserving
-advection, convection, and boundary-layer diffusion. KernelAbstractions
-provides CPU/GPU portability.
+GPU-accelerated offline atmospheric transport model in Julia. Runs on lat-lon,
+reduced-Gaussian and cubed-sphere grids driven by ERA5, GEOS (FP/IT) and
+MERRA-2 meteorology, with mass-conserving advection, convection, and
+boundary-layer diffusion. KernelAbstractions provides CPU/GPU portability.
 
 ## Working Rules
 
@@ -48,16 +48,24 @@ mass basis, supported operators, and load-time consistency gates.
   `Quantities -> Parameters -> Grids -> State -> Output -> Observations ->`
   `MetDrivers -> Operators -> Tape -> Adjoints -> Regridding -> GriddedIO ->`
   `Preprocessing -> Models -> Diagnostics -> Extras`.
+- Later modules may depend on earlier ones, never the reverse.
+  `scripts/checks/check_structure.jl` (run with `--project=test`) enforces this
+  against `src/LAYERS.toml`; a PR that moves, renames or splits a folder, module
+  or source file declares it as rows in `test/structure/migrations.toml` and
+  regenerates the code map (`--write-code-map`). See
+  `docs/src/development/structure.md`.
 - Submodules, in dependency order:
   - `Operators`: `Diffusion -> SurfaceFlux -> Convection -> Advection ->
     Chemistry -> StepPlans`. `StepPlans` composes a step and owns the
     emission/diffusion midpoint of the advection Strang palindrome; Advection
     only calls the abstract `apply_midpoint!` hook (`NoMidpoint` by default).
   - `Adjoints`: core -> `Footprint` -> `Inversion` (`Observations`, `Solver`).
-  - `Preprocessing`, in pipeline order: `Common -> Vertical -> Spectral ->
-    MassClosure -> PhysicsInputs -> TransportBinary -> LatLonTarget /
-    ReducedGaussianTarget / CubedSphereTarget -> Sources (GEOS, ERA5, MERRA2)`;
-    the root only dispatches to sources.
+  - `Preprocessing`, in pipeline order: `Common` (folder `Core/`) -> `Vertical`
+    -> `Spectral` -> `MassClosure` -> `PhysicsInputs` -> `TransportBinary` ->
+    `LatLonTarget` / `ReducedGaussianTarget` / `CubedSphereTarget` (folder
+    `Targets/`) -> `GEOS`, `ERA5`, `MERRA2` (folder `Sources/`). The root owns
+    only the config entry point, which dispatches to the `process_day` methods
+    of the targets (ERA5 spectral) and the sources.
   - `Models`: `Physics -> Core -> InitialConditionIO -> Runner`.
 - `src/Extras` (Visualization, Analysis, Downloads) is non-core: no tests,
   excluded from coverage.
@@ -65,15 +73,9 @@ mass basis, supported operators, and load-time consistency gates.
   names, fill policy, lat-lon orientation, source meshes, time decoding, flux
   units, `cs_native` and lat-lon flux-file schemas); initial-condition and
   surface-flux loaders read files through it, never with private helpers.
-
-- Later modules may depend on earlier ones, never the reverse.
-  `scripts/checks/check_structure.jl` enforces this against `src/LAYERS.toml`;
-  a PR that moves, renames or splits a folder or module declares it as rows in
-  `test/structure/migrations.toml` and regenerates the code map
-  (`--write-code-map`). See `docs/src/development/structure.md`.
-- Each `src/` folder has a `README.md` (purpose, entry points, file map,
-  common tasks, invariants; `Downloads/sources/` is covered by its parent's);
-  read it before editing the folder.
+- Each `src/` folder has a `README.md` (purpose, file map, Depends on, Used by,
+  Shared helpers owned here, Forward<->adjoint mirrors; `Extras/Downloads/sources/`
+  is covered by its parent's); read it before editing the folder.
 - Physical constants live in `src/Parameters/PhysicalConstants.jl`; import
   them by name instead of writing literals.
 - Active code lives in `src/`, tests in `test/`, tools in `scripts/`, configs
@@ -90,10 +92,12 @@ mass basis, supported operators, and load-time consistency gates.
 
 ## High-Signal Invariants
 
-- Cubed-sphere code uses the GEOS file panel convention. Panel-edge flux
-  rotation lives in `panel_connectivity.jl`.
+- Cubed-sphere code uses the GEOS file panel convention. Panel connectivity and
+  edge orientation live in `src/Grids/PanelConnectivity.jl`; the halo fills and
+  seam-flux signs that use them are in `src/Operators/Advection/CubedSphere/`
+  (`HaloExchange.jl`, `CubedSphereSeams.jl`).
 - GEOS `MFXC` and `MFYC` are accumulated over the dynamics timestep, not the
-  1-hour met interval. Use `mass_flux_dt = 450`.
+  1-hour met interval. Use `mass_flux_dt_seconds = 450`.
 - Wrong vertical level ordering causes extreme CFL and NaNs. Readers
   auto-detect GEOS-FP vs GEOS-IT ordering.
 - Advection sweeps must ping-pong source and destination arrays. In-place sweep
@@ -119,7 +123,7 @@ mass basis, supported operators, and load-time consistency gates.
 
 | Symptom | First check |
 |---|---|
-| Transport is about 8x too slow | `mass_flux_dt = 450` |
+| Transport is about 8x too slow | `mass_flux_dt_seconds = 450` |
 | Extreme CFL or NaNs | vertical ordering, stale binary, or broken `cm` |
 | About 10% mass loss per step | in-place sweep update |
 | Panel-edge waves on cubed sphere | panel convention, flux rotation, or missing `linrood` |
@@ -130,7 +134,8 @@ mass basis, supported operators, and load-time consistency gates.
 ## Extending The Code
 
 - New advection scheme: add the type in `src/Operators/Advection/Reconstruction/schemes.jl`,
-  implement the interface in `src/Operators/Advection/Advection.jl`, wire it
+  implement its face fluxes in `src/Operators/Advection/Reconstruction/reconstruction.jl`
+  (adjoint mirror: `src/Operators/Advection/CubedSphere/AdvectionAdjoint.jl`), wire it
   into the sweep path, and add uniform-field, mass-conservation, adjoint, and
   CPU/GPU tests.
 - New met driver: subtype `AbstractMetDriver`, implement the required
@@ -147,25 +152,36 @@ mass basis, supported operators, and load-time consistency gates.
 - Tests should observe state through `get_tracer(state, name)` or
   `state.tracers.name`, not through input arrays cached before construction.
 - Prefer focused test files around the touched module before running full
-  `Pkg.test()`. Before pushing, run `scripts/dev/quick_gate.sh` (about 10 min:
-  quick set, `--changed` topics, structure check, required-keyword call check).
-- CI runs the full suite on Julia 1.10 (LTS) and 1.13 for every PR that changes
-  more than documentation; docs-only PRs run the quick set, the docs build and
-  the structure check. A PR merges when its own CI and codecov are green.
+  `Pkg.test()`. Before pushing, run `scripts/dev/quick_gate.sh`: whitespace check,
+  required-keyword call check, structure check, then the quick set plus the
+  `--changed` topics (roughly 10 to 35 min, depending on the topics touched).
+- Every PR runs the quick set (Julia 1; it includes the structure check) and the
+  docs build. A PR with any path outside `docs/` that does not end in `.md` also
+  runs the full suite on Julia 1.10 (LTS) and 1.13. A PR is mergeable only when
+  its own `Full suite`, `Quick tests`, docs `build` and any reported Codecov
+  statuses are green; a green `main` or nightly run does not count (see
+  `test/README.md`, CI and merging).
 - Refactors must reproduce the golden outputs bit for bit: `julia --project=. test/golden/run_goldens.jl check <ref> <new>`
   (see `test/golden/README.md`); a change that alters results states its deltas.
-  A golden check writes about 25 GB; use a large local disk (set `TMPDIR`
-  there as well; mmap adjoint tapes also need an explicit large directory).
-- Adjoint and tape changes keep gradients bitwise identical on CPU (Float64
-  and Float32, one thread): `test/helpers/cs_adjoint_tape_harness.jl` compares
-  against digests recorded from main (see `test/README.md`). GPU gradients
-  differ run to run (atomic adds), so bitwise checks run on CPU.
+  A golden check writes about 25 GB; use a large local disk and point `TMPDIR`
+  there as well.
+- Adjoint and tape changes that are not meant to change gradients keep them
+  bitwise identical on CPU (Float64 and Float32, one thread):
+  `test/core/test_cs_adjoint_tape_bitwise.jl` runs
+  `test/helpers/cs_adjoint_tape_harness.jl`; its committed digests are checked
+  only on the reference host, so elsewhere A/B with `--record` on main and
+  `--check` on the branch (see `test/README.md`). GPU gradients can differ in
+  the last bits run to run (atomic adds), so bitwise checks run on CPU. mmap
+  tape storage needs an explicit directory on a large local ext4/XFS disk.
 - Imports between package modules are relative (`..X`, `...Preprocessing.Y`);
-  never `import AtmosTransport.X` inside `src/` (tests that load a sandboxed
-  copy of the package then bind the real one). Do not name a module like a
-  Base/Core/stdlib module or a package dependency: JET 0.9 rewrites `..Core` to
-  Julia's built-in `Core`. `test/core/test_undefined_names.jl` catches names
-  lost when code moves between modules.
+  never `using`/`import AtmosTransport.X` inside `src/` (tests that load a
+  sandboxed copy of the package would bind the real one). Do not give a new
+  module the name of a Base/Core/stdlib module or a package dependency: JET 0.9
+  resolves a relative `..Core` to Julia's built-in `Core`. The one existing
+  exception, `Models.Core`, is always imported by its full relative path
+  (`...Models.Core`); inside `Models`, Julia's own module is `Base.Core`.
+  `test/core/test_undefined_names.jl` catches names lost when code moves
+  between modules.
 - Do not add `Real -> FT` outer constructors unless there is a real ambiguity;
   Julia already converts through synthesized constructors.
 - Parametric kwarg defaults like `Foo{FT}()` inside a `where FT` signature fail

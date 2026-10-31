@@ -36,7 +36,7 @@ Two patterns dominate the current report count and are NOT bugs:
    auto-generates a zero-arg constructor for
    `struct Foo{FT}; x::FT = FT(1.0); end`, but `FT` is unbound at
    that call site. Users must call `Foo{Float64}()` explicitly.
-   Documented in `CLAUDE.md` under "Julia / language gotchas".
+   Documented in `CLAUDE.md` under "Testing And Gotchas".
 
 ## Escape hatch
 
