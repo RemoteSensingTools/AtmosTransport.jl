@@ -14,13 +14,16 @@
 using Test
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_adjoint_tape_harness.jl"))
-using .CSAdjointTapeHarness: full_cases, missing_limiter_codes, run_subprocess, variant_mismatches
+using .CSAdjointTapeHarness: entry_failures, full_cases, missing_limiter_codes, run_subprocess,
+    variant_mismatches
 
 @testset "adjoint tape bitwise gate (full matrix)" begin
     out = run_subprocess("full")
     @test out["threads"] == 1
     @test issetequal(keys(out["cases"]), [c.name for c in full_cases()])
-    for (problems, what) in ((variant_mismatches(out), "tape variants differ from the reference"),
+    @test out["poisoned_arrays"] > 0
+    for (problems, what) in ((entry_failures(out), "entry points failed"),
+                             (variant_mismatches(out), "tape variants differ from the reference"),
                              (missing_limiter_codes(out), "limiter branches never occur"))
         isempty(problems) || @error "$(length(problems)) $what:\n  " * join(problems, "\n  ")
         @test isempty(problems)

@@ -117,8 +117,8 @@ abstract type AbstractCS4DVarEvaluation end
 
 A 4D-Var evaluation of the cost and its gradient (the default of
 `cs_surface_flux_4dvar` and the evaluation of every optimizer step): one
-forward run that samples the observations and records the tape of its
-`checkpoint` schedule, then one reverse pass.
+forward run that samples the observations and records what the `tape`'s
+checkpoint schedule needs, then one reverse pass.
 """
 struct CSCostAndGradient <: AbstractCS4DVarEvaluation end
 

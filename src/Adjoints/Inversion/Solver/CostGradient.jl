@@ -331,11 +331,11 @@ end
 # surface-pressure screen, applied after the run, only removes observations,
 # so this bounds the reverse pass, and co-samples after it do not extend the
 # tape. Without such an observation there is no reverse pass to tape for.
-_observation_run(::CSCostOnly, _checkpoint, _replay, _tape_storage, _observations) = _UntapedRun()
-function _observation_run(::CSCostAndGradient, checkpoint, replay, tape_storage, observations)
+_observation_run(::CSCostOnly, _replay, _runtime, _observations) = _UntapedRun()
+function _observation_run(::CSCostAndGradient, replay, runtime::_TapeRuntime, observations)
     taped_steps = maximum(obs -> obs.assimilate ? obs.step : 0, observations)
     taped_steps == 0 && return _UntapedRun()
-    return _begin_taped_run(checkpoint, replay, tape_storage, taped_steps)
+    return _begin_taped_run(runtime.tape.checkpoint, replay, runtime, taped_steps)
 end
 
 # Only a gradient needs the observations' linear functionals.
@@ -417,16 +417,16 @@ do not extend the taped run: adding them leaves the cost and the reverse
 pass's forcing unchanged, bit for bit.
 
 One cost-and-gradient evaluation is one forward run and one reverse pass
-(with `FullCheckpoint`; the other schedules add their recomputation, and a
-`MmapCSTapeStorage` adds the counting run that sizes its file), whatever the
-number of observations, as in TM5-4DVAR:
+(with `FullCheckpoint`; `StrideCheckpoint` adds the re-recording of its
+windows, and a `MmapCSTapeStorage` the counting run that sizes its file),
+whatever the number of observations, as in TM5-4DVAR:
 
 1. the forward run gives the simulated values `Hᵢ(x) = Σₛ ωᵢₛ hᵢ(rₛ)`, each
    observation's stencil (`CSObservationStencil`: steps, weights, levels) and
    its linear functional (weights from the replayed air mass at each sampled
-   step, times `ωᵢₛ`), and records the tape of its `checkpoint` schedule
-   through the last step of an observation with `assimilate = true` (the
-   whole tape with `FullCheckpoint`, the K-step checkpoints with
+   step, times `ωᵢₛ`), and records what the `tape`'s checkpoint schedule
+   needs through the last step of an observation with `assimilate = true`
+   (the whole tape with `FullCheckpoint`, the K-step checkpoints with
    `StrideCheckpoint(K)`);
 2. each observation contributes `(Hᵢ(x) − yᵢ)/σᵢ²` times its functional's
    weights to the adjoint forcing of each sampled step;
@@ -440,9 +440,9 @@ The run replays the production step plan of `schedule` (a
 default: one step of `dt` per met window, the full
 operator suite every step), with the controls' rates in its surface-flux
 operator. Steps after the last assimilated step do not affect the cost and
-get a zero gradient. `checkpoint` (`FullCheckpoint()`, `StrideCheckpoint(k)`,
-`RevolveCheckpoint()`) and `tape_storage` select how the tape is stored, as in
-`cs_surface_emission_footprint`.
+get a zero gradient. `tape` (an [`AdjointTape`](@ref AtmosTransport.Tape.AdjointTape):
+storage and checkpoint schedule) selects how the tape is stored, as in
+`cs_surface_emission_footprint`; the call frees its memory when it returns.
 
 An averaging-kernel column the surface-pressure screen leaves out after the
 last assimilated step is taped but not walked: the tape (and the reservation
@@ -451,8 +451,8 @@ of a `MmapCSTapeStorage`) covers the steps through the last observation with
 
 `evaluation = CSCostOnly()` computes the cost and the simulated values only:
 the forward run without a tape and no reverse pass (the result's `gradients`
-are empty; `checkpoint` and `tape_storage` are validated but not used); the
-default `CSCostAndGradient()` computes both.
+are empty; `tape` is validated but opens no memory); the default
+`CSCostAndGradient()` computes both.
 
 `scheme` is required: inversion callers must name the advection operator whose
 forward and adjoint they intend to use; there is no hidden numerical default.
@@ -492,21 +492,37 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                observations,
                                controls;
                                scheme::CSAdjointSupportedScheme,
-                               dt = nothing,
-                               schedule = nothing,
-                               flux_scale = one(eltype(panels_rm0[1])),
-                               cfl_limit = DEFAULT_CFL_LIMIT,
-                               diffusion_op = NoDiffusion(),
-                               diffusion_workspace = nothing,
-                               diffusion_meteo = nothing,
-                               convection_op = NoConvection(),
-                               convection_forcing = nothing,
-                               convection_workspace = nothing,
-                               tape_storage = :device,
-                               checkpoint::AbstractCheckpointSchedule = FullCheckpoint(),
-                               evaluation::AbstractCS4DVarEvaluation = CSCostAndGradient(),
-                               preconditioner = nothing,
-                               column_met = nothing)
+                               tape::AdjointTape = AdjointTape(),
+                               kwargs...)
+    return _with_tape_runtime(tape) do runtime
+        _cs_surface_flux_4dvar(runtime, panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
+                               panels_cm_steps, mesh, observations, controls; scheme, kwargs...)
+    end
+end
+
+# One evaluation with the tape runtime `runtime`: a call's own, or the one an
+# optimization shares between its evaluations (`cs_surface_flux_4dvar_optimize`).
+function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
+                                panels_am_steps,
+                                panels_bm_steps,
+                                panels_cm_steps,
+                                mesh::CubedSphereMesh,
+                                observations,
+                                controls;
+                                scheme::CSAdjointSupportedScheme,
+                                dt = nothing,
+                                schedule = nothing,
+                                flux_scale = one(eltype(panels_rm0[1])),
+                                cfl_limit = DEFAULT_CFL_LIMIT,
+                                diffusion_op = NoDiffusion(),
+                                diffusion_workspace = nothing,
+                                diffusion_meteo = nothing,
+                                convection_op = NoConvection(),
+                                convection_forcing = nothing,
+                                convection_workspace = nothing,
+                                evaluation::AbstractCS4DVarEvaluation = CSCostAndGradient(),
+                                preconditioner = nothing,
+                                column_met = nothing)
     FT = eltype(panels_rm0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     observation_vec = _observation_vector(observations)
@@ -517,8 +533,8 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
     _validate_control_shapes(control_vec, mesh, "surface-flux control")
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
-    # Storage checks before the forward run, not after it.
-    _require_tape_storage_supported(scheme, tape_storage)
+    # Tape checks before the forward run, not after it.
+    _require_tape_supported(scheme, runtime.tape)
 
     seen = Set{Symbol}()
     for control in control_vec
@@ -560,7 +576,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         convection_op, convection_forcing, convection_workspace,
         column_met)
     physical_gradients = [_zero_panel_tuple_like(control.value) for control in physical_controls]
-    run = _observation_run(evaluation, checkpoint, replay, tape_storage, observation_vec)
+    run = _observation_run(evaluation, replay, runtime, observation_vec)
     observed = try
         sampled = _observe_cs_forward!(run, replay, mesh, observation_vec; column_met,
                                        build_functionals = _builds_functionals(evaluation))

@@ -39,7 +39,8 @@ else
             ADJ.Footprint._replay_steps!(forward, 1:sum(c.steps))
             @test map(Array, _interior(ADJ.Footprint._replay_rm(forward))) == expected
             recorded = replay()
-            tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.DeviceCSTapeStorage())
+            tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.FullStateTape(),
+                                                  AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
             @test map(Array, _interior(ADJ.Footprint._replay_rm(recorded))) == expected
             resets = filter(op -> op isa AT.Tape._CSAirMassResetRecord, tape)
             @test length(resets) == 3 # two window ends and one window advance
@@ -49,7 +50,7 @@ else
             footprint(checkpoint) = AT.cs_surface_emission_footprint(inp.panels_rm0, inp.panels_m0,
                 inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh,
                 AT.CSLayerMeanObjective(2, 2, 3, NZ); kwargs...,
-                base_emission_rates = inp.kwargs.emission_rates, checkpoint)
+                base_emission_rates = inp.kwargs.emission_rates, tape = AT.AdjointTape(; checkpoint))
             full = footprint(AT.FullCheckpoint())
             stride = footprint(AT.StrideCheckpoint(2))
             @test full.initial_adjoint[1] isa CuArray

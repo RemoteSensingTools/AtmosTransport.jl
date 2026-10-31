@@ -11,8 +11,8 @@
 # The documentation build also executes every assertion below.
 
 using AtmosTransport
-using AtmosTransport.Adjoints: CSLayerMeanObjective, FullCheckpoint,
-    cs_surface_emission_footprint, run_cs_footprint_forward
+using AtmosTransport.Adjoints: AdjointTape, CSLayerMeanObjective, DeviceCSTapeStorage,
+    FullCheckpoint, cs_surface_emission_footprint, run_cs_footprint_forward
 
 # ## 1. Define a small transport problem
 #
@@ -80,10 +80,12 @@ println("Final receptor mixing ratio: ", J, " mol/mol")
 # a sensitivity for **every** surface cell and emission step. It does not run a
 # separate perturbed simulation for every cell. The meteorology is held fixed:
 # these are emission sensitivities, not derivatives with respect to winds.
+# `tape` says where the recording is kept and how much of the run is taped at
+# once; this is the default (every step, on the device).
 
 result = cs_surface_emission_footprint(tracer0, air0, xflux, yflux, zflux,
     mesh, objective; scheme, dt, base_emission_rates=rates,
-    checkpoint=FullCheckpoint());
+    tape=AdjointTape(; storage=DeviceCSTapeStorage(), checkpoint=FullCheckpoint()));
 
 @assert length(result.footprints) == nsteps
 @assert size(result.footprints[1][1]) == (Nc, Nc)

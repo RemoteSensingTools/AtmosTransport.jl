@@ -14,15 +14,22 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
   `cs_adjoint_inputs` shares them) share one flux state, so `flux_scale ≠ 1`
   scales each set once.
 - `ReplaySupport.jl`: replay-specific extension of `require_adjoint_support`.
-- `TapeRecorder.jl`: production recorder hooks and counting recorder (also
-  the per-step byte count an mmap tape reserves before recording).
-- `TapeRecording.jl`: sweep records, recording and `cs_tape_byte_estimate`.
+- `TapeRecorder.jl`: production recorder hooks (staging the tape's content
+  into the call's pool) and counting recorder (also the per-step byte count
+  an mmap tape reserves before recording).
+- `TapeRecording.jl`: sweep records by tape content and scheme, recording and
+  `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
-- `StrideCheckpoint.jl`, `revolve_checkpoint.jl`: Full/Stride/Revolve drivers
-  in four phases on one replay (`_begin_taped_run`, the forward run
-  `_run_forward!`, `_reverse_taped_run`, `_end_taped_run!`), the 4D-Var's
-  zero-start forced reverse (`_forced_reverse`), and the tape-storage checks
-  made before the forward run.
+- `TapeRuntime.jl`: the runtime of an `AdjointTape` for one call or one
+  optimization (`_TapeRuntime`, `_with_tape_runtime`): its pool, opened
+  once, rewound for each further tape and released explicitly; the counted
+  mmap bytes (once per runtime); explicit release of checkpoints and Lin–Rood
+  records.
+- `StrideCheckpoint.jl`: Full/Stride drivers in four phases on one replay
+  (`_begin_taped_run`, the forward run `_run_forward!`, `_reverse_taped_run`,
+  `_end_taped_run!`), the 4D-Var's zero-start forced reverse
+  (`_forced_reverse`), and the tape checks made before the forward run
+  (`_require_tape_supported`).
 - `FootprintAPI.jl`: footprint and seeded-footprint entry points.
 
 ## Depends on
@@ -43,8 +50,10 @@ scripts and tests.
 `run_cs_footprint_forward`, `cs_tape_byte_estimate`,
 `cs_surface_emission_footprint`, `cs_surface_emission_footprint_from_seed`.
 Inversion uses the replay accessors, call setup/validation, objective-footprint
-batch, the taped forward run (which samples the observations while it records)
-and the zero-start forced reverse driver listed below.
+batch, the tape runtime (one per evaluation, or one shared by an
+optimization's evaluations), the taped forward run (which samples the
+observations while it records) and the zero-start forced reverse driver
+listed below.
 
 ## Forward<->adjoint mirrors
 
@@ -54,20 +63,22 @@ state (emission Kahan compensation, convection/diffusion carries and caches).
 Each sweep stores its entering air mass and, for limited schemes, tracer mass.
 The reverse reads them with separate Tape roles. Every step ends with a
 forcing marker; one emission record per step stores the surface footprint.
-Full/Stride/Revolve give the same gradients bit for bit on one CPU thread
-(`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape
-storage, rewinds it before each re-recorded window and releases it at the
-end; a storage that reserves its extent (`MmapCSTapeStorage`) is sized by
-counting the largest tape on the replay first. A call runs one forward run of
-its replay, which records what the schedule's reverse pass needs (Full: the
-tape; Stride: the K-step checkpoints; Revolve: the initial state) through its
-taped steps; the reverse pass may stop earlier (the 4D-Var's last assimilated
-step, `_tape_through`) and runs from the state the forward run ended in. The
+Full and Stride give the same gradients bit for bit on one CPU thread
+(`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape pool
+from its `AdjointTape`, rewinds it before each re-recorded window and
+releases it at the end (`cs_surface_flux_4dvar_optimize` keeps one pool for
+all its evaluations); a storage that reserves its extent (`MmapCSTapeStorage`)
+is sized by counting the largest tape on the replay first, once per runtime.
+A call runs one forward run of its replay, which records what the schedule's
+reverse pass needs (Full: the tape; Stride: the K-step checkpoints) through
+its taped steps; the reverse pass may stop earlier (the 4D-Var's last
+assimilated step, `_tape_through`) and runs from the state the forward run
+ended in. Stride records each window once and walks it for every start. The
 4D-Var samples its observations in that forward run, so one run gives the
 simulated values and the tape. Lin–Rood accepts device tape storage only.
 Level Nz is the surface.
 
-# shared: CSFootprintResult, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _replay_m, _replay_nsteps, _replay_rm, _require_tape_storage_supported, _run_forward!, _validate_step_sequences
+# shared: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _replay_m, _replay_nsteps, _replay_rm, _require_tape_supported, _run_forward!, _validate_step_sequences, _with_tape_runtime
 
 # shared: _validate_step_sequences
 

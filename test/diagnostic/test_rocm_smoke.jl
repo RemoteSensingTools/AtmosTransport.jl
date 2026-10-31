@@ -34,18 +34,29 @@ else
         foreach(copyto!, host, panels)
         A.synchronize_storage!(panels)
         @test all(p -> host[p] == Array(panels[p]), 1:6)
-        storage = T.PinnedHostCSTapeStorage()
-        slot = T._stage_panels(storage, panels)
-        GC.gc() # registration must survive for the whole host-panel lifetime
-        @test all(p -> slot.host_panels[p] == Array(panels[p]), 1:6)
-        @test map(Array, T._tape_panels(slot, T.TracerMassRead())) == map(Array, panels)
+        # The pinned-host arena registers its chunk once; the registration
+        # lives until the arena is released.
+        arena = T._open_tape_pool(AtmosTransport.PinnedHostCSTapeStorage(), 0)
+        try
+            slot = T._stage_panels(arena, panels)
+            GC.gc()
+            @test length(arena.chunks) == 1 && arena.chunks[1].registration !== nothing
+            @test all(p -> slot.panels[p] == Array(panels[p]), 1:6)
+            @test map(Array, T._tape_panels(slot, T.TracerMassRead())) == map(Array, panels)
+            T._rewind_tape_pool!(arena)
+            again = T._stage_panels(arena, panels)
+            @test length(arena.chunks) == 1 && pointer(again.panels[1]) == pointer(slot.panels[1])
+        finally
+            T._release_tape_pool!(arena)
+        end
+        @test isempty(arena.chunks)
         mktempdir() do dir
-            storage = T._MmapTapeFile(dir, sum(p -> sizeof(eltype(p)) * length(p), panels))
+            storage = T._MmapTapeFile(dir, T._tape_slot_bytes(panels))
             try
                 slot = T._stage_panels(storage, panels)
                 @test map(Array, T._tape_panels(slot, T.TracerMassRead())) == map(Array, panels)
             finally
-                T._release_tape_storage!(storage)
+                T._release_tape_pool!(storage)
             end
         end
         A.reclaim_backend_pool!(panels)

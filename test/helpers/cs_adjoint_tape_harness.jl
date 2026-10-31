@@ -1,14 +1,15 @@
 # Bitwise gate of the cubed-sphere adjoint tape (core/test_cs_adjoint_tape_bitwise.jl).
 #
-# Every tape storage and checkpoint schedule must give the same gradients, bit
-# for bit, as the device tape with `FullCheckpoint` (the reference variant):
-# footprints and the initial adjoint of the objective, seeded and
-# multi-objective (Jacobian) entry points, and the 4D-Var cost and gradient
-# (layer and column means with a co-sample after the last assimilated step,
-# and, for the cases marked `operators`, the observation operators: time
+# Every tape storage and checkpoint schedule (`AdjointTape`) must give the same
+# gradients, bit for bit, as the default tape (device storage, `FullCheckpoint`;
+# the reference variant): footprints and the initial adjoint of the objective,
+# seeded and multi-objective (Jacobian) entry points, the 4D-Var cost and
+# gradient (layer and column means with a co-sample after the last assimilated
+# step, and, for the cases marked `operators`, the observation operators: time
 # windows, placed points, averaging-kernel columns with the rebin and the hat
 # projection, a cell average, a column the surface-pressure screen leaves out,
-# background terms and the preconditioned space).
+# background terms and the preconditioned space), and a two-iteration 4D-Var
+# optimization, whose evaluations share one tape pool.
 # The cases use rough fields (random values, spikes, exact zeros and ties, sign
 # changes, nonzero emission rates), so the limited PPM reverse meets every
 # branch of its limiters; `limiter_code_counts` histograms those branches on
@@ -31,12 +32,16 @@
 #     --out=FILE          write all digests and limiter-code counts (TOML)
 #     --record=FILE       write the reference digests in the fixture format
 #     --check=FILE        compare the reference digests with a recorded FILE
-#     --reference-only    run only the reference variant (e.g. on an older
-#                         checkout whose tape API differs)
+#     --reference-only    run only the reference variant, which passes no tape
+#                         keyword (so it also runs on a checkout whose tape
+#                         API differs, e.g. to record main)
 #
-# It prints every problem (a variant that differs from the reference, a
-# limiter branch that never occurs, a digest that differs from `--check`) and
-# exits with status 1 if there is one. A same-host A/B of a branch against
+# It prints every problem (an entry point that throws, a variant that differs
+# from the reference, a limiter branch that never occurs, a digest that differs
+# from `--check`) and exits with status 1 if there is one; a failing entry point
+# does not stop the run. Every array the tape frees explicitly is filled with
+# NaN when it is freed (`poison_freed_tape_arrays!`), so a free before the last
+# read of an array (a use-after-free on a GPU) changes the digests. A same-host A/B of a branch against
 # main: `--record=main.toml` on main, `--check=main.toml` on the branch, both
 # with `SUBPROCESS_FLAGS` (the flags of the test).
 module CSAdjointTapeHarness
@@ -392,19 +397,23 @@ physics_kwargs(P, inputs::CapturedInputs) =
                     NamedTuple{(:scheme, :schedule, :surface_flux, :emission_rates)})
 
 # ---------------------------------------------------------------------------
-# Variants `checkpoint/storage`: the reference is the device tape with
-# FullCheckpoint. `strideK` is the case's stride (2 and 3 both cross the met
-# windows [2, 3, 2]) and `S` each of its host storages.
+# Variants `checkpoint/storage` of the `AdjointTape`: the reference is the
+# default tape (device storage, FullCheckpoint), passed as no keyword.
+# `strideK` is the case's stride (2 and 3 both cross the met windows
+# [2, 3, 2]) and `S` each of its host storages. The Jacobian's two objectives
+# share each stride window's recording; the optimization's evaluations share
+# one tape pool (rewound, and an mmap file counted and reserved once).
 # ---------------------------------------------------------------------------
 
 const REFERENCE = "full/device"
 
 const VARIANT_TEMPLATES = (
-    footprint = [REFERENCE, "strideK/device", "revolve/device", "full/S", "strideK/S", "revolve/S"],
+    footprint = [REFERENCE, "strideK/device", "full/S", "strideK/S"],
     seeded = [REFERENCE, "strideK/S"],
-    jacobian = [REFERENCE, "revolve/S"],
-    fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
-    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
+    jacobian = [REFERENCE, "strideK/device", "strideK/S"],
+    fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
+    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
+    optimize = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
 )
 
 # The entry points a case runs.
@@ -415,13 +424,16 @@ variants(c::Case, entry::Symbol) =
     unique!([replace(t, "K" => string(c.stride), "S" => s)
              for t in VARIANT_TEMPLATES[entry] for s in c.storages])
 
+const STORAGES = Dict("device" => () -> AT.DeviceCSTapeStorage(),
+                      "pinned_host" => () -> AT.PinnedHostCSTapeStorage())
+
 function _variant_kwargs(variant::AbstractString, scratch::AbstractString)
+    variant == REFERENCE && return (;)
     schedule, storage = split(variant, '/')
     checkpoint = schedule == "full" ? AT.FullCheckpoint() :
-                 schedule == "revolve" ? AT.RevolveCheckpoint() :
                  AT.StrideCheckpoint(parse(Int, chopprefix(schedule, "stride")))
-    tape_storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : Symbol(storage)
-    return (; checkpoint, tape_storage)
+    storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
+    return (; tape = AT.AdjointTape(; storage, checkpoint))
 end
 
 # ---------------------------------------------------------------------------
@@ -546,6 +558,8 @@ end
 
 _common(P) = (; scheme = P.case.scheme, schedule = P.schedule, physics_kwargs(P)...)
 
+_norm(tuples) = sqrt(sum(sum(abs2, a) for t in tuples for a in t))
+
 function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractString)
     kw = (; _common(P)..., _variant_kwargs(variant, scratch)...)
     if entry === :footprint
@@ -581,6 +595,20 @@ function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractS
                                        column_met, preconditioner = _preconditioner(P), kw...)
         return ("cost" => [r.cost], "simulated" => r.simulated, "gradients" => r.gradients,
                 "chi_cost" => [chi.cost], "chi_gradients" => chi.gradients)
+    elseif entry === :optimize
+        # Fixed-step gradient descent: two iterations, three evaluations into
+        # one tape pool. The step moves the controls by about a tenth of their
+        # size along the default tape's gradient (the same for every variant).
+        probe = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, _observations(P),
+                                         _controls(P); _common(P)...)
+        step = _norm([c.value for c in _controls(P)]) / (10 * _norm(probe.gradients))
+        optimizer = AT.CSGradientDescent(; iterations = 2, initial_step = step, min_step = step,
+                                         line_search = false)
+        r = AT.cs_surface_flux_4dvar_optimize(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, _observations(P),
+                                              _controls(P); optimizer, kw...)
+        length(r.cost_history) == 3 || error("the optimization took $(r.iterations) of 2 steps")
+        return ("cost_history" => r.cost_history, "controls" => [c.value for c in r.controls],
+                "gradients" => r.last.gradients)
     end
     error("unknown entry point $entry")
 end
@@ -679,9 +707,15 @@ end
 function case_limiter_codes(P)
     replay, _ = ADJ.Footprint._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
                                                   _common(P)..., base_emission_rates = P.rates)
-    ops = ADJ.Footprint._record_cs_tape!(replay, 1:P.nsteps, TapeMod.DeviceCSTapeStorage())
-    return limiter_code_counts(ops, P.case.Nc, P.case.Nz)
+    return limiter_code_counts(_device_tape!(replay, 1:P.nsteps), P.case.Nc, P.case.Nz)
 end
+
+# The device tape of `steps` (`--reference-only` on a checkout from before the
+# tape pools records with the storage descriptor itself).
+_device_tape!(replay, steps) = isdefined(TapeMod, :_open_tape_pool) ?
+    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.FullStateTape(),
+                                   TapeMod._open_tape_pool(TapeMod.DeviceCSTapeStorage(), 0)) :
+    ADJ.Footprint._record_cs_tape!(replay, steps, TapeMod.DeviceCSTapeStorage())
 
 # ---------------------------------------------------------------------------
 # Driver
@@ -695,20 +729,28 @@ host_fingerprint() = Dict{String, Any}(
     run_cases(cases; scratch, reference_only = false) -> Dict
 
 Digests of every (case, entry point, variant, quantity) and the limiter-code
-counts of the limited-PPM cases, as written by `--out`.
+counts of the limited-PPM cases, as written by `--out`. An entry point that
+throws is reported in `failures` (one line per case, entry point and variant)
+and the run continues; it has no digests.
 """
 function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
     out = Dict{String, Any}("host" => host_fingerprint(), "threads" => Threads.nthreads())
     results = Dict{String, Any}()
+    failures = String[]
     for c in cases
         t0 = time()
         P = problem(c)
         digests = Dict{String, Any}()
         for entry in entries(c)
             vs = reference_only ? [REFERENCE] : variants(c, entry)
-            digests[String(entry)] = Dict{String, Any}(
-                v => Dict{String, Any}(name => digest(x) for (name, x) in run_entry(P, entry, v, scratch))
-                for v in vs)
+            d = digests[String(entry)] = Dict{String, Any}()
+            for v in vs
+                try
+                    d[v] = Dict{String, Any}(name => digest(x) for (name, x) in run_entry(P, entry, v, scratch))
+                catch err
+                    push!(failures, "$(c.name) $entry $v: " * first(sprint(showerror, err), 400))
+                end
+            end
         end
         entry = Dict{String, Any}("digests" => digests)
         if _limited(c.scheme)
@@ -719,6 +761,8 @@ function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
         println(stderr, "  ", rpad(c.name, 44), round(time() - t0; digits = 1), " s")
     end
     out["cases"] = results
+    out["failures"] = failures
+    out["poisoned_arrays"] = POISONED[]
     return out
 end
 
@@ -737,12 +781,16 @@ end
 function variant_mismatches(out)
     bad = String[]
     for (name, entry) in out["cases"], (e, d) in entry["digests"], (v, q) in d
+        haskey(d, REFERENCE) || continue          # a failed reference is in `entry_failures`
         for (quantity, h) in q
             h == d[REFERENCE][quantity] || push!(bad, "$name $e $v: $quantity differs from $REFERENCE")
         end
     end
     return sort!(bad)
 end
+
+"""Entry points that threw: one line per case, entry point and variant."""
+entry_failures(out) = sort!(String[f for f in get(out, "failures", String[])])
 
 # The branch histograms of a limited case: profile branches on every axis and
 # region, and the CW84 minmod slopes.
@@ -781,6 +829,25 @@ function reference_mismatches(out, reference)
         end
     end
     return sort!(bad)
+end
+
+# ---------------------------------------------------------------------------
+# Freed tape memory is poisoned
+# ---------------------------------------------------------------------------
+
+# On a GPU the tape frees its arrays explicitly (`_free_tape_array!`:
+# `unsafe_free!` of device slabs, read caches, stride checkpoints and Lin–Rood
+# records) and the memory is handed out again, so a free placed before the last
+# read of an array is a use-after-free. On the CPU the free is a no-op, so the
+# bitwise gate fills every freed float array with NaN at that moment instead:
+# a premature free then changes the digests. The method is added in the
+# harness's own subprocess only (`main`), never in the test process, and is a
+# no-op on trees without the hook.
+const POISONED = Ref(0)
+function poison_freed_tape_arrays!()
+    isdefined(TapeMod, :_free_tape_array!) || return false
+    @eval TapeMod._free_tape_array!(a::Array{<:AbstractFloat}) = (fill!(a, NaN); $POISONED[] += 1; nothing)
+    return true
 end
 
 # The flags of every bitwise run: one thread, and the default bounds checks
@@ -829,9 +896,11 @@ function main(args = ARGS)
     Threads.nthreads() == 1 ||
         @warn "run with --threads=1: CPU atomics are not bitwise reproducible across threads"
     cases = tier == "core" ? CORE_CASES : full_cases()
+    poison_freed_tape_arrays!()
     # Production logs each growth of the CFL subcycle count; keep warnings.
+    # `invokelatest`: the run sees the poisoning method defined just above.
     out = with_logger(ConsoleLogger(stderr, Warn)) do
-        mktempdir(scratch -> run_cases(cases; scratch, reference_only))
+        mktempdir(scratch -> Base.invokelatest(run_cases, cases; scratch, reference_only))
     end
     out_file === nothing || open(io -> TOML.print(io, out; sorted = true), out_file, "w")
     record_file === nothing || open(record_file, "w") do io
@@ -839,7 +908,8 @@ function main(args = ARGS)
         println(io, "# recorded from main on the [host] below; see test/README.md.")
         TOML.print(io, reference_digests(out); sorted = true)
     end
-    problems = vcat(variant_mismatches(out), missing_limiter_codes(out))
+    problems = vcat(entry_failures(out), variant_mismatches(out), missing_limiter_codes(out))
+    println(stderr, "freed tape arrays poisoned: ", out["poisoned_arrays"])
     if check_file !== nothing
         reference = TOML.parsefile(check_file)
         same_host(out, reference) ||

@@ -470,7 +470,8 @@ end
     for scheme in (UpwindScheme(), PPMScheme(MonotoneLimiter()))
         # The tape of one step of the adjoint's replay of the production plan.
         replay, _ = AT.Adjoints.Footprint._cs_replay_for_call(rm0, m0, [am], [bm], [cm], mesh; scheme, dt = 1.0)
-        ops = AT.Adjoints.Footprint._record_cs_tape!(replay, 1:1, AT.DeviceCSTapeStorage())
+        ops = AT.Adjoints.Footprint._record_cs_tape!(replay, 1:1, AT.FullStateTape(),
+                                                     AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
         final = (AT.Adjoints.Footprint._replay_rm(replay), AT.Adjoints.Footprint._replay_m(replay))
         kinds = map(ops) do op
             op isa AT.Tape._CSSweepRecord ? op.direction :

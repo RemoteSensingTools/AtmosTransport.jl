@@ -7,8 +7,9 @@ const AT = AtmosTransport
 const Adv = AtmosTransport.Operators.Advection
 const TapeMod = AtmosTransport.Tape
 
-# Full/Stride/Revolve parity for objective and seeded paths. Physics combinations
-# are covered by the single-sweep and production-step parity matrices.
+# Full/Stride parity of the `AdjointTape` checkpoint schedules for objective and
+# seeded paths. Physics combinations are covered by the single-sweep and
+# production-step parity matrices and the bitwise gate.
 
 function _stride_problem(; Nc = 4, Nz = 3, nsteps = 6, FT = Float64)
     mesh = AT.CubedSphereMesh(Nc = Nc, Hp = 3, FT = FT)
@@ -60,7 +61,7 @@ end
 _column_mean_objective(mesh::AT.CubedSphereMesh) =
     AT.CSColumnMeanObjective(1, max(2, mesh.Nc ÷ 2), max(2, mesh.Nc ÷ 2))
 
-# Stride, Revolve and Full call the same forward / reverse kernels in
+# Stride and Full call the same forward / reverse kernels in
 # the same order on the same inputs. Every recorded step starts with
 # production's step-start halo refresh (`fill_cs_step_start_halos!`),
 # so a window that restarts at a step boundary records the same states
@@ -135,12 +136,11 @@ end
             AT.cs_surface_emission_footprint(rm, m, am, bm, cm, mesh, objective;
                 scheme, dt = 1.0, kwargs...)
         full = run()
-        @test _footprints_equal(full, run(; checkpoint = AT.FullCheckpoint()))
-        storages = scheme isa AT.LinRoodPPMScheme ? (:device,) :
-                   (:device, AT.MmapCSTapeStorage(mktempdir()))
-        for checkpoint in (AT.StrideCheckpoint.((1, 2, 3, 5, 6, 12))..., AT.RevolveCheckpoint()),
-            tape_storage in storages
-            result = run(; checkpoint, tape_storage)
+        @test _footprints_equal(full, run(; tape = AT.AdjointTape(; checkpoint = AT.FullCheckpoint())))
+        storages = scheme isa AT.LinRoodPPMScheme ? (AT.DeviceCSTapeStorage(),) :
+                   (AT.DeviceCSTapeStorage(), AT.MmapCSTapeStorage(mktempdir()))
+        for checkpoint in AT.StrideCheckpoint.((1, 2, 3, 5, 6, 12)), storage in storages
+            result = run(; tape = AT.AdjointTape(; checkpoint, storage))
             @test _footprints_equal(full, result)
             @test all(p -> isapprox(full.initial_adjoint[p], result.initial_adjoint[p];
                                     atol = 1e-12, rtol = 1e-10), 1:6)
@@ -188,16 +188,13 @@ end
         # staged post-sweep air mass and this case was off by 7.1e-8.
         @test _dot_footprint(full, rates) ≈ finite_difference rtol = 1e-9
 
-        stride = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-            scheme, dt = 1.0, flux_scale,
-            checkpoint = AT.StrideCheckpoint(1))
-        revolve = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-            scheme, dt = 1.0, flux_scale,
-            checkpoint = AT.RevolveCheckpoint())
-        @test _footprints_equal(full, stride)
-        @test _footprints_equal(full, revolve)
+        for K in (1, 2)
+            stride = AT.cs_surface_emission_footprint(
+                panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+                scheme, dt = 1.0, flux_scale,
+                tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)))
+            @test _footprints_equal(full, stride)
+        end
     end
 end
 
@@ -235,40 +232,25 @@ end
         stride = AT.cs_surface_emission_footprint_from_seed(
             final_adj, panels_m, am_steps, bm_steps, cm_steps, mesh;
             scheme = scheme, dt = 1.0,
-            checkpoint = AT.StrideCheckpoint(K))
+            tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)))
         @test _footprints_equal(ref, stride)
     end
 end
 
-@testset "RevolveCheckpoint handles nsteps == 1 (single-step base case)" begin
-    # Pathological case: bisection driver immediately hits the leaf.
-    # Worth a regression assertion since the recursion stop condition
-    # is non-trivial (`hi - lo == 1`).
+@testset "StrideCheckpoint handles nsteps == 1 (one window of one step)" begin
     mesh, panels_m, panels_rm, am_steps, bm_steps, cm_steps = _stride_problem(
         ; Nc = 4, Nz = 3, nsteps = 1, FT = Float64)
     objective = _column_mean_objective(mesh)
-
-    @testset "linear PPM" begin
-        scheme = AT.PPMScheme(AT.NoLimiter())
+    @testset "$(nameof(typeof(scheme.limiter)))" for scheme in (AT.PPMScheme(AT.NoLimiter()),
+                                                                AT.PPMScheme(AT.MonotoneLimiter()))
         ref = AT.cs_surface_emission_footprint(
             panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
             scheme = scheme, dt = 1.0)
-        rev = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-            scheme = scheme, dt = 1.0,
-            checkpoint = AT.RevolveCheckpoint())
-        @test _footprints_equal(ref, rev)
-    end
-
-    @testset "nonlinear PPM" begin
-        scheme = AT.PPMScheme(AT.MonotoneLimiter())
-        ref = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-            scheme = scheme, dt = 1.0)
-        rev = AT.cs_surface_emission_footprint(
-            panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
-            scheme = scheme, dt = 1.0,
-            checkpoint = AT.RevolveCheckpoint())
-        @test _footprints_equal(ref, rev)
+        for K in (1, 3)
+            stride = AT.cs_surface_emission_footprint(
+                panels_rm, panels_m, am_steps, bm_steps, cm_steps, mesh, objective;
+                scheme = scheme, dt = 1.0, tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)))
+            @test _footprints_equal(ref, stride)
+        end
     end
 end

@@ -54,24 +54,16 @@ _footprint_maxrel(a, b) =
             for s in eachindex(a.footprints), p in 1:6) /
     maximum(maximum(abs.(b.footprints[s][p])) for s in eachindex(b.footprints), p in 1:6)
 
-# The scratch file of an mmap tape that reads through device-side caches, as
-# the CUDA extension sets it up for `CuArray` panels: the generic
-# `_mmap_prepare_for_panels!` (the CPU method returns mmap views instead).
-# Passed as `tape_storage` it is the caller's: the call neither sizes nor
-# releases it. 64 MiB holds the tapes of this problem.
+# Scratch directory of the mmap tapes. Host pools (pinned host, mmap) copy
+# every read into a cache per read role, as on a GPU.
 const SCRATCH = mktempdir()
-function _mmap_with_read_cache()
-    storage = TapeMod._MmapTapeFile(SCRATCH, 1 << 26)
-    invoke(TapeMod._mmap_prepare_for_panels!,
-           Tuple{TapeMod._MmapTapeFile, NTuple{6}}, storage, PB57.m)
-    return storage
-end
 
 @testset "host tape storage gives distinct air-mass and tracer-mass reads (#57)" begin
-    @testset "slot reads ($(nameof(typeof(storage))))" for
-            storage in (TapeMod.PinnedHostCSTapeStorage(), _mmap_with_read_cache())
-        m_slot = TapeMod._stage_panels(storage, PB57.m)
-        rm_slot = TapeMod._stage_panels(storage, PB57.rm)
+    @testset "slot reads ($(nameof(typeof(pool))))" for
+            pool in (TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0),
+                     TapeMod._MmapTapeFile(SCRATCH, 1 << 26))
+        m_slot = TapeMod._stage_panels(pool, PB57.m)
+        rm_slot = TapeMod._stage_panels(pool, PB57.rm)
         # Both operands of one limited-PPM sweep record, read as the reverse
         # loop reads them.
         m_read = TapeMod._tape_panels(m_slot, TapeMod.AirMassRead())
@@ -82,7 +74,7 @@ end
         # A read stays valid until the next read with the same role.
         TapeMod._tape_panels(rm_slot, TapeMod.TracerMassRead())
         @test all(m_read[p] == PB57.m[p] for p in 1:6)
-        TapeMod._release_tape_storage!(storage)
+        TapeMod._release_tape_pool!(pool)
     end
 
     objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
@@ -91,27 +83,23 @@ end
     @testset "footprints, PPM $(nameof(typeof(limiter)))" for
             limiter in (AT.MonotoneLimiter(), AT.CW84Limiter())
         scheme = AT.PPMScheme(limiter)
-        footprint(storage; kw...) = AT.cs_surface_emission_footprint(
+        footprint(storage, checkpoint) = AT.cs_surface_emission_footprint(
             PB57.rm, PB57.m, am, bm, cm, MESH, objective;
-            scheme, dt = 30.0, tape_storage = storage, kw...)
-        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-            reference = footprint(:device; checkpoint)
-            for storage in (:pinned_host, AT.MmapCSTapeStorage(SCRATCH))
-                @test _footprint_maxrel(footprint(storage; checkpoint), reference) <= 1e-12
+            scheme, dt = 30.0, tape = AT.AdjointTape(; storage, checkpoint))
+        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+            reference = footprint(AT.DeviceCSTapeStorage(), checkpoint)
+            for storage in (AT.PinnedHostCSTapeStorage(), AT.MmapCSTapeStorage(SCRATCH))
+                @test _footprint_maxrel(footprint(storage, checkpoint), reference) <= 1e-12
             end
         end
-        # The device-cache read path of a GPU mmap tape, on its scratch file.
-        mmap_file = _mmap_with_read_cache()
-        @test _footprint_maxrel(footprint(mmap_file), footprint(:device)) <= 1e-12
-        TapeMod._release_tape_storage!(mmap_file)
 
         seed = ntuple(p -> (a = zeros(size(PB57.rm[p])); a[HP + 2, HP + 2, NZ] = 1.0; a), 6)
-        from_seed(storage; kw...) = AT.cs_surface_emission_footprint_from_seed(
+        from_seed(storage, checkpoint) = AT.cs_surface_emission_footprint_from_seed(
             seed, PB57.m, am, bm, cm, MESH;
-            scheme, dt = 30.0, base_panels_rm0 = PB57.rm, tape_storage = storage, kw...)
-        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
-            @test _footprint_maxrel(from_seed(:pinned_host; checkpoint),
-                                    from_seed(:device; checkpoint)) <= 1e-12
+            scheme, dt = 30.0, base_panels_rm0 = PB57.rm, tape = AT.AdjointTape(; storage, checkpoint))
+        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+            @test _footprint_maxrel(from_seed(AT.PinnedHostCSTapeStorage(), checkpoint),
+                                    from_seed(AT.DeviceCSTapeStorage(), checkpoint)) <= 1e-12
         end
     end
 
@@ -127,18 +115,16 @@ end
         shifted(h) = AT.CSSurfaceFluxControl(control.window,
             ntuple(p -> control.value[p] .+ h .* direction[p], 6);
             background = control.background, sigma = control.sigma)
-        fourdvar(c; storage = :device) = AT.cs_surface_flux_4dvar(
+        fourdvar(c; storage = AT.DeviceCSTapeStorage()) = AT.cs_surface_flux_4dvar(
             PB57.rm, PB57.m, am, bm, cm, MESH, observations, [c];
-            scheme, dt = 30.0, tape_storage = storage)
+            scheme, dt = 30.0, tape = AT.AdjointTape(; storage))
         gd(result) = sum(sum(result.gradients[1][p] .* direction[p]) for p in 1:6)
         h = 1e-7
         fd = (fourdvar(shifted(h)).cost - fourdvar(shifted(-h)).cost) / 2h
         reference = gd(fourdvar(control))
         @test abs(reference - fd) <= 1e-8 * abs(fd)
-        mmap_file = _mmap_with_read_cache()
-        for storage in (:pinned_host, mmap_file)
+        for storage in (AT.PinnedHostCSTapeStorage(), AT.MmapCSTapeStorage(SCRATCH))
             @test abs(gd(fourdvar(control; storage)) - reference) <= 1e-12 * abs(reference)
         end
-        TapeMod._release_tape_storage!(mmap_file)
     end
 end

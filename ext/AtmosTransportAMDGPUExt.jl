@@ -9,13 +9,10 @@ module AtmosTransportAMDGPUExt
 import AtmosTransport
 import AMDGPU
 import AtmosTransport.Tape:
-    PinnedHostCSTapeStorage,
-    PinnedHostCSTapeSlot,
-    _MmapTapeFile,
-    _allocate_tape_slot,
-    _register_tape_read_backend!,
-    _mmap_prepare_for_panels!,
-    stage_panels!
+    _free_tape_array!,
+    _pin_host_chunk,
+    _tape_synchronize,
+    _unpin_host_chunk
 using AtmosTransport.Architectures: GPU
 using AMDGPU: ROCArray, AnyROCArray, ROCBackend
 
@@ -44,35 +41,23 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::AnyROCArray) =
     AtmosTransport.Architectures.foreach_host_array(_pin_host_array!, storage)
 
-_pinned_host_panel(a::ROCArray{T,N}) where {T,N} =
-    _pin_host_array!(Array{T,N}(undef, size(a)))
+# Adjoint tape hooks (`src/Tape/`): explicit release of tape memory, and
+# synchronous device↔host tape copies (staging and every read wait).
+_free_tape_array!(a::ROCArray) = AMDGPU.unsafe_free!(a)
+_tape_synchronize(::ROCArray) = AMDGPU.synchronize()
 
-function _allocate_tape_slot(storage::PinnedHostCSTapeStorage,
-                             panels::NTuple{6,<:ROCArray})
-    storage.synchronize = AMDGPU.synchronize
-    _register_tape_read_backend!(storage, panels)
-    host_panels = ntuple(p -> _pinned_host_panel(panels[p]), 6)
-    return PinnedHostCSTapeSlot(storage, host_panels)
+# A pinned-host tape arena registers each chunk once, when it allocates it,
+# through the same `unsafe_wrap(...; own = true)` registration as above, and
+# unregisters it (frees the wrapper) before freeing the chunk. Mmap tapes are
+# not registered: their file mapping is copied through the read caches.
+struct _ROCHostRegistration{W}
+    wrapper::W
 end
 
-function stage_panels!(slot::PinnedHostCSTapeSlot,
-                       src::NTuple{6,<:ROCArray})
-    @inbounds for p in 1:6
-        copyto!(slot.host_panels[p], src[p])
-    end
-    AMDGPU.synchronize()
-    return slot
-end
+_pin_host_chunk(::ROCArray, ptr::Ptr, nbytes::Integer) =
+    _ROCHostRegistration(unsafe_wrap(ROCArray, Ptr{UInt8}(ptr), (Int(nbytes),); own = true))
 
-# Mmap storage owns its host views; it need not register every disk mapping.
-# The generic tape path copies via its role-specific ROCArray read caches.
-# Its synchronization hook waits for H2D transfers before a cache is reused
-# and D2H transfers before the mmap payload is consumed.
-function _mmap_prepare_for_panels!(storage::_MmapTapeFile,
-                                   panels::NTuple{6,<:ROCArray})
-    storage.synchronize = AMDGPU.synchronize
-    _register_tape_read_backend!(storage, panels)
-    return storage
-end
+_unpin_host_chunk(registration::_ROCHostRegistration) =
+    (AMDGPU.unsafe_free!(registration.wrapper); nothing)
 
 end # module AtmosTransportAMDGPUExt

@@ -24,11 +24,19 @@ Private = false
 ```
 
 The solver exposes the forward preconditioner and its adjoint. The unused
-inverse and tangent interfaces have been removed. The on-disk tape storage
-`MmapCSTapeStorage(dir)` takes a required scratch directory; each call
-reserves its tape there before recording and releases it when it returns.
+inverse and tangent interfaces have been removed.
 
 ## Tape and checkpointing
+
+Every reverse-pass entry point takes `tape = AdjointTape(; content, storage,
+checkpoint)`: what each record stages (`FullStateTape()`), where the staged
+states live (`DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`,
+`MmapCSTapeStorage(dir)`) and how much of the run is taped at once
+(`FullCheckpoint()`, `StrideCheckpoint(K)`). The value holds no memory: each
+call opens its tape's memory, reuses it for every stride window (and
+`cs_surface_flux_4dvar_optimize` for every evaluation) and frees it when it
+returns. The on-disk storage `MmapCSTapeStorage(dir)` takes a required
+scratch directory; each call reserves its tape there before recording.
 
 ```@autodocs
 Modules = [AtmosTransport.Tape]

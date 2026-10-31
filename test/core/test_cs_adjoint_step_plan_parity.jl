@@ -8,8 +8,8 @@
 #   cadences, TM5 / CMFMC / CMFMC-matrix convection, both diffusion couplings,
 #   diffusion without surface sources and both air-mass reset modes, the
 #   adjoint's forward replay and its tape recording reproduce the production
-#   run BIT FOR BIT, and so do the replays of the Stride and Revolve
-#   checkpoint drivers (restarts inside met windows).
+#   run BIT FOR BIT, and so do the replays of the Stride checkpoint driver
+#   (restarts inside met windows).
 # * Capture: `cs_adjoint_inputs` copies the face fluxes each time production
 #   rewrites them (once per met window, every step when interpolated), bit for
 #   bit production's; shared and per-step copies give the same footprints.
@@ -31,7 +31,7 @@
 include(joinpath(@__DIR__, "..", "helpers", "cs_adjoint_step_plan.jl"))
 
 # Final (rm, m) interiors of production, the forward replay, the recording
-# replay, and Stride / Revolve-style restarts from a snapshot inside a window.
+# replay, and Stride-style restarts from a snapshot inside a window.
 function _parity(c::Case)
     sim = _simulation(c)
     inp = _adjoint_inputs(c)
@@ -44,11 +44,11 @@ function _parity(c::Case)
     replayed = (_interior(ADJ.Footprint._replay_rm(forward)), _interior(ADJ.Footprint._replay_m(forward)))
 
     recorded = _replay(inp)
-    ops = ADJ.Footprint._record_cs_tape!(recorded, 1:n, AT.DeviceCSTapeStorage())
+    ops = ADJ.Footprint._record_cs_tape!(recorded, 1:n, AT.FullStateTape(), AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
     taped = (_interior(ADJ.Footprint._replay_rm(recorded)), _interior(ADJ.Footprint._replay_m(recorded)))
 
     # A checkpoint inside the second met window (after its first step), as the
-    # Stride and Revolve drivers take them, and a restart from it.
+    # Stride driver takes them, and a restart from it.
     restart = _replay(inp)
     k = c.steps[1] + 1
     ADJ.Footprint._replay_steps!(restart, 1:k)
@@ -161,7 +161,7 @@ _unshared(v) = [map(copy, x) for x in v]
     @test all(isequal.(_flux_sets(inp), _flux_sets(_adjoint_inputs(c))))
 end
 
-@testset "Full, Stride and Revolve footprints agree across met windows" begin
+@testset "Full and Stride footprints agree across met windows" begin
     for c in (Case(conv = :tm5, diffusion = :split),
               Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :boundary,
                    reset = :preserve_vmr),
@@ -171,9 +171,9 @@ end
         objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
         footprint(checkpoint) = AT.cs_surface_emission_footprint(
             inp.rm0, inp.m0, inp.am, inp.bm, inp.cm, MESH, objective;
-            _footprint_kwargs(inp)..., checkpoint)
+            _footprint_kwargs(inp)..., tape = AT.AdjointTape(; checkpoint))
         full = footprint(AT.FullCheckpoint())
-        for checkpoint in (AT.StrideCheckpoint(2), AT.StrideCheckpoint(3), AT.RevolveCheckpoint())
+        for checkpoint in (AT.StrideCheckpoint(1), AT.StrideCheckpoint(2), AT.StrideCheckpoint(3))
             other = footprint(checkpoint)
             @test all(exact(other.footprints[s][p], full.footprints[s][p])
                       for s in eachindex(full.footprints), p in 1:6)

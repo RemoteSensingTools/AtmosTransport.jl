@@ -123,6 +123,15 @@
 #     # both:
 #     gradient_tolerance = 1e-10
 #
+#     [adjoint.tape]              # optional: the gradient's tape (`AdjointTape`), shared
+#                                 # by every evaluation of the optimization
+#     content = "full_state"      # what each record stages (the only content today)
+#     storage = "device"          # device (default) | pinned_host | mmap (any letter case)
+#     scratch_dir = "/scratch/tape"   # mmap only, and required there: a directory on a
+#                                     # local file system (ext4, XFS) with room for the tape
+#     checkpointing = "full"      # full (default) | stride
+#     stride = 8                  # stride only, and required there: steps per re-recorded window
+#
 # Any other table or key is an error, so nothing in the file is silently
 # ignored; diffusion and convection are not wired into this driver yet.
 # Keys that the selected kind does not read (e.g. `m` with gradient descent)
@@ -154,6 +163,21 @@ const _CELL_AVERAGING_MODES = ("average", "inflate_model_error")
 # limit of averaging-kernel columns.
 const _OBSERVATION_PLACEMENT_KEYS = (AT.Observations.VERTICAL_PLACEMENT_KEYS..., "layer_height_temperature_kelvin",
                                      "max_surface_pressure_mismatch_pa")
+# `[adjoint.tape]`: one table of choices per axis of `AdjointTape` (read with
+# `ConfigChecks.parse_choice`, so in any letter case), each choice the
+# constructor of its value given the table; and the keys a choice reads beyond
+# its axis key (required with that choice, rejected with any other).
+const _TAPE_LABEL = "[adjoint.tape]"
+const _TAPE_CONTENTS = (full_state = _ -> AT.FullStateTape(),)
+const _TAPE_STORAGES = (device = _ -> AT.DeviceCSTapeStorage(),
+                        pinned_host = _ -> AT.PinnedHostCSTapeStorage(),
+                        mmap = t -> AT.MmapCSTapeStorage(AT.expand_data_path(_tape_scratch_dir(t))))
+const _TAPE_CHECKPOINTS = (full = _ -> AT.FullCheckpoint(),
+                           stride = t -> AT.StrideCheckpoint(
+                               AT.ConfigChecks.config_int(t["stride"], "$(_TAPE_LABEL).stride"; min = 1)))
+const _TAPE_CHOICE_KEYS = (mmap = ("scratch_dir",), stride = ("stride",))
+const _ADJOINT_TAPE_KEYS = ("content", "storage", "scratch_dir", "checkpointing", "stride")
+
 const _INVERSION_TABLE_KEYS = Dict(
     "mesh"           => ("Nc", "Hp", "float_type"),
     "time"           => ("nsteps", "dt_seconds", "start"),
@@ -165,6 +189,7 @@ const _INVERSION_TABLE_KEYS = Dict(
     "preconditioner" => ("enabled", "optim_type", "background_value"),
     "optimizer"      => ("kind", "iterations", "log", "gradient_tolerance",
                          _GRADIENT_DESCENT_KEYS..., _LBFGS_KEYS...),
+    "adjoint"        => ("tape",),
 )
 const _REQUIRED_TABLES = ("mesh", "time", "meteo", "advection", "observations",
                           "control", "optimizer")
@@ -193,6 +218,7 @@ function _validate_inversion_config(cfg)
         AT.ConfigChecks.check_known_keys(table, _INVERSION_TABLE_KEYS[name], "[$(name)]")
     end
     _validate_observation_source(cfg)
+    _adjoint_tape(cfg)          # the tape choices, checked before anything is built
     for entry in get(cfg["observations"], "entries", ())
         entry isa AbstractDict || throw(ArgumentError(
             "observations.entries must be [[observations.entries]] tables"))
@@ -308,6 +334,42 @@ function _build_observations(cfg, mesh, FT)
                               FT(entry["value"]),
                               FT(entry["sigma"]))
             for entry in obs_cfg["entries"]]
+end
+
+# The value of one axis of `[adjoint.tape]` (`key`, default `default`): the
+# constructor `choices` holds for it, applied to the table, after checking that
+# exactly the keys this choice reads are present.
+function _tape_choice(tape, key, choices, default)
+    path = "$(_TAPE_LABEL).$(key)"
+    value = get(tape, key, default)
+    build = AT.ConfigChecks.parse_choice(value, choices, path)
+    name = Symbol(lowercase(value))
+    for (choice, needs) in pairs(_TAPE_CHOICE_KEYS), k in needs
+        haskey(choices, choice) || continue
+        if name === choice
+            haskey(tape, k) || throw(ArgumentError("$(path) = $(repr(value)) requires `$(k)`"))
+        elseif haskey(tape, k)
+            throw(ArgumentError("$(_TAPE_LABEL).$(k) applies to $(key) = \"$(choice)\", not $(repr(value))"))
+        end
+    end
+    return build(tape)
+end
+
+function _tape_scratch_dir(tape)
+    dir = tape["scratch_dir"]
+    dir isa AbstractString && !isempty(strip(dir)) || throw(ArgumentError(
+        "$(_TAPE_LABEL).scratch_dir must be a non-empty path; got $(repr(dir))"))
+    return String(dir)
+end
+
+# The `AdjointTape` of `[adjoint.tape]` (the default tape without the table).
+function _adjoint_tape(cfg)
+    tape = get(get(cfg, "adjoint", Dict{String, Any}()), "tape", Dict{String, Any}())
+    tape isa AbstractDict || throw(ArgumentError("$(_TAPE_LABEL) must be a TOML table"))
+    AT.ConfigChecks.check_known_keys(tape, _ADJOINT_TAPE_KEYS, _TAPE_LABEL)
+    return AT.AdjointTape(; content = _tape_choice(tape, "content", _TAPE_CONTENTS, "full_state"),
+                          storage = _tape_choice(tape, "storage", _TAPE_STORAGES, "device"),
+                          checkpoint = _tape_choice(tape, "checkpointing", _TAPE_CHECKPOINTS, "full"))
 end
 
 const _PLACEMENT_LABEL = "[observations.placement]"
@@ -619,6 +681,7 @@ function run_inversion(config_path::AbstractString)
         scheme = scheme,
         dt = dt,
         optimizer = optimizer,
+        tape = _adjoint_tape(cfg),
         preconditioner = prec,
         column_met = meteo.column_met)
 
