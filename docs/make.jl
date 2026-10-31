@@ -85,6 +85,7 @@ const PAGES = [
     ],
     "Development" => [
         "development/code_map.md",
+        "development/structure.md",
         "development/benchmarks.md",
         "development/rocm.md",
     ],

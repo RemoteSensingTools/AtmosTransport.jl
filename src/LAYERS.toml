@@ -7,33 +7,9 @@ order = ["AtmosTransport", "AtmosTransport.Architectures", "AtmosTransport.Secti
 
 [folder_order_allow]
 "src/Extras/Downloads|src/Extras/Downloads/sources" = "Existing parent/subfolder wiring between src/Extras/Downloads and src/Extras/Downloads/sources; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/Advection" = "Existing parent/subfolder wiring between src/Operators and src/Operators/Advection; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/Chemistry" = "Existing parent/subfolder wiring between src/Operators and src/Operators/Chemistry; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/Convection" = "Existing parent/subfolder wiring between src/Operators and src/Operators/Convection; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/Diffusion" = "Existing parent/subfolder wiring between src/Operators and src/Operators/Diffusion; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/StepPlan" = "Existing parent/subfolder wiring between src/Operators and src/Operators/StepPlan; split module contracts in the target-layout PR."
-"src/Operators|src/Operators/SurfaceFlux" = "Existing parent/subfolder wiring between src/Operators and src/Operators/SurfaceFlux; split module contracts in the target-layout PR."
 "src/Preprocessing/sources|src/Preprocessing/transport_binary" = "Existing src/Preprocessing/sources dependency on src/Preprocessing/transport_binary precedes target-layout separation; retain behavior and remove this reverse edge during folder cleanup."
 "src/Preprocessing|src/Preprocessing/sources" = "Existing parent/subfolder wiring between src/Preprocessing and src/Preprocessing/sources; split module contracts in the target-layout PR."
 "src/Preprocessing|src/Preprocessing/transport_binary" = "Existing parent/subfolder wiring between src/Preprocessing and src/Preprocessing/transport_binary; split module contracts in the target-layout PR."
-"src|src/Adjoints" = "Existing package facade includes/re-exports src/Adjoints; foundation files and facade share src until folder/module alignment."
-"src|src/Diagnostics" = "Package facade includes core Diagnostics after Models; foundation files and facade share src until folder/module alignment."
-"src|src/Extras/Analysis" = "Existing package facade includes/re-exports src/Extras/Analysis; foundation files and facade share src until folder/module alignment."
-"src|src/Extras/Downloads" = "Existing package facade includes/re-exports src/Extras/Downloads; foundation files and facade share src until folder/module alignment."
-"src|src/Extras/Visualization" = "Existing package facade includes/re-exports src/Extras/Visualization; foundation files and facade share src until folder/module alignment."
-"src|src/GriddedIO" = "Existing package facade includes/re-exports src/GriddedIO; foundation files and facade share src until folder/module alignment."
-"src|src/Grids" = "Existing package facade includes/re-exports src/Grids; foundation files and facade share src until folder/module alignment."
-"src|src/MetDrivers" = "Existing package facade includes/re-exports src/MetDrivers; foundation files and facade share src until folder/module alignment."
-"src|src/Models" = "Existing package facade includes/re-exports src/Models; foundation files and facade share src until folder/module alignment."
-"src|src/Observations" = "Package facade includes Observations after Output; lower foundation helpers share src until folder/module alignment."
-"src|src/Operators" = "Existing package facade includes/re-exports src/Operators; foundation files and facade share src until folder/module alignment."
-"src|src/Output" = "Existing package facade includes/re-exports src/Output; foundation files and facade share src until folder/module alignment."
-"src|src/Parameters" = "Existing package facade includes/re-exports src/Parameters; foundation files and facade share src until folder/module alignment."
-"src|src/Preprocessing" = "Existing package facade includes/re-exports src/Preprocessing; foundation files and facade share src until folder/module alignment."
-"src|src/Quantities" = "Existing package facade includes/re-exports src/Quantities; foundation files and facade share src until folder/module alignment."
-"src|src/Regridding" = "Existing package facade includes/re-exports src/Regridding; foundation files and facade share src until folder/module alignment."
-"src|src/State" = "Existing package facade includes/re-exports src/State; foundation files and facade share src until folder/module alignment."
-"src|src/Tape" = "Existing package facade includes/re-exports src/Tape; foundation files and facade share src until folder/module alignment."
 
 [folders]
 ext = ["src", "src/Extras/Visualization", "src/Operators", "src/Operators/Advection", "src/Operators/Advection/CubedSphere", "src/Operators/Advection/Reconstruction", "src/Operators/Convection", "src/Operators/Convection/TM5", "src/Operators/Diffusion", "src/Operators/SurfaceFlux", "src/Parameters", "src/Tape"]
