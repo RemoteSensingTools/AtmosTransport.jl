@@ -1,6 +1,8 @@
 """Cubed-sphere spectral staging, conservative regridding, coarsening and contracts."""
 module CubedSphere
 
+import ..Spectral: mass_target_offset
+
 import ...State
 import ...Grids: CS_PANEL_COUNT,
     CubedSphereMesh,
@@ -58,6 +60,7 @@ import ...Preprocessing.Core: AbstractColumnWeights,
     CubedSphereTargetGeometry,
     ERA5SpectralSettings,
     LatLonTargetGeometry,
+    MAX_SPECIFIC_HUMIDITY,
     build_target_geometry,
     column_weights,
     nlat,
@@ -201,5 +204,8 @@ include("cubed_sphere_contracts.jl")
 include("cubed_sphere_spectral.jl")
 include("cubed_sphere_regrid.jl")
 include("cubed_sphere_coarsen.jl")
+
+export cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
+include("mass_helpers.jl")
 
 end # module CubedSphere

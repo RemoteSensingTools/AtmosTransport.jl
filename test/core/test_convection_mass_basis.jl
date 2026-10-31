@@ -19,7 +19,7 @@ using .AtmosTransport.MetDrivers: ConvectionForcing, TM5_CONVECTION_MASS_BASIS_K
     tm5_convection_mass_basis
 using .AtmosTransport.Preprocessing: interface_specific_humidity, ecmwf_convection_to_basis!,
     tm5_convection_to_basis!, ec2tm_from_rates!, dz_hydrostatic_virtual!,
-    _moist_to_dry_cmfmc!
+    moist_to_dry_cmfmc!
 
 @testset "interface humidity rule (shared with GEOS CMFMC)" begin
     q = [0.001, 0.004, 0.010]
@@ -39,7 +39,7 @@ using .AtmosTransport.Preprocessing: interface_specific_humidity, ecmwf_convecti
                  (q1[p][i, j, k-1] + q1[p][i, j, k] + q2[p][i, j, k-1] + q2[p][i, j, k]) * FT(0.25)
             legacy[p][i, j, k] *= one(FT) - qf
         end
-        @test _moist_to_dry_cmfmc!(map(copy, cmfmc), q1, q2) == legacy
+        @test moist_to_dry_cmfmc!(map(copy, cmfmc), q1, q2) == legacy
     end
 end
 

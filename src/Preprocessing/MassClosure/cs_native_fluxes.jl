@@ -140,11 +140,7 @@ function compute_cs_cm_pressure_fixer!(cm_panels::NTuple{CS_PANEL_COUNT, Array{F
     @inbounds for p in 1:CS_PANEL_COUNT
         am = am_v4[p]; bm = bm_v4[p]; cm = cm_panels[p]
         for j in 1:Nc, i in 1:Nc
-            pit = zero(FT)
-            for k in 1:Nz
-                pit += (am[i, j, k] - am[i + 1, j, k]) +
-                       (bm[i, j, k] - bm[i, j + 1, k])
-            end
+            pit = cs_column_convergence(am, bm, i, j, Nz)
             cm[i, j, 1] = zero(FT)
             acc = zero(FT)
             for k in 1:Nz
@@ -156,4 +152,16 @@ function compute_cs_cm_pressure_fixer!(cm_panels::NTuple{CS_PANEL_COUNT, Array{F
         end
     end
     return nothing
+end
+
+# `@propagate_inbounds`: the callers' `@inbounds` loops cover this sum, as
+# they did when it was written inline.
+"""Sum native horizontal convergence in ascending level order and the flux element type."""
+Base.@propagate_inbounds function cs_column_convergence(am::AbstractArray{FT,3}, bm, i, j, Nz) where FT
+    pit = zero(FT)
+    for k in 1:Nz
+        pit += (am[i, j, k] - am[i + 1, j, k]) +
+               (bm[i, j, k] - bm[i, j + 1, k])
+    end
+    return pit
 end

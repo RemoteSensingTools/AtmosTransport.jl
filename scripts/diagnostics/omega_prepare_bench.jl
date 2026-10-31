@@ -44,9 +44,9 @@ function build_day_context(cfg_path::String, date::Date)
     target_kg = P._native_mass_fix_target_kg(cfg, grid, settings)
     omega_cfg = get(numerics, "omega_regularization", Dict{String, Any}())
     # Keys the config leaves out take the `OmegaRegularization` defaults.
-    omega_defaults = P.OmegaRegularization()
+    omega_defaults = P.GEOS.OmegaRegularization()
     taper = get(omega_cfg, "pressure_taper_hpa", omega_defaults.pressure_taper_hpa)
-    omega_regularization = P.OmegaRegularization(
+    omega_regularization = P.GEOS.OmegaRegularization(
         pressure_taper_hpa = ntuple(i -> Float64(taper[i]), 4),
         smoothing_steps = Int(get(omega_cfg, "smoothing_steps", omega_defaults.smoothing_steps)),
         smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction",
@@ -84,7 +84,7 @@ function main()
             cm_closure = closure,
             smooth_iters = DEFAULT_GEOS_SMOOTHING_SWEEPS,
             omega_regularization = omega_regularization)
-    P._OMEGA_TIMING[] = true
+    P.GEOS._OMEGA_TIMING[] = true
 
     @printf("nthreads=%d  win=%d steps=%d\n", Threads.nthreads(), win, steps)
     # Ingest the target window: reads raw + endpoints, builds vdiv_om, and runs
@@ -93,16 +93,16 @@ function main()
     # so -t1 vs -tN compare on identical inputs. To keep the JIT warm-up cheap we
     # cap the adaptive ceiling at `steps` via min/max bounds set at allocation.
     P.ingest_window!(ws, reader, win, grid, settings, vertical)
-    P._reset_omega_timing!()
+    P.GEOS._reset_omega_timing!()
 
     # Timed fixed-steps prepare (the apples-to-apples reconstruct cost).
     t0 = time()
-    diagnostics = P._geos_prepare_window_for_steps!(ws, grid, steps)
+    diagnostics = P.GEOS._geos_prepare_window_for_steps!(ws, grid, steps)
     elapsed = time() - t0
-    s = P._OMEGA_TIMING_STATE
+    s = P.GEOS._OMEGA_TIMING_STATE
     @printf("PREPARE win=%d steps=%d  wall=%.3fs  recon=%.3fs  solves=%d cg_iters=%d\n",
             win, steps, elapsed, s.recon_time, s.solves, s.cg_iters)
-    if P._uses_omega(closure)
+    if P.GEOS.uses_omega(closure)
         @printf("OMEGA correction max relative RMS=%.4f  max increment=%.3e  target residual=%.3e\n",
                 diagnostics.omega_max_relative_correction,
                 diagnostics.omega_max_increment,

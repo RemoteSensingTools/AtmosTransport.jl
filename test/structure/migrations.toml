@@ -11,10 +11,15 @@
 
 [[migration]]
 from = "AtmosTransport.Preprocessing"
-to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.TransportBinary", "AtmosTransport.Preprocessing.LatLon", "AtmosTransport.Preprocessing.ReducedGaussian", "AtmosTransport.Preprocessing.CubedSphere"]
-reason = "PP3: binary protocols/writers and the three grid targets leave the Preprocessing module as ordered submodules"
+to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.GEOS", "AtmosTransport.Preprocessing.ERA5", "AtmosTransport.Preprocessing.MERRA2"]
+reason = "PP4: native source readers and day drivers become independent submodules above the pipeline stages and targets"
+
+[[migration]]
+from = "src/Preprocessing/sources"
+to = ["src/Preprocessing/Sources/ERA5"]
+reason = "PP4: ERA5 GRIB geometry retains the former reader-folder users and dependency budget; GEOS/MERRA2 are covered by the driver-folder split"
 
 [[migration]]
 from = "src/Preprocessing/transport_binary"
-to = ["src/Preprocessing/transport_binary", "src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon", "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere"]
-reason = "PP3: binary and target files leave transport_binary, which keeps the source-specific drivers until PP4"
+to = ["src/Preprocessing/Sources/GEOS", "src/Preprocessing/Sources/ERA5", "src/Preprocessing/Sources/MERRA2"]
+reason = "PP4: the seven remaining native-source day drivers/helpers join their readers; the deferred folder disappears"

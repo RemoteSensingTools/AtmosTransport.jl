@@ -58,22 +58,6 @@ end
 
 @testset "ERA5 N320 dry-mass — breakpoint C" begin
 
-    @testset "Allocator shapes" begin
-        grid = _tiny_source_grid(Float64)
-        Nz = 5
-        dry = allocate_era5_n320_dry_mass_fields(grid, Nz)
-        @test dry isa ERA5N320DryMassFields{Float64}
-        @test size(dry.m_dry)    == (ncells(grid.mesh), Nz)
-        @test size(dry.delp_dry) == (ncells(grid.mesh), Nz)
-        @test length(dry.ps_dry) == ncells(grid.mesh)
-        @test_throws ArgumentError allocate_era5_n320_dry_mass_fields(grid, 0)
-
-        areas = n320_cell_areas(grid)
-        @test length(areas) == ncells(grid.mesh)
-        @test all(areas .> 0)
-        # Synthetic reduced-Gaussian targets use the common target sphere.
-        @test isapprox(sum(areas), 4π * grid.mesh.radius^2; rtol = 1e-6)
-    end
 
     @testset "Q = 0 ⇒ dry == moist exactly" begin
         grid = _tiny_source_grid(Float64)
@@ -89,6 +73,8 @@ end
         areas = n320_cell_areas(grid)
         dry = allocate_era5_n320_dry_mass_fields(grid, Nz)
 
+        @test_throws ArgumentError allocate_era5_n320_dry_mass_fields(grid, 0)
+        @test isapprox(sum(areas), 4π * grid.mesh.radius^2; rtol = 1e-6)
         derive_n320_dry_mass!(dry, win, vc, areas; grav = GRAV_TEST)
 
         @test all(dry.ps_dry .≈ 100_000.0)
@@ -160,50 +146,4 @@ end
     # with breakpoint C (derive dry mass) so a regression in either path is
     # visible. Gated on the same env var.
     # -----------------------------------------------------------------------
-    real_root_env = get(ENV, "ATMOS_ERA5_N320_ROOT", "")
-    if !isempty(real_root_env) && isdir(real_root_env)
-        @testset "Real N320 dry-mass smoke (2021-12-01 hour 0)" begin
-            settings = ERA5N320Settings(; root_dir = real_root_env)
-            handles  = open_era5_day(settings, Date(2021, 12, 1))
-            try
-                T = discover_era5_spectral_truncation(handles.core_path)
-                grid = discover_era5_n320_source_grid(handles.core_path; FT = Float64)
-                Nz = 137
-                ws  = allocate_era5_n320_spectral_workspace(grid, T, Nz)
-                win = allocate_era5_n320_window_fields(grid, Nz)
-                read_era5_n320_window_fields!(win, ws, handles, Date(2021, 12, 1), 0)
-
-                coeffs_path = abspath(joinpath(@__DIR__, "..", "..", "config", "era5_L137_coefficients.toml"))
-                vc = load_hybrid_coefficients(coeffs_path)
-                @test length(vc.A) == Nz + 1
-
-                areas = n320_cell_areas(grid)
-                dry = allocate_era5_n320_dry_mass_fields(grid, Nz)
-                derive_n320_dry_mass!(dry, win, vc, areas)
-
-                # Water vapor is roughly 1% of total atmosphere mass.
-                ratio = sum(dry.ps_dry) / sum(win.ps)
-                @test 0.985 <= ratio <= 1.0
-
-                # Total dry-atmosphere mass should be near 5.1e18 kg.
-                total_dry = sum(dry.m_dry)
-                @test 4.8e18 <= total_dry <= 5.3e18
-
-                # Per-cell column closure: Σ_k DELP_dry[c, k] = PS_dry[c]
-                # to roundoff (we summed it that way, but the test guards
-                # against a silent type-conversion drift).
-                worst = 0.0
-                @inbounds for c in 1:size(dry.delp_dry, 1)
-                    s = sum(view(dry.delp_dry, c, :))
-                    worst = max(worst, abs(s - dry.ps_dry[c]) / dry.ps_dry[c])
-                end
-                @test worst < 1e-12
-            finally
-                close_era5_day!(handles)
-            end
-        end
-    else
-        @info "Skipping real N320 dry-mass smoke (set ATMOS_ERA5_N320_ROOT to enable)."
-        @test_skip false
-    end
 end

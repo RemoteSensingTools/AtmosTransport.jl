@@ -163,17 +163,17 @@ function read_interp_3d(ds, var, valid_min::Function, n3::Int, t::Float64, or;
                         FT, scheme::Symbol)
     if scheme === :linear
         a0, a1, f = bracket3(valid_min, n3, t)
-        f0 = P._read_panels_3d(ds[var], a0, or; FT=FT)
+        f0 = P.GEOS._read_panels_3d(ds[var], a0, or; FT=FT)
         a0 == a1 && return f0
-        f1 = P._read_panels_3d(ds[var], a1, or; FT=FT)
+        f1 = P.GEOS._read_panels_3d(ds[var], a1, or; FT=FT)
         return ntuple(p -> @.(f0[p] * (1 - f) + f1[p] * f), 6)
     else  # :pchip
         (nodes, f, atnode) = bracket4(valid_min, n3, t)
-        y1 = P._read_panels_3d(ds[var], nodes[1], or; FT=FT)
-        atnode && f == 0.0 && return P._read_panels_3d(ds[var], nodes[2], or; FT=FT)
-        y2 = P._read_panels_3d(ds[var], nodes[2], or; FT=FT)
-        y3 = P._read_panels_3d(ds[var], nodes[3], or; FT=FT)
-        y4 = P._read_panels_3d(ds[var], nodes[4], or; FT=FT)
+        y1 = P.GEOS._read_panels_3d(ds[var], nodes[1], or; FT=FT)
+        atnode && f == 0.0 && return P.GEOS._read_panels_3d(ds[var], nodes[2], or; FT=FT)
+        y2 = P.GEOS._read_panels_3d(ds[var], nodes[2], or; FT=FT)
+        y3 = P.GEOS._read_panels_3d(ds[var], nodes[3], or; FT=FT)
+        y4 = P.GEOS._read_panels_3d(ds[var], nodes[4], or; FT=FT)
         out = ntuple(p -> similar(y2[p]), 6)
         @inbounds for p in 1:6
             o = out[p]; a = y1[p]; b = y2[p]; c = y3[p]; d = y4[p]
@@ -329,11 +329,11 @@ function build_window(s, ds_ctm, ds_ctm1, w::Int, nt::Int, or, FT)
     Nc = s.Nc; Nz = s.Nz; g = FT(GRAV)
     flux_scale = FT(1/(2g))
     twosteps = FT(2*s.steps)
-    mfxc = P._read_panels_3d(ds_ctm["MFXC"], w, or; FT=FT)
-    mfyc = P._read_panels_3d(ds_ctm["MFYC"], w, or; FT=FT)
-    dc   = P._read_panels_3d(ds_ctm["DELP"], w, or; FT=FT)
-    dn   = w < nt ? P._read_panels_3d(ds_ctm["DELP"], w+1, or; FT=FT) :
-                    P._read_panels_3d(ds_ctm1["DELP"], 1,  or; FT=FT)
+    mfxc = P.GEOS._read_panels_3d(ds_ctm["MFXC"], w, or; FT=FT)
+    mfyc = P.GEOS._read_panels_3d(ds_ctm["MFYC"], w, or; FT=FT)
+    dc   = P.GEOS._read_panels_3d(ds_ctm["DELP"], w, or; FT=FT)
+    dn   = w < nt ? P.GEOS._read_panels_3d(ds_ctm["DELP"], w+1, or; FT=FT) :
+                    P.GEOS._read_panels_3d(ds_ctm1["DELP"], 1,  or; FT=FT)
     am = ntuple(_ -> zeros(FT, Nc+1, Nc, Nz), 6)
     bm = ntuple(_ -> zeros(FT, Nc, Nc+1, Nz), 6)
     P.geos_native_to_face_flux!(am, bm, mfxc, mfyc, s.conn, Nc, Nz, flux_scale)

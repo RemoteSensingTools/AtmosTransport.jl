@@ -239,3 +239,7 @@ Core, and Spectral depends on Core and Vertical. Scripts keep using the
 `Preprocessing` facade. The erroring typed pressure-overlap stub, unused
 spectral reader placeholder and test-only seed accessors are removed; spectral
 pressure-overlap remapping and day chaining retain their production paths.
+
+Native sources are independent `Preprocessing.GEOS`, `.ERA5` and `.MERRA2`
+submodules under `src/Preprocessing/Sources/`. They use lower stage and target
+APIs directly; the root owns configuration dispatch and the public facade.

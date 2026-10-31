@@ -280,16 +280,16 @@ interior_divergence(am, bm, Nc) =
         m = ntuple(_ -> 1e3 .* rand(Nc, Nc, Nz), 6)
         dp = ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         x = (dp = dp,)
-        P._fill_flux_thickness!(P.DryMassFluxThickness(), x, nothing, m, nothing, mesh, Nc, Nz)
+        P.MERRA2._fill_flux_thickness!(P.DryMassFluxThickness(), x, nothing, m, nothing, mesh, Nc, Nz)
         @test all(p -> dp[p] ≈ g .* m[p] ./ mesh.cell_areas, 1:6)
         ps = ntuple(_ -> fill(1e5, Nc, Nc), 6)
         vc = (A = [0.0, 1000.0, 3000.0, 0.0], B = [0.0, 0.0, 0.2, 1.0])
-        P._fill_flux_thickness!(P.MoistFluxThickness(), x, ps, m, vc, mesh, Nc, Nz)
+        P.MERRA2._fill_flux_thickness!(P.MoistFluxThickness(), x, ps, m, vc, mesh, Nc, Nz)
         @test dp[1][1, 1, :] ≈ [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
 
         qv = ntuple(_ -> fill(0.1, Nc, Nc, Nz), 6)
         pipe = (c180_fields = (ps = ps, qv = qv),)
-        P._fill_era5_flux_thickness!(P.DryMassFluxThickness(), x, pipe, vc, Nc, Nz)
+        P.ERA5._fill_era5_flux_thickness!(P.DryMassFluxThickness(), x, pipe, vc, Nc, Nz)
         @test dp[1][1, 1, :] ≈ 0.9 .* [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
     end
 
@@ -361,9 +361,9 @@ interior_divergence(am, bm, Nc) =
         # full coverage; `_regrid_intensive!` divides by the regridded constant.
         coverage = P.apply_regridder!(zeros(length(R.dst_areas)), R, ones(length(lon)))
         @test minimum(coverage) < 0.99
-        @test P._regrid_intensive!(dst_flat, src_flat, R, coverage, fill(400.0, length(lon), Nz)) ≈
+        @test P.ERA5._regrid_intensive!(dst_flat, src_flat, R, coverage, fill(400.0, length(lon), Nz)) ≈
               fill(400.0, size(dst_flat)) rtol = 1e-12
-        regrid!(panels, f) = (P._regrid_intensive!(dst_flat, src_flat, R, coverage, f);
+        regrid!(panels, f) = (P.ERA5._regrid_intensive!(dst_flat, src_flat, R, coverage, f);
                               P.unpack_flat_to_panels_3d!(panels, dst_flat, Nc, Nz))
         u_cs, v_cs = ntuple(_ -> zeros(Nc, Nc, Nz), 6), ntuple(_ -> zeros(Nc, Nc, Nz), 6)
         polar_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(rg, mesh, Nz, Float64))) do w

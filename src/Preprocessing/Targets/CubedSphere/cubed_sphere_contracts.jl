@@ -44,11 +44,7 @@ balance and replay checks that still need the absolute target endpoint.
 """
 @inline function convert_cs_mass_target_to_delta!(m_target::NTuple{NP, <:AbstractArray{FT, 3}},
                                                   m_cur::NTuple{NP, <:AbstractArray{FT, 3}}) where {FT, NP}
-    for p in 1:NP
-        @inbounds for idx in eachindex(m_target[p])
-            m_target[p][idx] -= m_cur[p][idx]
-        end
-    end
+    fill_cs_mass_delta_payload!(m_target, m_cur, m_target)
     return nothing
 end
 
@@ -314,4 +310,23 @@ function summarize_status!(contract::CubedSphereContract;
                                            require_substep_positivity =
                                                contract.require_substep_positivity,
                                            quarantine_path = quarantine_path)
+end
+
+"""
+    fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
+
+Fill the on-disk forward endpoint-difference payload without mutating the
+absolute next endpoint. The ERA5 writer's sliding-window loop swaps
+`m_next` into `m_cur` after each write, so in-place conversion of the endpoint
+would make the following window start from `m_next - m_cur`.
+"""
+function fill_cs_mass_delta_payload!(dm_payload::NTuple{NP, <:AbstractArray{FT, 3}},
+                                      m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
+                                      m_next::NTuple{NP, <:AbstractArray{FT, 3}}) where {FT, NP}
+    for p in 1:NP
+        @inbounds for idx in eachindex(dm_payload[p])
+            dm_payload[p][idx] = m_next[p][idx] - m_cur[p][idx]
+        end
+    end
+    return dm_payload
 end

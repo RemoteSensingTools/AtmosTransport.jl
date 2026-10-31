@@ -547,3 +547,41 @@ function dz_hydrostatic_virtual!(dz::AbstractVector{FT},
     end
     return dz
 end
+
+"""
+    TM5ConvectionColumnScratch{FT}
+
+Per-column storage for converting ECMWF convection diagnostics to TM5
+entrainment and detrainment on the target grid. One instance is allocated per
+Julia thread and reused across panels, cells, and windows.
+"""
+struct TM5ConvectionColumnScratch{FT <: AbstractFloat}
+    udmf_col :: Vector{FT}    # Nz+1 half-level
+    ddmf_col :: Vector{FT}    # Nz+1
+    udrf_col :: Vector{FT}    # Nz
+    ddrf_col :: Vector{FT}    # Nz
+    t_col    :: Vector{FT}    # Nz
+    q_col    :: Vector{FT}    # Nz
+    dz_col   :: Vector{FT}    # Nz
+    entu_col :: Vector{FT}    # Nz
+    detu_col :: Vector{FT}
+    entd_col :: Vector{FT}
+    detd_col :: Vector{FT}
+end
+
+function allocate_tm5_convection_column_scratch(::Type{FT}, Nz::Integer) where FT
+    Nz_int = Int(Nz)
+    return TM5ConvectionColumnScratch{FT}(
+        Vector{FT}(undef, Nz_int + 1),  # udmf_col half-level
+        Vector{FT}(undef, Nz_int + 1),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+        Vector{FT}(undef, Nz_int),
+    )
+end

@@ -1,6 +1,8 @@
 """Binary metadata, evidence, shared contracts, writers and day lifecycle."""
 module TransportBinary
 
+import ..Spectral: era5_thermo_path
+
 import ...source_revision
 import ...AtomicFiles: abandon_atomic_staging,
     commit_atomic_staging

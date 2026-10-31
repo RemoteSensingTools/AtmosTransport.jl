@@ -4,7 +4,7 @@
 # MERRA-2 reproduces the validated GEOS-Chem CO₂ transport input path: derive
 # horizontal mass fluxes from MERRA-2 WINDS (U/V) plus a Cameron-Smith
 # column pressure-fix (the Poisson balance), instead of GEOS native
-# cubed-sphere MFXC. The writer (`transport_binary/merra2_latlon_regrid.jl`)
+# cubed-sphere MFXC. The writer (`Sources/MERRA2/merra2_latlon_regrid.jl`)
 # accepts any cubed-sphere target resolution.
 #
 # Data lives on a regular 0.5° × 0.625° latitude-longitude grid (576 × 361),

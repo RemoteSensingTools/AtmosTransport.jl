@@ -358,8 +358,7 @@ function read_next_day_qv!(qv::NativeQVWorkspace,
                            Nx::Int,
                            Ny::Int,
                            Nz_native::Int)
-    next_thermo_path = joinpath(settings.thermo_dir,
-                                "era5_thermo_ml_$(Dates.format(date + Day(1), "yyyymmdd")).nc")
+    next_thermo_path = era5_thermo_path(settings.thermo_dir, date + Day(1))
     isfile(next_thermo_path) || error("Thermo file not found: $next_thermo_path")
     Nx_t, Ny_t = size(qv.qv_thermo, 1), size(qv.qv_thermo, 2)
     qv.qv_thermo .= read_qv_from_thermo(next_thermo_path, 1, Nx_t, Ny_t, Nz_native; FT=Float64)

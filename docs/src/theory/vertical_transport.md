@@ -33,7 +33,7 @@ native GEOS fluxes are not rederivable (certificate `not_applicable`). See
 [Binary format](../concepts/binary_format.md#Flux-fidelity-gate-and-header-certificate)
 for sampling, normalization, and header details.
 
-**MERRA-2** (`src/Preprocessing/transport_binary/merra2_latlon_regrid.jl`).
+**MERRA-2** (`src/Preprocessing/Sources/MERRA2/merra2_latlon_regrid.jl`).
 - Inputs: A3dyn 3-hour mean winds (0.5° × 0.625°); I3 instantaneous surface
   pressure and humidity.
 - `u_east` and `v_north` are regridded conservatively to C90 cell means as a

@@ -262,7 +262,7 @@ function resolve_qv_requirements(date::Date, settings)
         error("mass_basis=:dry requires [input].thermo_dir")
 
     thermo_path = if needs_qv
-        path = joinpath(settings.thermo_dir, "era5_thermo_ml_$(Dates.format(date, "yyyymmdd")).nc")
+        path = era5_thermo_path(settings.thermo_dir, date)
         isfile(path) || error("Thermo file not found: $path")
         path
     else

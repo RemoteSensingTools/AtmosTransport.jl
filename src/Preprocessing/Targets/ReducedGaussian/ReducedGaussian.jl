@@ -1,6 +1,8 @@
 """Reduced-Gaussian spectral staging, window contracts and daily preprocessing."""
 module ReducedGaussian
 
+import ..Spectral: era5_thermo_path
+
 import ...Grids, ...State
 import ...Architectures: CPU
 import ...Grids: AtmosGrid,
@@ -108,7 +110,7 @@ using FFTW
 
 import ..TransportBinary: cached_or_build!, ranked_fidelity_ids
 
-export RGSpectralUnifiedDriverContext,
+export allocate_reduced_spectral_thread_cache, RGSpectralUnifiedDriverContext,
     RGWorst,
     ReducedFidelitySampler,
     ReducedGaussianContract,

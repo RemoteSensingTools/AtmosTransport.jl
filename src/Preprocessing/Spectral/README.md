@@ -34,6 +34,8 @@ pressure-overlap remap, dry-basis conversion, humidity readers, global mass
 pinning, LL balance and mass-target support. Private implementation helpers
 stay within this module.
 
+`era5_thermo_path` formats daily thermodynamic filenames for binary and target workflows.
+
 ## Forward<->adjoint mirrors
 
 None.
