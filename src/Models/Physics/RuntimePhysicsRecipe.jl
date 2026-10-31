@@ -92,8 +92,8 @@ build_runtime_diffusion(cfg, style::AbstractRuntimeRecipeStyle, ::Type{FT},
 
 # --- Context helpers the diffusion `materialize` methods call ----------------
 # Kept here (not in RuntimePhysicsSpecs.jl) because they resolve concrete
-# grid/reader/driver types; tests stub them via `AtmosTransport.Models._runtime_has_*`
-# and `AtmosTransport.Models._pbl_cache_shape`.
+# grid/reader/driver types; tests stub them via `AtmosTransport.Models.Physics._runtime_has_*`
+# and `AtmosTransport.Models.Physics._pbl_cache_shape`.
 
 @inline _constant_runtime_kz_field(::LatLonRuntimeRecipeStyle, value::FT) where FT =
     ConstantField{FT, 3}(value)

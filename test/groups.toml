@@ -96,8 +96,8 @@ files = [
 paths = [
     "src/Parameters/**",
     "src/ConfigChecks.jl",
-    "src/Models/Runner/config_keys.jl",
-    "src/Models/Runner/configuration.jl",
+    "src/Models/Runner/DrivenRunner/config_keys.jl",
+    "src/Models/Runner/DrivenRunner/configuration.jl",
     "src/Models/**",
     "src/MetDrivers/**",
     "src/Preprocessing/**",
@@ -214,7 +214,7 @@ paths = [
     "src/Operators/SurfaceFlux/surface_flux_kernels.jl",
     "src/Adjoints/DiffusionAdjoint.jl",
     "src/Preprocessing/PhysicsInputs/tm5_bldiff.jl",
-    "src/Models/Physics/driven_physics_refresh.jl",
+    "src/Models/Runner/driven_physics_refresh.jl",
 ]
 
 [topics.surface_flux_chemistry]
@@ -241,7 +241,8 @@ paths = [
     "src/State/Fields/StepwiseField.jl",
     "src/Operators/StepPlan/**",
     "src/Operators/OperatorState.jl",
-    "src/Models/Core/{TransportModel,driven_stepping}.jl",
+    "src/Models/Core/TransportModel.jl",
+    "src/Models/Runner/driven_stepping.jl",
     "src/Models/InitialConditions/surface_flux*.jl",
 ]
 
@@ -304,7 +305,7 @@ paths = [
     "src/Models/Runner/BinaryPathExpander.jl",
     "src/Models/Runner/InputStaging.jl",
     "src/Models/Runner/driven_window_state.jl",
-    "src/Models/Runner/resources.jl",
+    "src/Models/Runner/DrivenRunner/resources.jl",
     "scripts/diagnostics/inspect_transport_binary.jl",
     "scripts/validation/verify_cs_binary_continuity.jl",
     "scripts/postprocess/**",
@@ -405,7 +406,7 @@ files = [
 ]
 paths = [
     "src/Output/*.jl",
-    "src/Models/Runner/output.jl",
+    "src/Models/Runner/DrivenRunner/output.jl",
 ]
 
 [topics.observations]
@@ -423,7 +424,7 @@ files = [
 ]
 paths = [
     "src/{Output,Observations}/**",
-    "src/Models/Runner/observations.jl",
+    "src/Models/Runner/DrivenRunner/observations.jl",
     "schemas/observation_sites.schema.json",
 ]
 
@@ -468,7 +469,8 @@ paths = [
     "src/Operators/StepPlan/**",
     "src/Operators/OperatorState.jl",
     "src/Operators/StepRecording.jl",
-    "src/Models/Core/{driven_stepping,adjoint_schedule,TransportModel}.jl",
+    "src/Models/Core/{adjoint_support,TransportModel}.jl",
+    "src/Models/Runner/{driven_stepping,adjoint_schedule}.jl",
 ]
 
 [topics.inversion]

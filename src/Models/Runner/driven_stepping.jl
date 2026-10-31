@@ -1,5 +1,10 @@
 # DrivenSimulation: window advance, the constructor, step!, run_window! and run!.
-# Split from DrivenSimulation.jl (refactor phase 4); included by Models.jl in this order.
+# Split from DrivenSimulation.jl (refactor phase 4); included by Runner.jl in this order.
+
+using ...Operators.SurfaceFlux: _check_surface_source_compatibility,
+                                stage_surface_flux_window!
+using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _reset_air_mass!,
+                              _refresh_state_halos!
 
 function _load_window(driver::D, win::Int) where {D <: AbstractMetDriver}
     return load_transport_window(driver, win)

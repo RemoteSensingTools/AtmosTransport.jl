@@ -475,7 +475,7 @@ end
     FT = Float64
     mesh = ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT = FT)
     fluxes_rg = allocate_face_fluxes(mesh, 2; FT = FT, basis = DryBasis)
-    @test_throws ArgumentError Models._scale_runtime_fluxes!(fluxes_rg, FT(0.5))
+    @test_throws ArgumentError Models.Runner._scale_runtime_fluxes!(fluxes_rg, FT(0.5))
 
     # CS flux state: am/bm/cm scale, nothing else does.
     cs_mesh = CubedSphereMesh(; FT = FT, Nc = 4, Hp = 1)
@@ -485,7 +485,7 @@ end
         fluxes_cs.bm[p] .= 4.0
         fluxes_cs.cm[p] .= 8.0
     end
-    Models._scale_runtime_fluxes!(fluxes_cs, FT(0.5))
+    Models.Runner._scale_runtime_fluxes!(fluxes_cs, FT(0.5))
     @test all(all(fluxes_cs.am[p] .== 1.0) for p in 1:6)
     @test all(all(fluxes_cs.bm[p] .== 2.0) for p in 1:6)
     @test all(all(fluxes_cs.cm[p] .== 4.0) for p in 1:6)
@@ -518,7 +518,7 @@ end
 
     destination = make_window(1)
     source = make_window(2)
-    AtmosTransport.Models._copy_window_payload!(destination, source)
+    AtmosTransport.Models.Runner._copy_window_payload!(destination, source)
 
     @test all(all(==(FT(2)), destination.vdiff.u[p]) for p in 1:6)
     @test all(all(==(FT(2)), destination.vdiff.v[p]) for p in 1:6)

@@ -152,7 +152,7 @@ end
     # runner wiring. Until a 2-binary end-to-end fixture exists, pin the two
     # call sites the 31-day verification campaign validated empirically.
     src = read(normpath(joinpath(@__DIR__, "..", "..", "src", "Models",
-                                 "Runner", "DrivenRunner.jl")), String)
+                                 "Runner", "DrivenRunner", "DrivenRunner.jl")), String)
     @test occursin("start_time = run_time_seconds", src)        # LL/RG loop
     @test occursin("start_time = total_hour * 3600.0", src)     # CS day loop
     @test occursin("run_time_seconds += (stop_window - start_window + 1)", src)

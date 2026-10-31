@@ -2,6 +2,8 @@
 # that materialize the operators, so metadata cannot drift into a second string
 # switch over TOML values.
 
+using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence
+
 _physics_limiter(::NoLimiter) = "none"
 _physics_limiter(::MonotoneLimiter) = "monotone"
 _physics_limiter(::CW84Limiter) = "cw84"
