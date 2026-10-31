@@ -26,10 +26,8 @@ Observation sampling lives in `AtmosTransport.Observations`.
 module Output
 
 using ..Parameters: EARTH_RADIUS
-using ..Grids: HybridSigmaPressure, cell_centers, parse_panel_convention, parse_cs_definition
-
-using ..Grids: panel_convention_tag
-
+using ..Grids: HybridSigmaPressure, cell_centers, parse_panel_convention, parse_cs_definition,
+               panel_convention_tag
 using ..State: basis_symbol
 
 using Dates
@@ -40,7 +38,7 @@ using Printf
 using KernelAbstractions: @kernel, @index, get_backend, synchronize, CPU as KA_CPU
 using ..Architectures: CPU, compensated_total, _total_accumulator_type
 
-using ..ConfigChecks: config_bool as _config_bool, check_known_keys as _check_known_keys
+using ..ConfigChecks: config_bool, config_int, config_float, parse_choice, parse_float_type
 
 # netcdf-c is not thread-safe, even across files. Daily snapshot files are
 # written on a spawned task while observation and single-file snapshot appends
@@ -60,14 +58,11 @@ with_netcdf_lock(f) = lock(f, _NETCDF_IO_LOCK)
 import ..expand_data_path
 import ..source_revision
 using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh,
-               GnomonicPanelConvention, GEOSNativePanelConvention,
                nx, ny, nrings, ring_longitudes, cell_index, ncells,
                cell_area, panel_cell_center_lonlat, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
-               cs_definition_tag, coordinate_law_tag, center_law_tag,
-               lonlat_to_panel_xy, gravity
-using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis, tracer_names, get_tracer,
-               CellState, CubedSphereState, tracer_index
+               cs_definition_tag, coordinate_law_tag, center_law_tag
+using ..State: mass_basis, tracer_names, get_tracer
 
 export AbstractSnapshotFrame, SnapshotFrame, SelectedSnapshotFrame, SnapshotWriteOptions
 export AbstractOutputSchedule, AbstractOutputPartition
@@ -90,7 +85,6 @@ export with_netcdf_lock
 
 include("snapshots.jl")
 include("runtime_output.jl")
-include("output_config.jl")
 include("diagnostics.jl")
 include("snapshot_totals.jl")
 include("selected_snapshots.jl")
