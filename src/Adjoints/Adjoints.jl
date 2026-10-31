@@ -124,7 +124,8 @@ export CELL_AVERAGE_PLACEMENT_CODE, AbstractFlaggedRecordPolicy, DropFlaggedReco
     CSSurfaceFluxPreconditioner, apply_preconditioner!, apply_preconditioner_adjoint!,
     CSTapeByteEstimate, run_cs_footprint_forward, cs_surface_emission_footprint,
     cs_surface_emission_footprint_from_seed, cs_tape_byte_estimate, cs_surface_flux_jacobian,
-    cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize, AbstractCSOptimizer, CSGradientDescent,
-    CSLBFGS, cs_surface_flux_4dvar_solve, CSStepSchedule, CSIterationLog, CSIterationLogEntry
+    cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize, AbstractCS4DVarEvaluation,
+    CSCostAndGradient, CSCostOnly, AbstractCSOptimizer, CSGradientDescent, CSLBFGS,
+    cs_surface_flux_4dvar_solve, CSStepSchedule, CSIterationLog, CSIterationLogEntry
 
 end # module Adjoints

@@ -16,7 +16,10 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `TapeRecording.jl`: sweep records, recording and `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
 - `StrideCheckpoint.jl`, `revolve_checkpoint.jl`: Full/Stride/Revolve drivers
-  and the tape-storage checks made before the forward run.
+  in four phases on one replay (`_begin_taped_run`, the forward run
+  `_run_forward!`, `_reverse_taped_run`, `_end_taped_run!`), the 4D-Var's
+  zero-start forced reverse (`_forced_reverse`), and the tape-storage checks
+  made before the forward run.
 - `FootprintAPI.jl`: footprint and seeded-footprint entry points.
 
 ## Depends on
@@ -37,7 +40,8 @@ scripts and tests.
 `run_cs_footprint_forward`, `cs_tape_byte_estimate`,
 `cs_surface_emission_footprint`, `cs_surface_emission_footprint_from_seed`.
 Inversion uses the replay accessors, call setup/validation, objective-footprint
-batch and zero-start forced reverse driver listed below.
+batch, the taped forward run (which samples the observations while it records)
+and the zero-start forced reverse driver listed below.
 
 ## Forward<->adjoint mirrors
 
@@ -51,10 +55,16 @@ Full/Stride/Revolve give the same gradients bit for bit on one CPU thread
 (`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape
 storage, rewinds it before each re-recorded window and releases it at the
 end; a storage that reserves its extent (`MmapCSTapeStorage`) is sized by
-counting the largest tape on the replay first. Lin–Rood accepts device tape
-storage only. Level Nz is the surface.
+counting the largest tape on the replay first. A call runs one forward run of
+its replay, which records what the schedule's reverse pass needs (Full: the
+tape; Stride: the K-step checkpoints; Revolve: the initial state) through its
+taped steps; the reverse pass may stop earlier (the 4D-Var's last assimilated
+step, `_tape_through`) and runs from the state the forward run ended in. The
+4D-Var samples its observations in that forward run, so one run gives the
+simulated values and the tape. Lin–Rood accepts device tape storage only.
+Level Nz is the surface.
 
-# shared: CSFootprintResult, _ZeroStart, _cs_objective_footprints, _cs_replay_for_call, _cs_surface_footprints, _replay_m, _replay_rm, _replay_steps!, _require_tape_storage_supported, _validate_step_sequences
+# shared: CSFootprintResult, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _replay_m, _replay_nsteps, _replay_rm, _require_tape_storage_supported, _run_forward!, _validate_step_sequences
 
 # shared: _validate_step_sequences
 

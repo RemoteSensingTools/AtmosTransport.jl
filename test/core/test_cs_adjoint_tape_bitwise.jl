@@ -6,9 +6,10 @@
 # Stride with K not dividing the met windows, Revolve) must give the gradients
 # of the device tape with FullCheckpoint bit for bit: footprints and initial
 # adjoints of the objective, seeded and multi-objective entry points, and the
-# 4D-Var cost, simulated values and gradient. The fields are rough, so the
-# limited PPM reverse runs through every limiter branch on every axis and at
-# the seams, which the test requires. On the host that recorded
+# 4D-Var cost, simulated values and gradient (on two cases with every
+# observation operator, background terms and the preconditioned space). The
+# fields are rough, so the limited PPM reverse runs through every limiter
+# branch on every axis and at the seams, which the test requires. On the host that recorded
 # `fixtures/cs_adjoint_tape_digests.toml` the reference digests must also equal
 # the recorded ones, so a change of the tape internals has to reproduce the
 # recorded gradients bit for bit.

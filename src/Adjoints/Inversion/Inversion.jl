@@ -19,7 +19,7 @@ export CELL_AVERAGE_PLACEMENT_CODE, AbstractFlaggedRecordPolicy, DropFlaggedReco
     apply_B_half!, apply_B_half_adjoint!, AbstractCSOptimType, LinearOptimType, LogNormalOptimType,
     CSSurfaceFluxPreconditioner, apply_preconditioner!, apply_preconditioner_adjoint!,
     cs_surface_flux_jacobian, cs_surface_flux_4dvar, cs_surface_flux_4dvar_optimize,
-    AbstractCSOptimizer, CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve, CSIterationLog,
-    CSIterationLogEntry
+    AbstractCS4DVarEvaluation, CSCostAndGradient, CSCostOnly, AbstractCSOptimizer,
+    CSGradientDescent, CSLBFGS, cs_surface_flux_4dvar_solve, CSIterationLog, CSIterationLogEntry
 
 end # module Inversion

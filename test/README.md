@@ -245,11 +245,14 @@ flux and FV3 Lin–Rood footprint differences share the matrix in
 mmap tier's space reservation are in `core/test_cs_tape_storage.jl`.
 
 The adjoint tape's bitwise gate, `core/test_cs_adjoint_tape_bitwise.jl` (about
-2.5 minutes, adjoint footprint topic), runs `helpers/cs_adjoint_tape_harness.jl`
+3.5 minutes, adjoint footprint topic), runs `helpers/cs_adjoint_tape_harness.jl`
 in a `--threads=1` subprocess: every tape storage and checkpoint schedule must
 reproduce the device `FullCheckpoint` gradients bit for bit on rough fields
 that reach every limiter branch, and on the reference host the reference
-digests must equal `fixtures/cs_adjoint_tape_digests.toml`. A change that is
+digests must equal `fixtures/cs_adjoint_tape_digests.toml`. Two core cases
+(`operators = true`) also run every 4D-Var observation operator, including a
+screened averaging-kernel column that ends the reverse pass before the tape
+(`fourdvar_operators`). A change that is
 meant to keep gradients bit for bit must pass it unchanged. The full matrix is
 the opt-in `diagnostic/test_cs_adjoint_tape_bitwise_full.jl` (about 10
 minutes). To A/B a branch against main on any host (any tier), or to

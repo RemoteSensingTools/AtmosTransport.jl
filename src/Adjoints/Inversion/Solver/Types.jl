@@ -105,12 +105,42 @@ function CSSurfaceFluxControl(window::CSSurfaceFluxWindow,
 end
 
 """
+    AbstractCS4DVarEvaluation
+
+What one `cs_surface_flux_4dvar` evaluation computes: [`CSCostAndGradient`](@ref)
+(the default) or [`CSCostOnly`](@ref).
+"""
+abstract type AbstractCS4DVarEvaluation end
+
+"""
+    CSCostAndGradient()
+
+A 4D-Var evaluation of the cost and its gradient (the default of
+`cs_surface_flux_4dvar` and the evaluation of every optimizer step): one
+forward run that samples the observations and records the tape of its
+`checkpoint` schedule, then one reverse pass.
+"""
+struct CSCostAndGradient <: AbstractCS4DVarEvaluation end
+
+"""
+    CSCostOnly()
+
+A 4D-Var evaluation of the cost and the simulated values only: one forward
+run without a tape, no reverse pass and no tape storage. The result's
+`gradients` and `gradient_by_name` are empty. For callers that need the
+simulated observations or the cost at a point but not the gradient there
+(for example, synthetic observations).
+"""
+struct CSCostOnly <: AbstractCS4DVarEvaluation end
+
+"""
     CS4DVarResult
 
 One 4D-Var cost and gradient evaluation (`cs_surface_flux_4dvar`): the
 total, observation and background costs, the simulated values and
 residuals `H(x) − y` per observation, the gradient per control (and by
-control name), the controls and observations evaluated, and `stencils`, one
+control name; both empty for a [`CSCostOnly`](@ref) evaluation), the
+controls and observations evaluated, and `stencils`, one
 [`CSObservationStencil`](@ref) per observation (the steps, weights and
 levels it was sampled at). An observation whose stencil is not `assimilated`
 (a co-sample, or an averaging-kernel column screened out by its
