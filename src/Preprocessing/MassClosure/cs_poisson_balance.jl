@@ -44,7 +44,7 @@ end
 # High-level balance entry point
 # ---------------------------------------------------------------------------
 
-function _balance_cs_level!(
+function balance_cs_level!(
     k::Int,
     panels_am::NTuple{6, Array{FT, 3}},
     panels_bm::NTuple{6, Array{FT, 3}},
@@ -165,12 +165,7 @@ function balance_cs_global_mass_fluxes!(
     nc = ft.nc
     inv_scale = 1.0 / (2.0 * steps_per_window)
 
-    nthread = Threads.maxthreadid()
-    scratches = Vector{CSPoissonScratch}(undef, nthread)
-    scratches[1] = scratch
-    for t in 2:nthread
-        scratches[t] = CSPoissonScratch(nc)
-    end
+    scratches = cs_level_scratches(scratch, nc)
 
     pre_by_level = zeros(Float64, Nz)
     post_by_level = zeros(Float64, Nz)
@@ -180,7 +175,7 @@ function balance_cs_global_mass_fluxes!(
     iter_by_level = zeros(Int, Nz)
 
     Threads.@threads :static for k in 1:Nz
-        diag = _balance_cs_level!(
+        diag = balance_cs_level!(
             k, panels_am, panels_bm, panels_m, panels_m_next,
             ft, degree, scratches[Threads.threadid()], inv_scale;
             tol=tol, max_iter=max_iter, project_every=project_every)
@@ -716,4 +711,16 @@ function diagnose_balanced_cs_cm!(panels_cm::NTuple{6, Array{FT, 3}},
                            panels_m, Nc, Nz, weights;
                            residual_tol = balance_diag.final_column_tolerance_by_cell,
                            context)
+end
+
+"""Allocate independent per-thread CS solve scratch, reusing the supplied first slot."""
+function cs_level_scratches(scratch::CSPoissonScratch, nc::Int)
+    nthread = Threads.maxthreadid()
+    scratches = Vector{CSPoissonScratch}(undef, nthread)
+    scratches[1] = scratch
+    for t in 2:nthread
+        scratches[t] = CSPoissonScratch(nc)
+    end
+
+    return scratches
 end

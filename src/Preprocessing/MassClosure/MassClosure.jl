@@ -1,5 +1,7 @@
 module MassClosure
 
+export balance_cs_level!, cs_level_scratches, cs_column_convergence
+
 using LinearAlgebra: mul!, dot
 using SparseArrays: SparseMatrixCSC, sparse
 using ...Parameters: DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,

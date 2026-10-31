@@ -2,9 +2,8 @@
 
 Configuration parsing, logging, met-source and reader contracts, target
 geometry, and shared binary-pipeline interfaces. Core loads before Vertical
-and Spectral and imports no later preprocessing stage. The parent registers
-native GRIB geometry, source traits and column-balance implementations on its
-generics. Target scratch has a concrete type parameter, preserving the same
+and Spectral and imports no later preprocessing stage. Sources register native GRIB geometry and source traits on its generics;
+MassClosure registers the column-balance implementation. Target scratch has a concrete type parameter, preserving the same
 scratch allocation while keeping the closure implementation out of Core.
 
 ## File map
@@ -13,10 +12,12 @@ scratch allocation while keeping the closure implementation out of Core.
 - `binary_pipeline.jl`: staging paths, humidity clamp, column-weight and target
   balance protocols; workflow includes live in `../Preprocessing.jl`.
 - `met_sources.jl`: settings types, full 14-argument `RawWindow`, source contracts.
-- `met_readers.jl`: GEOS reader, seed policy and support/threading traits.
+- `met_readers.jl`: abstract reader contracts, seed policy and support/threading traits.
 - `target_geometry.jl`: LL, RG and CS target geometry and metadata.
 - `configuration.jl`: runtime settings and common flux/column-weight parsers.
 - `logging.jl`: public `FlushingLogger` for preprocessing scripts.
+
+- `source_factory.jl`: source settings factory, extension protocols and native output naming.
 
 ## Depends on
 

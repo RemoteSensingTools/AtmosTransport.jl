@@ -62,7 +62,8 @@ const README_DIRS = [
     "src/Preprocessing/MassClosure", "src/Preprocessing/PhysicsInputs",
     "src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon",
     "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere",
-    "src/Preprocessing/sources", "src/Preprocessing/transport_binary",
+    "src/Preprocessing/Sources/GEOS", "src/Preprocessing/Sources/ERA5",
+    "src/Preprocessing/Sources/MERRA2",
     "src/Quantities", "src/Regridding", "src/GriddedIO", "src/Tape", "src/Extras/Visualization",
 ]
 

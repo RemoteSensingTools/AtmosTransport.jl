@@ -1,6 +1,9 @@
 """Cubed-sphere spectral staging, conservative regridding, coarsening and contracts."""
 module CubedSphere
 
+import ..Core: MAX_SPECIFIC_HUMIDITY
+import ..Spectral: mass_target_offset
+
 import AtmosTransport: State
 import ...Grids: CS_PANEL_COUNT,
     CubedSphereMesh,
@@ -200,5 +203,8 @@ include("cubed_sphere_contracts.jl")
 include("cubed_sphere_spectral.jl")
 include("cubed_sphere_regrid.jl")
 include("cubed_sphere_coarsen.jl")
+
+export cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
+include("mass_helpers.jl")
 
 end # module CubedSphere

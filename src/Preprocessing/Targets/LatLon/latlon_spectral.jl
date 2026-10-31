@@ -349,11 +349,9 @@ function process_day(date::Date,
     header = build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
     source_paths = String[vo_d_path, lnsp_path]
     if settings.include_qv || settings.mass_basis == :dry
-        push!(source_paths, joinpath(
-            settings.thermo_dir, "era5_thermo_ml_$(date_str).nc"))
+        push!(source_paths, era5_thermo_path(settings.thermo_dir, date_str))
         next_date_str = Dates.format(date + Day(1), "yyyymmdd")
-        push!(source_paths, joinpath(
-            settings.thermo_dir, "era5_thermo_ml_$(next_date_str).nc"))
+        push!(source_paths, era5_thermo_path(settings.thermo_dir, next_date_str))
     end
     settings.include_surface && push!(
         source_paths, resolve_era5_surface_path(settings.surface_dir, date))

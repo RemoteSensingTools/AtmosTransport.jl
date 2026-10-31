@@ -29,16 +29,16 @@ function load_product(name, config, FT)
     if name == :IT
         f = expanduser("~/data/AtmosTransport/met/geosit/C180/raw_catrine/20211211/GEOSIT.20211211.CTM_A1.C180.nc")
         ds = NCDataset(f, "r"); or = P.detect_level_orientation(ds); w = 12
-        mfxc = P._read_panels_3d(ds, "MFXC", w,   or; FT=FT); mfyc = P._read_panels_3d(ds, "MFYC", w, or; FT=FT)
-        dc   = P._read_panels_3d(ds, "DELP", w,   or; FT=FT); dn   = P._read_panels_3d(ds, "DELP", w+1, or; FT=FT)
+        mfxc = P.GEOS._read_panels_3d(ds, "MFXC", w,   or; FT=FT); mfyc = P.GEOS._read_panels_3d(ds, "MFYC", w, or; FT=FT)
+        dc   = P.GEOS._read_panels_3d(ds, "DELP", w,   or; FT=FT); dn   = P.GEOS._read_panels_3d(ds, "DELP", w+1, or; FT=FT)
         close(ds)
     else  # :FP — per-hour files, hour 12 → 13
         dir = expanduser("~/data/AtmosTransport/met/geosfp_c720/raw/20211204")
         path(h) = joinpath(dir, "GEOS.fp.asm.tavg_1hr_ctm_c0720_v72.20211204_$(lpad(h,2,'0'))30.V01.nc4")
         dsc = NCDataset(path(12), "r"); dsn = NCDataset(path(13), "r")
         or = P.detect_level_orientation(dsc)
-        mfxc = P._read_panels_3d(dsc, "MFXC", 1, or; FT=FT); mfyc = P._read_panels_3d(dsc, "MFYC", 1, or; FT=FT)
-        dc   = P._read_panels_3d(dsc, "DELP", 1, or; FT=FT); dn   = P._read_panels_3d(dsn, "DELP", 1, or; FT=FT)
+        mfxc = P.GEOS._read_panels_3d(dsc, "MFXC", 1, or; FT=FT); mfyc = P.GEOS._read_panels_3d(dsc, "MFYC", 1, or; FT=FT)
+        dc   = P.GEOS._read_panels_3d(dsc, "DELP", 1, or; FT=FT); dn   = P.GEOS._read_panels_3d(dsn, "DELP", 1, or; FT=FT)
         close(dsc); close(dsn)
     end
 

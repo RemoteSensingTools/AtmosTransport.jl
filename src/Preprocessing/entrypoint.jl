@@ -43,24 +43,14 @@ end
 # ---------------------------------------------------------------------------
 # Output path resolution for the native-source path. The TOML's
 # `[output].directory` is the destination; the date and float type pick the
-# filename. Sources can override via `_native_output_filename(settings, date, FT)`.
+# filename. Sources can override via `native_output_filename(settings, date, FT)`.
 # ---------------------------------------------------------------------------
-
-"""
-    _native_output_filename(settings, date, FT) -> String
-
-Per-source output filename for native-source preprocessing. Concrete
-sources override this in their own files (e.g. `sources/geos_panels.jl`); the
-default is a source-agnostic prefix.
-"""
-_native_output_filename(::AbstractMetSettings, date::Date, FT::Type) =
-    "transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
 
 function _native_output_path(cfg::AbstractDict, settings::AbstractMetSettings,
                              date::Date, FT::Type)
     out_dir = expand_data_path(String(cfg["output"]["directory"]))
     mkpath(out_dir)
-    return joinpath(out_dir, _native_output_filename(settings, date, FT))
+    return joinpath(out_dir, native_output_filename(settings, date, FT))
 end
 
 # ---------------------------------------------------------------------------
@@ -396,10 +386,10 @@ function _native_preprocessing_plan(cfg::AbstractDict)
                 omega_defaults.max_bottom_flux_correction)),
     )
     cm_closure === :omega_regularized &&
-        _validate_omega_regularization(omega_regularization)
+        validate_omega_regularization(omega_regularization)
     mass_fix_cfg = get(cfg, "mass_fix", Dict{String, Any}())
     global_mass_pin = _config_bool(mass_fix_cfg, "enable", false, "[mass_fix].enable")
-    _uses_omega(cm_closure) && !global_mass_pin &&
+    uses_omega(cm_closure) && !global_mass_pin &&
         error("OMEGA-based GEOS cm closures require [mass_fix].enable=true so " *
               "the per-level Poisson targets have zero global column tendency")
     configured_global_mass_target_kg = _native_mass_fix_target_kg(cfg, grid, settings)
@@ -407,7 +397,7 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     # pressure's air mass; the header records the pressure itself.
     configured_mass_fix_target_ps_dry_pa = isfinite(configured_global_mass_target_kg) ?
         GLOBAL_MEAN_DRY_SURFACE_PRESSURE : NaN
-    _check_native_closure_config(settings, cm_closure)
+    check_native_closure_config(settings, cm_closure)
     ensure_preprocessor_pair_supported(grid, settings; context = "native-source")
     return (; FT, grid, settings, vertical, mass_basis, dt_met_seconds, chain_mass,
             positivity_cfl_limit, require_substep_positivity, write_replay_check,
@@ -418,7 +408,7 @@ end
 
 # Closure-specific config checks of a native source; only GEOS has `cm`
 # closures (its method is in `cubed_sphere_geos.jl`).
-_check_native_closure_config(::AbstractMetSettings, _cm_closure::Symbol) = nothing
+
 
 function _process_day_native(cfg::AbstractDict;
                              day_override = nothing,
@@ -495,7 +485,7 @@ function _process_day_native(cfg::AbstractDict;
     # per-level Poisson loop must run SERIAL so day-workers don't each re-grab
     # the whole pool (oversubscription). In the single-day-per-process (`--day`)
     # path the day loop is serial, so the level solve keeps the full pool.
-    _OMEGA_LEVEL_PARALLEL[] = !threaded
+    set_omega_level_parallel!(!threaded)
     if threaded
         # Cold-cache pre-warm: regridder weight caches + JIT specializations
         # land during day 1 serial, then days 2..N run concurrently. Without

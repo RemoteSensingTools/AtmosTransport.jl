@@ -55,27 +55,8 @@
 # ===========================================================================
 
 """
-    _fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
-
-Fill the on-disk forward endpoint-difference payload without mutating the
-absolute next endpoint. The ERA5 writer's sliding-window loop swaps
-`m_next` into `m_cur` after each write, so in-place conversion of the endpoint
-would make the following window start from `m_next - m_cur`.
-"""
-function _fill_cs_mass_delta_payload!(dm_payload::NTuple{NP, <:AbstractArray{FT, 3}},
-                                      m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
-                                      m_next::NTuple{NP, <:AbstractArray{FT, 3}}) where {FT, NP}
-    for p in 1:NP
-        @inbounds for idx in eachindex(dm_payload[p])
-            dm_payload[p][idx] = m_next[p][idx] - m_cur[p][idx]
-        end
-    end
-    return dm_payload
-end
-
-"""
-    _merge_era5_c180_state!(out_fields, out_m, out_delp_dry,
-                            native_fields, native_m, native_delp_dry,
+    _merge_era5_c180_state!(out_fields, out_m,
+                            native_fields, native_m,
                             native_delp_moist, plan)
 
 Collapse a target-grid ERA5 state from native levels onto `plan`. Extensive
@@ -86,15 +67,16 @@ after native-level reconstruction and therefore do not depend on these
 averaged winds.
 """
 function _merge_era5_c180_state!(out_fields::ERA5C180RegridFields,
-                                  out_m, out_delp_dry,
+                                  out_m,
                                   native_fields::ERA5C180RegridFields,
-                                  native_m, native_delp_dry,
+                                  native_m,
                                   native_delp_moist,
                                   plan::VerticalPlan)
     Nz_out = plan.Nz_output
     Threads.@threads :dynamic for p in 1:6
         copyto!(out_fields.ps[p], native_fields.ps[p])
-        for a in (out_m[p], out_delp_dry[p], out_fields.u[p],
+        sum_merged_layers!(out_m[p], native_m[p], plan.merge_map)
+        for a in (out_fields.u[p],
                   out_fields.v[p], out_fields.t[p], out_fields.qv[p])
             fill!(a, zero(eltype(a)))
         end
@@ -103,8 +85,6 @@ function _merge_era5_c180_state!(out_fields::ERA5C180RegridFields,
             l = plan.merge_map[k]
             for j in axes(native_m[p], 2), i in axes(native_m[p], 1)
                 w = native_delp_moist[p][i, j, k]
-                out_m[p][i, j, l] += native_m[p][i, j, k]
-                out_delp_dry[p][i, j, l] += native_delp_dry[p][i, j, k]
                 out_fields.u[p][i, j, l] += native_fields.u[p][i, j, k] * w
                 out_fields.v[p][i, j, l] += native_fields.v[p][i, j, k] * w
                 out_fields.t[p][i, j, l] += native_fields.t[p][i, j, k] * w
@@ -193,7 +173,7 @@ function _pin_era5_endpoint_mass!(::NativeMergedPinSensitivity,
                                 diff(plan.native_vc.B), cell_areas, gravity)
     _merge_cs_center_extensive!(merged_pin_sensitivity,
                                 native_pin_sensitivity, plan, MassField())
-    return _pin_cs_global_air_mass_from_sensitivity!(
+    return pin_cs_global_air_mass_from_sensitivity!(
         m_dry, merged_pin_sensitivity, target_kg)
 end
 
@@ -204,7 +184,7 @@ function _pin_era5_endpoint_mass!(::PurePressureMergePinCompatibility,
     # Pure-pressure-only merges have zero sensitivity in every merged dB=0
     # group. Keep the direct merged-q path for the remaining singleton hybrid
     # layers so this no-op merge class retains its established rounding.
-    return _pin_cs_global_air_mass!(m_dry, merged_qv, cell_areas, gravity,
+    return pin_cs_global_air_mass!(m_dry, merged_qv, cell_areas, gravity,
                                     target_kg, diff(plan.merged_vc.B))
 end
 
@@ -479,6 +459,7 @@ function process_era5_n320_to_cs_day(date::Date,
 
     handles = open_era5_day(settings, date; next_day_handle = true)
     writer = nothing
+    surf_reader = nothing
     try
         # --- Allocate two ERA5 pipelines: current + next sliding-window. ---
         @info "  Allocating ERA5 N320 → C180 pipelines (×2, sliding window)..."
@@ -506,7 +487,6 @@ function process_era5_n320_to_cs_day(date::Date,
         # --- CS-side workspaces (dry mass on target, face flux, balance). ---
         cs_cell_areas = mesh.cell_areas   # (Nc, Nc), shared across panels
         native_m_dry    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
-        native_delp_dry = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_ps_dry   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         native_ps_acc   = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         native_dp       = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
@@ -517,17 +497,13 @@ function process_era5_n320_to_cs_day(date::Date,
         cur_fields      = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
         nxt_fields      = allocate_era5_c180_regrid_fields(target_grid, Nz_int)
         cur_m_dry      = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
-        cur_delp_dry   = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         cur_ps_dry     = ntuple(_ -> zeros(FT, Nc, Nc), 6)
-        cur_ps_dry_acc = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         cur_am         = ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz_int), 6)
         cur_bm         = ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz_int), 6)
         cur_cm         = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int + 1), 6)
         cur_dm_dry     = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         nxt_m_dry      = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
-        nxt_delp_dry   = ntuple(_ -> zeros(FT, Nc, Nc, Nz_int), 6)
         nxt_ps_dry     = ntuple(_ -> zeros(FT, Nc, Nc), 6)
-        nxt_ps_dry_acc = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         tm5_merged = include_convection ?
             allocate_era5_c180_tm5_convection_fields(target_grid, Nz_int) : nothing
 
@@ -661,7 +637,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 pin_sensitivity.native, pin_sensitivity.merged,
                 plan, cs_cell_areas, gravity, global_mass_target_kg)
             for p in 1:6
-                _ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
+                ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
             end
             return nothing
         end
@@ -755,11 +731,11 @@ function process_era5_n320_to_cs_day(date::Date,
         function _process_window_to_cs!(win::Int,
                                           pipe::ERA5N320ToC180Pipeline,
                                           merged_fields::ERA5C180RegridFields,
-                                          m_dry, delp_dry, ps_dry, ps_dry_acc)
+                                          m_dry, ps_dry)
             hour = win - 1
             process_era5_n320_window!(pipe, handles, date, hour)
 
-            derive_c180_dry_mass!(native_m_dry, native_delp_dry,
+            derive_c180_dry_mass!(native_m_dry,
                                    native_ps_dry, native_ps_acc,
                                    pipe.c180_fields.ps, pipe.c180_fields.qv,
                                    native_vc, cs_cell_areas)
@@ -774,12 +750,11 @@ function process_era5_n320_to_cs_day(date::Date,
                     end
                 end
             end
-            _merge_era5_c180_state!(merged_fields, m_dry, delp_dry,
+            _merge_era5_c180_state!(merged_fields, m_dry,
                                      pipe.c180_fields, native_m_dry,
-                                     native_delp_dry, native_dp, plan)
+                                     native_dp, plan)
             for p in 1:6
                 copyto!(ps_dry[p], native_ps_dry[p])
-                copyto!(ps_dry_acc[p], native_ps_acc[p])
             end
             pin_endpoint_mass!(m_dry, ps_dry, pipe.c180_fields.qv, merged_fields.qv)
             return nothing
@@ -828,9 +803,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
                 project_every = Int(cs_balance_project_every),
                 weights = balance_weights)
-            sync_all_cs_boundary_mirrors!(am, bm, mesh.connectivity, Nc, Nz_int)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
-            for p in 1:6; fill!(cm[p], zero(FT)); end
             cm_diag = diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
                                                 bal_diag, "ERA5 N320 window", balance_weights)
             closure_record[] = column_closure_record(bal_diag, cm_diag)
@@ -847,16 +820,6 @@ function process_era5_n320_to_cs_day(date::Date,
                                  mesh, Nz_native)
             window_mean && prepare_cell_winds!(flux_method, flux_x_end, pipe_end.c180_fields.u,
                                                 pipe_end.c180_fields.v, mesh, Nz_native)
-            @inbounds for p in 1:6
-                for k in 1:Nz_native
-                    dA = Float64(native_vc.A[k + 1]) - Float64(native_vc.A[k])
-                    dB = Float64(native_vc.B[k + 1]) - Float64(native_vc.B[k])
-                    for j in 1:Nc, i in 1:Nc
-                        native_dp[p][i, j, k] =
-                            FT(abs(dA + dB * Float64(pipe.c180_fields.ps[p][i, j])))
-                    end
-                end
-            end
             steps = steps_per_met
             bal_diag = _balance_window_at_steps!(pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
             if substep_policy.adaptive_substeps
@@ -884,7 +847,7 @@ function process_era5_n320_to_cs_day(date::Date,
         # --- Window 1. ---
         t0 = time()
         _process_window_to_cs!(1, cur_pipe, cur_fields,
-                                cur_m_dry, cur_delp_dry, cur_ps_dry, cur_ps_dry_acc)
+                                cur_m_dry, cur_ps_dry)
         @info @sprintf("    Window  1/%d: pipeline+regrid+vertical-merge %.2fs",
                        nwindow, time() - t0)
 
@@ -892,7 +855,7 @@ function process_era5_n320_to_cs_day(date::Date,
         for win in 2:nwindow
             t0 = time()
             _process_window_to_cs!(win, nxt_pipe, nxt_fields,
-                                    nxt_m_dry, nxt_delp_dry, nxt_ps_dry, nxt_ps_dry_acc)
+                                    nxt_m_dry, nxt_ps_dry)
             t_read = time() - t0
 
             # Restore + adaptively balance the CURRENT window against the NEXT
@@ -930,7 +893,7 @@ function process_era5_n320_to_cs_day(date::Date,
             end
             worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
 
-            _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
+            fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
             # Surface PBL for the written window (window win-1 → hour win-2).
             fill_surface_payload!(win - 2)
@@ -971,9 +934,7 @@ function process_era5_n320_to_cs_day(date::Date,
             cur_pipe, nxt_pipe = nxt_pipe, cur_pipe
             cur_fields, nxt_fields = nxt_fields, cur_fields
             cur_m_dry, nxt_m_dry         = nxt_m_dry, cur_m_dry
-            cur_delp_dry, nxt_delp_dry   = nxt_delp_dry, cur_delp_dry
             cur_ps_dry, nxt_ps_dry       = nxt_ps_dry, cur_ps_dry
-            cur_ps_dry_acc, nxt_ps_dry_acc = nxt_ps_dry_acc, cur_ps_dry_acc
         end
 
         # --- Final window: next-day hour-0 endpoint look-ahead. ---
@@ -1000,7 +961,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                    nxt_pipe.window_fields,
                                    nxt_pipe.regrid_ws,
                                    target_grid, nxt_pipe.wind)
-            derive_c180_dry_mass!(native_m_dry, native_delp_dry,
+            derive_c180_dry_mass!(native_m_dry,
                                    native_ps_dry, native_ps_acc,
                                    nxt_pipe.c180_fields.ps, nxt_pipe.c180_fields.qv,
                                    native_vc, cs_cell_areas)
@@ -1014,12 +975,11 @@ function process_era5_n320_to_cs_day(date::Date,
                     end
                 end
             end
-            _merge_era5_c180_state!(nxt_fields, nxt_m_dry, nxt_delp_dry,
+            _merge_era5_c180_state!(nxt_fields, nxt_m_dry,
                                      nxt_pipe.c180_fields, native_m_dry,
-                                     native_delp_dry, native_dp, plan)
+                                     native_dp, plan)
             for p in 1:6
                 copyto!(nxt_ps_dry[p], native_ps_dry[p])
-                copyto!(nxt_ps_dry_acc[p], native_ps_acc[p])
             end
             pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
                                nxt_pipe.c180_fields.qv, nxt_fields.qv)
@@ -1069,7 +1029,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                           m_next = nxt_m_dry)
         end
         worst_positivity = update_cs_positivity_accumulator(worst_positivity, final_pos_diag, nwindow)
-        _fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
+        fill_cs_mass_delta_payload!(cur_dm_dry, cur_m_dry, nxt_m_dry)
 
         # Surface PBL for the final window (window nwindow → hour nwindow-1).
         # VDIFF still comes from cur_pipe (current-day last hour); the look-ahead
@@ -1144,7 +1104,7 @@ function process_era5_n320_to_cs_day(date::Date,
             end
         end
         close_era5_day!(handles)
-        @isdefined(surf_reader) && close_era5_surface_reader(surf_reader)
+        surf_reader === nothing || close_era5_surface_reader(surf_reader)
     end
 end
 
@@ -1224,6 +1184,4 @@ end
 # Output filename matches the standalone CLI script's naming convention so
 # downstream tools that already grep for `era5_n320_to_cNNN_transport_…`
 # pick up the unified-CLI output without changes.
-function _native_output_filename(::AbstractERA5GRIBSettings, date::Date, FT::Type)
-    return "era5_n320_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
-end
+native_output_prefix(::AbstractERA5GRIBSettings) = "era5_n320_"

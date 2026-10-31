@@ -25,8 +25,8 @@ using .AtmosTransport.Preprocessing: verify_substep_positivity_cs!,
 # helper just for tests.
 const _resolve_positivity_cfl_limit =
     AtmosTransport.Preprocessing._resolve_positivity_cfl_limit
-const _fill_cs_mass_delta_payload! =
-    AtmosTransport.Preprocessing._fill_cs_mass_delta_payload!
+const fill_cs_mass_delta_payload! =
+    AtmosTransport.Preprocessing.fill_cs_mass_delta_payload!
 
 # Build a 6-panel CS window whose horizontal fluxes vanish and whose vertical
 # fluxes encode the per-cell mass tendency exactly. The result satisfies the
@@ -76,7 +76,7 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         m_next_before = ntuple(p -> copy(m_next[p]), 6)
         dm_payload = ntuple(_ -> zeros(FT, 2, 2, 2), 6)
 
-        _fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
+        fill_cs_mass_delta_payload!(dm_payload, m_cur, m_next)
 
         for p in 1:6
             @test dm_payload[p] == m_next_before[p] .- m_cur[p]

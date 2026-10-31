@@ -20,26 +20,6 @@ function _delp_pa_to_air_mass_kg!(m_kg::AbstractArray{FT, 3},
 end
 
 """
-    _ps_from_air_mass!(ps, m, area, g, Nc, Nz)
-
-Set `ps[i,j] = (Σ_k m[i,j,k]) · g / area[i,j]` (Pa). Used to keep the
-binary's stored `ps` consistent with the chained pressure-fixer mass.
-"""
-function _ps_from_air_mass!(ps::AbstractMatrix{FT},
-                            m::AbstractArray{FT, 3},
-                            cell_areas::AbstractMatrix{FT},
-                            g::FT, Nc::Int, Nz::Int) where {FT}
-    @inbounds for j in 1:Nc, i in 1:Nc
-        s = zero(FT)
-        for k in 1:Nz
-            s += m[i, j, k]
-        end
-        ps[i, j] = s * g / cell_areas[i, j]
-    end
-    return ps
-end
-
-"""
     _evolve_mass_pressure_fixer!(m_next, m_cur, am_v4, bm_v4, ΔB, two_steps, Nc, Nz)
 
 FV3 pressure-fixer mass evolution (restored from commit e648bf3f):
@@ -64,11 +44,7 @@ function _evolve_mass_pressure_fixer!(
         am = am_v4[p]; bm = bm_v4[p]
         m  = m_cur[p]; mn = m_next[p]
         for j in 1:Nc, i in 1:Nc
-            pit = zero(FT)
-            for k in 1:Nz
-                pit += (am[i, j, k] - am[i + 1, j, k]) +
-                       (bm[i, j, k] - bm[i, j + 1, k])
-            end
+            pit = cs_column_convergence(am, bm, i, j, Nz)
             for k in 1:Nz
                 mn[i, j, k] = m[i, j, k] + two_steps * FT(ΔB[k]) * pit
             end

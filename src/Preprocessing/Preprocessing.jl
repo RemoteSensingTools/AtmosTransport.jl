@@ -58,11 +58,9 @@ optional dry-mass pin where the source has one); every path ends in the same
 write-time replay and positivity gates.
 
 Target workflows live in `Targets/LatLon`, `Targets/ReducedGaussian` and
-`Targets/CubedSphere`; shared binary APIs live in `TransportBinary`. Native-source
-day drivers remain in `transport_binary/` until PP4. Each supported pair owns a
-`process_day` method (binary regridding has its own entry point) while
-shared binary metadata, endpoint-delta, and replay helpers stay in common
-files.
+`Targets/CubedSphere`; shared binary APIs live in `TransportBinary`. Native
+readers and day drivers live in the independent `GEOS`, `ERA5` and `MERRA2`
+submodules under `Sources/`. The parent owns only entrypoint dispatch.
 
 ## Usage
 
@@ -146,7 +144,7 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
 import ..State
 using ..State: AbstractMassBasis, DryBasis, MoistBasis,
                TotalSurfacePressure, DrySurfacePressure
-# The GEOS block-coarsen strategy (`transport_binary/geos_cs_resolution.jl`)
+# The GEOS block-coarsen strategy (`Sources/GEOS/geos_cs_resolution.jl`)
 # sums nested faces with `coarsen_xface_sum!` / `coarsen_yface_sum!`.
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
                     coarsen_xface_sum!, coarsen_yface_sum!, default_regrid_cache_dir
@@ -239,10 +237,10 @@ export coarsen_nested_cs_transport_binary
 
 # Pipeline stages load in dependency order. The facade preserves script names.
 include("Core/Core.jl")
-import .Core: AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings,
+import .Core: check_native_closure_config, AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings,
     AbstractGEOSSettings, AbstractMetReader, AbstractMetSettings, AbstractTargetGeometry,
     COLUMN_WEIGHT_NAMES, ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings,
-    FlushingLogger, GEOSNativeReader, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY,
+    FlushingLogger, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY,
     MassWeightedColumn, NoChain, PACKAGE_ROOT, RawWindow, ReducedGaussianTargetGeometry,
     source_grid, allocate_raw_window, build_target_geometry, check_column_weight_levels,
     check_spectral_column_weights, checked_mass_fix_config, close_day!, close_reader!,
@@ -624,56 +622,94 @@ import .CubedSphere: CSSpectralUnifiedDriverContext,
     verify_cs_window_contract!,
     verify_write_replay_cs!
 
-# Source readers and per-source drivers remain in the facade for PP4.
-include("sources/era5_grib_geometry.jl")
+include("Sources/GEOS/GEOS.jl")
+import .GEOS: uses_omega, validate_omega_regularization, set_omega_level_parallel!, GEOSDayHandles,
+    GEOSFPNativeDayHandles,
+    GEOSFPSettings,
+    GEOSITSettings,
+    GEOSNativeReader,
+    GEOSSettings,
+    OmegaRegularization,
+    close_geos_day!,
+    detect_level_orientation,
+    endpoint_dry_mass!,
+    geos_collection_path,
+    geosfp_native_hourly_ctm_path,
+    open_geos_day
+
+include("Sources/ERA5/ERA5.jl")
+import .ERA5: ERA5C180RawConvectionFields,
+    ERA5C180RegridFields,
+    ERA5C180RegridWorkspace,
+    ERA5C180TM5ConvectionFields,
+    ERA5GRIBDayHandles,
+    ERA5GRIBSettings,
+    ERA5HumidityRemap,
+    ERA5N320ConvectionFields,
+    ERA5N320DryMassFields,
+    ERA5N320Settings,
+    ERA5N320SpectralWorkspace,
+    ERA5N320ToC180Pipeline,
+    ERA5N320WindowFields,
+    ERA5ReducedGaussianGeometry,
+    allocate_era5_c180_raw_convection_fields,
+    allocate_era5_c180_regrid_fields,
+    allocate_era5_c180_regrid_workspace,
+    allocate_era5_n320_convection_fields,
+    allocate_era5_n320_dry_mass_fields,
+    allocate_era5_n320_spectral_workspace,
+    allocate_era5_n320_to_c180_pipeline,
+    allocate_era5_n320_window_fields,
+    close_era5_day!,
+    derive_c180_tm5_convection!,
+    derive_n320_dry_mass!,
+    discover_era5_n320_source_grid,
+    discover_era5_spectral_truncation,
+    era5_convection_hour_address,
+    era5_grib_path,
+    n320_cell_areas,
+    open_era5_day,
+    open_era5_humidity_remap,
+    process_era5_n320_to_cs_day,
+    process_era5_n320_window!,
+    read_era5_n320_convection_window!,
+    read_era5_n320_humidity!,
+    read_era5_n320_window_fields!,
+    regrid_n320_raw_convection_to_c180!,
+    regrid_n320_to_c180!,
+    remap_era5_humidity!
+
+include("Sources/MERRA2/MERRA2.jl")
+import .MERRA2: GEOSChemArchive,
+    MERRA2Archive,
+    MERRA2DayHandles,
+    MERRA2LevelOrder,
+    MERRA2Settings,
+    MERRA2ToC180Pipeline,
+    NASAArchive,
+    SurfaceFirst,
+    TopDown,
+    allocate_merra2_to_c180_pipeline,
+    allocate_merra2_window_physics,
+    close_merra2_day!,
+    convective_cloud_base!,
+    detect_merra2_level_order,
+    merra2_archive,
+    merra2_path,
+    merra2_stream_code,
+    merra2_window_physics!,
+    open_merra2_day,
+    process_merra2_to_cs_day,
+    process_merra2_window!,
+    read_merra2_next_day_endpoint,
+    read_merra2_physics_window,
+    read_merra2_window_fields,
+    validate_merra2_settings
+
+import AtmosTransport.Preprocessing.Core: ALL_FLUX_KEYS, FLUX_CONSTRUCTION_KEYS, build_met_settings, column_balance_weights_option, flux_construction_kwargs, load_met_settings, native_output_filename, reject_unsupported_flux_keys, settings_constructor, supported_flux_keys
+import AtmosTransport.Preprocessing.CubedSphere: cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
+import AtmosTransport.Preprocessing.PhysicsInputs: TM5ConvectionColumnScratch, allocate_tm5_convection_column_scratch, moist_to_dry_cmfmc!, moist_to_dry_dtrain!
 include("entrypoint.jl")
-
-# Native GEOS NetCDF reader
-include("sources/geos.jl")
-include("sources/geos_panels.jl")
-include("sources/geos_read_window.jl")
-
-# ERA5 native-GRIB reader: N320 settings + day handles, spectral synthesis
-# (VO+D → U/V, LNSP → PS, reduced_gg Q reader), dry-basis layer-mass
-# derivation, convection forecast (UDMF/DDMF/UDRF/DDRF), conservative
-# regrid to a cubed-sphere target, and the per-window pipeline that
-# wires them all together.
-include("sources/era5.jl")
-include("sources/era5_n320_window.jl")
-include("sources/era5_n320_mass_convection.jl")
-include("sources/era5_n320_to_cs.jl")
-
-# Native MERRA-2 reader: MERRA2Settings + day handles + per-window LL field
-# reader (PS/QV from inst3, U/V from tavg3). Drives the wind-derived → CS
-# path that reproduces the GEOS-Chem CO₂ transport input. Included after the
-# ERA5 sources (reader before the preprocessor that uses it).
-include("sources/merra2.jl")
-
-# TOML-driven met-source factory
-include("sources/loader.jl")
-
-# GEOS → CS passthrough orchestrator
-include("transport_binary/geos_cs_mass_helpers.jl")
-include("transport_binary/geos_cs_omega.jl")
-include("transport_binary/geos_cs_resolution.jl")
-include("transport_binary/geos_cs_window.jl")
-include("transport_binary/cubed_sphere_geos.jl")
-
-
-# ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
-# through the per-window pipeline in `sources/era5*.jl` plus the
-# target-grid dry-mass re-derivation, wind rotation, face flux reconstruction,
-# Poisson balance, and v4 writer.
-include("transport_binary/era5_n320_regrid.jl")
-
-# MERRA-2 wind-derived → CS transport-binary writer. Near-clone of the ERA5
-# N320 writer: direct MERRA-2 NetCDF read + conservative regrid to the CS
-# target, wind-derived flux reconstruction + Cameron-Smith column
-# pressure-fix (Poisson balance), 3-hourly source blocks written as 8 or 24
-# windows/day. Reproduces the validated GEOS-Chem CO₂ transport input path.
-# Included after the ERA5 N320 writer so `_fill_cs_mass_delta_payload!` is in
-# scope.
-include("transport_binary/merra2_latlon_regrid.jl")
 
 # Met source abstraction
 export AbstractMetSettings, RawWindow
@@ -686,7 +722,7 @@ export AbstractGEOSSettings, GEOSSettings, GEOSITSettings, GEOSFPSettings
 export GEOSDayHandles, open_geos_day, close_geos_day!
 export GEOSFPNativeDayHandles, geosfp_native_hourly_ctm_path
 export geos_collection_path, detect_level_orientation
-export endpoint_dry_mass, endpoint_dry_mass!
+export endpoint_dry_mass!
 
 # ERA5 native-GRIB reader: settings, day handles, and the
 # per-window spectral-synthesis surface for the N320 source grid.

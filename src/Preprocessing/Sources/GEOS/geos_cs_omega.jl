@@ -47,10 +47,10 @@ struct OmegaRegularizationScratch{FT}
     active_levels::BitVector
 end
 
-@inline _uses_omega(closure::Symbol) =
+@inline uses_omega(closure::Symbol) =
     closure === :omega_full_replacement || closure === :omega_regularized
 
-function _validate_omega_regularization(options::OmegaRegularization)
+function validate_omega_regularization(options::OmegaRegularization)
     p0, p1, p2, p3 = options.pressure_taper_hpa
     0.0 <= p0 < p1 <= p2 < p3 ||
         throw(ArgumentError("OMEGA pressure taper must satisfy 0 ≤ outer_top < inner_top ≤ inner_bottom < outer_bottom; got $(options.pressure_taper_hpa)"))
@@ -198,7 +198,7 @@ end
 # each stencil index to the range of nodes actually available (today plus any
 # present adjacent days). Returns global stencil `(gm1, g0, g1, gp2)`, the local
 # fraction `f` between `g0` and `g1`, and `atnode` (g0 == g1, exact hit).
-function _pchip_bracket_global(valid_min::Function, n3::Int, t::Float64,
+function _pchip_bracket_global(valid_min::Function, t::Float64,
                                gmin::Int, gmax::Int)
     # Largest global node index with valid_min ≤ t, searched over [gmin, gmax].
     a = gmin
@@ -256,7 +256,7 @@ function _read_pchip_field_xday!(out::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                  today, prev, next) where FT
     gmin = prev === nothing ? 1 : 1 - prev.dim["time"]
     gmax = next === nothing ? n3 : n3 + next.dim["time"]
-    (nodes, f, atnode) = _pchip_bracket_global(valid_min, n3, t, gmin, gmax)
+    (nodes, f, atnode) = _pchip_bracket_global(valid_min, t, gmin, gmax)
     if atnode && f == 0.0
         (ds, loc) = _resolve_global_node(nodes[2], n3, today, prev, next)
         y = _read_panels_3d(ds[var], loc, or; FT = FT)
@@ -413,26 +413,7 @@ function _regularize_omega_target!(
     return target
 end
 
-"""
-    _reconstruct_omega_target!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
 
-After the column balance (so div_h closes the column: Σ_k div_h = Σ_k dm), apply
-a per-level Poisson flux-potential correction so the NEW horizontal convergence
-is div_h_new[k] = dm[k] − vdiv_scale·vdiv_om[k]. Structurally identical to
-`_balance_cs_level!`: drive the graph divergence (= −div_h) toward
-−(dm − vdiv) by solving L·ψ = (div_current − desired) and applying the flux
-correction. `vdiv_scale = source_steps_per_met/steps` matches the per-substep
-flux scaling without mutating the stored base-scaled `vdiv_om` (so the adaptive
-loop can re-prepare at a different `steps` without F32 drift). The realized
-telescoped cm then has vdiv[k] = dm[k] − div_h_new[k] = +vdiv_scale·vdiv_om[k]
-UP TO a per-level global constant (the unrealizable mean removed before the
-solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
-reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
-the maximum increment and post-solve residual, the maximum global and local
-relative corrections, and the global RMS relative correction for every level.
-The local relative correction is diagnostic only; the per-level RMS values feed
-the hard lower-layer fidelity gate.
-"""
 # Single-level OMEGA-consistent flux-potential correction. Independent per level
 # (touches only `am[:,:,k]`/`bm[:,:,k]` and the supplied per-thread `scratch`),
 # so the Nz levels can be solved concurrently. Returns the per-level correction
@@ -456,14 +437,7 @@ the hard lower-layer fidelity gate.
     cg_scratch = (r = scratch.r, p = scratch.p, Ap = scratch.Ap, z = scratch.z)
     @inbounds begin
         # Current graph divergence at level k (= −div_h).
-        fill!(div, 0.0)
-        for f in 1:ft.nf
-            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
-            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
-            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
-            div[Int(ft.face_left[f])]  += flux
-            div[Int(ft.face_right[f])] -= flux
-        end
+        cs_face_divergence!(div, am, bm, ft, k)
         # Desired graph divergence: −div_h_new = −(dm − vdiv_om).
         # rhs[c] = div_current[c] − desired_graph_div[c] = div[c] + dh_new[c].
         # A horizontal flux divergence is globally mean-zero per level, so ONLY
@@ -537,14 +511,7 @@ the hard lower-layer fidelity gate.
             max_local_relative = max(max_local_relative, local_relative)
         end
         apply_cs_flux_correction!(am, bm, psi, ft, k)
-        fill!(div, 0.0)
-        for f in 1:ft.nf
-            panel = Int(ft.face_panel[f]); dir = Int(ft.face_dir[f])
-            i = Int(ft.face_idx_i[f]); j = Int(ft.face_idx_j[f])
-            flux = dir == 1 ? Float64(am[panel][i, j, k]) : Float64(bm[panel][i, j, k])
-            div[Int(ft.face_left[f])]  += flux
-            div[Int(ft.face_right[f])] -= flux
-        end
+        cs_face_divergence!(div, am, bm, ft, k)
         max_post = 0.0
         for c in 1:nc
             il, jl, p_idx = cs_panel_ij(c, Nc)
@@ -558,6 +525,26 @@ the hard lower-layer fidelity gate.
     return (max_inc, max_post, cg_iter, applied_relative, max_local_relative)
 end
 
+"""
+    _reconstruct_omega_target!(am, bm, dm, vdiv_om, grid, vdiv_scale; tol, max_iter)
+
+After the column balance (so div_h closes the column: Σ_k div_h = Σ_k dm), apply
+a per-level Poisson flux-potential correction so the NEW horizontal convergence
+is div_h_new[k] = dm[k] − vdiv_scale·vdiv_om[k]. Structurally identical to
+`balance_cs_level!`: drive the graph divergence (= −div_h) toward
+−(dm − vdiv) by solving L·ψ = (div_current − desired) and applying the flux
+correction. `vdiv_scale = source_steps_per_met/steps` matches the per-substep
+flux scaling without mutating the stored base-scaled `vdiv_om` (so the adaptive
+loop can re-prepare at a different `steps` without F32 drift). The realized
+telescoped cm then has vdiv[k] = dm[k] − div_h_new[k] = +vdiv_scale·vdiv_om[k]
+UP TO a per-level global constant (the unrealizable mean removed before the
+solve; zero grid-scale signature so r_vdiv is unchanged, global-mean part
+reconciled by the dry-mass pin). Continuity holds per column to roundoff. Returns
+the maximum increment and post-solve residual, the maximum global and local
+relative corrections, and the global RMS relative correction for every level.
+The local relative correction is diagnostic only; the per-level RMS values feed
+the hard lower-layer fidelity gate.
+"""
 function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         bm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
                                         dm::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
@@ -584,12 +571,7 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
     # The CG is a deterministic sequential solve on a per-level RHS, so the
     # written am/bm/cm are BIT-IDENTICAL to the serial loop regardless of the
     # thread schedule.
-    nthread = Threads.maxthreadid()
-    scratches = Vector{CSPoissonScratch}(undef, nthread)
-    scratches[1] = grid.poisson_scratch
-    for t in 2:nthread
-        scratches[t] = CSPoissonScratch(nc)
-    end
+    scratches = cs_level_scratches(grid.poisson_scratch, nc)
 
     inc_by_level = zeros(Float64, Nz)
     post_by_level = zeros(Float64, Nz)
@@ -642,3 +624,6 @@ function _reconstruct_omega_target!(am::NTuple{CS_PANEL_COUNT, Array{FT, 3}},
             max_local_relative_correction = maximum(local_relative_by_level),
             relative_correction_by_level = relative_by_level)
 end
+
+"""Select level parallelism before dispatching days; retains the existing execution policy."""
+set_omega_level_parallel!(enabled::Bool) = (_OMEGA_LEVEL_PARALLEL[] = enabled)

@@ -253,14 +253,9 @@ end
                      wi       * wj       * src[i1, j1]
 end
 
-function _interp_regular_ll(src::AbstractMatrix, lons, lats, lon::Real, lat::Real)
-    return _apply_ll_stencil(src, _ll_stencil(lons, lats, lon, lat))
-end
 
-function _interp_regular_ll(src::AbstractArray{FT,3}, lons, lats,
-                            lon::Real, lat::Real, k::Int) where FT
-    return _interp_regular_ll(@view(src[:, :, k]), lons, lats, lon, lat)
-end
+
+
 
 function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Matrix{FT}},
                                     src::AbstractMatrix{FT},
@@ -288,16 +283,7 @@ function _interpolate_ll_to_panels!(dst::NTuple{CS_PANEL_COUNT, Array{FT,3}},
     return dst
 end
 
-function _hflux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
-    units = lowercase(String(get(ds[var_name].attrib, "units", "")))
-    lname = lowercase(var_name)
-    if occursin("j", units) || lname in ("sshf", "surface_sensible_heat_flux")
-        # J m⁻² accumulated over the ECMWF hourly window. The Int divisor keeps
-        # Float32 data in Float32 before the FT conversion.
-        return FT.(-raw ./ round(Int, ERA5_MET_INTERVAL_SECONDS))
-    end
-    return FT.(raw)
-end
+
 
 function _validate_geos_surface_panels!(surface, path::String, win_idx::Int)
     for field in (surface.pblh, surface.ustar, surface.hflux, surface.t2m)
@@ -413,14 +399,7 @@ function endpoint_dry_mass!(delp_dry::AbstractArray{FT,3},
     return delp_dry, ps_dry
 end
 
-"""Allocate (delp_dry, ps_dry) for one panel and run `endpoint_dry_mass!`."""
-function endpoint_dry_mass(ps_total::AbstractMatrix{FT}, qv::AbstractArray{FT,3},
-                           vc::HybridSigmaPressure) where {FT}
-    delp_dry = similar(qv)
-    ps_dry   = similar(ps_total)
-    endpoint_dry_mass!(delp_dry, ps_dry, ps_total, qv, vc)
-    return delp_dry, ps_dry
-end
+
 
 # ---------------------------------------------------------------------------
 # Mass-flux scaling.
@@ -451,8 +430,7 @@ end
 windows_per_day(::GEOSSettings, ::Date) = round(Int, 86400 / GEOS_MET_INTERVAL_SECONDS)
 
 # Per-source output-filename override: GEOS gets a clearer prefix.
-_native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
-    "geos_transport_$(Dates.format(date, "yyyymmdd"))_$(FT === Float32 ? "float32" : "float64").bin"
+native_output_prefix(::AbstractGEOSSettings) = "geos_"
 
 # `has_convection` reports the capability that downstream code can rely on.
 # When `settings.include_convection` is `true`, the reader populates
@@ -461,9 +439,6 @@ _native_output_filename(::AbstractGEOSSettings, date::Date, FT::Type) =
 # the orchestrator threads them into the v4 binary's `:cmfmc` / `:dtrain`
 # payload sections, and the runtime `CMFMCConvection` operator consumes
 # them via `ConvectionForcing` (GCHP RAS / Grell-Freitas, dry-basis).
-has_convection(s::GEOSSettings) = s.include_convection
-has_surface(s::GEOSSettings) = s.include_surface || s.include_vdiff_fields
-has_vdiff_fields(s::GEOSSettings) = s.include_vdiff_fields
 # GEOS-IT A1 carries EFLUX, which GEOS-Chem's non-local PBL needs alongside the
 # VDIFF profiles. The GEOS-FP fallback readers do not read it.
 has_pbl_eflux(s::GEOSSettings{:geosit}) = s.include_vdiff_fields

@@ -130,14 +130,8 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings,
     #      `endpoint_dry_mass!` and writes into the raw buffer directly. ----
     @assert raw.qv      !== nothing "GEOS RawWindow must carry qv"
     @assert raw.qv_next !== nothing "GEOS RawWindow must carry qv_next"
-    for p in 1:6
-        copyto!(raw.qv[p],      qv_n_panels[p])
-        copyto!(raw.qv_next[p], qv_np1_panels[p])
-        endpoint_dry_mass!(raw.m[p],      raw.ps[p],      ps_n_total[p],   raw.qv[p],      vc)
-        endpoint_dry_mass!(raw.m_next[p], raw.ps_next[p], ps_np1_total[p], raw.qv_next[p], vc)
-        _scale_flux!(raw.am[p], mfxc_raw[p], inv_dt)
-        _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
-    end
+    _fill_endpoints_and_fluxes!(raw, ps_n_total, qv_n_panels, ps_np1_total,
+                               qv_np1_panels, mfxc_raw, mfyc_raw, vc, inv_dt)
 
     if settings.include_surface || settings.include_vdiff_fields
         _read_geos_surface_window!(raw, handles, win_idx)
@@ -200,14 +194,8 @@ function read_window!(raw::RawWindow{FT}, settings::GEOSSettings{:geosfp},
 
     @assert raw.qv      !== nothing "GEOS-FP RawWindow must carry qv"
     @assert raw.qv_next !== nothing "GEOS-FP RawWindow must carry qv_next"
-    for p in 1:6
-        copyto!(raw.qv[p],      qv_n_panels[p])
-        copyto!(raw.qv_next[p], qv_np1_panels[p])
-        endpoint_dry_mass!(raw.m[p],      raw.ps[p],      ps_n_total[p],   raw.qv[p],      vc)
-        endpoint_dry_mass!(raw.m_next[p], raw.ps_next[p], ps_np1_total[p], raw.qv_next[p], vc)
-        _scale_flux!(raw.am[p], mfxc_raw[p], inv_dt)
-        _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
-    end
+    _fill_endpoints_and_fluxes!(raw, ps_n_total, qv_n_panels, ps_np1_total,
+                               qv_np1_panels, mfxc_raw, mfyc_raw, vc, inv_dt)
     if settings.include_surface
         _read_geosfp_surface_window!(raw, handles.physics, win_idx)
     end
@@ -328,7 +316,7 @@ function _read_geosfp_surface_window!(raw::RawWindow{FT},
     pblh_ll  = _read_latlon_slice(physics.a1, pblh_name,  win_idx, Val(2), FT)
     ustar_ll = _read_latlon_slice(physics.a1, ustar_name, win_idx, Val(2), FT)
     hflux_raw = _read_latlon_slice(physics.a1, hflux_name, win_idx, Val(2), FT)
-    hflux_ll = _hflux_to_upward_wm2(hflux_raw, physics.a1, hflux_name, FT)
+    hflux_ll = surface_flux_to_upward_wm2(hflux_raw, physics.a1, hflux_name, FT)
     t2m_ll   = _read_latlon_slice(physics.a1, t2m_name,   win_idx, Val(2), FT)
 
     _interpolate_ll_to_panels!(raw.surface.pblh,  pblh_ll,  physics)
@@ -366,8 +354,8 @@ function _read_geosfp_convection_window!(raw::RawWindow{FT},
         copyto!(raw.cmfmc[p],  cmfmc_raw[p])
         copyto!(raw.dtrain[p], dtrain_raw[p])
     end
-    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
-    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
     _validate_geos_convection_panels!(raw.cmfmc, "CMFMC", something(physics.a3mste_path, "<GEOS-FP A3mstE>"), win_idx)
     _validate_geos_convection_panels!(raw.dtrain, "DTRAIN", something(physics.a3dyn_path, "<GEOS-FP A3dyn>"), win_idx)
     return raw
@@ -407,8 +395,8 @@ function _read_geosfp_convection_window!(raw::RawWindow{FT},
         throw(DimensionMismatch("GEOS-FP DTRAIN fallback has $(size(dtrain_ll, 3)) levels; expected $(size(raw.dtrain[1], 3))"))
     _interpolate_ll_to_panels!(raw.cmfmc,  cmfmc_ll,  physics)
     _interpolate_ll_to_panels!(raw.dtrain, dtrain_ll, physics)
-    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
-    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
     _validate_geos_convection_panels!(raw.cmfmc, "CMFMC", something(physics.a3mste_path, "<GEOS-FP A3mstE>"), win_idx)
     _validate_geos_convection_panels!(raw.dtrain, "DTRAIN", something(physics.a3dyn_path, "<GEOS-FP A3dyn>"), win_idx)
     return raw
@@ -459,46 +447,9 @@ function _read_geos_convection_window!(raw::RawWindow{FT},
         copyto!(raw.cmfmc[p],  cmfmc_raw[p])
         copyto!(raw.dtrain[p], dtrain_raw[p])
     end
-    _moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
-    _moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
+    moist_to_dry_dtrain!(raw.dtrain, raw.qv, raw.qv_next)
+    moist_to_dry_cmfmc!(raw.cmfmc,  raw.qv, raw.qv_next)
     return raw
-end
-
-# DTRAIN at centers: face index k → center k. Dry factor is the
-# window-mean of (1 − qv) at the same cell.
-function _moist_to_dry_dtrain!(dtrain::NTuple{6, Array{FT,3}},
-                               qv::NTuple{6, Array{FT,3}},
-                               qv_next::NTuple{6, Array{FT,3}}) where {FT}
-    @inbounds for p in 1:6
-        d = dtrain[p]; q1 = qv[p]; q2 = qv_next[p]
-        Nc1, Nc2, Nz = size(d)
-        for k in 1:Nz, j in 1:Nc2, i in 1:Nc1
-            qv_avg = (q1[i, j, k] + q2[i, j, k]) * FT(0.5)
-            d[i, j, k] *= (one(FT) - qv_avg)
-        end
-    end
-    return dtrain
-end
-
-# CMFMC at interfaces (Nz+1): face k sits between centers k−1 (above)
-# and k (below) under TOA-first orientation. The face humidity is
-# `interface_specific_humidity` over both endpoints: the four-corner mean
-# (two centers × two endpoints) for interior faces, the single adjacent
-# center at the model top (k=1) and surface (k=Nz+1). ERA5 convection
-# (`ecmwf_convection_to_basis!`) uses the same rule.
-function _moist_to_dry_cmfmc!(cmfmc::NTuple{6, Array{FT,3}},
-                              qv::NTuple{6, Array{FT,3}},
-                              qv_next::NTuple{6, Array{FT,3}}) where {FT}
-    @inbounds for p in 1:6
-        c = cmfmc[p]; q1 = qv[p]; q2 = qv_next[p]
-        Nc1, Nc2, Nz1 = size(c)
-        Nz = Nz1 - 1
-        for k in 1:Nz1, j in 1:Nc2, i in 1:Nc1
-            qv_face = interface_specific_humidity(k, Nz, i, j, q1, q2)
-            c[i, j, k] *= (one(FT) - qv_face)
-        end
-    end
-    return cmfmc
 end
 
 # Per-window 2D variable handle by name (NCDataset[name]).
@@ -507,3 +458,16 @@ _read_panels_2d(ds::NCDataset, name, win_idx; FT) =
 
 _read_panels_3d(ds::NCDataset, name, win_idx, orientation; FT) =
     _read_panels_3d(ds[name], win_idx, orientation; FT=FT)
+
+function _fill_endpoints_and_fluxes!(raw, ps_n_total, qv_n_panels, ps_np1_total,
+                                    qv_np1_panels, mfxc_raw, mfyc_raw, vc, inv_dt)
+    for p in 1:6
+        copyto!(raw.qv[p],      qv_n_panels[p])
+        copyto!(raw.qv_next[p], qv_np1_panels[p])
+        endpoint_dry_mass!(raw.m[p],      raw.ps[p],      ps_n_total[p],   raw.qv[p],      vc)
+        endpoint_dry_mass!(raw.m_next[p], raw.ps_next[p], ps_np1_total[p], raw.qv_next[p], vc)
+        _scale_flux!(raw.am[p], mfxc_raw[p], inv_dt)
+        _scale_flux!(raw.bm[p], mfyc_raw[p], inv_dt)
+    end
+    return raw
+end

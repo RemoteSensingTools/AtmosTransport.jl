@@ -12,7 +12,7 @@ using Test
 using AtmosTransport
 using .AtmosTransport.Preprocessing: pin_global_mean_ps!, pin_global_mean_ps_using_qv!,
                                      rescale_reduced_fluxes_to_ps!,
-                                     _pin_cs_global_air_mass!
+                                     pin_cs_global_air_mass!
 using .AtmosTransport.Grids: face_cells
 using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE, STANDARD_GRAVITY,
                                    IFS_EARTH_RADIUS
@@ -65,7 +65,7 @@ end
     pure_pressure_before = ntuple(p -> copy(m[p][:, :, 1]), 6)
     target_kg = GLOBAL_MEAN_DRY_SURFACE_PRESSURE *
                 (6 * sum(Float64, area)) / STANDARD_GRAVITY
-    stats = _pin_cs_global_air_mass!(m, qv, area, STANDARD_GRAVITY,
+    stats = pin_cs_global_air_mass!(m, qv, area, STANDARD_GRAVITY,
                                      target_kg, dB)
     @test stats.after_kg ≈ target_kg rtol = 5e-15
     @test stats.delta_ps_pa < 0

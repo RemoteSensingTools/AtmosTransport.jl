@@ -9,7 +9,7 @@
 # therefore carries dry-air fluxes, F_dry = (1 - q) F_moist, with the
 # specific humidity q taken where the flux lives: at the layer centre for
 # centre fields, and at the interface for interface fields by the rule of
-# `interface_specific_humidity`. GEOS (`_moist_to_dry_cmfmc!`) and ERA5 use
+# `interface_specific_humidity`. GEOS (`moist_to_dry_cmfmc!`) and ERA5 use
 # the same interface rule.
 # ---------------------------------------------------------------------------
 
@@ -32,7 +32,7 @@ interface `k`.
 Each `q` is a column of layer-centre values indexed by level; with several
 columns (time samples, e.g. the start and end of a window) the result is also
 averaged over them, in the order `q[1][k-1], q[1][k], q[2][k-1], ...`, which
-is the four-corner mean of GEOS `CMFMC` (`_moist_to_dry_cmfmc!`).
+is the four-corner mean of GEOS `CMFMC` (`moist_to_dry_cmfmc!`).
 
 The `(i, j, q...)` method applies the identical rule directly to columns of
 three-dimensional arrays without constructing a view in the GEOS grid loop.
@@ -233,4 +233,41 @@ end
         det[k] = zero(FT)
     end
     return (ent_negative, det_negative)
+end
+
+# DTRAIN at centers: face index k → center k. Dry factor is the
+# window-mean of (1 − qv) at the same cell.
+function moist_to_dry_dtrain!(dtrain::NTuple{6, Array{FT,3}},
+                               qv::NTuple{6, Array{FT,3}},
+                               qv_next::NTuple{6, Array{FT,3}}) where {FT}
+    @inbounds for p in 1:6
+        d = dtrain[p]; q1 = qv[p]; q2 = qv_next[p]
+        Nc1, Nc2, Nz = size(d)
+        for k in 1:Nz, j in 1:Nc2, i in 1:Nc1
+            qv_avg = (q1[i, j, k] + q2[i, j, k]) * FT(0.5)
+            d[i, j, k] *= (one(FT) - qv_avg)
+        end
+    end
+    return dtrain
+end
+
+# CMFMC at interfaces (Nz+1): face k sits between centers k−1 (above)
+# and k (below) under TOA-first orientation. The face humidity is
+# `interface_specific_humidity` over both endpoints: the four-corner mean
+# (two centers × two endpoints) for interior faces, the single adjacent
+# center at the model top (k=1) and surface (k=Nz+1). ERA5 convection
+# (`ecmwf_convection_to_basis!`) uses the same rule.
+function moist_to_dry_cmfmc!(cmfmc::NTuple{6, Array{FT,3}},
+                              qv::NTuple{6, Array{FT,3}},
+                              qv_next::NTuple{6, Array{FT,3}}) where {FT}
+    @inbounds for p in 1:6
+        c = cmfmc[p]; q1 = qv[p]; q2 = qv_next[p]
+        Nc1, Nc2, Nz1 = size(c)
+        Nz = Nz1 - 1
+        for k in 1:Nz1, j in 1:Nc2, i in 1:Nc1
+            qv_face = interface_specific_humidity(k, Nz, i, j, q1, q2)
+            c[i, j, k] *= (one(FT) - qv_face)
+        end
+    end
+    return cmfmc
 end

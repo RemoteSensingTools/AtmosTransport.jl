@@ -54,7 +54,7 @@ function _check_geos_column_weights(kind::Symbol, cm_closure::Symbol)
     return nothing
 end
 
-_check_native_closure_config(settings::AbstractGEOSSettings, cm_closure::Symbol) =
+check_native_closure_config(settings::AbstractGEOSSettings, cm_closure::Symbol) =
     _check_geos_column_weights(settings.column_balance_weights, cm_closure)
 
 # Record the column weights in a GEOS header only when the closure balances the
@@ -91,18 +91,17 @@ struct GEOSCSUnifiedDriverContext{G, S, V}
     grid             :: G
     settings         :: S
     vertical         :: V
-    steps_per_met    :: Int
     write_replay_on  :: Bool
     replay_stats     :: Base.RefValue{GEOSReplayStats}
     split_stats      :: Base.RefValue{GEOSSplitSubstepStats}
     mass_fix_target_ps_dry_pa :: Float64   # configured pin target; NaN: none
 end
 
-GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met::Integer;
+GEOSCSUnifiedDriverContext(grid, settings, vertical;
                            write_replay_on::Bool = true,
                            mass_fix_target_ps_dry_pa::Real = NaN) =
     GEOSCSUnifiedDriverContext{typeof(grid), typeof(settings), typeof(vertical)}(
-        grid, settings, vertical, Int(steps_per_met), write_replay_on,
+        grid, settings, vertical, write_replay_on,
         Ref(GEOSReplayStats()), Ref(GEOSSplitSubstepStats()),
         Float64(mass_fix_target_ps_dry_pa))
 
@@ -133,7 +132,7 @@ function driver_drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{F
                                      win::Int,
                                      ctx::GEOSCSUnifiedDriverContext) where FT
     ready_diag = drain_ready_windows!(workspace, contract, win, ctx.grid,
-                                      ctx.settings, ctx.steps_per_met;
+                                      ctx.settings;
                                       write_replay_on = ctx.write_replay_on)
     replay = ready_diag.contract.replay
     stats = ctx.replay_stats[]
@@ -229,7 +228,7 @@ function _process_day_geos_cs_unified(date::Date,
                          # Only OMEGA-based closures read the prev/next-day
                          # A3dyn+I3 handles (cross-midnight PCHIP); every other
                          # closure leaves them `nothing` (no extra opens).
-                         adjacent_omega = _uses_omega(cm_closure))
+                         adjacent_omega = uses_omega(cm_closure))
     driver_started = false
     inner_writer = nothing
     tmp_path = ""
@@ -357,7 +356,7 @@ function _process_day_geos_cs_unified(date::Date,
             steps_per_window = steps_per_met,
         )
         write_replay_on || @info "  Write-time CS replay gate SKIPPED (disabled for this run)"
-        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical, steps_per_met;
+        ctx = GEOSCSUnifiedDriverContext(grid, settings, vertical;
                                          write_replay_on, mass_fix_target_ps_dry_pa)
 
         t_start = time()

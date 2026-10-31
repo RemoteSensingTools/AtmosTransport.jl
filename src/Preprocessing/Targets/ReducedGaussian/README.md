@@ -22,6 +22,9 @@ RG spectral preprocessing through the Preprocessing facade. The deferred ERA5 re
 
 Ring synthesis/cache helpers, `ReducedFidelitySampler`, RG workspaces, `merge_field_2d!`, pressure-pin rescaling, `SlidingWindowBuffer`, `balance_window!`, `ReducedGaussianContract`, stub/positivity/replay gates and `process_day`.
 
+`allocate_reduced_spectral_thread_cache` owns the ring-cache allocation body;
+RG and ERA5 keep their distinct thread-pool sizing policies.
+
 ## Forward<->adjoint mirrors
 
 No adjoint. RG checks each horizontal/vertical pass separately and skips polar stub faces; its scan must remain distinct from LL/CS. Stored cm is diagnosed after column balance; native/merged cm scratch is unnecessary.

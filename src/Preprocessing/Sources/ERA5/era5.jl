@@ -47,7 +47,6 @@ Base.@kwdef struct ERA5GRIBSettings{flavor} <: AbstractERA5GRIBSettings
     # the `core` GRIB was assembled from ARCO (see config/downloads/era5_arco.toml).
     arco_surface_pressure :: Bool   = false
     coefficients_file     :: String = "config/era5_L137_coefficients.toml"
-    level_orientation     :: Symbol = :top_down
     # Flux construction (shared with MERRA-2; see `flux_construction.jl` and
     # docs/src/config/data_sources.md). Defaults use GCHP-matched vector
     # construction; column weighting defaults to the hybrid-layer-safe mode.
@@ -164,13 +163,7 @@ ERA5GRIBDayHandles(settings::S, date, core_path, convection_path, surface_path, 
     ERA5GRIBDayHandles{S}(settings, date, core_path, convection_path, surface_path, next_core_path,
                           prev_convection_path, arco_sp_path, Ref{Union{Nothing, GRIB.Index}}(nothing))
 
-function _validate_era5_level_orientation(settings::AbstractERA5GRIBSettings)
-    settings.level_orientation === :top_down ||
-        throw(ArgumentError("ERA5 level_orientation must be :top_down because " *
-                            "canonical ERA5 GRIB model levels are top-first; " *
-                            "got :$(settings.level_orientation)"))
-    return settings
-end
+
 
 """
     open_era5_day(settings, date; next_day_handle=true) -> ERA5GRIBDayHandles
@@ -185,7 +178,6 @@ or an incomplete download is immediately visible.
 """
 function open_era5_day(settings::AbstractERA5GRIBSettings, date::Date;
                        next_day_handle::Bool = true)
-    _validate_era5_level_orientation(settings)
 
     core_path = era5_grib_path(settings, date, :core)
     isfile(core_path) ||
@@ -299,9 +291,6 @@ windows_per_day(::AbstractERA5GRIBSettings, ::Date) = round(Int, 86400 / ERA5_ME
 # directly and emits the surface, TM5 `dkg`, and TM5 convection sections
 # itself, using its own per-window containers (`ERA5N320ConvectionFields`,
 # etc.); it never writes CMFMC/DTRAIN or GCHP VDIFF fields.
-has_surface(::AbstractERA5GRIBSettings)      = false
-has_convection(::AbstractERA5GRIBSettings)   = false
-has_vdiff_fields(::AbstractERA5GRIBSettings) = false
 
 # Static thread schedules inside the N320 workflow preclude threading days.
 supports_day_threading(::ERA5GRIBSettings{:n320}) = false

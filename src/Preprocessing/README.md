@@ -31,11 +31,11 @@ remap retain it where reproducing IFS geometry requires it.
 - Target grids: `build_target_geometry(cfg_grid, FT)` ([`Core/target_geometry.jl`](Core/target_geometry.jl));
   `[grid].type` is `latlon`, `era5_native_reduced_gaussian` (alias
   `reduced_gaussian`), `synthetic_reduced_gaussian`, or `cubed_sphere`.
-- `load_met_settings` ([`sources/README.md`](sources/README.md)) and
-  `run_unified_preprocessor_day!` ([`transport_binary/README.md`](transport_binary/README.md)).
+- `load_met_settings` ([`Core/source_factory.jl`](Core/source_factory.jl)) and
+  `run_unified_preprocessor_day!` ([`TransportBinary/README.md`](TransportBinary/README.md)).
 - Other tools with CLIs under [`../../scripts/preprocessing/`](../../scripts/preprocessing/):
   `regrid_transport_binary` / `regrid_ll_binary_to_cs` (LL binary to CS),
-  `coarsen_nested_cs_transport_binary` (experimental, not exported).
+  `coarsen_nested_cs_transport_binary` (experimental).
 - TM5 convection sections come from the ERA5 N320 to CS path
   (`include_convection = true` in the met source) or from
   [`../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`](../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl).
@@ -49,9 +49,9 @@ remap retain it where reproducing IFS geometry requires it.
 | `ERA5SpectralSettings` | `LatLonTargetGeometry` | [`Targets/LatLon/latlon_spectral.jl`](Targets/LatLon/latlon_spectral.jl) | unified driver |
 | `ERA5SpectralSettings` | `ReducedGaussianTargetGeometry` | [`Targets/ReducedGaussian/reduced_spectral_day.jl`](Targets/ReducedGaussian/reduced_spectral_day.jl) | unified driver |
 | `ERA5SpectralSettings` | `CubedSphereTargetGeometry` | [`Targets/CubedSphere/cubed_sphere_spectral.jl`](Targets/CubedSphere/cubed_sphere_spectral.jl) | unified driver |
-| `GEOSITSettings`, `GEOSFPSettings` | `CubedSphereTargetGeometry` | [`transport_binary/cubed_sphere_geos.jl`](transport_binary/cubed_sphere_geos.jl) | unified driver |
-| `ERA5N320Settings` | `CubedSphereTargetGeometry` | [`transport_binary/era5_n320_regrid.jl`](transport_binary/era5_n320_regrid.jl) | own loop |
-| `MERRA2Settings` | `CubedSphereTargetGeometry` | [`transport_binary/merra2_latlon_regrid.jl`](transport_binary/merra2_latlon_regrid.jl) | own loop |
+| `GEOSITSettings`, `GEOSFPSettings` | `CubedSphereTargetGeometry` | [`Sources/GEOS/cubed_sphere_geos.jl`](Sources/GEOS/cubed_sphere_geos.jl) | unified driver |
+| `ERA5N320Settings` | `CubedSphereTargetGeometry` | [`Sources/ERA5/era5_n320_regrid.jl`](Sources/ERA5/era5_n320_regrid.jl) | own loop |
+| `MERRA2Settings` | `CubedSphereTargetGeometry` | [`Sources/MERRA2/merra2_latlon_regrid.jl`](Sources/MERRA2/merra2_latlon_regrid.jl) | own loop |
 | LL transport binary | `CubedSphereTargetGeometry` | [`Targets/CubedSphere/cubed_sphere_regrid.jl`](Targets/CubedSphere/cubed_sphere_regrid.jl) | own loop, own CLI |
 
 GEOS targets need `panel_convention = "geos_native"` and a target `Nc` equal
@@ -116,59 +116,24 @@ ERA5 N320 and MERRA-2 to CS:
 
 ## File Map
 
-Stage submodules load in pipeline order: [Core](Core/README.md), [Vertical](Vertical/README.md),
-[Spectral](Spectral/README.md), [MassClosure](MassClosure/README.md),
-and [PhysicsInputs](PhysicsInputs/README.md). All retained public names remain reachable through
-`Preprocessing`. Shared [TransportBinary](TransportBinary/README.md) APIs load next, followed by
-[LatLon](Targets/LatLon/README.md), [ReducedGaussian](Targets/ReducedGaussian/README.md),
-and [CubedSphere](Targets/CubedSphere/README.md). These targets are direct child modules
-of Preprocessing. RG and CS reuse LL staging/logging; targets import no parent or source
-implementation. Sources and per-source day drivers remain for PP4.
-The subfolders have their own READMEs
-([`sources/`](sources/README.md), [`transport_binary/`](transport_binary/README.md)).
-The facade owns [`entrypoint.jl`](entrypoint.jl), which dispatches to the stages.
-
-- [`Preprocessing.jl`](Preprocessing.jl) — module, imports, include order, exports
-- [`Core/binary_pipeline.jl`](Core/binary_pipeline.jl) — pipeline protocols and staging paths; the root includes the deferred `transport_binary/` workflows
-- [`Core/logging.jl`](Core/logging.jl) — `FlushingLogger`, used by the CLI so logs reach redirected files
-- [`Core/met_sources.jl`](Core/met_sources.jl) — `AbstractMetSettings`, `ERA5SpectralSettings`, `RawWindow`, source trait generics
-- [`Core/met_readers.jl`](Core/met_readers.jl) — `AbstractMetReader`, `NoChain`/`ChainedMass`, `GEOSNativeReader`, `preprocessor_pair_supported`, `supports_day_threading`
-- [`Core/target_geometry.jl`](Core/target_geometry.jl) — `AbstractTargetGeometry`, LL/RG/CS target types, `build_target_geometry`, header metadata
-- [`Core/configuration.jl`](Core/configuration.jl) — ERA5 spectral TOML parsing (`resolve_runtime_settings`, `build_vertical_setup`, dates, `next_day_hour0`)
-- [`PhysicsInputs/convection_mass_basis.jl`](PhysicsInputs/convection_mass_basis.jl) — moist-to-dry conversion and TM5 convection flux basis
-- [`Vertical/vertical_coordinates.jl`](Vertical/vertical_coordinates.jl) — `merge_thin_levels`, `select_levels_echlevs`, echlevs presets, coefficient loaders
-- [`Vertical/vertical_transforms.jl`](Vertical/vertical_transforms.jl) — `AbstractVerticalTransform` types, `VerticalPlan`, `plan_vertical`, `apply_vertical!`
-- [`Spectral/spectral_io.jl`](Spectral/spectral_io.jl) — spectral GRIB reading, day cache (published with `AtomicFiles.atomic_publish`), `read_day_spectral`, `read_hour0_spectral`
-- [`Spectral/spectral_synthesis.jl`](Spectral/spectral_synthesis.jl) — Legendre/FFT synthesis to LL, `spectral_to_native_fields!`, native mass and fluxes
-- [`Spectral/reduced_spectral_synthesis.jl`](Spectral/reduced_spectral_synthesis.jl) — batched spectral synthesis on reduced-Gaussian rings (`synthesize_reduced!`)
-- [`Targets/ReducedGaussian/reduced_transport_helpers.jl`](Targets/ReducedGaussian/reduced_transport_helpers.jl) — RG workspaces, humidity, spectral synthesis, horizontal fluxes and level merge (balanced cm uses MetDrivers.recompute_cm_from_dm_target!)
-- [`Targets/ReducedGaussian/reduced_window_buffer.jl`](Targets/ReducedGaussian/reduced_window_buffer.jl) — RG two-slot window buffer and workspace, ingest/drain/flush
-- [`Targets/ReducedGaussian/reduced_spectral_day.jl`](Targets/ReducedGaussian/reduced_spectral_day.jl) — RG window synthesis, pin/dry/merge and next-day end point, `balance_window!`, driver hooks, RG `process_day`
-- [`Spectral/mass_support.jl`](Spectral/mass_support.jl) — LL merge/remap, LL Poisson and column balance, qv readers and their coordinates (`read_thermo_coordinates`, through `GriddedIO.find_coordinate`), `apply_dry_basis_native!`, `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!`
-- [`MassClosure/ring_poisson_balance.jl`](MassClosure/ring_poisson_balance.jl) — RG `CompressedLaplacian`, `balance_compressed_column_fluxes!`
-- [`../Grids/CSGlobalFaceTable.jl`](../Grids/CSGlobalFaceTable.jl) — CS global cell and face indexing (the face table)
-- [`MassClosure/cs_poisson_solver.jl`](MassClosure/cs_poisson_solver.jl) — CS graph Laplacian, PCG solver, correction mapping, mirror synchronization
-- [`MassClosure/cs_poisson_balance.jl`](MassClosure/cs_poisson_balance.jl) — `balance_cs_global_mass_fluxes!` (the CG solve on the column), `balance_cs_column_mass_fluxes!`, `diagnose_cs_cm!`; shared weights are in `MassClosure/column_weights.jl`
-- [`Targets/CubedSphere/cs_transport_helpers.jl`](Targets/CubedSphere/cs_transport_helpers.jl) — CS workspace, LL → CS regrid helpers (`regrid_2d_to_cs_panels!` / `regrid_3d_to_cs_panels!` pass the quantity kind to `Regridding.apply_regridder!`) (wind recovery is in MassClosure)
-- [`MassClosure/cs_flux_reconstruction.jl`](MassClosure/cs_flux_reconstruction.jl) — CS face fluxes from cell-center winds (`cs_face_fluxes!`)
-- [`MassClosure/cs_wind_rotation.jl`](MassClosure/cs_wind_rotation.jl) — east/north → panel-local wind rotation and LL face fluxes → cell-center winds
-- [`MassClosure/cs_native_fluxes.jl`](MassClosure/cs_native_fluxes.jl) — `geos_native_to_face_flux!` with panel halo sync, `compute_cs_cm_pressure_fixer!`
-- [`MassClosure/face_line_integrals.jl`](MassClosure/face_line_integrals.jl) — `LineIntegralFaceFluxes` (cube-face fluxes integrated from N320 or spectral staging-grid winds)
-- [`MassClosure/flux_construction.jl`](MassClosure/flux_construction.jl) — typed flux methods and wind regrids shared by MERRA-2, ERA5 N320, and spectral ERA5-to-CS
-- [`PhysicsInputs/era5_surface_reader.jl`](PhysicsInputs/era5_surface_reader.jl) — ERA5 single-level PBL fields (`open_era5_surface_reader`, `load_era5_surface_window`)
-- [`PhysicsInputs/tm5_convection_conversion.jl`](PhysicsInputs/tm5_convection_conversion.jl) — `ec2tm_from_rates!` (ECMWF to TM5 entu/detu/entd/detd), virtual-temperature hydrostatic `dz`
-- [`PhysicsInputs/tm5_bldiff.jl`](PhysicsInputs/tm5_bldiff.jl) — TM5 `bldiff` column kernels; `tm5_bldiff_dkg_column!` feeds the N320 `dkg` payload
+- [`Preprocessing.jl`](Preprocessing.jl) — module wiring and public facade.
+- [`entrypoint.jl`](entrypoint.jl) — TOML/configuration dispatch, date iteration and cross-day carry.
+- [Core](Core/README.md), [Vertical](Vertical/README.md), [Spectral](Spectral/README.md),
+  [MassClosure](MassClosure/README.md), [PhysicsInputs](PhysicsInputs/README.md) — ordered pipeline stages.
+- [TransportBinary](TransportBinary/README.md) — writer, evidence and window protocols.
+- [Targets](Targets/README.md) — LatLon, ReducedGaussian and CubedSphere submodules.
+- [Sources](Sources/README.md) — independent GEOS, ERA5 and MERRA2 submodules.
 
 ## Common Tasks
 
-- Adding a met source: follow [`sources/README.md`](sources/README.md). Its
+- Adding a met source: follow [`Core/source_factory.jl`](Core/source_factory.jl). Its
   `process_day` must accept the entry point's full keyword set (end with
   `kwargs...`) and return a NamedTuple; the serial loop reads `final_m` and
   `global_mass_target_kg` from it with `get`.
 - Adding a target topology: subtype `AbstractTargetGeometry`, add
   `build_target_geometry(::Val{:kind}, cfg_grid, FT)` and
   `supports_spectral_massflux_preprocessing` (else `ensure_supported_target`
-  rejects it), then a contract, writer, and hooks (see `transport_binary/`).
+  rejects it), then a contract, writer, and hooks (see `TransportBinary/`).
 - Debugging a replay-gate failure ("Write-time replay gate FAILED for ...
   window N"): every cell's residual must stay within `replay_tolerance(FT)`
   (`1e-5` Float32, `1e-12` Float64) of the summed magnitudes of its budget
@@ -244,27 +209,29 @@ The facade owns [`entrypoint.jl`](entrypoint.jl), which dispatches to the stages
 Panel indexing, the global face table, panel packing, geometry-tag parsing and
 flat area helpers are owned by Grids; basis-tag conversion is owned by State.
 
-ERA5 native GRIB geometry is owned here: `sources/era5_grib_geometry.jl`
+ERA5 native GRIB geometry is implemented by the ERA5 source: `Sources/ERA5/era5_grib_geometry.jl`
 defines `ERA5ReducedGaussianGeometry`, `read_era5_reduced_gaussian_geometry`,
 and `read_era5_reduced_gaussian_mesh`; no runtime dependency on GRIB geometry
 is required. Binary metadata and payload sizes delegate to MetDrivers.BinaryFormat.
 
 ## Depends on
 
-Core → Vertical → Spectral → MassClosure → PhysicsInputs supply the ordered
-pipeline stages. PhysicsInputs needs Spectral and has no MassClosure dependency.
-The facade assembles the deferred targets, transport binary and source implementations, using the lower package modules in `src/LAYERS.toml`.
+Core → Vertical → Spectral → MassClosure → PhysicsInputs, then TransportBinary
+and Targets, then the independent GEOS/ERA5/MERRA2 sources. Sources import lower
+stages directly. No lower stage imports a source or the parent facade.
 
 ## Used by
 
-Preprocessing scripts and the package facade call the public names here.
+The preprocessing CLI and package facade; existing public script and model imports stay available here.
 
 ## Shared helpers owned here
 
-The root registers source and closure implementations on Core's pipeline
-interfaces. Concrete source readers and topology writers remain here until
-PP3 and PP4.
+Only the configuration entrypoint and dispatch. Source-factory protocols and
+filename formatting live in Core; concrete readers and native day drivers live
+in their source modules. Shared CS endpoint mass/pin/delta helpers live in
+Targets/CubedSphere; shared dry convection conversion lives in PhysicsInputs.
 
 ## Forward<->adjoint mirrors
 
-None; preprocessing runs offline on the CPU.
+None; preprocessing runs offline on the CPU. Each source uses the same lower
+binary replay and positivity contracts.

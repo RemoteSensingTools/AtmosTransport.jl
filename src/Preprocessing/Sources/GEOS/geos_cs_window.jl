@@ -129,7 +129,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
         error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
               ":moisture_filtered, :pfix_corrected, :omega_full_replacement, " *
               "or :omega_regularized; got $(cm_closure)")
-    if _uses_omega(cm_closure)
+    if uses_omega(cm_closure)
         global_mass_pin ||
             error("GEOS-CS OMEGA-based cm closure requires global_mass_pin=true " *
                   "to remove the unrealizable global column-mass mode")
@@ -147,7 +147,7 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
                   "(the validated full-L72 build).")
     end
     cm_closure === :omega_regularized &&
-        _validate_omega_regularization(omega_regularization)
+        validate_omega_regularization(omega_regularization)
     # ΔB[k] = B_interface[k+1] − B_interface[k] (TOA-first; Σ ΔB = 1 by hybrid
     # sigma-pressure construction). The merged_vc is the target coordinate (same
     # source the identity plan above is built from). Used by :pressure_fixer cm.
@@ -181,13 +181,13 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     # OMEGA-consistent closure scratch: OMEGA/QV read buffers + the smooth
     # vertical-convergence target. Identity passthrough (Nc==settings.Nc,
     # Nz==Nz_native) is enforced above, so all three are target-shaped.
-    omega_buf = _uses_omega(cm_closure) ?
+    omega_buf = uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
-    qv_buf = _uses_omega(cm_closure) ?
+    qv_buf = uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
-    vdiv_om = _uses_omega(cm_closure) ?
+    vdiv_om = uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
-    vdiv_target = _uses_omega(cm_closure) ?
+    vdiv_target = uses_omega(cm_closure) ?
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), npanel) : nothing
     omega_regularization_scratch = if cm_closure === :omega_regularized
         nc = npanel * Nc * Nc
@@ -227,7 +227,7 @@ function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorksp
                                           label::AbstractString) where FT
     workspace.global_mass_pin_enabled || return nothing
     if !isfinite(workspace.global_mass_target_kg)
-        workspace.global_mass_target_kg = _cs_total_air_mass(panels_m)
+        workspace.global_mass_target_kg = cs_total_air_mass(panels_m)
         @info @sprintf("  GEOS global dry-mass pin target initialized from %s: %.9e kg",
                        label, workspace.global_mass_target_kg)
         return (before_kg = workspace.global_mass_target_kg,
@@ -245,7 +245,7 @@ function _geos_pin_global_mass_if_needed!(workspace::GEOSCubedSphereWindowWorksp
         apply_vertical!(workspace.dm_v4[p], workspace.m_native_kg[p],
                         workspace.plan, MassField())
     end
-    stats = _pin_cs_global_air_mass_from_sensitivity!(
+    stats = pin_cs_global_air_mass_from_sensitivity!(
         panels_m, workspace.dm_v4, workspace.global_mass_target_kg)
     abs(stats.delta_ps_pa) > 1e-10 &&
         @debug @sprintf("  GEOS global dry-mass pin %s: Δps=%+.6e Pa residual=%+.6e kg",
@@ -282,9 +282,6 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         workspace.am_v4, workspace.bm_v4, grid.face_table;
         sample_map = workspace.fidelity_map)
 
-    for p in 1:CS_PANEL_COUNT
-        fill!(workspace.cm_v4[p], zero(FT))
-    end
     workspace.closure_record[] = NoColumnClosureRecord()
 
     if workspace.cm_closure === :pressure_fixer
@@ -428,7 +425,7 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         return bal_diag
     end
 
-    if _uses_omega(workspace.cm_closure)
+    if uses_omega(workspace.cm_closure)
         # Both OMEGA modes first column-balance the native horizontal fluxes to
         # the analyzed dry endpoint. `:omega_full_replacement` then replaces the full
         # per-layer convergence target. `:omega_regularized` keeps that diagnosed
@@ -562,7 +559,7 @@ function _geos_select_steps_for_window!(workspace::GEOSCubedSphereWindowWorkspac
         throw(ArgumentError("GEOS steps_schedule length $(length(workspace.steps_schedule)) " *
                             "cannot record window $(win)."))
     workspace.steps_schedule[win] = steps
-    if _OMEGA_TIMING[] && _uses_omega(workspace.cm_closure)
+    if _OMEGA_TIMING[] && uses_omega(workspace.cm_closure)
         s = _OMEGA_TIMING_STATE
         @info @sprintf("  [OMEGA_TIMING] win %2d steps=%-4d prepares=%d solves=%d cg_iters=%d recon=%.3fs (%.4fs/window)",
                        win, steps, s.prepares, s.solves, s.cg_iters, s.recon_time, s.recon_time)
@@ -588,12 +585,6 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                             workspace.am_native_v4, workspace.bm_native_v4,
                             workspace.raw, grid, Nc, Nz_native,
                             workspace.flux_scale)
-    for p in 1:CS_PANEL_COUNT
-        apply_vertical!(workspace.am_v4[p], workspace.am_native_v4[p],
-                        workspace.plan, MassFluxField())
-        apply_vertical!(workspace.bm_v4[p], workspace.bm_native_v4[p],
-                        workspace.plan, MassFluxField())
-    end
 
     if win == 1 || !workspace.chain_mass
         if workspace.chain_mass && win == 1 && reader.seed !== nothing
@@ -614,7 +605,7 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         _geos_pin_global_mass_if_needed!(workspace, workspace.m_cur, workspace.raw.qv,
                                          "window $(win) start")
         for p in 1:CS_PANEL_COUNT
-            _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
+            ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
                                workspace.cell_areas, workspace.g, Nc, Nz)
         end
     end
@@ -639,7 +630,7 @@ function ingest_window!(workspace::GEOSCubedSphereWindowWorkspace{FT},
     # window's valid time) and build the smooth vdiv_om target at the BASE flux
     # scaling (tau = mass_flux_dt/2). `_geos_prepare_window_for_steps!` rescales
     # it by source_steps_per_met/steps to match the per-substep flux scaling.
-    if _uses_omega(workspace.cm_closure)
+    if uses_omega(workspace.cm_closure)
         _read_geos_omega_qv_pchip!(workspace.omega_buf, workspace.qv_buf,
                                    reader.handles, win, Nc, Nz)
         tau_base = FT(settings.mass_flux_dt / 2)
@@ -654,8 +645,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
                               contract::CubedSphereContract{FT},
                               win::Int,
                               grid::CubedSphereTargetGeometry,
-                              settings::AbstractGEOSSettings,
-                              steps_per_met::Int;
+                              settings::AbstractGEOSSettings;
                               write_replay_on::Bool = true) where FT
     steps = workspace.steps_current
     contract.steps_per_window = steps
@@ -702,7 +692,7 @@ function drain_ready_windows!(workspace::GEOSCubedSphereWindowWorkspace{FT},
         method = "geos_native_scaling_vertical_map",
         samples_per_window = length(workspace.fidelity_map.faces),
         amount_seconds = 2 * steps * Float64(workspace.flux_scale) * Float64(workspace.g))
-    omega_evidence = if _uses_omega(workspace.cm_closure)
+    omega_evidence = if uses_omega(workspace.cm_closure)
         source_omega_evidence_cs(
             CubedSphereTargetGeometry, workspace.cm_v4, workspace.omega_buf,
             workspace.qv_buf, workspace.ps_cur,
@@ -730,7 +720,7 @@ function advance_window!(workspace::GEOSCubedSphereWindowWorkspace,
     Nz = size(workspace.m_cur[1], 3)
     for p in 1:CS_PANEL_COUNT
         copyto!(workspace.m_cur[p], workspace.m_next_target[p])
-        _ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
+        ps_from_air_mass!(workspace.ps_cur[p], workspace.m_cur[p],
                            workspace.cell_areas, workspace.g, Nc, Nz)
     end
     return nothing

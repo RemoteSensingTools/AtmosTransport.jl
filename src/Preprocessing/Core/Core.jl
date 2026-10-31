@@ -1,5 +1,7 @@
 module Core
 
+import TOML
+
 using Dates
 using Logging
 using Printf
@@ -21,8 +23,7 @@ using FastGaussQuadrature: gausslegendre
 
 export AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings, AbstractGEOSSettings,
     AbstractMetReader, AbstractMetSettings, AbstractTargetGeometry, COLUMN_WEIGHT_NAMES,
-    ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings, FlushingLogger, GEOSNativeReader,
-    LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY, MassWeightedColumn, NoChain, PACKAGE_ROOT,
+    ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings, FlushingLogger, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY, MassWeightedColumn, NoChain, PACKAGE_ROOT,
     RawWindow, ReducedGaussianTargetGeometry, source_grid, allocate_raw_window,
     build_target_geometry, check_column_weight_levels, check_spectral_column_weights,
     checked_mass_fix_config, close_day!, close_reader!, column_weights, day_threading_enabled,
@@ -48,4 +49,7 @@ include("target_geometry.jl")
 include("configuration.jl")
 include("met_readers.jl")
 
-end
+export check_native_closure_config, native_output_prefix, ALL_FLUX_KEYS, FLUX_CONSTRUCTION_KEYS, build_met_settings, column_balance_weights_option, flux_construction_kwargs, load_met_settings, native_output_filename, reject_unsupported_flux_keys, settings_constructor, supported_flux_keys
+include("source_factory.jl")
+
+end # module Core

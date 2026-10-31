@@ -269,7 +269,7 @@ Conversions happen at the boundaries:
   column-integrated air mass` is dry by construction).
 - **Convection forcing.** The CMFMC and DTRAIN fields shipped by
   GMAO are moist-basis. The GEOS reader's
-  `_moist_to_dry_cmfmc!` / `_moist_to_dry_dtrain!` apply the
+  `moist_to_dry_cmfmc!` / `moist_to_dry_dtrain!` apply the
   `(1 − qv_face)` correction so the convection operator consumes
   forcing on the same basis as `state.air_mass`.
 
@@ -288,7 +288,7 @@ well before any windows actually step.
 | Column balance against next-hour endpoint (GEOS-CS) | `src/Preprocessing/MassClosure/cs_poisson_balance.jl::balance_cs_column_mass_fluxes!` |
 | Write-time replay gate | `src/MetDrivers/ReplayContinuity.jl::verify_window_continuity_*!` |
 | `replay_tolerance(FT)` | `src/MetDrivers/ReplayContinuity.jl` |
-| Substep positivity gates | `src/Preprocessing/transport_binary/{cubed_sphere_contracts.jl, latlon_contracts.jl, reduced_gaussian_contracts.jl}` |
+| Substep positivity gates | `src/Preprocessing/Targets/{CubedSphere,LatLon,ReducedGaussian}/*_contracts.jl` |
 | Dry-basis correction | `src/Preprocessing/Spectral/mass_support.jl::apply_dry_basis_native!` |
 | Basis-mismatch enforcement | `src/Models/Runner/DrivenSimulation.jl` (construction) |
 

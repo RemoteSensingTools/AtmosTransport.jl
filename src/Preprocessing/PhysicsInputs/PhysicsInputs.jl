@@ -33,4 +33,6 @@ include("tm5_convection_conversion.jl")
 include("era5_surface_reader.jl")
 include("tm5_bldiff.jl")
 
-end
+export surface_flux_to_upward_wm2, TM5ConvectionColumnScratch, allocate_tm5_convection_column_scratch, moist_to_dry_cmfmc!, moist_to_dry_dtrain!
+
+end # module PhysicsInputs
