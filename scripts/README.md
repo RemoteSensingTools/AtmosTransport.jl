@@ -17,7 +17,7 @@ move the function there), not copy it.
 | [`benchmarks/`](benchmarks/) | Synthetic cubed-sphere advection and TM5 convection benchmarks; recorded experiments with their evidence in `benchmarks/results/` |
 | [`postprocess/`](postprocess/), [`inversions/`](inversions/) | Snapshot conversion, inversion prototypes |
 | [`checks/`](checks/) | Static checks: the JuliaSyntax source-structure ratchet (`check_structure.jl`, run with `--project=test`; see `test/structure/README.md`), markdown citations (`check_markdown_citations.jl`) and calls that omit a required keyword (`check_keyword_calls.jl`, run by the quick gate and by `test/core/test_keyword_calls.jl`) |
-| [`dev/`](dev/) | `quick_gate.sh`, the check to run before committing: `git diff --check`, the keyword-call and source-structure checks, and the quick test set plus the topics of the changed files (see `test/README.md`) |
+| [`dev/`](dev/) | `quick_gate.sh`, the check to run before committing: `git diff --check`, the keyword-call and source-structure checks, and the quick test set plus the topics of the changed files. Defaults `JULIA_NUM_THREADS` to `1` when unset; preserves an explicit value (see `test/README.md`) |
 
 A `heritage/` subfolder (in `scripts/` itself and in `benchmarks/`,
 `diagnostics/`, `downloads/`, `preprocessing/`, `validation/` and

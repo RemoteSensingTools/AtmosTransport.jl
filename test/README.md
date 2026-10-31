@@ -68,7 +68,8 @@ julia --project=. -e 'using Pkg; Pkg.test(test_args=["--quick"])'
   first), the metadata gates (`test_physical_constants`, `test_readme_current`,
   `test_public_api_surface`, `test_public_docstrings`, `test_public_contracts`,
   `test_environment_variables`, `test_documentation_links`,
-  `test_config_schema_agreement`, `test_config_key_checks`), the groups
+  `test_config_schema_agreement`, `test_config_key_checks`,
+  `test_config_matrix_contract`), the groups
   meta-test, the source-structure ratchet (`test_structure`), the
   required-keyword call check (`test_keyword_calls`), the undefined-global
   scan of all package methods (`test_undefined_names`: a name a module uses
@@ -118,9 +119,62 @@ source-structure ratchet (see [`structure/README.md`](structure/README.md)),
 and then
 `--quick --changed=<ref>` in one Julia process. It prints a summary and exits
 non-zero if any step failed. `JULIA="julia +1.10"` selects another Julia.
+When `JULIA_NUM_THREADS` is unset, the gate exports `JULIA_NUM_THREADS=1`,
+matching CI. An explicit value is preserved. Single-threaded execution keeps
+the reverse-halo atomic summation order deterministic for the bitwise
+stride-checkpoint comparison in `core/test_cs_stride_checkpoint.jl`.
 
-CI runs `--quick` as a separate fast job for early feedback; the full suite on
-Julia 1.10 and the current release stays the merge requirement.
+## CI and merging
+
+CI runs `--quick` as a separate fast job on Julia `1` for early feedback.
+Every PR with a change outside `docs/**` and `*.md` anywhere runs the full
+default suite on **Julia 1.10 (minimum supported/LTS) and 1.13** on Ubuntu.
+There is no per-topic selection in the CI matrix. The full suite also runs
+on every push to `main`, nightly at 08:23 UTC, and on `workflow_dispatch`.
+Each event type has its own concurrency group, so nightly and manual runs
+never delay or cancel the run of a push to `main`.
+
+A PR is documentation-only when **all** changed paths are under `docs/` or
+end in `.md`. CI diffs the PR's base and head SHAs from their merge base,
+with rename detection disabled so both old and new paths are classified.
+Deleted paths count too. An empty diff, a detection error or a missing
+classifier output runs the full matrix. Only the matrix is skipped for
+documentation-only PRs: the quick job, the strict Documentation build and
+the benchmark workflow still run.
+
+**Every test that reads `docs/` or `*.md` files belongs to the quick set**
+(`groups.toml`), because the quick set is all that tests a
+documentation-only PR. Today these are `test_readme_current`,
+`test_documentation_links`, `test_environment_variables`, `test_structure`
+(code map and `# shared:` README lines), `test_keyword_calls`
+(`docs/literate/` and `docs/scripts/`) and `test_config_matrix_contract`
+(script citations in `src/`, `config/` and `docs/src/`).
+
+The `Full suite` job always reports. It passes when the matrix passed, or
+when the matrix was skipped for a documentation-only PR, and fails
+otherwise, including for a cancelled run. A matrix skipped by its job
+condition reports a single skipped check under its unexpanded name
+(`Julia ${{ matrix.version }} - ${{ matrix.os }}`), never the lane names
+`Julia 1.10 - ubuntu-latest` and `Julia 1.13 - ubuntu-latest`. A required
+lane name would therefore stay "Expected — Waiting for status to be
+reported" on every documentation-only PR; require `Full suite` instead.
+
+**Fully green for merging** means `Full suite`, `Quick tests (Julia 1)` (which
+includes the structure check; it has no separate job), the Documentation
+`build` and the Codecov statuses have passed. Coverage is uploaded only by
+the Julia 1.13 lane. Codecov posts its `codecov/project` and
+`codecov/patch` statuses only after it processes an upload, so a
+documentation-only PR shows no Codecov status at all: none pending and none
+failing. Any Codecov status reported on the PR must be green. A green
+`main` or nightly run does not replace the PR's own checks.
+
+As of the 2026-10-31 owner decision, `main` has no required status checks.
+For branch protection, require `Full suite` and `Quick tests (Julia 1)`. A
+required `codecov/*` status would never report on documentation-only PRs.
+GitHub counts a job skipped by its condition as successful, but a workflow
+excluded by path filters leaves its required checks pending (see
+[GitHub's required-check guidance](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks)),
+so every workflow stays triggered for every PR.
 
 The repository structure test reads `ATMOSTR_STRUCTURE_BASE` (default
 `origin/main`). The quick gate uses the same default and exports its selected
@@ -130,6 +184,8 @@ quick and full test jobs fetch `github.base_ref` for pull requests and set
 commit before the push (`github.event.before`, or `HEAD^1` when that commit is
 all zeros or cannot be fetched), so a merge validates the migration rows it adds. The docs and benchmark workflows
 also set the variable but do not run the structure check.
+Scheduled and manually dispatched CI runs use `HEAD^1`; their fetch step logs
+`fatal: invalid refspec 'HEAD^1'` before it falls back, which is expected.
 A depth-one fetch suffices for the structure snapshots (`git show <base>:<path>`).
 For example, prepare the default base in a shallow checkout with:
 
