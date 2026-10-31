@@ -16,7 +16,7 @@ Binary metadata, write-time evidence, window protocols, writer adapters and the 
 
 ## Depends on
 
-Core target/source protocols; Vertical extensive sums; Spectral pressure/remap helpers; MassClosure flux geometry and closure diagnostics. Lower package APIs provide binary v4 IO, replay types, geometry, constants, mass basis and atomic publication. It imports no target, source or parent implementation.
+Common target/source protocols; Vertical extensive sums; Spectral pressure/remap helpers; MassClosure flux geometry and closure diagnostics. Lower package APIs provide binary v4 IO, replay types, geometry, constants, mass basis and atomic publication. It imports no target, source or parent implementation.
 
 ## Used by
 

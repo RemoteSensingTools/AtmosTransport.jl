@@ -1,4 +1,4 @@
-module Core
+module Common
 
 import TOML
 
@@ -52,4 +52,4 @@ include("met_readers.jl")
 export check_native_closure_config, native_output_prefix, ALL_FLUX_KEYS, FLUX_CONSTRUCTION_KEYS, build_met_settings, column_balance_weights_option, flux_construction_kwargs, load_met_settings, native_output_filename, reject_unsupported_flux_keys, settings_constructor, supported_flux_keys
 include("source_factory.jl")
 
-end # module Core
+end # module Common

@@ -17,10 +17,10 @@ floating-point order and conversions.
 
 ## Depends on
 
-Core geometry, humidity policy and column-correction protocols; Vertical's
+Common geometry, humidity policy and column-correction protocols; Vertical's
 extensive reduction; Grids, Parameters, GriddedIO, AtomicFiles; Dates, Logging,
 Printf, FFTW, GRIB/ecCodes, SHA, JLD2, NCDatasets and LinearAlgebra.
-Closure implementations register Core methods in the parent; Spectral does
+Closure implementations register Common methods in the parent; Spectral does
 not import the parent or another later stage.
 
 ## Used by

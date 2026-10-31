@@ -1,4 +1,4 @@
-# ReducedGaussian
+# Preprocessing.ReducedGaussianTarget
 
 Reduced-Gaussian spectral workspaces, humidity staging, sliding windows and contracts.
 
@@ -12,7 +12,7 @@ Reduced-Gaussian spectral workspaces, humidity staging, sliding windows and cont
 
 ## Depends on
 
-Core, Vertical/Spectral, MassClosure and TransportBinary; LatLon logging; lower grid/replay/writer APIs, FFTW and NetCDF. No parent, source or CS implementation.
+Common, Vertical/Spectral, MassClosure and TransportBinary; LatLonTarget logging; lower grid/replay/writer APIs, FFTW and NetCDF. No parent, source or CS implementation.
 
 ## Used by
 

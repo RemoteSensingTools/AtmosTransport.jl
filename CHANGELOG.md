@@ -154,6 +154,16 @@
   footprints, 4D-Var cost and gradient) bit for bit on rough fields that reach
   every PPM limiter branch, and the digests recorded from main on the
   reference host.
+- **CI tests Julia 1.10 and 1.13 and skips the full suite for
+  documentation-only pull requests.** The 1.12 lane is gone. Pull requests
+  that change any file outside `docs/` and `*.md` files, pushes to `main`, a
+  nightly run and manual dispatches run the full suite; documentation-only
+  pull requests run the quick set (which now includes
+  `test_config_matrix_contract`, so it holds every test that reads
+  documentation) and the documentation build. The always-reporting
+  `Full suite` check summarizes the matrix. `scripts/dev/quick_gate.sh`
+  defaults `JULIA_NUM_THREADS` to `1` when it is unset. Results are
+  unchanged.
 
 ## 0.6.0 — 2026-10-20
 

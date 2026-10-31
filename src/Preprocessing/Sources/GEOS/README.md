@@ -18,7 +18,7 @@ Meteorological input readers and transport-binary workflows for GEOS.
 
 ## Depends on
 
-Core source/target/factory protocols; Vertical transforms; Spectral synthesis
+Common source/target/factory protocols; Vertical transforms; Spectral synthesis
 and mass support; MassClosure flux/balance primitives; PhysicsInputs conversions;
 Targets/CubedSphere mass/pin/delta and window contracts; TransportBinary writers
 and fidelity. Geometry, binary IO, conservative regridding and constants come
@@ -31,7 +31,7 @@ Preprocessing entrypoint and public facade; preprocessing CLI and focused tests.
 ## Shared helpers owned here
 
 The exports in the module entry file are the source interface. New concrete
-settings/readers extend the imported Core protocols; day workflows extend
+settings/readers extend the imported Common protocols; day workflows extend
 TransportBinary.process_day. Private numerical helpers stay inside this source.
 
 ## Forward<->adjoint mirrors

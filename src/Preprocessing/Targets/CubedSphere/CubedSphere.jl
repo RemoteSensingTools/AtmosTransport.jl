@@ -1,5 +1,5 @@
 """Cubed-sphere spectral staging, conservative regridding, coarsening and contracts."""
-module CubedSphere
+module CubedSphereTarget
 
 import ..Spectral: mass_target_offset
 
@@ -54,8 +54,7 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     STANDARD_GRAVITY,
     TM5_CONVECTION_SOURCE_KEY,
     TM5_EC2TM_CONVENTION_KEY
-# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
-import ...Preprocessing.Core: AbstractColumnWeights,
+import ..Common: AbstractColumnWeights,
     AbstractTargetGeometry,
     CubedSphereTargetGeometry,
     ERA5SpectralSettings,
@@ -109,7 +108,7 @@ import ...State: DrySurfacePressure,
 import Dates: Date,
     Dates
 import GRIB: GRIB
-import ..LatLon: allocate_merge_workspace,
+import ..LatLonTarget: allocate_merge_workspace,
     allocate_qv_workspace,
     allocate_transform_workspace,
     apply_dry_basis_if_needed!,
@@ -208,4 +207,4 @@ include("cubed_sphere_coarsen.jl")
 export cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
 include("mass_helpers.jl")
 
-end # module CubedSphere
+end # module CubedSphereTarget

@@ -13,7 +13,9 @@
 #
 # The quick set is the crucial fast check (metadata gates that CI has failed
 # on, Aqua and JET, and short physics smokes); it should stay near 5 minutes
-# in one process. The full suite (no flags) remains the merge requirement.
+# in one process. Every test that reads docs/ or *.md files belongs to the
+# quick set: CI skips the full suite (no flags) for documentation-only pull
+# requests and runs only the quick set for them (see README.md).
 
 quick = [
     "core/test_aqua.jl",
@@ -30,6 +32,7 @@ quick = [
     "core/test_documentation_links.jl",
     "core/test_config_schema_agreement.jl",
     "core/test_config_key_checks.jl",
+    "core/test_config_matrix_contract.jl",
     "core/test_public_contracts.jl",
     # Physics smokes: mass conservation and uniform-tracer invariance of the
     # advection kernels, convection and diffusion; driven lat-lon runs and a

@@ -99,11 +99,11 @@ by the preprocessing goldens.
 
 ## Depends on
 
-Sources depend on Core, Vertical, Spectral, MassClosure, PhysicsInputs, Targets
+Sources depend on Common, Vertical, Spectral, MassClosure, PhysicsInputs, Targets
 and TransportBinary. The three sources have no dependencies on one another.
 Shared CS mass/pin/delta bodies moved to Targets/CubedSphere, dry CMFMC/DTRAIN
 conversion and TM5 column scratch to PhysicsInputs, and source-factory/naming
-protocols to Core. The lower stages never depend on sources.
+protocols to Common. The lower stages never depend on sources.
 
 ## Used by
 

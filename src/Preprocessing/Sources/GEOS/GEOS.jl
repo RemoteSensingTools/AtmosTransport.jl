@@ -50,8 +50,7 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     SURFACE_AIR_TEMPERATURE_RANGE,
     SURFACE_HEAT_FLUX_MAX_ABS
 
-# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
-import ...Preprocessing.Core: check_native_closure_config,
+import ..Common: check_native_closure_config,
     AbstractChainPolicy,
     AbstractGEOSSettings,
     AbstractMetReader,
@@ -80,7 +79,7 @@ import ...Preprocessing.Core: check_native_closure_config,
     with_column_weights_record,
     with_replay_record
 
-import ..CubedSphere: CubedSphereContract,
+import ..CubedSphereTarget: CubedSphereContract,
     convert_cs_mass_target_to_delta!,
     cs_total_air_mass,
     fill_cs_window_mass_tendency!,

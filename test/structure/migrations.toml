@@ -1,41 +1,21 @@
 # Reviewed identity migrations; see test/structure/README.md.
 
 [[migration]]
-from = "AtmosTransport.Models"
-to = ["AtmosTransport.Models", "AtmosTransport.Models.Physics", "AtmosTransport.Models.Core", "AtmosTransport.Models.Runner"]
-reason = "MD2: specs, model and driven implementation become ordered submodules behind the existing facade"
+from = "AtmosTransport.Preprocessing.Core"
+to = ["AtmosTransport.Preprocessing.Common"]
+reason = "RN1: Preprocessing.Core shadowed Julia's built-in Core (JET 0.9 rewrites relative ..Core imports); retain its dependency budget"
 
 [[migration]]
-from = "AtmosTransport.Models.BinaryPathExpander"
-to = ["AtmosTransport.Models.Runner.BinaryPathExpander"]
-reason = "MD2: binary paths are owned by Runner; preserve the old facade alias"
+from = "AtmosTransport.Preprocessing.LatLon"
+to = ["AtmosTransport.Preprocessing.LatLonTarget"]
+reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
 
 [[migration]]
-from = "AtmosTransport.Models.InputStaging"
-to = ["AtmosTransport.Models.Runner.InputStaging"]
-reason = "MD2: input staging is owned by Runner; preserve the old facade alias"
+from = "AtmosTransport.Preprocessing.ReducedGaussian"
+to = ["AtmosTransport.Preprocessing.ReducedGaussianTarget"]
+reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
 
 [[migration]]
-from = "AtmosTransport.Models.DrivenRunner"
-to = ["AtmosTransport.Models.Runner.DrivenRunner"]
-reason = "MD2: configured runtime is owned by Runner and imports lower siblings directly"
-
-[[migration]]
-from = "src/Models"
-to = ["src/Models", "src/Models/Physics"]
-reason = "MD2: the specs own the operator imports previously supplied by the Models module"
-
-[[migration]]
-from = "src/Models/Core"
-to = ["src/Models/Core", "src/Models/Runner"]
-reason = "MD2: driven stepping and capture move beside DrivenSimulation; model support and shared stepping generics remain in Core"
-
-[[migration]]
-from = "src/Models/Physics"
-to = ["src/Models/Physics", "src/Models/Runner"]
-reason = "MD2: forcing refresh dispatches on the driven runtime in Runner"
-
-[[migration]]
-from = "src/Models/Runner"
-to = ["src/Models/Runner/DrivenRunner"]
-reason = "MD2: the existing configured-runner child gets its own folder so driven runtime and orchestration each remain below the folder budget"
+from = "AtmosTransport.Preprocessing.CubedSphere"
+to = ["AtmosTransport.Preprocessing.CubedSphereTarget"]
+reason = "RN1: rename target module; CubedSphere is also a package dependency; retain its dependency budget"
