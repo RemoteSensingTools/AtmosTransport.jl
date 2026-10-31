@@ -233,10 +233,13 @@ requested range, the unified driver runs:
   level orientation, panel conventions — the one-page reference for
   debugging an unexpected binary.
 
-The first pipeline stages live in `Preprocessing.Core`, `Preprocessing.Vertical`
-and `Preprocessing.Spectral`. Core supplies contracts; Vertical depends on
-Core, and Spectral depends on Core and Vertical. Scripts keep using the
-`Preprocessing` facade. The erroring typed pressure-overlap stub, unused
+The first pipeline stages live in `Preprocessing.Common`, `Preprocessing.Vertical`
+and `Preprocessing.Spectral`. Common supplies contracts; Vertical depends on
+Common, and Spectral depends on Common and Vertical. Scripts keep using the
+`Preprocessing` facade. Target implementations live in
+`Preprocessing.LatLonTarget`, `Preprocessing.ReducedGaussianTarget` and
+`Preprocessing.CubedSphereTarget`; their existing source folders are retained.
+The erroring typed pressure-overlap stub, unused
 spectral reader placeholder and test-only seed accessors are removed; spectral
 pressure-overlap remapping and day chaining retain their production paths.
 

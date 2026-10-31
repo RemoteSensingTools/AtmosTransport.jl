@@ -78,11 +78,17 @@ const HOT_PATH_MODULES = (
 # PR-A merge: 115 reports. The drop from the former allowance reflects the
 # current Julia 1.12/JET inference stack; the remaining reports are the
 # known-tolerated patterns documented above.
-# The 1.10 baseline retains its prior CI-measured allowance. An isolated
-# compatible JET run produced zero reports, so it is not comparable evidence
-# for tightening that allowance.
+# RN1 re-measured Julia 1.10.12/JET 0.9.14 on main and after the preprocessing
+# module renames with the same dependencies: 118 -> 62 reports. Common avoids
+# JET rewriting relative Core imports to Julia's built-in Core; the target
+# names also avoid colliding with the CubedSphere package dependency.
+# On Julia 1.10 every counted report is a JET load-time UndefVarError, so no
+# hot-path inference runs there. The remaining 62 come from
+# `using ....Observations:` in Adjoints/Inversion/Observations/ObservationsModule.jl,
+# the same self-name problem (a child module named like the package-level
+# Observations module); renaming that module is the follow-up.
 # Keep these at the expected counts so the snapshot remains a real gate.
-const JET_HOT_PATH_BASELINE_1_10 = 130
+const JET_HOT_PATH_BASELINE_1_10 = 62
 const JET_HOT_PATH_BASELINE_1_12 = 115
 const JET_HOT_PATH_BASELINE =
     VERSION >= v"1.12" ? JET_HOT_PATH_BASELINE_1_12 :

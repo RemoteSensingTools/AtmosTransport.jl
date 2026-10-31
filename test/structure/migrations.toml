@@ -10,16 +10,21 @@
 # reason = "Why the split keeps the old dependency budget"
 
 [[migration]]
-from = "AtmosTransport.Preprocessing"
-to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.GEOS", "AtmosTransport.Preprocessing.ERA5", "AtmosTransport.Preprocessing.MERRA2"]
-reason = "PP4: native source readers and day drivers become independent submodules above the pipeline stages and targets"
+from = "AtmosTransport.Preprocessing.Core"
+to = ["AtmosTransport.Preprocessing.Common"]
+reason = "RN1: Preprocessing.Core shadowed Julia's built-in Core (JET 0.9 rewrites relative ..Core imports); retain its dependency budget"
 
 [[migration]]
-from = "src/Preprocessing/sources"
-to = ["src/Preprocessing/Sources/ERA5"]
-reason = "PP4: ERA5 GRIB geometry retains the former reader-folder users and dependency budget; GEOS/MERRA2 are covered by the driver-folder split"
+from = "AtmosTransport.Preprocessing.LatLon"
+to = ["AtmosTransport.Preprocessing.LatLonTarget"]
+reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
 
 [[migration]]
-from = "src/Preprocessing/transport_binary"
-to = ["src/Preprocessing/Sources/GEOS", "src/Preprocessing/Sources/ERA5", "src/Preprocessing/Sources/MERRA2"]
-reason = "PP4: the seven remaining native-source day drivers/helpers join their readers; the deferred folder disappears"
+from = "AtmosTransport.Preprocessing.ReducedGaussian"
+to = ["AtmosTransport.Preprocessing.ReducedGaussianTarget"]
+reason = "RN1: rename target module to match CubedSphereTarget (no collision of its own); retain its dependency budget"
+
+[[migration]]
+from = "AtmosTransport.Preprocessing.CubedSphere"
+to = ["AtmosTransport.Preprocessing.CubedSphereTarget"]
+reason = "RN1: rename target module; CubedSphere is also a package dependency; retain its dependency budget"

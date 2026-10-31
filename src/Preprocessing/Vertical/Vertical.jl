@@ -5,7 +5,7 @@ using Logging
 using ...Parameters: STANDARD_PRESSURE, ERA5_L137_ECHLEVS_PRESETS
 using ...Grids: HybridSigmaPressure, n_levels, pressure_at_interface, level_thickness
 import ...expand_data_path
-using ..Core: package_path
+using ..Common: package_path
 
 export AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
     ConvectionTendencyField, IdentityVertical, IntensiveCenterField, LevelSelection, MassField,

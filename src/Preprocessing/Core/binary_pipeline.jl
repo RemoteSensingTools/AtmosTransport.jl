@@ -1,5 +1,5 @@
 # Shared pipeline interfaces. Deferred source/closure stages add methods in
-# Preprocessing; Core itself depends only on these contracts.
+# Preprocessing; Common itself depends only on these contracts.
 """
 How a column mass-budget correction is spread over the levels of a column.
 
