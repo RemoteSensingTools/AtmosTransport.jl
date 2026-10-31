@@ -3,7 +3,7 @@ module CubedSphere
 
 import ..Spectral: mass_target_offset
 
-import AtmosTransport: State
+import ...State
 import ...Grids: CS_PANEL_COUNT,
     CubedSphereMesh,
     HybridSigmaPressure,
@@ -54,8 +54,8 @@ import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     STANDARD_GRAVITY,
     TM5_CONVECTION_SOURCE_KEY,
     TM5_EC2TM_CONVENTION_KEY
-# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
-import AtmosTransport.Preprocessing.Core: AbstractColumnWeights,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: AbstractColumnWeights,
     AbstractTargetGeometry,
     CubedSphereTargetGeometry,
     ERA5SpectralSettings,

@@ -3,15 +3,15 @@ module GEOS
 
 import Printf: @sprintf
 
-import AtmosTransport.Preprocessing.MassClosure: cs_face_divergence!,
+import ..MassClosure: cs_face_divergence!,
     cs_level_scratches,
     cs_column_convergence
 
-import AtmosTransport: expand_data_path
+import ...expand_data_path
 
-import AtmosTransport.ConfigChecks: config_bool as _config_bool
+import ...ConfigChecks: config_bool as _config_bool
 
-import AtmosTransport.Grids: CSGlobalFaceTable,
+import ...Grids: CSGlobalFaceTable,
     CS_PANEL_COUNT,
     CubedSphereMesh,
     GEOSNativePanelConvention,
@@ -23,19 +23,19 @@ import AtmosTransport.Grids: CSGlobalFaceTable,
     panel_cell_center_lonlat,
     panel_convention
 
-import AtmosTransport.MetDrivers: flux_kind,
+import ...MetDrivers: flux_kind,
     replay_tolerance,
     surface_pressure_basis
 
-import AtmosTransport.MetDrivers.BinaryFormat: close_streaming_transport_binary!,
+import ...MetDrivers.BinaryFormat: close_streaming_transport_binary!,
     open_streaming_cs_transport_binary,
     set_streaming_steps_per_window_schedule!
 
-import AtmosTransport.MetDrivers.BinaryReaders: has_pbl_eflux,
+import ...MetDrivers.BinaryReaders: has_pbl_eflux,
     has_surface,
     has_vdiff_fields
 
-import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
+import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     DEFAULT_GEOS_SMOOTHING_SWEEPS,
     DEFAULT_GEOS_SMOOTHING_WEIGHT,
     DEFAULT_POISSON_PROJECT_EVERY,
@@ -50,7 +50,8 @@ import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     SURFACE_AIR_TEMPERATURE_RANGE,
     SURFACE_HEAT_FLUX_MAX_ABS
 
-import AtmosTransport.Preprocessing.Core: check_native_closure_config,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: check_native_closure_config,
     AbstractChainPolicy,
     AbstractGEOSSettings,
     AbstractMetReader,
@@ -79,14 +80,14 @@ import AtmosTransport.Preprocessing.Core: check_native_closure_config,
     with_column_weights_record,
     with_replay_record
 
-import AtmosTransport.Preprocessing.CubedSphere: CubedSphereContract,
+import ..CubedSphere: CubedSphereContract,
     convert_cs_mass_target_to_delta!,
     cs_total_air_mass,
     fill_cs_window_mass_tendency!,
     pin_cs_global_air_mass_from_sensitivity!,
     ps_from_air_mass!
 
-import AtmosTransport.Preprocessing.MassClosure: CSPoissonScratch,
+import ..MassClosure: CSPoissonScratch,
     apply_cs_flux_correction!,
     balance_cs_column_mass_fluxes!,
     compute_cs_cm_pressure_fixer!,
@@ -96,15 +97,15 @@ import AtmosTransport.Preprocessing.MassClosure: CSPoissonScratch,
     solve_cs_poisson_pcg!,
     sync_cs_mirrors!
 
-import AtmosTransport.Preprocessing.PhysicsInputs: surface_flux_to_upward_wm2,
+import ..PhysicsInputs: surface_flux_to_upward_wm2,
     moist_to_dry_cmfmc!,
     moist_to_dry_dtrain!
 
-import AtmosTransport.Preprocessing.Spectral: mass_fix_target_ps_dry_record,
+import ..Spectral: mass_fix_target_ps_dry_record,
     next_day_hour0,
     vertical_mapping_method
 
-import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord,
+import ..TransportBinary: AbstractColumnClosureRecord,
     AbstractWindowWorkspace,
     CubedSphereBinaryWriter,
     FidelitySampleMap,
@@ -140,7 +141,7 @@ import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord
     verify_substep_positivity_cs!,
     verify_window!
 
-import AtmosTransport.Preprocessing.Vertical: ConvectionInterfaceFlux,
+import ..Vertical: ConvectionInterfaceFlux,
     ConvectionTendencyField,
     IdentityVertical,
     IntensiveCenterField,
@@ -150,12 +151,12 @@ import AtmosTransport.Preprocessing.Vertical: ConvectionInterfaceFlux,
     load_hybrid_coefficients,
     plan_vertical
 
-import AtmosTransport.Regridding: coarsen_area_weighted!,
+import ...Regridding: coarsen_area_weighted!,
     coarsen_sum!,
     coarsen_xface_sum!,
     coarsen_yface_sum!
 
-import AtmosTransport.State: DryBasis,
+import ...State: DryBasis,
     DrySurfacePressure
 
 import Dates: Date,

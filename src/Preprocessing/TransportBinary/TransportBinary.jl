@@ -3,7 +3,7 @@ module TransportBinary
 
 import ..Spectral: era5_thermo_path
 
-import AtmosTransport: source_revision
+import ...source_revision
 import ...AtomicFiles: abandon_atomic_staging,
     commit_atomic_staging
 import ...Grids: CSGlobalFaceTable,
@@ -51,8 +51,8 @@ import ...Parameters: DEFAULT_POSITIVITY_CFL_LIMIT,
     OMEGA_FIDELITY_SLOPE_MIN,
     STANDARD_GRAVITY,
     TM5_CONVECTION_MASS_BASIS_KEY
-# Absolute path: JET 0.9 (Julia 1.10) would bind `..Core` to the builtin Core.
-import AtmosTransport.Preprocessing.Core: AbstractTargetGeometry,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: AbstractTargetGeometry,
     CubedSphereTargetGeometry,
     LatLonTargetGeometry,
     MAX_SPECIFIC_HUMIDITY,

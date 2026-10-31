@@ -14,6 +14,7 @@ Verifies:
 """
 
 using Test
+using AtmosTransport.Operators.StepPlans: TransportMidpoint
 using AtmosTransport
 using AtmosTransport: CellState, MoistBasis,
                       SlopesScheme, NoLimiter, UpwindScheme,
@@ -51,34 +52,7 @@ end
         @test_throws ArgumentError strang_split_mt!(
             state.tracers_raw, state.air_mass, am, bm, cm,
             UpwindScheme(), ws;
-            cfl_limit = 1.0, dt = 10.0, emissions_op = op)
-    end
-
-    @testset "Zero-flux emission-only palindrome matches standalone surface-flux" begin
-        # Setup: zero fluxes, zero diffusion. The palindrome reduces to
-        # `apply_surface_flux!(rm, op, ws, dt, ...)` on the surface layer.
-        FT = Float64
-        Nx, Ny, Nz = 3, 2, 3
-
-        # State A: run the full palindrome with emissions
-        state_a, am, bm, cm, ws_a = _make_triple(FT, Nx, Ny, Nz;
-                                                  init_co2 = 0.0)
-        rate = fill(2.0, Nx, Ny)   # kg/s per cell
-        op   = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
-        dt   = 7.0
-
-        strang_split_mt!(state_a.tracers_raw, state_a.air_mass,
-                         copy(am), copy(bm), copy(cm),
-                         UpwindScheme(), ws_a;
-                         cfl_limit = 1.0, dt = dt,
-                         emissions_op = op,
-                         tracer_names = state_a.tracer_names)
-
-        # State B: apply the surface flux directly via apply!
-        state_b, _, _, _, _ = _make_triple(FT, Nx, Ny, Nz; init_co2 = 0.0)
-        apply!(state_b, nothing, nothing, op, dt)
-
-        @test state_a.tracers_raw ≈ state_b.tracers_raw
+            cfl_limit = 1.0, midpoint = TransportMidpoint(; workspace=ws, dt=10.0, emissions_op=op))
     end
 
     @testset "Non-trivial emission adds surface mass correctly" begin
@@ -87,7 +61,7 @@ end
         state, am, bm, cm, ws = _make_triple(FT, Nx, Ny, Nz;
                                               init_co2 = 0.0,
                                               init_sf6 = 0.0)
-        rate_co2 = fill(3.0, Nx, Ny)
+        rate_co2 = reshape(collect(1.0:Float64(Nx * Ny)), Nx, Ny) ./ 100.0
         rate_sf6 = fill(0.5, Nx, Ny)
         op = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate_co2),
                                   SurfaceFluxSource(:SF6, rate_sf6))
@@ -96,36 +70,17 @@ end
         strang_split_mt!(state.tracers_raw, state.air_mass,
                          copy(am), copy(bm), copy(cm),
                          UpwindScheme(), ws;
-                         cfl_limit = 1.0, dt = dt,
-                         emissions_op = op,
-                         tracer_names = state.tracer_names)
+                         cfl_limit = 1.0,
+                         midpoint = TransportMidpoint(; workspace=ws, dt,
+                             emissions_op = op, tracer_names = state.tracer_names))
 
-        # With zero fluxes, both tracers stay at the surface; CO2 surface = 12,
+        # With zero fluxes, both tracers stay at the surface; CO2 = rate * dt,
         # SF6 surface = 2. Non-surface layers stay 0.
-        @test all(state.tracers.CO2[:, :, Nz] .≈ 3.0 * 4.0)
+        @test all(state.tracers.CO2[:, :, Nz] .≈ rate_co2 .* dt)
+        @test sum(state.tracers.CO2) ≈ sum(rate_co2) * dt
         @test all(state.tracers.SF6[:, :, Nz] .≈ 0.5 * 4.0)
         @test all(state.tracers.CO2[:, :, 1] .== 0.0)
         @test all(state.tracers.SF6[:, :, 1] .== 0.0)
-    end
-
-    @testset "Mass conservation: emitted == Σ rate × dt × cells" begin
-        FT = Float64
-        Nx, Ny, Nz = 5, 4, 3
-        state, am, bm, cm, ws = _make_triple(FT, Nx, Ny, Nz;
-                                              init_co2 = 0.0)
-        rate = reshape(collect(1.0:Float64(Nx * Ny)), Nx, Ny) ./ 100.0
-        op   = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rate))
-        dt   = 7.5
-
-        strang_split_mt!(state.tracers_raw, state.air_mass,
-                         copy(am), copy(bm), copy(cm),
-                         UpwindScheme(), ws;
-                         cfl_limit = 1.0, dt = dt,
-                         emissions_op = op,
-                         tracer_names = state.tracer_names)
-
-        expected = sum(rate) * dt
-        @test sum(state.tracers.CO2) ≈ expected
     end
 
     @testset "Cubed-sphere surface flux updates interior surface layer" begin

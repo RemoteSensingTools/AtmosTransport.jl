@@ -3,15 +3,15 @@ module ERA5
 
 import Printf: @sprintf
 
-import AtmosTransport.Preprocessing.ReducedGaussian: allocate_reduced_spectral_thread_cache
+import ..ReducedGaussian: allocate_reduced_spectral_thread_cache
 
-import AtmosTransport: State
+import ...State
 
-import AtmosTransport.AtomicFiles: abandon_atomic_staging
+import ...AtomicFiles: abandon_atomic_staging
 
-import AtmosTransport.ConfigChecks: config_bool as _config_bool
+import ...ConfigChecks: config_bool as _config_bool
 
-import AtmosTransport.Grids: HybridSigmaPressure,
+import ...Grids: HybridSigmaPressure,
     ReducedGaussianMesh,
     cell_areas,
     cs_geometry_tags,
@@ -23,14 +23,14 @@ import AtmosTransport.Grids: HybridSigmaPressure,
     unpack_flat_to_panels_2d!,
     unpack_flat_to_panels_3d!
 
-import AtmosTransport.MetDrivers: replay_tolerance,
+import ...MetDrivers: replay_tolerance,
     surface_pressure_basis
 
-import AtmosTransport.MetDrivers.BinaryFormat: grid_type,
+import ...MetDrivers.BinaryFormat: grid_type,
     open_streaming_cs_transport_binary,
     set_streaming_steps_per_window_schedule!
 
-import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
+import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POISSON_BALANCE_TOL,
     DEFAULT_POISSON_PROJECT_EVERY,
@@ -43,7 +43,8 @@ import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     IFS_EARTH_RADIUS,
     STANDARD_GRAVITY
 
-import AtmosTransport.Preprocessing.Core: AbstractERA5GRIBSettings,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: AbstractERA5GRIBSettings,
     CubedSphereTargetGeometry,
     FLUX_CONSTRUCTION_KEYS,
     MAX_SPECIFIC_HUMIDITY,
@@ -68,7 +69,7 @@ import AtmosTransport.Preprocessing.Core: AbstractERA5GRIBSettings,
     windows_per_day,
     with_replay_record
 
-import AtmosTransport.Preprocessing.CubedSphere: allocate_cs_preprocess_workspace,
+import ..CubedSphere: allocate_cs_preprocess_workspace,
     derive_c180_dry_mass!,
     fill_cs_mass_delta_payload!,
     fill_cs_window_mass_tendency!,
@@ -81,7 +82,7 @@ import AtmosTransport.Preprocessing.CubedSphere: allocate_cs_preprocess_workspac
     update_cs_positivity_accumulator,
     verify_cs_window_contract!
 
-import AtmosTransport.Preprocessing.MassClosure: AbstractWindRegrid,
+import ..MassClosure: AbstractWindRegrid,
     DryMassFluxThickness,
     LineIntegralFaceFluxes,
     MoistFluxThickness,
@@ -105,7 +106,7 @@ import AtmosTransport.Preprocessing.MassClosure: AbstractWindRegrid,
     validate_flux_thickness,
     validate_flux_time_sampling
 
-import AtmosTransport.Preprocessing.PhysicsInputs: BLDiffColumnScratch,
+import ..PhysicsInputs: BLDiffColumnScratch,
     BLDiffConstants,
     TM5CleanupStats,
     TM5ConvectionColumnScratch,
@@ -121,16 +122,16 @@ import AtmosTransport.Preprocessing.PhysicsInputs: BLDiffColumnScratch,
     reset_bldiff_diag!,
     tm5_bldiff_dkg_column!
 
-import AtmosTransport.Preprocessing.ReducedGaussian: ReducedSpectralThreadCache,
+import ..ReducedGaussian: ReducedSpectralThreadCache,
     spectral_to_reduced_scalar!
 
-import AtmosTransport.Preprocessing.Spectral: ReducedSpectralSynthesis,
+import ..Spectral: ReducedSpectralSynthesis,
     mass_fix_target_ps_dry_record,
     read_spectral_coeffs!,
     synthesize_reduced!,
     vod2uv!
 
-import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord,
+import ..TransportBinary: AbstractColumnClosureRecord,
     CubedSphereBinaryWriter,
     FidelitySampleMap,
     FluxFidelityEvidenceBundle,
@@ -155,7 +156,7 @@ import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord
     write_window!,
     writer_staging_path
 
-import AtmosTransport.Preprocessing.Vertical: sum_merged_layers!,
+import ..Vertical: sum_merged_layers!,
     AbstractFieldKind,
     ConvectionTendencyField,
     IdentityVertical,
@@ -166,12 +167,12 @@ import AtmosTransport.Preprocessing.Vertical: sum_merged_layers!,
     load_hybrid_coefficients,
     plan_vertical
 
-import AtmosTransport.Quantities: IntensiveCellField
+import ...Quantities: IntensiveCellField
 
-import AtmosTransport.Regridding: apply_regridder!,
+import ...Regridding: apply_regridder!,
     build_regridder
 
-import AtmosTransport.State: AbstractMassBasis,
+import ...State: AbstractMassBasis,
     DryBasis,
     DrySurfacePressure
 

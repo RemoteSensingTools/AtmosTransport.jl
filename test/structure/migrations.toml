@@ -11,7 +11,17 @@
 
 [[migration]]
 from = "AtmosTransport.Preprocessing"
-to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.GEOS", "AtmosTransport.Preprocessing.ERA5", "AtmosTransport.Preprocessing.MERRA2"]
+to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.TransportBinary", "AtmosTransport.Preprocessing.LatLon", "AtmosTransport.Preprocessing.ReducedGaussian", "AtmosTransport.Preprocessing.CubedSphere"]
+reason = "PP3: binary protocols/writers and the three grid targets leave the Preprocessing module as ordered submodules"
+
+[[migration]]
+from = "src/Preprocessing/transport_binary"
+to = ["src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon", "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere"]
+reason = "PP3: binary and target files leave transport_binary (its source-specific drivers move with PP4 below)"
+
+[[migration]]
+from = "AtmosTransport.Preprocessing"
+to = ["AtmosTransport.Preprocessing.GEOS", "AtmosTransport.Preprocessing.ERA5", "AtmosTransport.Preprocessing.MERRA2"]
 reason = "PP4: native source readers and day drivers become independent submodules above the pipeline stages and targets"
 
 [[migration]]

@@ -3,31 +3,30 @@ module MERRA2
 
 import Printf: @sprintf
 
-import AtmosTransport: State,
-    expand_data_path
+import ...State, ...expand_data_path
 
-import AtmosTransport.AtomicFiles: abandon_atomic_staging
+import ...AtomicFiles: abandon_atomic_staging
 
-import AtmosTransport.ConfigChecks: config_bool as _config_bool
+import ...ConfigChecks: config_bool as _config_bool
 
-import AtmosTransport.Grids: LatLonMesh,
+import ...Grids: LatLonMesh,
     cell_areas,
     cs_geometry_tags,
     ncells,
     unpack_flat_to_panels_3d!
 
-import AtmosTransport.MetDrivers: replay_tolerance,
+import ...MetDrivers: replay_tolerance,
     surface_pressure_basis
 
-import AtmosTransport.MetDrivers.BinaryFormat: open_streaming_cs_transport_binary,
+import ...MetDrivers.BinaryFormat: open_streaming_cs_transport_binary,
     set_streaming_steps_per_window_schedule!
 
-import AtmosTransport.MetDrivers.BinaryReaders: has_cmfmc_cloud_base,
+import ...MetDrivers.BinaryReaders: has_cmfmc_cloud_base,
     has_pbl_eflux,
     has_surface,
     has_vdiff_fields
 
-import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
+import ...Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POISSON_BALANCE_TOL,
     DEFAULT_POISSON_PROJECT_EVERY,
@@ -38,7 +37,8 @@ import AtmosTransport.Parameters: ADAPTIVE_SUBSTEP_MAX_REFINEMENTS,
     HORIZONTAL_BALANCE_TAG,
     STANDARD_GRAVITY
 
-import AtmosTransport.Preprocessing.Core: AbstractMetSettings,
+# Not `..Core`: JET 0.9 (Julia 1.10) would bind it to the builtin Core.
+import ...Preprocessing.Core: AbstractMetSettings,
     CubedSphereTargetGeometry,
     FLUX_CONSTRUCTION_KEYS,
     build_met_settings,
@@ -58,7 +58,7 @@ import AtmosTransport.Preprocessing.Core: AbstractMetSettings,
     windows_per_day,
     with_replay_record
 
-import AtmosTransport.Preprocessing.CubedSphere: CSWorst,
+import ..CubedSphere: CSWorst,
     CubedSpherePreprocessWorkspace,
     allocate_cs_preprocess_workspace,
     derive_c180_dry_mass!,
@@ -73,7 +73,7 @@ import AtmosTransport.Preprocessing.CubedSphere: CSWorst,
     update_cs_positivity_accumulator,
     verify_cs_window_contract!
 
-import AtmosTransport.Preprocessing.MassClosure: AbstractWindRegrid,
+import ..MassClosure: AbstractWindRegrid,
     DryMassFluxThickness,
     MoistFluxThickness,
     balance_cs_column_mass_fluxes!,
@@ -87,12 +87,12 @@ import AtmosTransport.Preprocessing.MassClosure: AbstractWindRegrid,
     regrid_winds!,
     validate_flux_construction
 
-import AtmosTransport.Preprocessing.PhysicsInputs: moist_to_dry_cmfmc!,
+import ..PhysicsInputs: moist_to_dry_cmfmc!,
     moist_to_dry_dtrain!
 
-import AtmosTransport.Preprocessing.Spectral: mass_fix_target_ps_dry_record
+import ..Spectral: mass_fix_target_ps_dry_record
 
-import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord,
+import ..TransportBinary: AbstractColumnClosureRecord,
     CubedSphereBinaryWriter,
     FidelitySampleMap,
     FluxFidelityEvidenceBundle,
@@ -116,14 +116,14 @@ import AtmosTransport.Preprocessing.TransportBinary: AbstractColumnClosureRecord
     write_window!,
     writer_staging_path
 
-import AtmosTransport.Preprocessing.Vertical: load_hybrid_coefficients
+import ..Vertical: load_hybrid_coefficients
 
-import AtmosTransport.Quantities: IntensiveCellField
+import ...Quantities: IntensiveCellField
 
-import AtmosTransport.Regridding: apply_regridder!,
+import ...Regridding: apply_regridder!,
     build_regridder
 
-import AtmosTransport.State: DrySurfacePressure
+import ...State: DrySurfacePressure
 
 import Dates: Date,
     Dates,
