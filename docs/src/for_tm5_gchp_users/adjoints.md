@@ -255,7 +255,7 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | --- | --- |
 | `cs_surface_emission_footprint` | One scalar objective to per-step emission sensitivities. |
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
-| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one taped run and one reverse pass for all observations. |
+| `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one forward run (which samples the observations and records the tape) and one reverse pass for all observations; `evaluation = CSCostOnly()` runs the forward run alone. |
 | `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
 | `read_observations`, `bind_to_mesh` | Read observation files (schema v2) and bind each record to its cell and time sampling: point records to `CSPlacedPointObjective`s placed in the column by the forward sampler's rule (height above ground and/or pressure), column records to column means. |
 | `build_departure_set`, `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics with each observation's sampled steps, levels and placement. |
@@ -263,8 +263,9 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 As in TM5-4DVAR, one gradient is one adjoint integration. Each observation
 is a fixed linear functional of the tracer mass after its model step (weights
 from the replayed air mass); `cs_surface_flux_4dvar` runs the forward model
-for the simulated values, tapes one run to the last observation step, and
-walks that tape back once, adding every observation's weighted departure
+once, sampling the simulated values and recording the tape through the last
+step of an observation with `assimilate = true`, and walks that tape back once
+from the last assimilated step, adding every observation's weighted departure
 `(H(x) − y)/σ²` at the end of its step, before the transposed convection of
 that step (TM5 adds its forcing just before the adjoint of the operator after
 which it sampled). See the [single-sweep gradient](@ref single-sweep-4dvar-gradient).

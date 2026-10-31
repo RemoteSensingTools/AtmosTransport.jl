@@ -1,5 +1,5 @@
 # Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
-# recorded from main (04a38b6d5) on the [host] below; see test/README.md.
+# recorded from main (0b09e749d) on the [host] below; see test/README.md.
 
 [cases.f32_cw84_matrixwin_split_none.footprint]
 footprints = "9f036e24e0d090e6872045b0e11bf7ac31c61d33"
@@ -9,6 +9,13 @@ initial_adjoint = "7443662990c067279ac77c6d42ba0ac6f9b12623"
 cost = "7559186a2c49d7a68c37de905c082b4d671fe954"
 gradients = "2ab2ac2297dc8b042df97e05c4b4488b237bd8bb"
 simulated = "9c20e66fcfff5dbdb92a00a8190f609e0e07fce9"
+
+[cases.f32_cw84_matrixwin_split_none.fourdvar_operators]
+chi_cost = "aa9600e82778b313e29d542f92bc7e7e21908b6b"
+chi_gradients = "d7b4519e662b3d867fd88ebd9c8479df83e56275"
+cost = "c21d76f704ee50a14691b59d48ef5f4e58e3e64d"
+gradients = "2e3befb9aefa420ec9f89b28d2f61110a3a9cb29"
+simulated = "620256483b67229b03e13be80f53e6e5f0cd9642"
 
 [cases.f32_cw84_matrixwin_split_none.jacobian]
 footprints = "6debd94b4edbc3786a0498590c0f7205cff0b799"
@@ -81,6 +88,13 @@ initial_adjoint = "2f3a7519dca85ec3e0f97ac357f379ee392f6a50"
 cost = "841ecefceb5ec9761e82b18e8a4fa6dd5f3eb573"
 gradients = "21dac29fdf4c0a00eb4b3fc66f581f11b182579b"
 simulated = "ad81545094775ffe5f2c8a3e511a8faeaccbce56"
+
+[cases.f64_monotone_cmfmcsub_split_mass_cfl.fourdvar_operators]
+chi_cost = "4d4cf1b5442d23151a47ba3d0ea66c63e98029bc"
+chi_gradients = "3b6e09719d195e65cb47df2c49e2cae6e119a159"
+cost = "57bcbc9c769b3dda091ec03aa7a535092ce75024"
+gradients = "5d0dafb7705bcd0f53d2565c0aad5c7255c4dc85"
+simulated = "54054ff797a9e2dcc98f5d4a4b63319d88daea6b"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.jacobian]
 footprints = "34187f55ede1e6a4c40477defbde8d4dac93d56e"

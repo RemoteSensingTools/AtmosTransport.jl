@@ -9,11 +9,12 @@
 #     explicit final-time adjoint seed (`dJ/drm_final`) instead of
 #     constructing it from one of the built-in objectives.
 #   * `_cs_surface_footprints` — the one checkpoint dispatch behind both
-#     entry points, `cs_surface_flux_jacobian` (several objectives on one
-#     recording) and `cs_surface_flux_4dvar` (a zero start plus the
-#     observation step forcing). It builds the replay of the production step
-#     plan (`_cs_replay_for_call`, which runs the setup guard) and hands it
-#     to the Full, Stride or Revolve driver (`_collect_footprints`).
+#     entry points and `cs_surface_flux_jacobian` (several objectives on one
+#     recording). It builds the replay of the production step plan
+#     (`_cs_replay_for_call`, which runs the setup guard) and hands it to the
+#     Full, Stride or Revolve driver (`_collect_footprints`). The 4D-Var
+#     gradient records during its observation forward run instead and calls
+#     the drivers' phases itself (`StrideCheckpoint.jl`).
 # ---------------------------------------------------------------------------
 
 """
@@ -243,21 +244,18 @@ end
 """
     _cs_surface_footprints(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                            panels_cm_steps, mesh, starts; scheme, checkpoint, dt,
-                           schedule, nsteps, surface_flux, flux_scale, cfl_limit,
+                           schedule, surface_flux, flux_scale, cfl_limit,
                            base_emission_rates, diffusion_op, diffusion_workspace,
                            diffusion_meteo, convection_op, convection_forcing,
-                           convection_workspace, tape_storage,
-                           forcing = NoStepForcing())
+                           convection_workspace, tape_storage)
         -> Vector{CSFootprintResult}
 
 One `CSFootprintResult` per adjoint start in `starts` (`_ObjectiveStart`,
-`_SeedStart`, `_ZeroStart`), on the replay of steps `1:nsteps` of the step
-plan recorded around `tape_rm0` and `base_emission_rates`. Validates the
-inputs and the plan's adjoint support once, then dispatches on `checkpoint` to
-the Full, Stride or Revolve driver. `forcing` is added at every end-of-step
-marker of the reverse walk; the single-sweep 4D-Var gradient passes its
-observation forcing with `[_ZeroStart()]`. The public footprint entry points,
-`cs_surface_flux_jacobian` and `cs_surface_flux_4dvar` all come through here.
+`_SeedStart`), on the replay of every step of the step plan recorded around
+`tape_rm0` and `base_emission_rates`. Validates the inputs and the plan's
+adjoint support once, then dispatches on `checkpoint` to the Full, Stride or
+Revolve driver. The public footprint entry points and
+`cs_surface_flux_jacobian` come through here.
 """
 function _cs_surface_footprints(tape_rm0, panels_m0,
                                 panels_am_steps,
@@ -269,7 +267,6 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 checkpoint::AbstractCheckpointSchedule,
                                 dt = nothing,
                                 schedule = nothing,
-                                nsteps::Int = length(panels_am_steps),
                                 surface_flux::Bool = true,
                                 flux_scale,
                                 cfl_limit,
@@ -280,15 +277,13 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 convection_op,
                                 convection_forcing,
                                 convection_workspace,
-                                tape_storage,
-                                forcing::AbstractStepForcing = NoStepForcing())
-    _validate_step_forcing(forcing, nsteps, size(panels_m0[1], 3))
+                                tape_storage)
     _require_tape_storage_supported(scheme, tape_storage)
     replay, step_dt = _cs_replay_for_call(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                                          panels_cm_steps, mesh; scheme, dt, schedule, nsteps,
+                                          panels_cm_steps, mesh; scheme, dt, schedule,
                                           surface_flux, base_emission_rates, flux_scale,
                                           cfl_limit, diffusion_op, diffusion_workspace,
                                           diffusion_meteo, convection_op, convection_forcing,
                                           convection_workspace)
-    return _collect_footprints(checkpoint, replay, starts, step_dt; tape_storage, forcing)
+    return _collect_footprints(checkpoint, replay, starts, step_dt; tape_storage)
 end

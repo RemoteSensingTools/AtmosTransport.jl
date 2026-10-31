@@ -316,9 +316,12 @@ end
 
 # ---------- single-point evaluation cache -------------------------------------
 
-# One `cost_fn` call returns the cost AND its gradient (a forward run plus the
-# adjoint footprints), so a value-only or gradient-only request costs as much
-# as a combined one. `_CSCostCache` remembers the most recent evaluation keyed
+# One `cost_fn` call returns the cost AND its gradient (one forward run, which
+# records the tape, plus the reverse pass), so a value-only or gradient-only
+# request costs as much as a combined one. L-BFGS with Optim's Hager–Zhang
+# line search asks for the value and the slope at every point it visits
+# (`value_gradient!`), so no evaluation of it could be a cheaper `CSCostOnly`
+# one. `_CSCostCache` remembers the most recent evaluation keyed
 # on the flat control vector: Optim's `f`, `g!` and `fg!` callbacks, the
 # iteration-log callback and the final result all read from it, and
 # `cost_fn` runs only when the requested point differs from the cached one.
@@ -474,7 +477,8 @@ settings, including `min_step = sqrt(eps(FT))`.
 
 Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
 on every cost evaluation — including `preconditioner = ...` for the
-preconditioned-cost path.
+preconditioned-cost path. Every evaluation computes the cost and the gradient,
+so `evaluation` is not accepted.
 """
 function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                         panels_am_steps,
@@ -489,6 +493,9 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                             eltype(panels_rm0[1])(0.5),
                                             zero(eltype(panels_rm0[1])), true, false),
                                         kwargs...)
+    haskey(kwargs, :evaluation) && throw(ArgumentError(
+        "cs_surface_flux_4dvar_optimize evaluates the cost and its gradient at every point; " *
+        "do not pass `evaluation`"))
     cost_fn = function (active_controls)
         return cs_surface_flux_4dvar(
             panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
