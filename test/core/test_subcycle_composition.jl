@@ -73,6 +73,31 @@ _scheme_label(s) = hasproperty(s, :limiter) ? "$(nameof(typeof(s)))($(nameof(typ
 _cs_packed(panels) = ntuple(p -> reshape(copy(panels[p]), size(panels[p])..., 1), 6)
 _cs_max_q_error(rm, m, q, I) = maximum(maximum(abs.(rm[p][I, I, :, 1] ./ m[p][I, I, :] .- q)) for p in 1:6)
 
+struct ObserveMidpoint{R, M, I} <: Adv.AbstractMidpointHook
+    minimum::R
+    initial_mass::M
+    interior::I
+end
+function Adv.apply_midpoint!(hook::ObserveMidpoint, _rm, m)
+    I = hook.interior
+    hook.minimum[] = minimum(minimum(m[p][I, I, :] ./ hook.initial_mass[p][I, I, :]) for p in 1:6)
+    return nothing
+end
+struct ScaleMidpoint <: Adv.AbstractMidpointHook end
+function Adv.apply_midpoint!(::ScaleMidpoint, rm, _m)
+    foreach(p -> (rm[p] .*= 1.01), 1:6)
+    return nothing
+end
+# A column-local midpoint that does not commute with the vertical sweeps: it
+# scales only the surface layer, by a factor that depends on the tracer index
+# the per-tracer reduced-Gaussian driver passes (packed lat-lon passes none).
+struct SurfaceScaleMidpoint <: Adv.AbstractMidpointHook end
+_surface_factor(::Nothing) = 1.25
+_surface_factor(tracer::Integer) = 1 + 0.25 * tracer
+_surface_scale!(rm::AbstractArray{<:Any, 4}, tracer) = (rm[:, :, end, :] .*= _surface_factor(tracer); nothing)
+_surface_scale!(rm::AbstractMatrix, tracer) = (rm[:, end] .*= _surface_factor(tracer); nothing)
+Adv.apply_midpoint!(::SurfaceScaleMidpoint, rm, _m, tracer = nothing) = _surface_scale!(rm, tracer)
+
 @testset "CS subcycling keeps a uniform tracer uniform (rotation and strain)" begin
     q0 = 0.4
     for (flow, A, convention) in ((:rotation, 0.15, G.GEOSNativePanelConvention()),
@@ -94,8 +119,8 @@ _cs_max_q_error(rm, m, q, I) = maximum(maximum(abs.(rm[p][I, I, :, 1] ./ m[p][I,
             Adv.fill_panel_halos!(rm, mesh; dir = 1)
             ws = Adv.CSAdvectionWorkspace(mesh, m0[1]; n_tracers = 1)
             mid_min = Ref(Inf)
-            midpoint! = (ar, amass) -> (mid_min[] = minimum(minimum(amass[p][I, I, :] ./ m0[p][I, I, :]) for p in 1:6))
-            Adv.strang_split_cs_mt!(rm, m, am, bm, cm, mesh, scheme, ws; midpoint!)
+            midpoint = ObserveMidpoint(mid_min, m0, I)
+            Adv.strang_split_cs_mt!(rm, m, am, bm, cm, mesh, scheme, ws; midpoint)
             @test _cs_max_q_error(rm, m, FT(q0), I) < (FT == Float32 ? 2e-6 : 1e-12)
             @test mid_min[] > 0.5
             @test minimum(minimum(m[p][I, I, :]) for p in 1:6) > 0
@@ -153,7 +178,7 @@ end
         ws = Adv.CSAdvectionWorkspace(mesh, m0[1]; n_tracers = 1)
         out_rm, out_m = Adv.strang_split_cs_mt_pingpong!(rm, m, ws.rm_4d_pp_buf, ws.m_pp_buf,
                                                          am, bm, cm, mesh, scheme, ws;
-                                                         subcycle_count = n, midpoint! = scale!)
+                                                         subcycle_count = n, midpoint = ScaleMidpoint())
         ref_rm, ref_m = _cs_explicit_composition(_cs_packed(rm0), map(copy, m0), am, bm, cm, mesh,
                                                  scheme, Adv.CSAdvectionWorkspace(mesh, m0[1]; n_tracers = 1),
                                                  n, scale!)
@@ -188,7 +213,7 @@ end
     end
 end
 
-@testset "lat-lon subcycled step is (X Y Z)^n | (Z Y X)^n" begin
+@testset "lat-lon subcycled step is (X Y Z)^n | midpoint | (Z Y X)^n" begin
     Nx, Ny, Nz = 12, 8, 3
     m0 = [1.0 + 0.1 * sin(i + 2j + 3k) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
     q  = [0.4 + 0.1 * cos(2i - j + k) for i in 1:Nx, j in 1:Ny, k in 1:Nz]
@@ -196,18 +221,22 @@ end
     bm = [0.2 * cos(0.4i + 0.9j + k) for i in 1:Nx, j in 1:Ny+1, k in 1:Nz]; bm[:, [1, Ny+1], :] .= 0
     cm = [0.2 * sin(0.5i + 0.2j + 2k) for i in 1:Nx, j in 1:Ny, k in 1:Nz+1]; cm[:, :, [1, Nz+1]] .= 0
     # scale 0.5: n = 2 (at scale 1 some cells would end the step with negative mass)
-    for scale in (0.1, 0.5), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()))
+    for scale in (0.1, 0.5), scheme in (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter())),
+        midpoint in (Adv.NoMidpoint(), SurfaceScaleMidpoint())
         a, b, c = scale .* am, scale .* bm, scale .* cm
         n = Adv._structured_palindrome_subcycle_count(a, b, c, m0, AT.Parameters.DEFAULT_CFL_LIMIT)
         @test (n == 1) == (scale == 0.1)
         m = copy(m0); rm = reshape(q .* m0, Nx, Ny, Nz, 1)
-        Adv.strang_split_mt!(rm, m, a, b, c, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1))
+        Adv.strang_split_mt!(rm, m, a, b, c, scheme, Adv.AdvectionWorkspace(m; n_tracers = 1); midpoint)
         mr = copy(m0); rr = reshape(q .* m0, Nx, Ny, Nz, 1); ws = Adv.AdvectionWorkspace(mr; n_tracers = 1)
         fs = 1.0 / n
         spare_r, spare_m = similar(rr), similar(mr)
         for sweeps in ((Adv.sweep_x_mt!, Adv.sweep_y_mt!, Adv.sweep_z_mt!),
                        (Adv.sweep_z_mt!, Adv.sweep_y_mt!, Adv.sweep_x_mt!))
             fluxes = sweeps[1] === Adv.sweep_x_mt! ? (a, b, c) : (c, b, a)
+            # The midpoint acts on the current buffer between the two halves.
+            sweeps[1] === Adv.sweep_z_mt! && midpoint isa SurfaceScaleMidpoint &&
+                (rr[:, :, end, :] .*= 1.25)
             for _ in 1:n, (sweep!, flux) in zip(sweeps, fluxes)
                 sweep!(rr, spare_r, mr, spare_m, flux, scheme, ws, fs)
                 rr, spare_r = spare_r, rr
@@ -399,6 +428,33 @@ end
     @test maximum(abs.(state.tracers_raw[:, :, 1] ./ state.air_mass .- 0.4)) < 1e-12
     @test maximum(abs.(state.tracers_raw[:, :, 2] ./ state.air_mass .- 0.1)) < 1e-12
     @test state.air_mass ≈ m0 atol = 1e-12
+
+    # The step is, per tracer from the step-start air mass, (H V)^n | midpoint |
+    # (V H)^n built from the sweep primitives; the midpoint receives the
+    # tracer's own index.
+    q = [0.4 + 0.1 * cos(2c + k) for c in 1:nc, k in 1:Nz]
+    raw0 = cat(q .* m0, (1 .- q) .* m0; dims = 3)
+    state = AT.CellState(AT.DryBasis, copy(m0); CO2 = raw0[:, :, 1], SF6 = raw0[:, :, 2])
+    AT.Operators.apply!(state, fluxes, grid, UpwindScheme(), 1.0;
+                        workspace = Adv.AdvectionWorkspace(state.air_mass),
+                        midpoint = SurfaceScaleMidpoint())
+    ref = copy(raw0); mr = copy(m0); ws = Adv.AdvectionWorkspace(mr)
+    hflux, cm = fluxes.horizontal_flux, fluxes.cm
+    for idx in 1:2
+        copyto!(mr, m0)
+        rr = view(ref, :, :, idx)
+        for _ in 1:n
+            Adv.sweep_horizontal!(rr, mr, hflux, mesh, UpwindScheme(), ws, 1.0 / n)
+            Adv.sweep_vertical!(rr, mr, cm, UpwindScheme(), ws, 1.0 / n)
+        end
+        rr[:, end] .*= 1 + 0.25 * idx
+        for _ in 1:n
+            Adv.sweep_vertical!(rr, mr, cm, UpwindScheme(), ws, 1.0 / n)
+            Adv.sweep_horizontal!(rr, mr, hflux, mesh, UpwindScheme(), ws, 1.0 / n)
+        end
+    end
+    @test isequal(state.tracers_raw, ref)
+    @test isequal(state.air_mass, mr)
 end
 
 # ---------------------------------------------------------------- footprint tape
@@ -442,5 +498,66 @@ end
                                 Adv.CSAdvectionWorkspace(mesh, m[1]; n_tracers = 1))
         @test all(p -> final[1][p][I, I, :] == rm[p][I, I, :, 1], 1:6)
         @test all(p -> final[2][p][I, I, :] == m[p][I, I, :], 1:6)
+    end
+end
+
+# Independent no-op implementation: exercise the hook dispatch on the same
+# active buffers as physics, rather than spelling NoMidpoint() twice.
+struct ExplicitNoopMidpoint <: Adv.AbstractMidpointHook end
+Adv.apply_midpoint!(::ExplicitNoopMidpoint, _rm, _m, _tracer = nothing) = nothing
+function _midpoint_allocations(hook, rm, m)
+    Adv.apply_midpoint!(hook, rm, m)
+    return @allocated Adv.apply_midpoint!(hook, rm, m)
+end
+_bit_equal(a, b) = reinterpret(UInt8, vec(a)) == reinterpret(UInt8, vec(b))
+
+@testset "NoMidpoint is bit-exact to an explicit no-op hook" begin
+    for FT in (Float32, Float64)
+        for A in (0.01, 15.0)
+            am, bm, cm = map(a -> FT.(a), _ll_strain_fluxes(A))
+            m0 = ones(FT, 32, 16, 1)
+            rm0 = reshape(FT[0.4 + 0.1sin(i + 2j) for i in 1:32, j in 1:16], 32, 16, 1, 1)
+            rm, m, ref, mr = copy(rm0), copy(m0), copy(rm0), copy(m0)
+            Adv.strang_split_mt!(rm, m, am, bm, cm, UpwindScheme(), Adv.AdvectionWorkspace(m; n_tracers = 1))
+            Adv.strang_split_mt!(ref, mr, am, bm, cm, UpwindScheme(), Adv.AdvectionWorkspace(mr; n_tracers = 1);
+                                 midpoint = ExplicitNoopMidpoint())
+            @test _bit_equal(rm, ref)
+            @test _bit_equal(m, mr)
+            hook = AT.Operators.StepPlans.TransportMidpoint(; dt = one(FT), workspace = nothing)
+            @test @inferred(Adv.apply_midpoint!(hook, rm, m)) === nothing
+            @test _midpoint_allocations(hook, rm, m) == 0
+        end
+        for n in (1, 3)
+            mesh, m0, am, bm, cm = _cs_flow_problem(:rotation, 0.01; Nc = 4)
+            m0, am, bm, cm = map(x -> map(a -> FT.(a), x), (m0, am, bm, cm))
+            rm0 = _cs_packed(map(a -> FT(0.4) .* a, m0))
+            rm, m, ref, mr = map(copy, rm0), map(copy, m0), map(copy, rm0), map(copy, m0)
+            Adv.fill_panel_halos!(rm, mesh; dir = 1)
+            Adv.fill_panel_halos!(ref, mesh; dir = 1)
+            Adv.strang_split_cs_mt!(rm, m, am, bm, cm, mesh, UpwindScheme(),
+                Adv.CSAdvectionWorkspace(mesh, m[1]; n_tracers = 1); subcycle_count = n)
+            Adv.strang_split_cs_mt!(ref, mr, am, bm, cm, mesh, UpwindScheme(),
+                Adv.CSAdvectionWorkspace(mesh, mr[1]; n_tracers = 1);
+                subcycle_count = n, midpoint = ExplicitNoopMidpoint())
+            @test all(p -> _bit_equal(rm[p], ref[p]), 1:6)
+            @test all(p -> _bit_equal(m[p], mr[p]), 1:6)
+            hook = AT.Operators.StepPlans.TransportMidpoint(; dt = one(FT), workspace = nothing,
+                                                            halo_width = mesh.Hp)
+            @test @inferred(Adv.apply_midpoint!(hook, rm, m)) === nothing
+            @test _midpoint_allocations(hook, rm, m) == 0
+        end
+        mesh = AT.ReducedGaussianMesh(FT[-45, 45], [4, 4]; FT)
+        grid = AT.AtmosGrid(mesh, AT.HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1]), AT.CPU(); FT)
+        m0 = ones(FT, AT.ncells(mesh), 2)
+        states = [AT.CellState(AT.DryBasis, copy(m0); CO2 = FT(0.4) .* m0, SF6 = FT(0.1) .* m0) for _ in 1:2]
+        fluxes = AT.allocate_face_fluxes(mesh, 2; FT, basis = AT.DryBasis)
+        fluxes.horizontal_flux .= FT(0.001)
+        AT.Operators.apply!(states[1], fluxes, grid, UpwindScheme(), one(FT);
+                            workspace = Adv.AdvectionWorkspace(states[1].air_mass))
+        AT.Operators.apply!(states[2], fluxes, grid, UpwindScheme(), one(FT);
+                            workspace = Adv.AdvectionWorkspace(states[2].air_mass),
+                            midpoint = ExplicitNoopMidpoint())
+        @test _bit_equal(states[1].tracers_raw, states[2].tracers_raw)
+        @test _bit_equal(states[1].air_mass, states[2].air_mass)
     end
 end

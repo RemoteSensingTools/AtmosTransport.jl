@@ -29,8 +29,8 @@ separate where their storage and numerical kernels genuinely differ.
   [`TransportModel.step!`](../Models/Core/TransportModel.jl) executes the `step`
   stages of the substep plan:
   - first constant-rate decay half-step
-  - transport block: advection, with diffusion and surface flux embedded
-    at the Strang midpoint
+  - transport block: StepPlan supplies diffusion and surface flux to the
+    abstract hook at the advection Strang midpoint
   - convection block, executed when the model carries a non-`NoConvection`
     operator
   - closing chemistry block
@@ -74,11 +74,9 @@ operator × topology matrix.
 [`Operators.jl`](Operators.jl) is not just a manifest. Its include order
 encodes real dependencies:
 
-- `Diffusion` is loaded before `Advection` because the transport
-  palindrome imports diffusion operator types and `apply_vertical_diffusion_vmr!`
-- `SurfaceFlux` is loaded before `Advection` for the same reason
-- `Convection` is loaded before `Advection` for consistency, but is not
-  consumed inside the current palindrome
+- `Diffusion`, `SurfaceFlux` and `Convection` load before `Advection` in the
+  current assembly. Advection imports none of them; its midpoint is abstract.
+- `StepPlan/` composes diffusion/emission with advection after all families load.
 - `Chemistry` is loaded after `Advection` because it is a separate
   post-transport block
 - `StepRecording.jl` is included first (the palindromes call its hooks) and
@@ -94,7 +92,7 @@ submodules before assuming it is cosmetic.
   submodule and wire exports in [`Operators.jl`](Operators.jl)
 - Extending topology support:
   read the submodule README first, then check the corresponding
-  `State/`, `Grids/`, and `Models/TransportModel.jl` runtime boundary
+  `State/`, `Grids/`, and `Models/Core/TransportModel.jl` runtime boundary
 - Tracing a live runtime path:
   start at [`../Models/Core/TransportModel.jl`](../Models/Core/TransportModel.jl),
   then follow the relevant operator `apply!`

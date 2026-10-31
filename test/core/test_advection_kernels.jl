@@ -17,6 +17,7 @@ all three sweep directions with non-trivial Courant numbers.
 """
 
 using Test
+using AtmosTransport.Operators.StepPlans: transport_step!
 
 using AtmosTransport
 using .AtmosTransport: Operators, Grids
@@ -254,30 +255,28 @@ end
     m_before = copy(state.air_mass)
     rm_before = copy(state.tracers_raw)
 
-    @test_throws ArgumentError strang_split!(
-        state, fluxes, grid, UpwindScheme();
+    @test_throws ArgumentError transport_step!(
+        state, fluxes, grid, UpwindScheme(), FT(60);
         workspace=advection_ws,
         diffusion_workspace=advection_ws,
         diffusion_op=diffusion,
-        dt=FT(60),
     )
     @test state.air_mass == m_before
     @test state.tracers_raw == rm_before
 
     wrong_shape = DiffusionWorkspace(zeros(FT, size(m, 1), size(m, 2), size(m, 3) - 1))
-    @test_throws DimensionMismatch strang_split!(
-        state, fluxes, grid, UpwindScheme();
+    @test_throws DimensionMismatch transport_step!(
+        state, fluxes, grid, UpwindScheme(), FT(60);
         workspace=advection_ws,
         diffusion_workspace=wrong_shape,
         diffusion_op=diffusion,
-        dt=FT(60),
     )
     @test state.air_mass == m_before
     @test state.tracers_raw == rm_before
 
     diffusion_ws = DiffusionWorkspace(state)
-    @test_throws ArgumentError strang_split!(
-        state, fluxes, grid, UpwindScheme();
+    @test_throws ArgumentError transport_step!(
+        state, fluxes, grid, UpwindScheme(), nothing;
         workspace=advection_ws,
         diffusion_workspace=diffusion_ws,
         diffusion_op=diffusion,

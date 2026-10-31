@@ -60,11 +60,17 @@ that family needs:
 
 | Family | Signature |
 |---|---|
-| Advection | `apply!(state, fluxes, grid, scheme, dt; workspace, cfl_limit, diffusion_op, emissions_op, meteo)` |
+| Advection | `apply!(state, fluxes, grid, scheme, dt; workspace, cfl_limit, midpoint = NoMidpoint())` |
 | Diffusion | `apply!(state, meteo, grid, op::AbstractDiffusion, dt; workspace)` |
 | Convection | `apply!(state, forcing::ConvectionForcing, grid, op::AbstractConvection, dt; workspace)` |
 | Surface flux | `apply!(state, meteo, grid, op::AbstractSurfaceFluxOperator, dt; workspace = nothing)` |
 | Chemistry | `apply!(state, meteo, grid, op::AbstractChemistryOperator, dt; workspace = nothing)` |
+
+Advection does not call diffusion or surface emissions itself. Between the two
+halves of the Strang palindrome it calls `apply_midpoint!(midpoint, ...)`; the
+default `NoMidpoint()` does nothing. `transport_step!` in `Operators.StepPlans`
+builds a `TransportMidpoint` that applies diffusion and emissions there, so
+diffusion and emission keywords belong to `transport_step!`, not to Advection.
 
 Every method mutates `state` in place. Performance-sensitive implementations
 keep reusable scratch buffers in workspaces. Each family provides an identity
@@ -114,9 +120,10 @@ scheme = "slopes"     # "upwind" | "slopes" | "ppm" | "linrood"
 
 A `NoAdvection` identity operator is available for isolating other
 operators (e.g. convection-only timing, regression). Select with
-`[advection] scheme = "none"`. Diffusion-only runs are supported as a
-single mass-conserving vertical solve. Surface fluxes require an advection
-palindrome and are therefore rejected with `NoAdvection`.
+`[advection] scheme = "none"`. `StepPlans.transport_step!` composes it
+without sweeps; Advection has no `apply!` method for it. Diffusion-only runs
+are supported as a single mass-conserving vertical solve. Surface fluxes
+require an advection palindrome and are therefore rejected with `NoAdvection`.
 
 ## Diffusion
 
@@ -389,6 +396,13 @@ launch.
 
 ## Transport composition
 
+StepPlan owns emission/diffusion composition. Advection calls the abstract
+`apply_midpoint!` hook on its active buffers between palindrome halves; the
+default `NoMidpoint` performs no work. StepPlan supplies `TransportMidpoint`,
+including physics workspaces, tracer selection, timing and CS recorder hooks.
+The adjoint replays the same plan and transposes its records in reverse order.
+Direct advection callers compose physics through `StepPlans.transport_step!`.
+
 The directional advection shell is a palindrome. Its center follows the
 diffusion operator's surface-coupling policy:
 
@@ -423,6 +437,11 @@ The same recipe applies in every family:
 3. Implement `apply!(state, …, op::MyConvection, dt; workspace)` for whichever grid types you support. Multiple dispatch on the grid type handles topology specialization.
 4. Wire selection from TOML through `RuntimePhysicsSpecs.jl` and its topology-dispatched `materialize` methods.
 5. Test that the `No<Operator>` path is bit-exact to the explicit no-op — this is the contract that lets future code skip the slot for free.
+
+For an operator at the transport midpoint, extend StepPlan’s typed midpoint
+composition in `src/Operators/StepPlan/midpoint.jl`, including recorder and
+adjoint support. Advection supplies current buffers through `apply_midpoint!`;
+keep its sweep drivers independent of the added physics.
 
 ## What's next
 
