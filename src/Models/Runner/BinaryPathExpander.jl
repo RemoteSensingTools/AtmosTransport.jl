@@ -48,8 +48,8 @@ date and rejects missing or duplicate dates.
 module BinaryPathExpander
 
 using Dates
-using ...ConfigChecks: config_date
-import ...expand_data_path
+using ....ConfigChecks: config_date
+import ....expand_data_path
 
 export expand_binary_paths
 

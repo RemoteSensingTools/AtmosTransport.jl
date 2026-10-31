@@ -145,13 +145,12 @@ including non-core modules, without adding numerical tests of non-core APIs.
 
 Folder edges point to earlier folders unless `folder_order_allow` records an
 exception. A module entry file may wire child modules in its subfolders, as
-for module edges. Two shared-module layouts also wire their folders:
+for module edges. One shared-module layout also wires its folders:
 `src/Operators/Advection` with its Reconstruction, Structured and CubedSphere
-folders (A1: fenced root types and Lin-Rood share one module), and the
-`src/Models` Core, Physics, InitialConditions and Runner folders where their
-files share `AtmosTransport.Models` (MD1: Core stepping and Physics refresh
-dispatch on Runner's DrivenSimulation). Edges between the Advection sibling
-folders and all external dependencies keep the ordinary order. Explicit
+folders (A1: fenced root types and Lin-Rood share one module). The Models
+folders are ordinary submodules (MD2 removed MD1's shared-Models exemption).
+Edges between the Advection sibling folders and all external dependencies keep
+the ordinary order. Explicit
 relative imports resolve local child modules before inherited aliases, so
 `Adjoints.Inversion.Observations` and the package's `Observations` module stay
 distinct owners.

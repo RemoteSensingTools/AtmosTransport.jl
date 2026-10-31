@@ -28,8 +28,8 @@ using .AtmosTransport.Operators.Diffusion: fill_dz_hydrostatic_virtualT_staged!,
                                             fill_dz_hydrostatic_constT_staged!,
                                             recover_total_surface_pressure_staged!
 using .AtmosTransport.Parameters: R_DRY_AIR, STANDARD_GRAVITY
-using .AtmosTransport.Models: _diffusion_pressure_humidity,
-                               _diffusion_total_surface_pressure!
+using .AtmosTransport.Models.Runner: _diffusion_pressure_humidity,
+                                      _diffusion_total_surface_pressure!
 using .AtmosTransport.Operators: DiffusionWorkspace
 using .AtmosTransport.Operators.Diffusion: stage_hybrid_coefficients!
 

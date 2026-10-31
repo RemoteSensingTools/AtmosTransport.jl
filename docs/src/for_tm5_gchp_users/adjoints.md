@@ -93,9 +93,10 @@ cadence, the met windows and the air-mass resets of a driven run come in as a
 a cubed-sphere `DrivenSimulation` configuration from production itself — the
 face fluxes of each step after window loading and flux scaling (one copy per
 met window, shared by its steps, as production's steps read the same
-arrays), the convection forcing and diffusion layer thickness of each met
-window, the tracer's emission rates, the schedule and fresh workspaces — so
-the adjoint of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
+arrays; one per step when the fluxes are interpolated within the window), the
+convection forcing and diffusion layer thickness of each met window, the
+tracer's emission rates, the schedule and fresh workspaces — so the adjoint
+of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
 records anything (below): an operator without an adjoint is an error that
 names it, never a silent approximation. `CSStepSchedule(sim)` also runs that
 check and retains the production chemistry operator, so a schedule cannot hide

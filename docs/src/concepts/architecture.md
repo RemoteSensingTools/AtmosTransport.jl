@@ -214,10 +214,10 @@ src/
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
 ├── MetDrivers/      version-4 binary reader, driver, and window carriers
 ├── Models/          runtime composition; stable Models and child-module paths
-│   ├── Core/        model, simulation, callbacks, stepping and adjoint schedule
-│   ├── Physics/     runtime specs, recipes, metadata and forcing refresh
-│   ├── InitialConditions/  IC and surface-flux loading
-│   └── Runner/      driven simulation, binary paths, staging and runtime orchestration
+│   ├── Core/        model, fixed-step simulation, callbacks, step!/run! generics
+│   ├── Physics/     runtime specs, recipes and metadata
+│   ├── InitialConditions/  InitialConditionIO: IC and surface-flux loading
+│   └── Runner/      driven stepping, forcing refresh, adjoint capture and orchestration
 ├── Diagnostics/     core run budgets, snapshot series and mass drift
 ├── SectionTimer.jl  foundation timing and optional NVTX instrumentation
 ├── Preprocessing/   source readers, transforms, balancing, verification, writers

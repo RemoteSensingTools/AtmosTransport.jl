@@ -10,30 +10,36 @@ module paths, including `InitialConditionIO`, `DrivenRunner`,
 
 - [`Models.jl`](Models.jl): imports, include order and facade exports.
 - [`Core/`](Core/README.md): model construction, fixed-step simulation,
-  callbacks, driven stepping and the adjoint schedule/capture bridge.
+  callbacks and model adjoint support.
 - [`Physics/`](Physics/README.md): runtime specs, styles, recipes, metadata
-  and per-window forcing refresh.
-- [`InitialConditions/`](InitialConditions/README.md): `InitialConditionIO`,
-  analytic/file IC builders, conservative hybrid remapping and flux loading.
+  and provenance.
+- [`InitialConditions/`](InitialConditions/README.md): the `InitialConditionIO`
+  submodule: analytic/file IC builders, conservative hybrid remapping and flux
+  loading.
 - [`Runner/`](Runner/README.md): `DrivenSimulation`, window storage,
-  `DrivenRunner`, binary-path expansion, input staging and runtime layout API.
+  `DrivenRunner`, forcing refresh, driven stepping, adjoint capture, binary-path
+  expansion, input staging and runtime layout API.
 
 ## Assembly and dependency order
 
-These are plain subfolders of the existing Models module. Independent modules
-would be cyclic with the requested ownership: Core stepping and adjoint
-schedule dispatch on Runner's `DrivenSimulation`, Runner constructs Core's
-`TransportModel`, and Physics refresh also dispatches on `DrivenSimulation`.
-The existing child modules stay nested at their original qualified paths.
+Each folder is one submodule, loaded in the order
+`Physics → Core → InitialConditionIO → Runner` (the InitialConditions folder's
+module keeps its existing name `InitialConditionIO`). Dependencies between
+siblings point to earlier modules: Physics owns specs/recipes without model
+types; Core owns the concrete model, callbacks and the `step!`/`run!` generics;
+Runner owns DrivenSimulation, `run_window!`, and its stepping, forcing refresh
+and adjoint capture methods, and extends Core's `step!` and `run!`. Core's
+model-only adjoint support stays with TransportModel.
 
-`Models.jl` keeps the original include order: Core model type; Physics styles,
-config specs, recipes and metadata; InitialConditionIO; Runner path expansion
-and staging; Core fixed-step simulation and callbacks; Runner driven type and
-window storage; Physics refresh; Core stepping and adjoint schedule; DrivenRunner.
-This defines types before their dispatched methods without moving numerical
-execution or introducing callbacks across new module boundaries. The structure
-checker records the four folders and retains the shared Models wiring explicitly;
-external dependencies and child-module ordering remain checked.
+The facade re-exports and aliases only public names. Underscore helpers stay
+private to their owning submodule; tests reach them as `Models.Physics._name`,
+`Models.Runner._name` or `Operators.StepPlans._name`. `DrivenRunner`,
+`BinaryPathExpander` and `InputStaging` remain reachable at their old Models
+paths as aliases of their nested modules.
+Children import their dependencies directly through package-relative paths,
+including `...Models.Core`, so sandboxed package copies and JET resolve the
+same owners. There is no sibling back-reference or special checker exception.
+Runtime execution order, staging and module initialization effects are unchanged.
 
 ## Runtime contract
 
@@ -70,12 +76,12 @@ layout API: `run_tracer_specs`, `runtime_output_origin`, `run_reference_time`,
 `binary_date_label`, `configured_float_type`, `parse_tracer_specs`,
 `structured_tracer_specs`, `observation_terrain`, and IC `uniform_background`.
 `ADVECTION_SPEC_KEYS` is the public schema table used by the inversion CLI.
-Public aliases share the original generic; legacy qualified bindings remain.
-See each folder for the explicitly shared internal assembly seams.
+Public aliases share the original generic. See each folder for the few
+underscore seams shared across submodules.
 
 ## Forward<->adjoint mirrors
 
-Core's `adjoint_schedule.jl` builds `CSStepSchedule` and captures production
+Runner's `adjoint_schedule.jl` builds `CSStepSchedule` and captures production
 forcing for Adjoints.Footprint. The `_has_initial_operator_state` predicate
 retains T1's name. `test_cs_adjoint_step_plan_parity.jl` guards forward/capture
 agreement; CPU/GPU golden and adjoint parity runs belong to the main session.

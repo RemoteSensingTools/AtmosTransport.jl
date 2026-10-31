@@ -1,5 +1,5 @@
 # Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
-# recorded from main (e182ba100) on the [host] below; see test/README.md.
+# recorded from main (6b63c6db0) on the [host] below; see test/README.md.
 
 [cases.captured_cw84_tm5win_boundary_vmr.footprint]
 footprints = "2409503a14d9f1b2495e43cb7cf607d87bc04886"

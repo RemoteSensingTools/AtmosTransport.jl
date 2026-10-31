@@ -1,6 +1,6 @@
 # The cubed-sphere adjoint of a DrivenSimulation configuration: its step plan
 # and met windows as a `CSStepSchedule`, and the setup guard for its operators.
-# Included by Models.jl after driven_stepping.jl.
+# Included by Runner.jl after driven_stepping.jl.
 
 """
     CSStepSchedule(sim::DrivenSimulation)
@@ -195,10 +195,4 @@ simulation's step plan and every operator of its model. Throws an
 function Adjoints.require_adjoint_support(sim::DrivenSimulation)
     require_adjoint_support(sim.plan, step_operators(sim.model))
     return sim
-end
-
-function Adjoints.require_adjoint_support(model::TransportModel;
-                                          plan::StepPlan = _MODEL_STEP_PLAN)
-    require_adjoint_support(plan, step_operators(model))
-    return model
 end
