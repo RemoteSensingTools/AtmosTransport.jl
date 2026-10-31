@@ -29,6 +29,10 @@ key_messages(cfg) = (f = Runner._config_key_findings(cfg); vcat(f.errors, f.warn
     @test CC.config_bool(true, "a") === true
     @test_throws ArgumentError CC.config_bool("true", "a")
     @test CC.config_bool(Dict("k" => false), "k", true, "a") === false
+    @test CC.config_float(2, "a") === 2.0
+    @test_throws ArgumentError CC.config_float(true, "a")
+    @test CC.parse_choice("Per-Day", (daily = :d, var"per-day" = :d, single = :s), "a") === :d
+    @test_throws ArgumentError CC.parse_choice("weekly", (daily = :d, single = :s), "a")
 end
 
 @testset "float_type: one strict parser on the runtime and both preprocessing paths" begin

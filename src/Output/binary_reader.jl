@@ -1,6 +1,5 @@
 # ATMSNAP reader shared by the conversion script.
 
-
 function _read_atmsnap_header(io::IO)
     magic = String(read(io, length(_ATMSNAP_MAGIC)))
     magic == _ATMSNAP_MAGIC || error("not an ATMSNAP binary: bad magic $(repr(magic))")
@@ -15,12 +14,6 @@ end
 # only the definition tag, panel convention, and the two law tags; we use the
 # convention-aware default-constructors for each definition to rebuild a
 # self-consistent object rather than reaching into the law factories directly.
-
-_float_from_dtype_tag(tag::AbstractString) =
-    tag == "Float32" ? Float32 :
-    tag == "Float64" ? Float64 :
-    error("unsupported float_dtype tag: $(repr(tag))")
-
 function _rebuild_cs_mesh(header::Dict{String, Any})
     g = header["grid"]
     Nc = Int(g["Nc"])
@@ -28,7 +21,7 @@ function _rebuild_cs_mesh(header::Dict{String, Any})
     def = parse_cs_definition(String(g["definition"]), conv)
     # Match the original run's mesh `FT` so geometry-derived diagnostics
     # (cell_area, lat/lon corner positions, etc.) round-trip bit-exact.
-    FT = _float_from_dtype_tag(String(header["float_dtype"]))
+    FT = parse_float_type(header["float_dtype"], "ATMSNAP float_dtype")
     # Hp = 0: the binary stores only interior cells. Downstream output paths
     # don't need halos for write-only consumers. Snapshots written before the
     # radius was recorded come from meshes of radius EARTH_RADIUS.
