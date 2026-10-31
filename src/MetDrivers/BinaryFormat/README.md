@@ -6,7 +6,7 @@ are re-exported by MetDrivers.
 
 ## Depends on
 
-Architectures, AtomicFiles, Parameters, Grids, State, and parent capability
+Architectures, ConfigChecks, AtomicFiles, Parameters, Grids, State, and parent capability
 generics. Reader types and file ownership belong to BinaryReaders.
 
 ## Used by
@@ -67,3 +67,7 @@ unifying its key set is a stated-delta follow-up. Writers publish only complete
 atomic staging files. LL/RG reject CS-only sections; the current format is v4.
 Tests: binary inspector, persistence hardening, atomic files, binary planet
 radius, optional CS sections, and preprocessing writer/driver contracts.
+
+ConfigChecks.parse_choice owns fidelity, surface-pressure basis and disk-type
+choice parsing. Disk types remain case sensitive; other tags preserve their
+previous case-insensitive String/Symbol policy. Header layout is unchanged.

@@ -66,15 +66,8 @@ observation_kind_label(::PointObservationKind) = "point"
 observation_kind_label(::ColumnObservationKind) = "column"
 
 _parse_observation_kind(kind::_ObservationKind) = kind
-function _parse_observation_kind(kind::AbstractString)
-    key = Symbol(kind)
-    haskey(_OBSERVATION_KINDS, key) || throw(ArgumentError(
-        "observation kind must be \"point\" or \"column\"; got $(repr(kind))"))
-    return _OBSERVATION_KINDS[key]
-end
-_parse_observation_kind(kind) = throw(ArgumentError(
-    "observation kind must be PointObservationKind(), ColumnObservationKind(), \"point\" or " *
-    "\"column\"; got $(repr(kind))"))
+_parse_observation_kind(kind) =
+    parse_choice(kind, _OBSERVATION_KINDS, "observation kind"; case_sensitive = true)
 
 # NaN means "absent"; any other value must be finite.
 _absent_or_finite(x::Float64) = isnan(x) || isfinite(x)
@@ -420,8 +413,6 @@ function _value_unit_scales(ds, path, has_retrieval::Bool)
     end
     return NamedTuple{(:value, :value_sigma, :model_sigma)}(map(sc -> something(sc, 1.0), scales))
 end
-
-
 
 # ---------------------------------------------------------------------------
 # Retrieval-level block (averaging-kernel columns)

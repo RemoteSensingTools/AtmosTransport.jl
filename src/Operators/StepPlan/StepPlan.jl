@@ -23,6 +23,7 @@ Phases, in the order a met window runs them:
 """
 module StepPlans
 
+using ...ConfigChecks: parse_choice
 using ...SectionTimer
 using ...Architectures: copy_arrays!
 using ...State: CellState, CubedSphereState, ConstantField, ntracers, FaceIndexedFluxState
@@ -76,23 +77,16 @@ export window_clock, window_step_dt
 # `[run] physics_cadence`: `:window`, `:substep` or `nothing` for `:window`.
 const _PHYSICS_CADENCES = (:window, :substep)
 
-function _resolve_physics_cadence(physics_cadence)
-    physics_cadence === nothing && return :window
-    cadence = Symbol(physics_cadence)
-    cadence in _PHYSICS_CADENCES || throw(ArgumentError(
-        "physics_cadence must be :window or :substep; got $(repr(physics_cadence))"))
-    return cadence
-end
+_resolve_physics_cadence(value) =
+    parse_choice(value === nothing ? "window" : value, NamedTuple{_PHYSICS_CADENCES}(_PHYSICS_CADENCES),
+                 "physics_cadence"; case_sensitive = true, allow_symbol = true)
 
 const _AIR_MASS_RESET_MODES = (:none, :preserve_vmr, :preserve_tracer_mass)
 
-function _normalize_air_mass_reset_mode(air_mass_reset_mode)
-    mode = air_mass_reset_mode === nothing ? :none : Symbol(air_mass_reset_mode)
-    mode in _AIR_MASS_RESET_MODES ||
-        throw(ArgumentError("air_mass_reset_mode must be one of :none, " *
-                            ":preserve_vmr, or :preserve_tracer_mass; got $(repr(mode))"))
-    return mode
-end
+_normalize_air_mass_reset_mode(value) =
+    parse_choice(value === nothing ? "none" : value,
+                 NamedTuple{_AIR_MASS_RESET_MODES}(_AIR_MASS_RESET_MODES),
+                 "air_mass_reset_mode"; case_sensitive = true, allow_symbol = true)
 
 # ---------------------------------------------------------------------------
 # Stages

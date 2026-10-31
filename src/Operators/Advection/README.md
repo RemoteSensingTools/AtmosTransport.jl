@@ -132,3 +132,6 @@ scalar Z-sweep reference), `test_subcycle_composition`, `test_cs_halo_fill`,
 `test_cs_adjoint_production_parity` and `test_cs_adjoint_step_plan_parity` guard
 the forward and reverse contracts. GPU goldens and a warm performance A/B are
 required when reviewing host launch changes.
+
+Host staging uses Architectures.host_array. ConfigChecks.env_flag reads the
+existing case-insensitive GPU profiling flag at call time.

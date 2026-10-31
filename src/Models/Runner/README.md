@@ -54,3 +54,7 @@ configured runner (DrivenRunner closes inputs after draining it):
 `driven_stepping.jl` and `adjoint_schedule.jl` share the production plan,
 refresh functions and clock transition. Operators.StepPlans owns clock/dt
 arithmetic. Resource cleanup drains prefetch before closing the input binary.
+
+Storage allocation delegates to Architectures.similar_arrays with the existing
+`Base.invokelatest(similar, array)` allocator at every leaf. Flux scaling uses
+`scale_arrays!`, retaining one broadcast per panel in the original order.

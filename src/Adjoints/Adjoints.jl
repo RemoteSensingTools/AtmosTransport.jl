@@ -1,5 +1,6 @@
 """Cubed-sphere discrete adjoint core; replay and inversion live in its child modules."""
 module Adjoints
+using ..Architectures: zeros_like
 
 using KernelAbstractions: @Const, @index, @kernel, get_backend, synchronize
 using ..Grids: CubedSphereMesh
@@ -93,8 +94,6 @@ _adjoint_gap(s::PPMScheme) = "PPMScheme with $(nameof(typeof(s.limiter))) has no
 _adjoint_gap(::NoAdvection) =
     "NoAdvection (scheme = \"none\") has no record in the cubed-sphere tape."
 _adjoint_gap(s) = "$(nameof(typeof(s))) has no cubed-sphere adjoint."
-
-
 
 include("ObjectiveSeeding.jl")
 include("StepForcing.jl")

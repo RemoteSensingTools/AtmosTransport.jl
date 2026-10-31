@@ -368,7 +368,7 @@ end
 _chi_gradients(::CSCostOnly, _preconditioners, _controls, _physical_controls, _physical_gradients) = nothing
 function _chi_gradients(::CSCostAndGradient, preconditioners, controls, physical_controls,
                         physical_gradients)
-    gradients = [_zero_panel_tuple_like(control.value) for control in controls]
+    gradients = [zeros_like(control.value) for control in controls]
     @inbounds for idx in eachindex(controls)
         _physical_gradient_to_chi!(gradients[idx], preconditioners[idx], controls[idx],
                                    physical_controls[idx], physical_gradients[idx])
@@ -559,7 +559,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
         diffusion_op, diffusion_workspace, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace,
         column_met)
-    physical_gradients = [_zero_panel_tuple_like(control.value) for control in physical_controls]
+    physical_gradients = [zeros_like(control.value) for control in physical_controls]
     run = _observation_run(evaluation, checkpoint, replay, tape_storage, observation_vec)
     observed = try
         sampled = _observe_cs_forward!(run, replay, mesh, observation_vec; column_met,

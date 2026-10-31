@@ -2,6 +2,102 @@
 
 ## Unreleased
 
+- **F1 foundation consolidation.** Runtime, preprocessing, inversion and binary
+  metadata parsers use ConfigChecks; progress settings use LogLevels. Array
+  staging/allocation/zeroing/scaling use Architectures, and remaining snapshot
+  and diagnostic interiors use State.panel_interior. Numerical arithmetic and
+  launch order are preserved. Tape configuration and fenced files are untouched.
+
+### F1 parser diagnostic inventory
+
+Valid inputs retain their numerical values, defaults, case rules and aliases.
+`P`, `V` and `C` below mean the exact setting path, `repr(value)` and the
+canonical spellings in the table. Parenthetical call-site labels in the first
+column are explanatory, except `(linrood)`, which is part of that diagnostic
+path. Every migrated choice now reports
+`P must be one of C; got V` for an unknown string; wrong types report
+`P must be a string; got V`, or `P must be a string or Symbol; got V` at
+interfaces that already accepted Symbols. These replace both the old explicit
+diagnostics below and implicit `String`/`Symbol` conversion `MethodError`s.
+Offending values are shown in their original case rather than the normalized
+case formerly used by several parsers. All new diagnostics are `ArgumentError`.
+
+| Setting | Previous diagnostic | Canonical choices in the new diagnostic |
+| --- | --- | --- |
+| [convection].cloud_base | Unknown [convection] cloud_base: … Supported: … | cmfmc, dqrcu |
+| [convection].kind | Unknown [convection] kind: … Supported: … | none, tm5, cmfmc, cmfmc_matrix |
+| [advection].scheme | Unknown [advection] scheme: … Supported: … | upwind, slopes, ppm, linrood, none |
+| [advection].vertical (PPM) | Unknown [advection] vertical: … Supported: … | same_as_horizontal, fv3_kord8, fv3_kord8_signed |
+| [advection].limiter | Unknown [advection] limiter: … Supported: … (including the forward-only note that none is inversion-only) | monotone, cw84; inversion also none |
+| [advection].vertical (linrood) | [advection] `scheme = "linrood"` supports vertical = …; got … | upwind, fv3_kord8, fv3_kord8_signed |
+| [chemistry].kind | Unknown [chemistry] kind: … Supported: … | none, decay |
+| [diffusion].kind | Unknown [diffusion] kind: … Supported: … | none, constant, tm5_beljaars_viterbo_local_kz, geoschem_holtslag_boville_vdiff, geoschem_nonlocal_vdiff, tm5_dkg |
+| physics_cadence | physics_cadence must be :window or :substep; got … | window, substep |
+| air_mass_reset_mode | air_mass_reset_mode must be one of :none, :preserve_vmr, or :preserve_tracer_mass; got … | none, preserve_vmr, preserve_tracer_mass |
+| [logging].progress | [logging].progress must be "bar", "lines" or "none"; got … | bar, lines, none |
+| out_of_range_policy | out_of_range_policy must be "reject", "skip", or "clamp"; got …; non-strings additionally named concrete policy types and said Symbol policies are not supported | reject, skip, clamp |
+| flagged_records | flagged_records must be "drop" or "cosample"; got …; non-strings additionally named concrete policy types | drop, cosample |
+| observation kind | observation kind must be "point" or "column"; got …; non-strings additionally named concrete kind types | point, column |
+| fidelity status | unsupported fidelity status …; expected passed, failed, not_applicable, or unavailable | passed, failed, not_applicable, unavailable |
+| flux_fidelity_kind | unsupported flux_fidelity_kind …; expected wind_rederived, native_passthrough, or none | wind_rederived, native_passthrough, none |
+| transport binary float_type | unsupported transport binary float_type=…; expected Float32 or Float64 | Float64, Float32 |
+| transport binary surface_pressure_basis | unsupported transport binary surface_pressure_basis=…; expected total or dry | total, dry |
+| visualization transform | visualization transform must be column_mean, column_sum, level_slice, or surface_slice; got … | column_mean, column_sum, level_slice, surface_slice |
+| visualization unit | visualization unit must be native or ppm; got … | native, ppm |
+| [output].mass_basis (spectral preprocessing) | Invalid output.mass_basis=… (expected moist or dry) | dry, moist |
+| [output].mass_basis (native preprocessing) | Symbol conversion failures, or later writer/source rejection of unknown mass_basis | dry, moist |
+| [numerics].substep_schedule | Invalid `[numerics].substep_schedule = …`: expected `fixed` or `adaptive_cfl`. | fixed, adaptive_cfl (constant/adaptive/cfl aliases retained) |
+| [numerics].geos_cm_closure | [numerics].geos_cm_closure must be "endpoint_balanced", "pressure_fixer", "moisture_filtered", "pfix_corrected", "omega_regularized", or "omega_full_replacement"; got … | endpoint_balanced, pressure_fixer, moisture_filtered, pfix_corrected, omega_regularized, omega_full_replacement (all existing aliases retained) |
+
+Additional changed scalar/date diagnostics (exhaustive):
+
+- `[convection].lmax_conv`, `[convection].n_merge`, `[advection].ppm_order`,
+  `[run] start_window`, `[run] stop_window`, `[logging].progress_interval_windows`
+  and `[checks].nan_check_interval_windows`: `P must be an integer; got V`
+  becomes `P must be an integer representable as Int; got V`. Run-window
+  helper diagnostics lose their final period. Integer overflow now raises the
+  same named `ArgumentError` instead of `InexactError`.
+- `[logging].progress_interval_windows` and `[checks].nan_check_interval_windows`
+  below one: `P must be at least 1; got value` becomes `P must be >= 1; got V`.
+- Preprocessing integers `[numerics].min_steps_per_window`,
+  `[numerics].max_steps_per_window`, `[numerics].cs_balance_project_every`,
+  `[numerics].geos_moisture_filter_smooth_iters`,
+  `[numerics.omega_regularization].smoothing_steps`, `[grid].level_top`,
+  `[grid].level_bot`, and direct runner `[run].start_window` conversions:
+  implicit `Int` conversion errors become `P must be an integer representable
+  as Int; got V`. Existing later range checks remain unchanged.
+- Preprocessing reals `[mass_fix].qv_global_climatology`,
+  `[cache].qv_preload_max_gb`, `[numerics].cs_balance_tol`,
+  `[numerics].dt_met_seconds`, `[numerics].positivity_cfl_limit`,
+  `[numerics].substep_cfl_target`,
+  `[numerics.omega_regularization].smoothing_fraction`, and the non-string
+  branch of `[vertical].pressure_Pa`, `pressure_hPa`,
+  `target_min_thickness_Pa`, `min_thickness_Pa`,
+  `reference_surface_pressure_Pa`: implicit `Float64` conversion errors
+  become `P must be a number; got V`. Vertical numeric strings still use their
+  original `parse(Float64, ...)` errors and infinity handling.
+- Native preprocessing `[input].start_date`, `[input].end_date`, native and
+  spectral `day override`, `start date`, `end date`: `String`/`Date` conversion
+  and invalid-calendar errors become `P must be a date in YYYY-MM-DD format;
+  got V`. The runner's header-date diagnostic ``invalid transport-binary
+  `date` header V`` uses the same date message with path
+  ``transport-binary `date` header``.
+
+Newly rejected invalid input: the listed preprocessing real settings reject
+Booleans and convertible non-Real values; the listed preprocessing integer
+settings reject Booleans and integral floating-point values as well as other
+non-integers. Direct runner start-window conversions now reject these too
+(preflight already rejected them). Out-of-Int integers are still rejected,
+with the new named error. Unknown native preprocessing mass-basis tags fail
+at parsing instead of reaching a later source/writer gate. Non-string/non-Symbol
+choice inputs that `String` could convert (e.g. byte vectors in programmatic
+configs) are now rejected explicitly. These are invalid TOML setting types.
+
+Preprocessing date settings now also accept TOML `Date` values; their ISO
+string behavior is preserved. No truth spellings are added to environment
+flags. Architecture Boolean and runtime real/Boolean diagnostics are unchanged.
+
+
 - **The 4D-Var evaluation runs the forward model once.** The forward run of
   `cs_surface_flux_4dvar` that samples the observations now also records what
   the reverse pass needs (the tape with `FullCheckpoint`, the K-step

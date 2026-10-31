@@ -40,11 +40,8 @@ function _typed_area_cache_ref(::Type{FT}, reference, nx::Integer, ny::Integer) 
     return Ref{Union{Nothing, typeof(probe)}}(nothing)
 end
 
-_pbl_host_array(a::Array) = a
-_pbl_host_array(a) = Array(a)
-
 @inline function _surface_panel(surface, name::Symbol, p::Int)
-    return _pbl_host_array(getfield(surface, name)[p])
+    return host_array(getfield(surface, name)[p])
 end
 
 @kernel function _window_pbl_kz_cs_panel_kernel!(cache, @Const(air_mass),
@@ -66,7 +63,6 @@ function _backend_ready_surface(surface)
                     _backend_ready_array(surface.t2m[p]), 1:6)
 end
 
-
 """
     refresh_pbl_kz_cache!(field, surface, air_mass, cell_areas; halo_width)
 
@@ -87,12 +83,12 @@ function refresh_pbl_kz_cache!(field::WindowPBLKzField{FT},
         return field
     end
     Hp = Int(halo_width)
-    areas = FT.(_pbl_host_array(cell_areas))
+    areas = FT.(host_array(cell_areas))
     p = field.params
 
     @inbounds for panel in 1:6
         cache = field.host_cache[panel]
-        mhost = _pbl_host_array(air_mass[panel])
+        mhost = host_array(air_mass[panel])
         pblh  = _surface_panel(surface, :pblh,  panel)
         ustar = _surface_panel(surface, :ustar, panel)
         hflux = _surface_panel(surface, :hflux, panel)

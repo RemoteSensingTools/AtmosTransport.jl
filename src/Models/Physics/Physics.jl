@@ -10,7 +10,7 @@ using ...State
 using ...Grids
 using ...Operators
 using ...MetDrivers
-using ...ConfigChecks: config_bool as _config_bool, config_int
+using ...ConfigChecks: config_bool as _config_bool, config_int, config_float, parse_choice
 using ...Parameters: DEFAULT_LINROOD_PPM_ORDER
 
 include("RuntimeRecipeStyles.jl")

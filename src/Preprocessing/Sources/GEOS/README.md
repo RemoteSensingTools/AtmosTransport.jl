@@ -40,3 +40,6 @@ No adjoint. Replay and positivity use the shared CS/binary contracts. Preserve
 source level orientation, endpoint timing, conversions and arithmetic order.
 
 GEOS dry endpoint arithmetic retains FT/SIMD summation and native dynamics-step flux scaling. OMEGA uses MassClosure divergence and solve scratch without changing solver policy.
+
+ConfigChecks.env_flag preserves ATMOS_OMEGA_TIMING as the case-sensitive
+strings "1", "true" and "yes".

@@ -52,3 +52,6 @@ Full-window fluxes use the parent's `flux_storage_substep_scale` at replay
 and runtime. The load-time replay gate is opt-in (`validate_replay=true`).
 Tests: reader round trips, binary inspector, CS staging and optional sections,
 replay consistency, validate-replay config, and cubed-sphere runtime.
+
+Replay panel scaling uses Architectures.scale_arrays!, retaining the existing
+per-panel broadcast order.

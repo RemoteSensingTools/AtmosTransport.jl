@@ -128,3 +128,6 @@ the one `physics_` key check of every sink.
 ## Forward<->adjoint mirrors
 
 None. Snapshot reductions preserve their existing accumulation order.
+
+Selected CS snapshot interiors use State.panel_interior, cropped to the
+requested mesh extent after the existing shape/halo checks.

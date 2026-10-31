@@ -29,12 +29,12 @@ function _resolve_dates_native(cfg::AbstractDict;
                                start_date   = nothing,
                                end_date     = nothing)
     if day_override !== nothing
-        return [Date(String(day_override))]
+        return [config_date(day_override, "day override")]
     elseif start_date !== nothing && end_date !== nothing
-        return collect(Date(String(start_date)):Day(1):Date(String(end_date)))
+        return collect(config_date(start_date, "start date"):Day(1):config_date(end_date, "end date"))
     elseif haskey(cfg, "input") && haskey(cfg["input"], "start_date") &&
            haskey(cfg["input"], "end_date")
-        return collect(Date(String(cfg["input"]["start_date"])):Day(1):Date(String(cfg["input"]["end_date"])))
+        return collect(config_date(cfg["input"]["start_date"], "[input].start_date"):Day(1):config_date(cfg["input"]["end_date"], "[input].end_date"))
     end
     error("Native-source preprocessing needs `--day`, `--start/--end`, " *
           "or `[input].start_date`/`[input].end_date` in the TOML.")
@@ -63,10 +63,11 @@ _resolve_float_type(cfg::AbstractDict) =
                      "[numerics] float_type")
 
 _resolve_dt_met(cfg::AbstractDict) =
-    Float64(get(get(cfg, "numerics", Dict()), "dt_met_seconds", DEFAULT_MET_INTERVAL_SECONDS))
+    config_float(get(get(cfg, "numerics", Dict()), "dt_met_seconds", DEFAULT_MET_INTERVAL_SECONDS), "[numerics].dt_met_seconds")
 
 _resolve_mass_basis(cfg::AbstractDict) =
-    Symbol(get(get(cfg, "output", Dict()), "mass_basis", "dry"))
+    parse_choice(get(get(cfg, "output", Dict()), "mass_basis", "dry"),
+                 (dry = :dry, moist = :moist), "[output].mass_basis"; case_sensitive = true, allow_symbol = true)
 
 _resolve_chain_mass(cfg::AbstractDict) =
     _config_bool(get(cfg, "numerics", Dict()), "chain_mass", true, "[numerics].chain_mass")
@@ -87,7 +88,7 @@ _resolve_chain_mass(cfg::AbstractDict) =
 # against outgoing < cell mass).
 function _resolve_positivity_cfl_limit(cfg::AbstractDict)
     raw = get(get(cfg, "numerics", Dict()), "positivity_cfl_limit", DEFAULT_POSITIVITY_CFL_LIMIT)
-    limit = Float64(raw)
+    limit = config_float(raw, "[numerics].positivity_cfl_limit")
     isfinite(limit) && 0 < limit <= 1 ||
         error("Invalid `[numerics].positivity_cfl_limit = $(raw)`: must be a " *
               "finite value in (0, 1]. The default `$(DEFAULT_POSITIVITY_CFL_LIMIT)` is what the regrid " *
@@ -108,17 +109,14 @@ _resolve_write_replay_check(cfg::AbstractDict) =
 function _resolve_substep_schedule_policy(cfg::AbstractDict,
                                           positivity_cfl_limit::Real)
     numerics = get(cfg, "numerics", Dict())
-    mode = Symbol(lowercase(String(get(numerics, "substep_schedule", "adaptive_cfl"))))
-    adaptive = mode in (:adaptive, :adaptive_cfl, :cfl)
-    mode in (:fixed, :constant, :adaptive, :adaptive_cfl, :cfl) ||
-        error("Invalid `[numerics].substep_schedule = $(mode)`: expected " *
-              "`fixed` or `adaptive_cfl`.")
-    target = Float64(get(numerics, "substep_cfl_target",
-                         Float64(positivity_cfl_limit)))
+    adaptive = parse_choice(get(numerics, "substep_schedule", "adaptive_cfl"),
+                            (fixed = false, constant = false, adaptive_cfl = true, adaptive = true, cfl = true),
+                            "[numerics].substep_schedule"; allow_symbol = true)
+    target = config_float(get(numerics, "substep_cfl_target", Float64(positivity_cfl_limit)), "[numerics].substep_cfl_target")
     isfinite(target) && target > 0 ||
         error("Invalid `[numerics].substep_cfl_target = $(target)`: must be finite and > 0.")
-    min_steps = Int(get(numerics, "min_steps_per_window", 1))
-    max_steps = Int(get(numerics, "max_steps_per_window", typemax(Int)))
+    min_steps = config_int(get(numerics, "min_steps_per_window", 1), "[numerics].min_steps_per_window")
+    max_steps = config_int(get(numerics, "max_steps_per_window", typemax(Int)), "[numerics].max_steps_per_window")
     1 <= min_steps <= max_steps ||
         error("Invalid adaptive step bounds: min_steps_per_window=$(min_steps), " *
               "max_steps_per_window=$(max_steps).")
@@ -141,7 +139,7 @@ function _vertical_float(raw, key::AbstractString)
         lowercase(s) in ("inf", "+inf", "infinity", "+infinity") && return Inf
         parse(Float64, s)
     else
-        Float64(raw)
+        config_float(raw, "[vertical].$(key)")
     end
     isfinite(value) || value == Inf ||
         error("Invalid `[vertical].$(key) = $(raw)`: must be finite or `Inf`.")
@@ -320,26 +318,22 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     write_replay_check         = _resolve_write_replay_check(cfg)
     substep_policy = _resolve_substep_schedule_policy(cfg, positivity_cfl_limit)
     numerics_cfg = get(cfg, "numerics", Dict{String, Any}())
-    cm_closure_raw = lowercase(String(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced")))
-    cm_closure = if cm_closure_raw in ("endpoint_balanced", "endpoint", "diagnose", "balanced")
-        :endpoint_balanced
-    elseif cm_closure_raw in ("pressure_fixer", "pressurefixer", "fv3", "native")
-        :pressure_fixer
-    elseif cm_closure_raw in ("moisture_filtered", "moisturefiltered", "filtered", "filtered_endpoint")
-        :moisture_filtered
-    elseif cm_closure_raw in ("pfix_corrected", "pfixcorrected", "pfix", "pressure_fixer_corrected")
-        :pfix_corrected
-    elseif cm_closure_raw in ("omega_regularized", "omegaregularized", "omega_reg",
-                              "regularized_omega", "omega_consistent",
-                              "omegaconsistent", "omega", "omega_cm")
-        :omega_regularized
-    elseif cm_closure_raw in ("omega_full_replacement", "omega_full", "full_omega")
-        :omega_full_replacement
-    else
-        error("[numerics].geos_cm_closure must be \"endpoint_balanced\", \"pressure_fixer\", " *
-              "\"moisture_filtered\", \"pfix_corrected\", \"omega_regularized\", or " *
-              "\"omega_full_replacement\"; got $(repr(cm_closure_raw))")
-    end
+    cm_closure = parse_choice(get(numerics_cfg, "geos_cm_closure", "endpoint_balanced"),
+        (endpoint_balanced = :endpoint_balanced, endpoint = :endpoint_balanced,
+         diagnose = :endpoint_balanced, balanced = :endpoint_balanced,
+         pressure_fixer = :pressure_fixer, pressurefixer = :pressure_fixer,
+         fv3 = :pressure_fixer, native = :pressure_fixer,
+         moisture_filtered = :moisture_filtered, moisturefiltered = :moisture_filtered,
+         filtered = :moisture_filtered, filtered_endpoint = :moisture_filtered,
+         pfix_corrected = :pfix_corrected, pfixcorrected = :pfix_corrected,
+         pfix = :pfix_corrected, pressure_fixer_corrected = :pfix_corrected,
+         omega_regularized = :omega_regularized, omegaregularized = :omega_regularized,
+         omega_reg = :omega_regularized, regularized_omega = :omega_regularized,
+         omega_consistent = :omega_regularized, omegaconsistent = :omega_regularized,
+         omega = :omega_regularized, omega_cm = :omega_regularized,
+         omega_full_replacement = :omega_full_replacement,
+         omega_full = :omega_full_replacement, full_omega = :omega_full_replacement),
+        "[numerics].geos_cm_closure"; allow_symbol = true)
     # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
     # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
     # `:pfix_corrected` are DIAGNOSTIC-ONLY — they explore the SH-UTLS fingering
@@ -361,8 +355,7 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     # native-cube candidate that avoids the full OMEGA pathway's oversmoothing.
     # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
     # `:pfix_corrected` column-drift smoother (ignored by the other closures).
-    smooth_iters = Int(get(numerics_cfg, "geos_moisture_filter_smooth_iters",
-                           DEFAULT_GEOS_SMOOTHING_SWEEPS))
+    smooth_iters = config_int(get(numerics_cfg, "geos_moisture_filter_smooth_iters", DEFAULT_GEOS_SMOOTHING_SWEEPS), "[numerics].geos_moisture_filter_smooth_iters")
     smooth_iters >= 0 ||
         error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
     omega_cfg = get(numerics_cfg, "omega_regularization", Dict{String, Any}())
@@ -375,9 +368,8 @@ function _native_preprocessing_plan(cfg::AbstractDict)
         error("[numerics.omega_regularization].pressure_taper_hpa must contain four values")
     omega_regularization = OmegaRegularization(
         pressure_taper_hpa = ntuple(i -> Float64(taper_raw[i]), 4),
-        smoothing_steps = Int(get(omega_cfg, "smoothing_steps", omega_defaults.smoothing_steps)),
-        smoothing_fraction = Float64(get(omega_cfg, "smoothing_fraction",
-                                         omega_defaults.smoothing_fraction)),
+        smoothing_steps = config_int(get(omega_cfg, "smoothing_steps", omega_defaults.smoothing_steps), "[numerics.omega_regularization].smoothing_steps"),
+        smoothing_fraction = config_float(get(omega_cfg, "smoothing_fraction", omega_defaults.smoothing_fraction), "[numerics.omega_regularization].smoothing_fraction"),
         max_relative_flux_correction = Float64(
             get(omega_cfg, "max_relative_flux_correction",
                 omega_defaults.max_relative_flux_correction)),
@@ -599,11 +591,11 @@ function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
     log_preprocessor_configuration(settings, grid, vertical)
 
     dates = if day_override !== nothing
-        [Date(String(day_override))]
+        [config_date(day_override, "day override")]
     elseif start_date !== nothing || end_date !== nothing
         all_dates = sort(available_spectral_dates(settings.spectral_dir))
-        start_d = start_date === nothing ? first(all_dates) : Date(String(start_date))
-        end_d   = end_date   === nothing ? last(all_dates)  : Date(String(end_date))
+        start_d = start_date === nothing ? first(all_dates) : config_date(start_date, "start date")
+        end_d   = end_date   === nothing ? last(all_dates)  : config_date(end_date, "end date")
         start_d <= end_d ||
             error("--start $(start_d) must be <= --end $(end_d)")
         [d for d in all_dates if start_d <= d <= end_d]

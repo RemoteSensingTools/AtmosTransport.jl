@@ -216,3 +216,6 @@ Deferred numerical changes: GCHP's Float64 `cbrt` (BF6), cross-operator
 mixing-ratio floors and LocalHB's shear-dependent background floor. Diffusion
 retains its absorbing `m <= 0` convention; Advection and diagnostics keep
 their respective policies.
+
+Host fallback staging uses Architectures.host_array. Zeroed workspace scratch
+uses Architectures.zeros_like, retaining one allocation and fill per array.

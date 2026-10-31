@@ -127,7 +127,7 @@ function cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
     schedule, _ = _call_schedule(schedule, dt, FT)
-    zero_rm = _zero_panel_tuple_like(panels_m0)
+    zero_rm = zeros_like(panels_m0)
     # Transport records: the replay without diffusion and convection (neither
     # changes the air mass the sweeps and their subcycle counts see).
     replay = _build_cs_replay(zero_rm, panels_m0, panels_am_steps, panels_bm_steps,

@@ -1,4 +1,5 @@
 module Observations
+using ....ConfigChecks: parse_choice
 using ....Operators.Advection: NoLimiter
 using ....Operators.Advection: PPMScheme
 using ...Footprint: _validate_step_sequences

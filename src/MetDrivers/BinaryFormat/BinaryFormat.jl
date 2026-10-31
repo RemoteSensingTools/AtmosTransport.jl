@@ -1,5 +1,6 @@
 """Version-4 transport metadata, payload layout, writers, windows, and inspection reports."""
 module BinaryFormat
+using ...ConfigChecks: parse_choice
 using Adapt
 using Printf: @sprintf
 using ...Grids
@@ -23,7 +24,6 @@ using ...AtomicFiles: atomic_publish, open_atomic_staging, commit_atomic_staging
 import ...State: mass_basis
 using ...State: AbstractSurfacePressureBasis, TotalSurfacePressure,
                DrySurfacePressure
-
 
 include("header.jl")
 include("contract.jl")

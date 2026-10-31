@@ -37,3 +37,6 @@ CSAdjointWorkspace, CSAdjointLinearScheme, CSAdjointNonlinearScheme, CSAdjointFV
 ## Forward<->adjoint mirrors
 
 HaloExchange.jl ↔ HaloAdjoint.jl; CubedSphereSeams.jl ↔ CubedSphereSeamsAdjoint.jl; cs_sweep_*.jl ↔ AdvectionAdjoint.jl; vertical_fv3_profile.jl ↔ vertical_fv3_profile_adjoint.jl. Tape recording remains in Adjoints/Footprint.
+
+The GPU profiling toggle delegates to ConfigChecks.env_flag with its original
+truth spellings; kernel bodies and sweep/launch order are unchanged.

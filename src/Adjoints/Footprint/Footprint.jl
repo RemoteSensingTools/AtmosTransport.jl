@@ -1,4 +1,5 @@
 module Footprint
+using ...Architectures: zeros_like
 
 using KernelAbstractions: @Const, @index, @kernel, get_backend, synchronize
 using ...Grids: AtmosGrid, CubedSphereMesh, HybridSigmaPressure
@@ -37,7 +38,7 @@ using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, CSAdjointLi
     _copy_panel_tuple, _inject_step_forcing!, _linrood_validate_tape_storage,
     _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met,
     _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing,
-    _zero_panel_tuple_like, _zero_surface_rates, evaluate_objective
+    _zero_surface_rates, evaluate_objective
 
 export CSFootprintResult, CSTapeByteEstimate, run_cs_footprint_forward,
     cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed, cs_tape_byte_estimate,

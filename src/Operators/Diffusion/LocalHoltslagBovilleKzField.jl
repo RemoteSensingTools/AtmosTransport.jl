@@ -132,20 +132,20 @@ function refresh_local_holtslag_boville_kz_cache!(field::LocalHoltslagBovilleKzF
     end
 
     Hp = Int(halo_width)
-    areas = FT.(_pbl_host_array(cell_areas))
+    areas = FT.(host_array(cell_areas))
     p = field.params
 
     @inbounds for panel in 1:6
         cache = field.host_cache[panel]
-        mhost = _pbl_host_array(air_mass[panel])
+        mhost = host_array(air_mass[panel])
         pblh  = _surface_panel(surface, :pblh,  panel)
         ustar = _surface_panel(surface, :ustar, panel)
         hflux = _surface_panel(surface, :hflux, panel)
         t2m   = _surface_panel(surface, :t2m,   panel)
-        u3 = _pbl_host_array(vdiff.u[panel])
-        v3 = _pbl_host_array(vdiff.v[panel])
-        t3 = _pbl_host_array(vdiff.t[panel])
-        q3 = _pbl_host_array(vdiff.qv[panel])
+        u3 = host_array(vdiff.u[panel])
+        v3 = host_array(vdiff.v[panel])
+        t3 = host_array(vdiff.t[panel])
+        q3 = host_array(vdiff.qv[panel])
         Nc, Ny, Nz = size(cache)
 
         for j in 1:Ny, i in 1:Nc

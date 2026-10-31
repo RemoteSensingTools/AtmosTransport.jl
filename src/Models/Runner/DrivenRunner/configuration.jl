@@ -151,12 +151,8 @@ function _check_config_table_shapes!(cfg, errors)
     return nothing
 end
 
-function _run_window_index(run_cfg, key, default)
-    value = get(run_cfg, key, default)
-    value isa Integer && !(value isa Bool) || throw(ArgumentError(
-        "[run] $key must be an integer; got $(repr(value))."))
-    return Int(value)
-end
+_run_window_index(run_cfg, key, default) =
+    config_int(get(run_cfg, key, default), "[run] $key")
 
 function _check_run_window_bounds!(cfg, errors::Vector{String})
     run_cfg = get(cfg, "run", Dict{String, Any}())

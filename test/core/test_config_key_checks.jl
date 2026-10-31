@@ -4,6 +4,7 @@
 using Test
 using AtmosTransport
 using Logging
+using Dates: Date
 
 const CC = AtmosTransport.ConfigChecks
 const Runner = AtmosTransport.Models.DrivenRunner
@@ -33,6 +34,24 @@ key_messages(cfg) = (f = Runner._config_key_findings(cfg); vcat(f.errors, f.warn
     @test_throws ArgumentError CC.config_float(true, "a")
     @test CC.parse_choice("Per-Day", (daily = :d, var"per-day" = :d, single = :s), "a") === :d
     @test_throws ArgumentError CC.parse_choice("weekly", (daily = :d, single = :s), "a")
+    @test CC.config_int(3, "a"; min = 1) === 3
+    for bad in (true, 3.0, big(typemax(Int)) + 1)
+        @test_throws ArgumentError CC.config_int(bad, "a")
+    end
+    @test_throws ArgumentError CC.config_int(0, "a"; min = 1)
+    @test CC.config_date("2024-02-29", "a") == Date(2024, 2, 29)
+    @test CC.config_date(Date(2024, 2, 29), "a") == Date(2024, 2, 29)
+    @test_throws ArgumentError CC.config_date("2023-02-29", "a")
+    @test CC.parse_choice(:dry, (dry = 1,), "a"; allow_symbol = true) === 1
+    @test_throws ArgumentError CC.parse_choice(:dry, (dry = 1,), "a")
+    @test_throws ArgumentError CC.parse_choice("DRY", (dry = 1,), "a"; case_sensitive = true)
+    withenv("ATMOSTR_F1_TEST_FLAG" => "TRUE") do
+        @test CC.env_flag("ATMOSTR_F1_TEST_FLAG")
+        @test !CC.env_flag("ATMOSTR_F1_TEST_FLAG"; true_values = ("1",), case_sensitive = true)
+    end
+    withenv("ATMOSTR_F1_TEST_FLAG" => nothing) do
+        @test !CC.env_flag("ATMOSTR_F1_TEST_FLAG")
+    end
 end
 
 @testset "float_type: one strict parser on the runtime and both preprocessing paths" begin
@@ -140,7 +159,7 @@ end
         @test any(contains("moved to the [advection] table"),
                   bad(c -> (c["advection"] = Dict("scheme" => "ppm");
                             c["run"] = Dict("vertical" => "fv3_kord8"))))
-        @test any(contains("Unknown [diffusion] kind"), bad(c -> c["diffusion"] = Dict("kind" => "pbl")))
+        @test any(contains("[diffusion].kind must be one of"), bad(c -> c["diffusion"] = Dict("kind" => "pbl")))
         @test any(contains("names no tracer"),
                   bad(c -> c["chemistry"] = Dict("kind" => "decay",
                                                  "half_lives_seconds" => Dict("rn222" => 3.3e5))))
