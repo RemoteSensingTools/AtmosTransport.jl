@@ -33,10 +33,11 @@ end
 # cubed-sphere palindrome with StepPlan’s typed midpoint, surface-flux, diffusion and
 # convection operators with their persistent state (Kahan compensation,
 # ledger carries, the CMFMC CFL cache). The forward replays (finite-difference
-# reference, 4D-Var simulated values) run it with `NoStepRecorder()`, the
-# production call path itself; the tape recorders run the same steps with a
-# recorder that stages each operator's input (`TapeRecorder.jl`). There is no
-# second composition of the step that could drift from production.
+# reference, a cost-only 4D-Var evaluation) run it with `NoStepRecorder()`,
+# the production call path itself; the tape recorders run the same steps with
+# a recorder that stages each operator's input (`TapeRecorder.jl`), and a 4D-Var
+# gradient samples its observations in that recording run. There is no second
+# composition of the step that could drift from production.
 # ---------------------------------------------------------------------------
 
 """

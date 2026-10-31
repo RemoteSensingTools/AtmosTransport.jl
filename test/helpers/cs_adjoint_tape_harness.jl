@@ -3,7 +3,12 @@
 # Every tape storage and checkpoint schedule must give the same gradients, bit
 # for bit, as the device tape with `FullCheckpoint` (the reference variant):
 # footprints and the initial adjoint of the objective, seeded and
-# multi-objective (Jacobian) entry points, and the 4D-Var cost and gradient.
+# multi-objective (Jacobian) entry points, and the 4D-Var cost and gradient
+# (layer and column means with a co-sample after the last assimilated step,
+# and, for the cases marked `operators`, the observation operators: time
+# windows, placed points, averaging-kernel columns with the rebin and the hat
+# projection, a cell average, a column the surface-pressure screen leaves out,
+# background terms and the preconditioned space).
 # The cases use rough fields (random values, spikes, exact zeros and ties, sign
 # changes, nonzero emission rates), so the limited PPM reverse meets every
 # branch of its limiters; `limiter_code_counts` histograms those branches on
@@ -156,6 +161,7 @@ Base.@kwdef struct Case
     Nz::Int = 5
     stride::Int = 2                     # StrideCheckpoint K of the variants
     storages::Vector{String} = ["pinned_host", "mmap"]   # host storages of the variants
+    operators::Bool = false             # also run the 4D-Var observation operators (`fourdvar_operators`)
 end
 
 _limited(scheme) = scheme isa AT.PPMScheme &&
@@ -167,15 +173,17 @@ _limited(scheme) = scheme isa AT.PPMScheme &&
 # host storage and one stride (compiling a recorder per storage is most of a
 # case's time); across the set every limiter meets both host storages and
 # both strides, and the mmap tape (sized by counting on the replay) meets CFL
-# subcycles and substep CMFMC convection.
+# subcycles and substep CMFMC convection. The observation operators run on one
+# Float64 case with CFL subcycles and the mmap tape and one Float32 case with
+# the pinned-host tape.
 const CORE_CASES = [
     Case(name = "f64_cw84_tm5win_boundary_vmr", scheme = AT.PPMScheme(AT.CW84Limiter()),
          conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, storages = ["mmap"]),
     Case(name = "f64_monotone_cmfmcsub_split_mass_cfl", scheme = AT.PPMScheme(AT.MonotoneLimiter()),
          conv = :cmfmc, diffusion = :split, cadence = :substep, contract = false,
-         reset = :preserve_tracer_mass, flow = 0.6, stride = 3, storages = ["mmap"]),
+         reset = :preserve_tracer_mass, flow = 0.6, stride = 3, storages = ["mmap"], operators = true),
     Case(name = "f32_cw84_matrixwin_split_none", FT = Float32, scheme = AT.PPMScheme(AT.CW84Limiter()),
-         conv = :cmfmc_matrix, diffusion = :split, storages = ["pinned_host"]),
+         conv = :cmfmc_matrix, diffusion = :split, storages = ["pinned_host"], operators = true),
     Case(name = "f32_monotone_tm5sub_boundary_vmr", FT = Float32,
          scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :tm5, diffusion = :boundary,
          cadence = :substep, reset = :preserve_vmr, stride = 3, storages = ["pinned_host"]),
@@ -287,8 +295,13 @@ const VARIANT_TEMPLATES = (
     footprint = [REFERENCE, "strideK/device", "revolve/device", "full/S", "strideK/S", "revolve/S"],
     seeded = [REFERENCE, "strideK/S"],
     jacobian = [REFERENCE, "revolve/S"],
-    fourdvar = [REFERENCE, "full/S", "strideK/S", "revolve/device"],
+    fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
+    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S", "revolve/device", "revolve/S"],
 )
+
+# The entry points a case runs.
+entries(c::Case) = c.operators ? keys(VARIANT_TEMPLATES) :
+                   filter(!=(:fourdvar_operators), keys(VARIANT_TEMPLATES))
 
 variants(c::Case, entry::Symbol) =
     unique!([replace(t, "K" => string(c.stride), "S" => s)
@@ -333,6 +346,96 @@ function _observations(P)
             AT.CSObservation(n, AT.CSColumnMeanObjective(3, 2, 2), 0.0, 0.01; assimilate = false)]
 end
 
+# ---------------------------------------------------------------------------
+# 4D-Var observation operators (`fourdvar_operators`). The interface pressures
+# of a column are those of its dry air mass (`DryInterfaces`) on a cell of area
+# `COLUMN_AREA`, about 1000 hPa at the surface for the case's air mass. The
+# observations sample states through step `n - 1` and use every operator once:
+# a time window, placed points by height and by pressure, averaging-kernel
+# columns on retrieval layers (rebin) and on levels (hat projection, in a time
+# window), a cell average of two columns, and at step `n - 1` the last column
+# with `assimilate = true`, whose surface pressure the screen rejects
+# (`SkipUnplaced`). The tape therefore records through step `n - 1` and the
+# reverse pass starts at step `n - 2`; a co-sample at step `n` runs the
+# forward to the end.
+# ---------------------------------------------------------------------------
+
+const COLUMN_P_TOP = 1000.0
+const COLUMN_GRAVITY = 9.80665
+const COLUMN_AREA = 1.36e-3                       # m²: g · 13.75 kg / A ≈ 990 hPa
+const COLUMN_BASIS = AT.Observations.DryInterfaces()
+
+_column_met(P) = AT.CSObservationColumnMet(; p_top = COLUMN_P_TOP, gravity = COLUMN_GRAVITY,
+                                           temperature = 280.0)
+
+# A retrieval column of `n` layers (rebin) or levels (hat) from `ps` up.
+function _retrieval(ps; n = 4, hat = false, tag = 130)
+    O = AT.Observations
+    pressures = collect(range(ps, 0.0; length = hat ? n : n + 1))
+    weights = hat ? fill(1.0 / n, n) : -diff(pressures) ./ ps
+    kernel = [0.7 + 0.5 * _u(tag, k) for k in 1:n]
+    prior = [0.02 + 0.06 * _u(tag + 1, k) for k in 1:n]
+    return O.RetrievalColumn(; pressure_pa = pressures, pressure_weight = weights, averaging_kernel = kernel,
+                             prior_profile = prior, mapping = hat ? O.HatLevelProjection() : O.LayerRebin())
+end
+
+function _column(panel, i, j, ps; limit = Inf, kwargs...)
+    O = AT.Observations
+    policy = isfinite(limit) ? O.SkipUnplaced() : O.ErrorOnUnplaced()
+    return AT.CSRetrievalColumnObjective(panel, i, j, COLUMN_AREA, _retrieval(ps; kwargs...), COLUMN_BASIS;
+                                         max_surface_pressure_mismatch_pa = limit, mismatch_policy = policy)
+end
+
+function _placed(panel, i, j; height = NaN, pressure = NaN)
+    codes = AT.Observations.VERTICAL_PLACEMENT_CODES
+    method = isnan(height) ? codes.pressure : codes.record_height
+    placement = AT.Observations.VerticalPlacement(method, height, pressure, NaN)
+    return AT.CSPlacedPointObjective(panel, i, j, COLUMN_AREA, placement, COLUMN_BASIS)
+end
+
+function _operator_observations(P)
+    n, Nz, FT = P.nsteps, P.case.Nz, P.case.FT
+    obs(s, objective, value, sigma; kw...) = AT.CSObservation(s, objective, FT(value), FT(sigma); kw...)
+    window(steps, weights) = AT.CSTimeSampling(steps, weights)
+    average = AT.CSCellAverageObjective(6, 1, 1, [_column(6, 1, 1, 98000.0; tag = 140),
+                                                  _column(6, 1, 1, 101000.0; hat = true, n = 5, tag = 150)],
+                                        [0.4, 0.6], [61, 62])
+    return [obs(window([n - 5, n - 4], [0.25, 0.75]), AT.CSLayerMeanObjective(1, 2, 3, 2), 0.01, 0.02),
+            obs(n - 4, _placed(2, 3, 1; height = 800.0), 0.02, 0.01),
+            obs(n - 3, _placed(4, 1, 4; pressure = 60000.0), -0.01, 0.02),
+            obs(n - 4, _column(3, 2, 2, 99000.0), 0.03, 0.01),
+            obs(window([n - 3, n - 2], [0.5, 0.5]), _column(5, 4, 3, 100000.0; hat = true, n = 5, tag = 160),
+                0.02, 0.01),
+            obs(n - 2, average, 0.01, 0.01),
+            obs(n - 1, _column(2, 2, 2, 200000.0; limit = 1000.0, tag = 170), 0.02, 0.01),
+            obs(n, AT.CSColumnMeanObjective(3, 2, 2), 0.0, 0.01; assimilate = false)]
+end
+
+# The controls of `_controls` with background terms (scalar and per-cell
+# sigma), and the same windows in the preconditioned space.
+function _background_controls(P)
+    FT, Nc = P.case.FT, P.case.Nc
+    background(tag) = ntuple(p -> [FT(5e-5 * _sym(_u(tag, p, i, j))) for i in 1:Nc, j in 1:Nc], 6)
+    sigma = ntuple(p -> [FT(1e-4 * (1 + _u(117, p, i, j))) for i in 1:Nc, j in 1:Nc], 6)
+    early, late = _controls(P)
+    return [AT.CSSurfaceFluxControl(early.window, early.value; background = background(115), sigma = FT(2e-4)),
+            AT.CSSurfaceFluxControl(late.window, late.value; background = background(116), sigma)]
+end
+
+function _preconditioner(P)
+    FT, Nc = P.case.FT, P.case.Nc
+    sigma = ntuple(p -> [FT(1e-4 * (1 + _u(118, p, i, j))) for i in 1:Nc, j in 1:Nc], 6)
+    background = ntuple(p -> [FT(2e-5 * _sym(_u(119, p, i, j))) for i in 1:Nc, j in 1:Nc], 6)
+    return AT.CSSurfaceFluxPreconditioner(AT.IsotropicGaussianCSCovariance(sigma, 1.5), background,
+                                          AT.LinearOptimType())
+end
+
+function _chi_controls(P)
+    FT, Nc = P.case.FT, P.case.Nc
+    chi(tag) = ntuple(p -> [FT(_sym(_u(tag, p, i, j))) for i in 1:Nc, j in 1:Nc], 6)
+    return [AT.CSSurfaceFluxControl(c.window, chi(121 + k)) for (k, c) in enumerate(_controls(P))]
+end
+
 _common(P) = (; scheme = P.case.scheme, schedule = P.schedule, physics_kwargs(P)...)
 
 function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractString)
@@ -357,6 +460,19 @@ function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractS
         r = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, _observations(P),
                                      _controls(P); kw...)
         return ("cost" => [r.cost], "simulated" => r.simulated, "gradients" => r.gradients)
+    elseif entry === :fourdvar_operators
+        observations, column_met = _operator_observations(P), _column_met(P)
+        r = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, observations,
+                                     _background_controls(P); column_met, kw...)
+        # The screen must reject the column at step n - 1 (the reverse pass
+        # then starts before the end of the tape) and nothing else.
+        [s.assimilated for s in r.stencils] == [trues(6); false; false] ||
+            error("$(P.case.name): the surface-pressure screen of `_operator_observations` changed")
+        kw = (; _common(P)..., _variant_kwargs(variant, scratch)...)
+        chi = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, observations, _chi_controls(P);
+                                       column_met, preconditioner = _preconditioner(P), kw...)
+        return ("cost" => [r.cost], "simulated" => r.simulated, "gradients" => r.gradients,
+                "chi_cost" => [chi.cost], "chi_gradients" => chi.gradients)
     end
     error("unknown entry point $entry")
 end
@@ -480,7 +596,7 @@ function run_cases(cases; scratch::AbstractString, reference_only::Bool = false)
         t0 = time()
         P = problem(c)
         digests = Dict{String, Any}()
-        for entry in keys(VARIANT_TEMPLATES)
+        for entry in entries(c)
             vs = reference_only ? [REFERENCE] : variants(c, entry)
             digests[String(entry)] = Dict{String, Any}(
                 v => Dict{String, Any}(name => digest(x) for (name, x) in run_entry(P, entry, v, scratch))

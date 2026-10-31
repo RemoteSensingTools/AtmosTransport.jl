@@ -7,7 +7,11 @@ device, pinned-host, and memory-mapped tape storage.
 ## Adjoints
 
 Configure optimizer settings and logging on `CSGradientDescent` or `CSLBFGS`
-and pass it as `optimizer` to `cs_surface_flux_4dvar_optimize`. Footprint
+and pass it as `optimizer` to `cs_surface_flux_4dvar_optimize`. One
+`cs_surface_flux_4dvar` evaluation runs the forward model once: the run that
+samples the observations records the tape of the reverse pass;
+`evaluation = CSCostOnly()` runs it without a tape for the cost and simulated
+values alone. Footprint
 functions compute analytic adjoints; finite-difference perturbations belong
 to the caller's validation code. `CSFootprintResult` contains `objective`,
 `footprints`, `lag_steps`, `dt`, and `initial_adjoint`.

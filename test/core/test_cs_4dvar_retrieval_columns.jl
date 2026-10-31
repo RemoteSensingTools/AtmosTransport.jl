@@ -701,6 +701,21 @@ end
     err = try _fourdvar(P, _bind(P, records; max_surface_pressure_mismatch_pa = 2000.0), controls) catch e e end
     @test err isa ArgumentError
     @test occursin("id 1", err.msg) && !occursin("id 2", err.msg) && occursin("max_surface_pressure_mismatch_pa", err.msg)
+    # The screen rejects after the forward run, which recorded into the tape:
+    # an mmap tape is released with the error (unmapped and closed, no GC).
+    mktempdir() do root
+        dir = joinpath(root, "tape")
+        err = try
+            _fourdvar(P, _bind(P, records; max_surface_pressure_mismatch_pa = 2000.0), controls;
+                      tape_storage = AT.MmapCSTapeStorage(dir))
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin("max_surface_pressure_mismatch_pa", err.msg)
+        @test isdir(dir)                                   # the tape was opened before the screen
+        Sys.islinux() && @test count(line -> occursin(realpath(dir), line), eachline("/proc/self/maps")) == 0
+        @test isempty(readdir(dir))
+    end
     # Skip: reported, not assimilated, counted.
     skip = O.VerticalPlacementSpec(; unplaced = O.SkipUnplaced())
     screened = _bind(P, records; max_surface_pressure_mismatch_pa = 2000.0, placement = skip)

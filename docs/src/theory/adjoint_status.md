@@ -34,7 +34,7 @@ The shipped pieces, all exported through `AtmosTransport.Adjoints`:
 | `cs_surface_emission_footprint` | Forward → tape → reverse pass driver for CS, returning `dJ/dE_t` at every surface step |
 | `cs_surface_emission_footprint_from_seed` | Same, but accepts an explicit final `dJ/drm` seed for arbitrary observation operators |
 | `cs_surface_flux_jacobian` | Batches layer/column objectives on one recorded tape (one reverse walk per objective), aggregates per-step footprints into named user windows |
-| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, scalar observations sampled at one step or over a time window (layer, column-mean, point samples placed in the column, and averaging-kernel columns), diagonal background; one taped run and one reverse pass per gradient, whatever the number of observations ([single-sweep gradient](@ref single-sweep-4dvar-gradient), [observation operators](@ref placed-observation-operator), [averaging-kernel columns](@ref retrieval-column-operator)) |
+| `cs_surface_flux_4dvar` | 4D-Var cost / gradient with named controls, scalar observations sampled at one step or over a time window (layer, column-mean, point samples placed in the column, and averaging-kernel columns), diagonal background; one forward run, which samples the observations and records the tape, and one reverse pass per gradient, whatever the number of observations ([single-sweep gradient](@ref single-sweep-4dvar-gradient), [observation operators](@ref placed-observation-operator), [averaging-kernel columns](@ref retrieval-column-operator)) |
 | `cs_surface_flux_4dvar_optimize` | Dependency-free gradient-descent driver for the above |
 | `cs_surface_flux_4dvar_solve` | Production driver with optimizer choice (`CSGradientDescent` / `CSLBFGS`) |
 
@@ -210,7 +210,12 @@ Footprints, initial adjoints, seeded and multi-objective footprints and the
 assimilated step) of every storage × schedule variant must equal the device
 `FullCheckpoint` reference bit for bit, and the reference must equal the
 SHA-1 digests recorded from main on the reference host
-(`test/fixtures/cs_adjoint_tape_digests.toml`). The full matrix of 50
+(`test/fixtures/cs_adjoint_tape_digests.toml`). Two of the configurations
+also evaluate every observation operator of the 4D-Var (a time window, placed
+points by height and by pressure, averaging-kernel columns with the rebin and
+the hat projection, a cell average, a column the surface-pressure screen
+leaves out, so that the reverse pass starts before the end of the tape, and a
+co-sample after it), with background terms and in the preconditioned space. The full matrix of 50
 configurations is the opt-in
 `test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
 
@@ -240,8 +245,9 @@ These are all on CI. Full inversion tests:
 ### [Single-sweep 4D-Var gradient](@id single-sweep-4dvar-gradient)
 
 `cs_surface_flux_4dvar` computes the observation term of the cost and its
-gradient with one taped forward run and one reverse pass, whatever the number
-of observations, as TM5-4DVAR does.
+gradient with one forward run and one reverse pass, whatever the number of
+observations, as TM5-4DVAR does: the forward run that samples the
+observations also records the tape the reverse pass walks.
 
 **Observations as linear functionals.** An observation ``i`` is sampled after
 the model steps ``s \in S_i`` of its time sampling (one step, or the steps of
@@ -281,7 +287,7 @@ has the gradient of a sum, so all observations share one recursion,
 f_{s} = \sum_{i:\,s \in S_i} \frac{H_i(x) - y_i}{\sigma_i^{2}}\,\omega_{is}\,\mathbf{w}_{is} ,
 ```
 
-run from the last sampled step ``N`` back to the first step. Every
+run from the last assimilated step ``N`` back to the first step. Every
 recorder ends each step with an end-of-step marker (`_CSStepEndRecord`, after
 the convection record); the reverse walk adds ``f_s`` there, before it
 transposes that step's convection. This is the TM5-4DVAR structure: its
@@ -293,21 +299,39 @@ and each control window sums its steps.
 
 The forcing entries are grouped by step, panel and cell; the injection
 kernel gives each cell one work item, which adds the cell's entries in input
-order, so the injection is deterministic without atomics. With
-`FullCheckpoint` one evaluation therefore costs a forward run for ``H(x)``
-and the weights, one taped forward run to the last observation step, and one
-reverse pass; `StrideCheckpoint` adds its checkpoint propagation pass and
-`RevolveCheckpoint` its ``O(\log N)`` recomputation, as for a footprint. Steps
-after the last observation do not affect the cost and get a zero gradient.
-`checkpoint` and `tape_storage` choose how that one taped run is
-stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
+order, so the injection is deterministic without atomics.
+
+**One forward run.** The forcing needs every ``H_i(x)``, so the reverse pass
+can only start after the forward run; but the tape does not depend on the
+forcing. The forward run that samples the observations therefore records
+what the `checkpoint` schedule's reverse pass needs, through the last step of
+an observation with `assimilate = true` (co-samples after it run the forward
+but are not taped): the whole tape with `FullCheckpoint`, the state at every
+``K``-step boundary with `StrideCheckpoint(K)`, the initial state with
+`RevolveCheckpoint`. After the forcing is assembled, the reverse pass starts
+from zero at the last assimilated step ``N``, which the surface-pressure
+screen of averaging-kernel columns may move before the end of the tape (the
+screen only removes observations); the walk then starts at that step's
+end-of-step marker. With `FullCheckpoint` one evaluation therefore costs one
+forward run and one reverse pass (previously a forward run for ``H(x)`` and a
+second, taped, forward run); `StrideCheckpoint` adds the re-recording of its
+windows and `RevolveCheckpoint` its ``O(\log N)`` recomputation, as for a
+footprint. A `MmapCSTapeStorage` with `FullCheckpoint` adds the counting run
+that sizes its file before the forward run. The gradients, the cost and the
+simulated values are bit for bit those of the two-run evaluation
+(`test/core/test_cs_adjoint_tape_bitwise.jl`). `evaluation = CSCostOnly()`
+runs the forward run alone, without a tape, for callers that need the cost
+or the simulated values but not the gradient. Steps after the last
+assimilated observation do not affect the cost and get a zero gradient.
+`checkpoint` and `tape_storage` choose how the tape is stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
 against one footprint per observation (the previous algorithm, rebuilt in the
 test) for upwind, unlimited slopes and PPM, monotone PPM and Lin–Rood with
 diffusion of both surface-flux couplings, TM5 and CMFMC convection and the
 three checkpoint schedules, and for CW84-limited PPM and Lin–Rood with the
 FV3 vertical sweep
-(``10^{-12}`` relative in Float64, ``10^{-5}`` in Float32), and counts tape
-reads to confirm one recording and one reverse pass per gradient.
+(``10^{-12}`` relative in Float64, ``10^{-5}`` in Float32), counts tape
+reads to confirm one recording and one reverse pass per gradient, and counts
+the replayed steps to confirm one forward run per evaluation.
 
 `cs_surface_flux_jacobian` likewise records its tape once and walks it once
 per objective (with `FullCheckpoint`); each walk is the one a separate

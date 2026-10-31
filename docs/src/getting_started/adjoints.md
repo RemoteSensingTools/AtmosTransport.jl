@@ -87,9 +87,9 @@ observation. With fixed meteorology each ``H_k`` is a linear function of the
 tracer mass after the model steps it samples (one step ``s``, or the steps of
 a time window with weights ``\omega_{ks}`` summing to 1), with weights
 ``\mathbf{w}_{ks}`` from those steps' air mass. A forward run gives every
-``H_k(F(x))``; the reverse pass then starts from zero at the last sampled
-step and, at the end of each step ``s``, adds the weighted departures of the
-observations sampled there,
+``H_k(F(x))`` and records the tape; the reverse pass then starts from zero
+at the last step with an assimilated observation and, at the end of each step
+``s``, adds the weighted departures of the observations sampled there,
 
 ```math
 \lambda_s = M_{s+1}^T\lambda_{s+1}
