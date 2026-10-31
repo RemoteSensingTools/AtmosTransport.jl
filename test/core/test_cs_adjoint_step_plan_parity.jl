@@ -27,6 +27,50 @@
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_adjoint_step_plan.jl"))
 
+import Adapt
+import KernelAbstractions
+
+# A distinct storage backend exercised entirely on the CPU. Workspaces built
+# for state on it must hold no host `Array` (e.g. the mesh's cell areas): a GPU
+# kernel would receive such an array as a non-isbits argument.
+struct _CaptureArray{T, N} <: AbstractArray{T, N}
+    data::Array{T, N}
+end
+_CaptureArray(a::_CaptureArray) = copy(a)
+Base.size(a::_CaptureArray) = size(a.data)
+Base.getindex(a::_CaptureArray{T, N}, i::Vararg{Int, N}) where {T, N} = a.data[i...]
+Base.setindex!(a::_CaptureArray{T, N}, v, i::Vararg{Int, N}) where {T, N} = (a.data[i...] = v)
+Base.similar(a::_CaptureArray, ::Type{T}, dims::Dims) where T = _CaptureArray(similar(a.data, T, dims))
+Adapt.adapt_storage(::Type{_CaptureArray}, a::Array) = _CaptureArray(copy(a))
+KernelAbstractions.get_backend(::_CaptureArray) = KernelAbstractions.CPU()
+AT.Architectures._array_adapter_for(::_CaptureArray) = _CaptureArray
+
+# Every array a workspace or forcing holds, through fields, tuples and Refs.
+_storage_leaves(x::AbstractArray) = Any[x]
+_storage_leaves(x::Union{Tuple, NamedTuple}) = reduce(vcat, map(_storage_leaves, Tuple(x)); init = Any[])
+_storage_leaves(x::Base.RefValue) = _storage_leaves(x[])
+_storage_leaves(x) = isstructtype(typeof(x)) ?
+    reduce(vcat, [_storage_leaves(getfield(x, f)) for f in fieldnames(typeof(x))]; init = Any[]) : Any[]
+_cell_metrics(ws::AT.Operators.Convection.CMFMCMatrixWorkspace) = ws.tm5_workspace.cell_metrics
+_cell_metrics(ws) = ws.cell_metrics
+
+@testset "convection workspaces follow the model backend: $conv" for conv in (:cmfmc, :tm5, :cmfmc_matrix)
+    host = _simulation(Case(; conv, emissions = false, steps = [2]))
+    model = Adapt.adapt(_CaptureArray, host.model)
+    # The public operator swap builds its workspace from the model's state.
+    swapped = AT.with_convection(model, model.convection).workspace.convection_ws
+    sim = AT.DrivenSimulation(model, host.driver; prefetch_windows = false)
+    inputs = AT.cs_adjoint_inputs(sim)
+    ws = inputs.kwargs.convection_workspace
+    @test ws !== model.workspace.convection_ws
+    for w in (ws, swapped)
+        @test all(a -> a isa _CaptureArray, _storage_leaves(w))
+        @test all(_cell_metrics(w)[p] == MESH.cell_areas for p in 1:6)
+    end
+    @test all(a -> a isa _CaptureArray, _storage_leaves(inputs.kwargs.convection_forcing[1]))
+    ws isa AT.Operators.Convection.CMFMCWorkspace && @test !ws.cache_valid[]
+end
+
 # Final (rm, m) interiors of production, the forward replay, the recording
 # replay, and Stride / Revolve-style restarts from a snapshot inside a window.
 function _parity(c::Case)

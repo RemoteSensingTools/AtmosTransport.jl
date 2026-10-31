@@ -157,7 +157,8 @@ window ranges), `test_async_output_lifetime.jl` (background writes, sampler clos
 `test_multiday_source_clock.jl`, `test_cs_multifile_equivalence.jl`,
 `test_fv3_vertical_profile.jl` (advection labels).
 
-Output owns the `[output]` key tables and `check_output_targets`; this folder
+Output owns the `[output]` key tables, format choices, per-tracer/column-mass
+alias precedence and `check_output_targets`; this folder
 reports findings and orchestrates the writers. Observation APIs are imported
 from `AtmosTransport.Observations`.
 

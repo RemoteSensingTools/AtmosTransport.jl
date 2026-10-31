@@ -319,15 +319,16 @@ function _output_key_findings!(w, output, carried)
         _report_unread!(w, output, ("start_hour", "stop_hour"), "[output]",
                       "without an interval key ($(join(SNAPSHOT_INTERVAL_KEYS, ", ")))")
     format = get(output, "format", "netcdf")
-    format isa AbstractString && lowercase(format) in ("binary_mmap", "binary", "mmap", "atmsnap") &&
+    format isa AbstractString && get(OUTPUT_FORMATS, Symbol(lowercase(format)), nothing) isa BinaryMmapOutput &&
         _report_unread!(w, output, ("fields", "deflate_level", "shuffle"), "[output]",
                       "with format = \"binary_mmap\" (snapshots carry every field, uncompressed)")
     fields = get(output, "fields", nothing)
     fields isa AbstractDict || return w
     _report_unknown!(w, fields, OUTPUT_FIELDS_KEYS, "[output.fields]")
-    _report_shadowed!(w, fields, ("per_tracer", "tracer_fields"), "[output.fields]")
-    _report_shadowed!(w, fields, ("column_mass_per_area", "column_mass"), "[output.fields]")
-    per_tracer = get(fields, "per_tracer", get(fields, "tracer_fields", nothing))
+    _report_shadowed!(w, fields, OUTPUT_PER_TRACER_KEYS, "[output.fields]")
+    _report_shadowed!(w, fields, OUTPUT_COLUMN_MASS_KEYS, "[output.fields]")
+    per_tracer_key = findfirst(k -> haskey(fields, k), OUTPUT_PER_TRACER_KEYS)
+    per_tracer = per_tracer_key === nothing ? nothing : fields[OUTPUT_PER_TRACER_KEYS[per_tracer_key]]
     per_tracer isa AbstractDict || return w
     for (name, entry) in pairs(per_tracer)
         label = "[output.fields.per_tracer.$(name)]"
@@ -335,7 +336,7 @@ function _output_key_findings!(w, output, carried)
             push!(w.errors, "$(label): `$(name)` is not a tracer of the run.")
         entry isa AbstractDict || continue
         _report_unknown!(w, entry, TRACER_OUTPUT_FIELDS_KEYS, label)
-        _report_shadowed!(w, entry, ("column_mass_per_area", "column_mass"), label)
+        _report_shadowed!(w, entry, OUTPUT_COLUMN_MASS_KEYS, label)
     end
     return w
 end

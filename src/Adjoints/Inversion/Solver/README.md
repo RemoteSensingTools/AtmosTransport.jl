@@ -19,7 +19,7 @@
 
 ## Depends on
 
-Inversion.Observations, Footprint, Adjoints core, Tape, Grids, Parameters and
+Inversion.ObservationBinding, Footprint, Adjoints core, Tape, Grids, Parameters and
 Operators (no-op defaults). External: KernelAbstractions, FFTW, Optim.
 
 ## Used by

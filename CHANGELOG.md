@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Output snapshot `hours` / `snapshot_hours` lists reject Boolean entries instead
+  of silently treating them as zero or one hour.
+- Convection workspaces copy their cell-area metrics onto the storage backend
+  of the air mass they are built for. `cs_adjoint_inputs` on a GPU simulation
+  therefore returns device metrics, so footprint and 4D-Var replay with CMFMC,
+  TM5 or CMFMC-matrix convection no longer passes host matrices to the GPU
+  kernels, and `with_convection` on a GPU model builds a device workspace.
+  CPU values are unchanged.
+
 - **The 4D-Var evaluation runs the forward model once.** The forward run of
   `cs_surface_flux_4dvar` that samples the observations now also records what
   the reverse pass needs (the tape with `FullCheckpoint`, the K-step

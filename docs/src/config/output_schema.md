@@ -1,5 +1,8 @@
 # Output schema
 
+Explicit `hours` and `snapshot_hours` lists accept finite numbers and reject
+Boolean entries. The schedule sorts a copy of the supplied list.
+
 The default runtime output is a **NetCDF4** snapshot file declared by
 `[output] path`. `split = "single"` writes one file per run; `split = "daily"`
 writes one file per daily binary. Single-file NetCDF runs append and flush one

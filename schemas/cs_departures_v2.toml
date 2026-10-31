@@ -33,13 +33,14 @@
 # arrays; model_sigma.
 #
 # This file documents the schema; the loader/writer live in
-# `src/Inversion/DeparturesIO.jl`. Any version bump must update both.
+# `src/Adjoints/Inversion/ObservationBinding/DeparturesIO.jl`. Any version bump
+# must update both.
 # ---------------------------------------------------------------------------
 
 [meta]
 version = "v2"
 shipped_in = "issue #20 (part 3)"
-intended_for = "src/Inversion/DeparturesIO.jl read_departures / write_departures"
+intended_for = "src/Adjoints/Inversion/ObservationBinding/DeparturesIO.jl read_departures / write_departures"
 
 [dimensions]
 obs            = "unlimited"

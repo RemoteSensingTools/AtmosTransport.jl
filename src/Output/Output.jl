@@ -80,6 +80,7 @@ export capture_snapshot, write_snapshot_netcdf, write_snapshot_binary
 export define_product_attributes!, define_cs_horizontal_geometry!, define_provenance_attributes!
 export column_mean_mixing_ratio, layer_mass_per_area
 export OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
+       OUTPUT_COLUMN_MASS_KEYS, OUTPUT_PER_TRACER_KEYS, OUTPUT_FORMATS,
        SNAPSHOT_SCHEDULE_KEYS, SNAPSHOT_INTERVAL_KEYS, schedule_has_times, check_output_targets
 export with_netcdf_lock
 

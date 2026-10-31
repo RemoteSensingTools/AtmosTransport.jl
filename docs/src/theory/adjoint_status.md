@@ -127,6 +127,8 @@ hooks of the production step (`AbstractStepRecorder`; production passes
   compensation or carries and valid CMFMC CFL caches, including models continued
   across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
   operators and retains chemistry. Reset windows and targets use the model backend.
+  The fresh convection workspace is allocated on that backend too, including
+  the cell-area metrics copied from the host mesh.
   Diffusion records carry the
   forward's clock, so time-varying Kz fields are transposed at the times
   production evaluated them.
