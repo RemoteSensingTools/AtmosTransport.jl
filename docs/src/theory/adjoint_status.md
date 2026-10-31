@@ -72,12 +72,12 @@ pre-sweep donor mass; the FV3 profile's records also hold the tracer mass
 entering the sweep. `test/core/test_cs_linrood_fv3_adjoint.jl` checks the FV3
 vertical sweeps' transpose in 256-bit arithmetic and the Lin–Rood footprints
 with them against central differences (`1e-9`, upward and downward flux,
-ORD 5 and 7, both profiles), and Full/Stride/Revolve parity.
+ORD 5 and 7, both profiles), and Full/Stride parity.
 
 The opt-in `test/diagnostic/test_cs_transport_adjoint_gpu.jl` also exercises
 transporting PPM and LinRood footprints on CUDA with scalar indexing disabled.
 It checks Float32/Float64 CPU/GPU agreement, Float64 directional finite
-differences, and full/stride/revolve checkpoint parity, plus the single-panel
+differences, and full/stride checkpoint parity, plus the single-panel
 recording and reverse wrappers. LinRood copy-back and halo-gradient updates
 run on the array backend; the tape path does not require host scalar reads.
 
@@ -121,9 +121,11 @@ hooks of the production step (`AbstractStepRecorder`; production passes
   rejects, before recording, every stage or operator without a record and an
   adjoint (`adjoint_support(x)` is the trait), naming it.
 - `cs_adjoint_inputs(sim; tracer)` captures the adjoint's inputs from a
-  production `DrivenSimulation` (per-step face fluxes as production refreshes
-  them, per-window convection forcing, diffusion layer thickness and Kz,
-  emission rates, the schedule, fresh workspaces). Capture rejects initial nonzero
+  production `DrivenSimulation` (the face fluxes of every step as production
+  refreshes them, one copy per met window that the window's steps share, or
+  one per step when they are interpolated within the window; per-window
+  convection forcing, diffusion layer thickness and Kz, emission rates, the
+  schedule, fresh workspaces). Capture rejects initial nonzero
   compensation or carries and valid CMFMC CFL caches, including models continued
   across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
   operators and retains chemistry. Reset windows and targets use the model backend.
@@ -140,55 +142,87 @@ with and without the binary window contract, TM5, CMFMC and CMFMC-matrix
 convection, both diffusion couplings, diffusion without surface sources and
 both reset modes. Each case compares the forward replay, the tape recording and
 a restart from a checkpoint inside a met window with the production
-`DrivenSimulation` (`==` in one thread), Full/Stride/Revolve footprints with
-each other, and, on a subset, footprints and the initial-condition sensitivity
+`DrivenSimulation` (`==` in one thread), Full/Stride footprints with
+each other, the captured fluxes with production's at every step (one copy per
+met window; shared and per-step copies give the same footprints) and, on a
+subset, footprints and the initial-condition sensitivity
 with central differences of the production simulation (Upwind ``\sim
 10^{-14}``, monotone PPM ``4\times10^{-12}``, Lin–Rood ``5\times10^{-11}``
 relative).
 
-### Checkpoint schedules
+### The tape: `AdjointTape`
 
-`src/Tape/CheckpointSchedule.jl` ships three checkpoint policies,
-selectable via the `checkpoint` kwarg of `cs_surface_emission_footprint`,
-`cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian` and
-`cs_surface_flux_4dvar`:
+Every reverse-pass entry point (`cs_surface_emission_footprint`,
+`cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian`,
+`cs_surface_flux_4dvar`, `cs_surface_flux_4dvar_optimize`) takes one
+`tape = AdjointTape(; content, storage, checkpoint)` keyword, an immutable
+value composed of three typed axes (`src/Tape/AdjointTape.jl`):
+
+| Axis | Choices | Default |
+| --- | --- | --- |
+| content: what each record stages | `FullStateTape()` (the full state each operator's reverse reads) | `FullStateTape()` |
+| storage: where the staged states live | `DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)` | `DeviceCSTapeStorage()` |
+| checkpoint: how much of the run is taped at once | `FullCheckpoint()`, `StrideCheckpoint(K)` | `FullCheckpoint()` |
+
+Every combination is valid for the split-sweep schemes; the Lin–Rood tape
+supports device storage only. The 4D-Var driver reads the same choices from
+`[adjoint.tape]` (`scripts/inversions/cs_4dvar.jl`).
+
+### Checkpoint schedules
 
 | Policy | Memory | Recompute |
 | --- | --- | --- |
 | `FullCheckpoint` | O(N) state snapshots | none — fastest reverse pass |
-| `StrideCheckpoint(stride)` | O(N/stride) | replays each stride forward |
-| `RevolveCheckpoint()` | O(log N) | recursive bisection; each step may be replayed once per recursion level |
+| `StrideCheckpoint(K)` | one K-step window plus N/K checkpoints | one extra forward run |
 
-`RevolveCheckpoint()` has no snapshot-budget argument. It is a recursive
-bisection variant rather than the optimal binomial Revolve: peak snapshots are
-proportional to the recursion depth and total replay work is
-`O(N log N)`. It is covered in `test/core/test_cs_stride_checkpoint.jl`. All
-three schedules share one driver per policy for every scheme family; a
+Both schedules share one driver per policy for every scheme family; a
 checkpoint is a replay snapshot (tracer and air mass with halos plus the
 persistent operator state), so a restart inside a met window runs that
 window's remaining steps and window-end stages exactly as the recording run.
-On one CPU thread every schedule and tape storage reproduces `FullCheckpoint`
-with device storage bit for bit; the bitwise gate below checks it.
+`StrideCheckpoint` records each window once and walks it for every adjoint
+start (all objectives of a Jacobian). On one CPU thread every schedule and
+tape storage reproduces `FullCheckpoint` with device storage bit for bit; the
+bitwise gate below checks it. There is no logarithmic-memory schedule: the
+bisection `RevolveCheckpoint` was removed (it measured 2.0–2.1× the time of
+`StrideCheckpoint` with no lower device peak); an optimal binomial schedule
+will be added when a case needs it.
 
-### Tape storage backends
+### Tape storage and its pools
 
-Split-sweep tape records can live on the device (the default), in pinned-host
-memory, or on disk, selected by the `tape_storage` keyword: `:device`,
-`:pinned_host`, a pre-constructed `DeviceCSTapeStorage()` or
-`PinnedHostCSTapeStorage()`, or `MmapCSTapeStorage(dir)`. Every storage works
-with every checkpoint schedule: one call records all its tapes (the stride
-windows, the bisection base steps) into one storage. Storage backends are
-defined in `src/Tape/TapeStorage.jl` and `src/Tape/MmapTapeStorage.jl`.
-LinRood tape records currently require device storage.
+The tape records can live on the device (the default), in pinned host memory,
+or on disk. Each call opens one runtime pool from the storage
+(`src/Tape/TapeStorage.jl`, `HostTapeArena.jl`, `MmapTapeStorage.jl`),
+records every tape of the call into it (each stride window rewinds it and
+reuses its memory), and releases it explicitly when it returns: device arrays
+go back to the GPU pool and pinned host memory to the system then, not at a
+later garbage collection. `cs_surface_flux_4dvar_optimize` keeps one pool for
+all its evaluations. A record read after its pool was rewound or released
+throws a `StaleTapeSlotError`. The pinned-host pool allocates host memory in
+chunks (64 MiB doubling to 1 GiB) and registers each chunk with the GPU
+driver once, so recording a state is one device-to-host copy into memory that
+is already pinned; staging and reads are synchronous copies.
+
+Measured on an L40S (C90 MERRA-2, 48 steps of 7.5 min, convection and
+diffusion, Float32, single runs against the previous per-window tapes):
+
+| | before | now |
+| --- | --- | --- |
+| device peak, `StrideCheckpoint`, upwind / monotone PPM | 7.13 / 11.38 GiB | 2.35 / 3.03 GiB |
+| device peak, 4-evaluation optimization, device `FullCheckpoint` / `StrideCheckpoint` (upwind) | 22.5 / 22.5 GiB | 7.3 / 2.9 GiB |
+| pinned-host re-record of a tape into its pool | 29–48 ms/step | 9.7–13.9 ms/step (≈ 24 GB/s device-to-host) |
+| pinned-host footprint or evaluation, `StrideCheckpoint` / `FullCheckpoint` | — | 50–56 % / 4–19 % less time |
+| optimization evaluation, mmap / pinned-host `FullCheckpoint` | — | 55–56 % / 42–44 % less time |
+| single device-tape call | — | 0–2 % more time (the tape is freed inside the call) |
 
 The on-disk tier needs a scratch directory; there is no default (a C90 day of
 PPM tape is tens of GB, more than a typical `/tmp`). Before recording, the
 call counts the bytes of the largest tape it records on the forward replay
-(one extra forward run with `FullCheckpoint`; the propagation pass of
-`StrideCheckpoint` and `RevolveCheckpoint` counts at no extra cost), checks
-that `dir` has them plus 10 % free, and reserves them with `fallocate` in one
-file, which is unlinked at once, mapped once, and unmapped and closed when the
-call returns, so its space goes back to the file system then. Too little space
+(one extra forward run with `FullCheckpoint`, the propagation pass of
+`StrideCheckpoint` at no extra cost; an optimization counts once for all its
+evaluations), checks that `dir` has them plus 10 % free, and reserves them
+with `fallocate` in one file, which is unlinked at once, mapped once, reused
+for every tape that fits, and unmapped and closed when the call returns, so
+its space goes back to the file system then. Too little space
 is an `ArgumentError` naming the required and available bytes, raised after
 the sizing pass and before the tape is recorded; with the extent reserved
 (ext4, XFS), the mmap writes can no longer end in a SIGBUS on a full file
@@ -197,7 +231,7 @@ system. A file system that cannot reserve blocks for in-place writes (no
 
 ### Bitwise gate of the tape
 
-`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of seven
+`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of nine
 configurations in a single-threaded subprocess
 (`test/helpers/cs_adjoint_tape_harness.jl`): upwind, unlimited slopes and
 PPM, monotone and CW84 PPM, Float64 and Float32, TM5, CMFMC and CMFMC-matrix
@@ -207,18 +241,25 @@ spikes, exact zeros and ties, sign changes; fluxes from a random
 streamfunction per panel plus noise; nonzero emission rates), and the test
 requires every branch of the monotone profile limiter and of the CW84 minmod
 slopes to occur on the recorded tape, per axis and next to the panel seams.
-Footprints, initial adjoints, seeded and multi-objective footprints and the
-4D-Var cost, simulated values and gradient (with a co-sample after the last
-assimilated step) of every storage × schedule variant must equal the device
-`FullCheckpoint` reference bit for bit, and the reference must equal the
+Footprints, initial adjoints, seeded and multi-objective footprints (the
+Jacobian also under `StrideCheckpoint`, whose windows serve both objectives),
+the 4D-Var cost, simulated values and gradient (with a co-sample after the
+last assimilated step) and a two-iteration gradient-descent optimization
+(whose evaluations share one tape pool) of every storage × schedule variant
+must equal the default tape's reference bit for bit, and the reference must equal the
 SHA-1 digests recorded from main on the reference host
 (`test/fixtures/cs_adjoint_tape_digests.toml`). Two of the configurations
 also evaluate every observation operator of the 4D-Var (a time window, placed
 points by height and by pressure, averaging-kernel columns with the rebin and
 the hat projection, a cell average, a column the surface-pressure screen
 leaves out, so that the reverse pass starts before the end of the tape, and a
-co-sample after it), with background terms and in the preconditioned space. The full matrix of 50
-configurations is the opt-in
+co-sample after it), with background terms and in the preconditioned space.
+Two others take their inputs from `cs_adjoint_inputs` of a production
+`DrivenSimulation` with rough met windows, so the gate also covers the
+capture: each met window's shared fluxes under CFL subcycles, full-window flux
+storage scaled per window, CMFMC sub-steps and per-window diffusion layer
+thickness, and under the binary window contract with a window-end reset. The
+full matrix (50 configurations and the two captured ones) is the opt-in
 `test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
 
 ### Inversion scaffold
@@ -306,38 +347,38 @@ order, so the injection is deterministic without atomics.
 **One forward run.** The forcing needs every ``H_i(x)``, so the reverse pass
 can only start after the forward run; but the tape does not depend on the
 forcing. The forward run that samples the observations therefore records
-what the `checkpoint` schedule's reverse pass needs, through the last step of
-an observation with `assimilate = true` (co-samples after it run the forward
-but are not taped): the whole tape with `FullCheckpoint`, the state at every
-``K``-step boundary with `StrideCheckpoint(K)`, the initial state with
-`RevolveCheckpoint`. After the forcing is assembled, the reverse pass starts
+what the tape's checkpoint schedule needs for its reverse pass, through the
+last step of an observation with `assimilate = true` (co-samples after it run
+the forward but are not taped): the whole tape with `FullCheckpoint`, the
+state at every ``K``-step boundary with `StrideCheckpoint(K)`. After the forcing is assembled, the reverse pass starts
 from zero at the last assimilated step ``N``, which the surface-pressure
 screen of averaging-kernel columns may move before the end of the tape (the
 screen only removes observations); the walk then starts at that step's
 end-of-step marker. With `FullCheckpoint` one evaluation therefore costs one
 forward run and one reverse pass (previously a forward run for ``H(x)`` and a
 second, taped, forward run); `StrideCheckpoint` adds the re-recording of its
-windows and `RevolveCheckpoint` its ``O(\log N)`` recomputation, as for a
-footprint. A `MmapCSTapeStorage` with `FullCheckpoint` adds the counting run
-that sizes its file before the forward run. The gradients, the cost and the
+windows, as for a footprint. A `MmapCSTapeStorage` with `FullCheckpoint` adds
+the counting run that sizes its file before the forward run (once per
+optimization). The gradients, the cost and the
 simulated values are bit for bit those of the two-run evaluation
 (`test/core/test_cs_adjoint_tape_bitwise.jl`). `evaluation = CSCostOnly()`
 runs the forward run alone, without a tape, for callers that need the cost
 or the simulated values but not the gradient. Steps after the last
 assimilated observation do not affect the cost and get a zero gradient.
-`checkpoint` and `tape_storage` choose how the tape is stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
+`tape` chooses how the tape is stored. `test/core/test_cs_4dvar_single_sweep.jl` checks the gradient
 against one footprint per observation (the previous algorithm, rebuilt in the
 test) for upwind, unlimited slopes and PPM, monotone PPM and Lin–Rood with
 diffusion of both surface-flux couplings, TM5 and CMFMC convection and the
-three checkpoint schedules, and for CW84-limited PPM and Lin–Rood with the
+Full and Stride checkpoint schedules, and for CW84-limited PPM and Lin–Rood with the
 FV3 vertical sweep
 (``10^{-12}`` relative in Float64, ``10^{-5}`` in Float32), counts tape
-reads to confirm one recording and one reverse pass per gradient, and counts
-the replayed steps to confirm one forward run per evaluation.
+reads to confirm one recording and one reverse pass per gradient, counts
+the replayed steps to confirm one forward run per evaluation, and counts the
+pool's opens, rewinds and releases to confirm one pool per optimization.
 
-`cs_surface_flux_jacobian` likewise records its tape once and walks it once
-per objective (with `FullCheckpoint`); each walk is the one a separate
-`cs_surface_emission_footprint` call makes.
+`cs_surface_flux_jacobian` likewise records its tape (with `StrideCheckpoint`
+each window) once and walks it once per objective; each walk is the one a
+separate `cs_surface_emission_footprint` call makes.
 
 ### [Observation operators: point samples in the column and time windows](@id placed-observation-operator)
 
@@ -861,7 +902,7 @@ that the default sounding file is identical.
 
 | Item | Notes |
 | --- | --- |
-| **Optimal binomial Revolve** | `RevolveCheckpoint` ships as the bisection variant — logarithmic memory but not the Griewank–Walther optimal recompute count. Optimal binomial Revolve is the next refinement. |
+| **Logarithmic-memory checkpointing** | Only `FullCheckpoint` and `StrideCheckpoint(K)` ship; the bisection Revolve was removed. An optimal binomial (Griewank–Walther) schedule will be added when a case needs log-memory snapshots (met streaming). |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
 | **Inversion driver on transport binaries** | `scripts/inversions/cs_4dvar.jl` binds observation files only on its synthetic meteorology (`synthetic_hydrostatic`); a 4D-Var on transport-binary meteorology is assembled with the Julia API (`bind_to_mesh`, `CSObservationColumnMet`, `cs_surface_flux_4dvar`). |
@@ -902,15 +943,16 @@ run's (`limiter = "none"`, the unlimited PPM, is accepted only here). Unknown
 tables and keys are errors. `[observations]` takes inline entries or a
 schema-v2 observation `file`, whose point records `[observations.placement]`
 places in the column of the `synthetic_hydrostatic` meteorology (the keys of
-`[output.observations]` placement, parsed by the same code). It does not
-expose checkpoint, diffusion, convection or real-binary settings.
+`[output.observations]` placement, parsed by the same code), and
+`[adjoint.tape]` chooses the `AdjointTape` (storage, checkpointing). It does
+not expose diffusion, convection or real-binary settings.
 For the lower-level Julia API, start with the
 [footprint tutorial](@ref First-emission-footprint), then
 `test/core/test_cs_inversion_truth_recovery.jl` for a larger inversion assembly.
-Use `RevolveCheckpoint()` (without arguments)
-for recursive bisection, or `StrideCheckpoint(K)` for an explicit interval.
-LinRood checkpoints currently require `tape_storage = :device`; split-sweep
-schemes also support `:pinned_host` and `MmapCSTapeStorage(dir)`.
+Pass `tape = AdjointTape(; checkpoint = StrideCheckpoint(K))` to re-record
+`K`-step windows instead of taping the whole run. Lin–Rood tapes currently
+require `DeviceCSTapeStorage()`; split-sweep schemes also support
+`PinnedHostCSTapeStorage()` and `MmapCSTapeStorage(dir)`.
 
 ## Where to read next
 

@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------------------
 # On-disk cubed-sphere tape storage: the eviction tier of the adjoint tape.
 #
-# `MmapCSTapeStorage(dir)` is the value a caller passes as `tape_storage`: it
-# names the scratch directory and nothing else. Each reverse-pass call opens one
-# `_MmapTapeFile` in that directory (`_open_tape_storage`), sized to the
-# largest tape the call records, and releases it when the call returns. The file
+# `MmapCSTapeStorage(dir)` is the storage descriptor of an `AdjointTape`: it
+# names the scratch directory and nothing else. Each reverse-pass call (or
+# 4D-Var optimization) opens one `_MmapTapeFile` in that directory
+# (`_open_tape_pool`), sized to the largest tape it records, reuses it for
+# every tape that fits, and releases it when it returns. The file
 #
 #   * checks the free space of `dir` (statvfs) before anything is written and
 #     throws with the required and available byte counts;
@@ -16,30 +17,31 @@
 #     that cannot reserve blocks for in-place writes (no `fallocate`, ZFS) is
 #     an error naming it;
 #   * maps the extent once (POSIX `mmap`); slots are views into that one
-#     mapping, and `_release_tape_storage!` unmaps it (`munmap`) and closes the
+#     mapping, and `_release_tape_pool!` unmaps it (`munmap`) and closes the
 #     file, so the space goes back to the file system when the call returns,
 #     without waiting for a GC.
 #
 # `stage_panels!` copies the six panels into a slot's views; `_tape_panels(slot,
-# role)` returns the views (CPU panels) or copies them into a device read cache
-# per read role and panel shape (GPU panels, see the CUDA and AMDGPU
-# extensions). Nothing is persisted: a tape lives for one call.
+# role)` copies them into a read cache per read role and panel shape (on the
+# device for GPU panels). The views never leave the file, so nothing can read
+# them after the unmap. Nothing is persisted: a tape lives for one call.
 # ---------------------------------------------------------------------------
 
 """
     MmapCSTapeStorage(dir)
 
-Tape storage policy that keeps staged adjoint mass states in a scratch file in
-`dir`, for tapes larger than device and host memory. `dir` is required (there
-is no default: a tape can be tens to hundreds of GB) and is created if it does
-not exist; a relative path is resolved when the storage is constructed.
+Keep the staged states in a scratch file in `dir`, for tapes larger than
+device and host memory. `dir` is required (there is no default: a tape can be
+tens to hundreds of GB) and is created if it does not exist; a relative path
+is resolved when the storage is constructed.
 
 Each reverse-pass call (footprint, Jacobian, 4D-Var gradient) first sizes its
 largest tape by running the forward replay with a counting recorder (one extra
 forward run with `FullCheckpoint`; the checkpoint propagation pass with
-`StrideCheckpoint` and `RevolveCheckpoint`). It then checks that `dir` has that
-many bytes plus 10 % free, and reserves them with `fallocate` in one anonymous
-(unlinked) file before recording. Too little space is an `ArgumentError`
+`StrideCheckpoint`; a `cs_surface_flux_4dvar_optimize` call counts once for
+all its evaluations). It then checks that `dir` has that many bytes plus 10 %
+free, and reserves them with `fallocate` in one anonymous (unlinked) file
+before recording; later tapes of the call reuse the file. Too little space is an `ArgumentError`
 naming the required and available bytes, raised after the sizing pass and
 before the tape is recorded. A file system that cannot reserve blocks for
 in-place writes (no `fallocate`, e.g. some NFS mounts, or ZFS) is an
@@ -47,11 +49,12 @@ in-place writes (no `fallocate`, e.g. some NFS mounts, or ZFS) is an
 or XFS. The file is unmapped, closed and its space returned to the file system
 when the call returns; tapes are not persisted.
 
-On a GPU, reads come back through device-side read caches keyed by read role
-(`AirMassRead`, `TracerMassRead`) and panel shape, so the air mass and tracer
-mass that one reverse kernel reads together are distinct buffers.
+Reads copy the staged state into read caches keyed by read role
+(`AirMassRead`, `TracerMassRead`) and panel shape (on the device for GPU
+panels), so the air mass and tracer mass that one reverse kernel reads
+together are distinct buffers.
 """
-struct MmapCSTapeStorage <: AbstractCSTapeStorage
+struct MmapCSTapeStorage <: AbstractHostCSTapeStorage
     dir::String
     function MmapCSTapeStorage(dir::AbstractString)
         isempty(dir) && throw(ArgumentError(
@@ -68,38 +71,20 @@ const _MMAP_TAPE_HEADROOM = 0.1
 # earlier tape's blocks: XFS frees unlinked inodes lazily) before it fails.
 const _MMAP_TAPE_FREE_WAIT = 5.0
 
-# Every panel of a slot starts on a 64-byte boundary of the mapping, so its
-# view is aligned for any element type, also when slots of different element
-# types share one file.
-const _MMAP_TAPE_ALIGN = 64
-_align_tape_bytes(n::Integer) = cld(Int64(n), _MMAP_TAPE_ALIGN) * _MMAP_TAPE_ALIGN
-
-"""
-    _tape_slot_bytes(panels::NTuple{6}) -> Int64
-
-Bytes one staged state of `panels` takes in an mmap tape (each panel padded
-to the 64-byte alignment). The counting recorder sums these to size the
-reservation.
-"""
-_tape_slot_bytes(panels::NTuple{6}) =
-    sum(p -> _align_tape_bytes(sizeof(eltype(panels[p])) * length(panels[p])), 1:6)
-
 # The open scratch file of one reverse-pass call: its reserved extent
 # (`capacity`) mapped once at `mapping` (`C_NULL` when empty or unmapped), the
-# bytes handed out so far (`cursor`), and the device read caches of
-# `AbstractHostCSTapeStorage`.
-mutable struct _MmapTapeFile <: AbstractHostCSTapeStorage
+# bytes handed out since the last rewind (`cursor`), and the generation and
+# read caches of a host pool.
+mutable struct _MmapTapeFile <: _AbstractHostTapePool
     dir::String
     io::IOStream
     mapping::Ptr{UInt8}
     capacity::Int64
     cursor::Int64
-    # Zero-size array on the source backend, set by `_mmap_prepare_for_panels!`
-    # for non-`Array` panels; `nothing` on the CPU, where reads return views.
+    generation::Int
+    released::Bool
     read_template::Union{Nothing, AbstractArray}
     read_caches::Dict{CSTapeReadCacheKey, CSPanelCache}
-    synchronize::CSSynchronizeHook
-    closed::Bool
 end
 
 """
@@ -109,7 +94,7 @@ Create an anonymous scratch file of `capacity` bytes in `dir`: check the file
 system and its free space, create and unlink the file, reserve the extent and
 map it. Throws an `ArgumentError` with the required and available bytes when
 the file system cannot hold it, and one naming the file system when it cannot
-reserve blocks. `_release_tape_storage!` unmaps and closes it (without it, the
+reserve blocks. `_release_tape_pool!` unmaps and closes it (without it, the
 GC does).
 """
 function _MmapTapeFile(dir::AbstractString, capacity::Integer)
@@ -127,10 +112,10 @@ function _MmapTapeFile(dir::AbstractString, capacity::Integer)
         close(io)
         rethrow()
     end
-    storage = _MmapTapeFile(String(dir), io, mapping, Int64(capacity), Int64(0), nothing,
-                            Dict{CSTapeReadCacheKey, CSPanelCache}(), nothing, false)
-    # A storage dropped without `_release_tape_storage!`: the GC unmaps it (and
-    # the stream's own finalizer closes the file).
+    storage = _MmapTapeFile(String(dir), io, mapping, Int64(capacity), Int64(0), 1, false,
+                            nothing, Dict{CSTapeReadCacheKey, CSPanelCache}())
+    # A file dropped without `_release_tape_pool!`: the GC unmaps it (and the
+    # stream's own finalizer closes the file).
     finalizer(_unmap_tape_extent!, storage)
     return storage
 end
@@ -144,9 +129,11 @@ function _map_tape_extent(io::IOStream, capacity::Int64, dir)
     capacity == 0 && return Ptr{UInt8}(C_NULL)
     ptr = ccall(:mmap, Ptr{Cvoid}, (Ptr{Cvoid}, Csize_t, Cint, Cint, Cint, Int64),
                 C_NULL, capacity, _PROT_READ_WRITE, _MAP_SHARED, fd(io), 0)
-    ptr == _MAP_FAILED && throw(ArgumentError(
+    # Read errno before anything else can allocate (and a GC overwrite it).
+    err = ptr == _MAP_FAILED ? Libc.errno() : 0
+    err == 0 || throw(ArgumentError(
         "MmapCSTapeStorage: could not map $(_format_tape_bytes(capacity)) of the tape in " *
-        "$(repr(dir)): $(Libc.strerror(Libc.errno()))"))
+        "$(repr(dir)): $(Libc.strerror(err))"))
     return Ptr{UInt8}(ptr)
 end
 
@@ -214,13 +201,13 @@ end
 # Allocate the file's blocks now, so writes through the mapping can never hit
 # a full file system. Linux calls `fallocate` itself rather than
 # `posix_fallocate`, whose glibc fallback writes one byte per block when the
-# file system has no `fallocate`, slowly and without a guarantee.
+# file system has no `fallocate`, slowly and without a guarantee. A signal
+# that interrupts it (EINTR, e.g. a profiler's) is retried.
 function _reserve_tape_extent!(io::IOStream, capacity::Int64, dir)
     capacity == 0 && return io
     @static if Sys.islinux()
-        rc = ccall(:fallocate, Cint, (Cint, Cint, Int64, Int64), fd(io), 0, 0, capacity)
-        if rc != 0
-            err = Libc.errno()
+        err = _fallocate(io, capacity)
+        if err != 0
             fstype = _filesystem_type(dir)
             err == Libc.EOPNOTSUPP && throw(ArgumentError(
                 "MmapCSTapeStorage: $(repr(dir)) is on $(fstype), which cannot reserve " *
@@ -235,6 +222,17 @@ function _reserve_tape_extent!(io::IOStream, capacity::Int64, dir)
         _zero_fill_tape_extent!(io, capacity, dir)
     end
     return io
+end
+
+# `fallocate(fd, 0, 0, capacity)`, retried while a signal interrupts it; the
+# errno of the failure, or 0.
+function _fallocate(io::IOStream, capacity::Int64)
+    while true
+        rc = ccall(:fallocate, Cint, (Cint, Cint, Int64, Int64), fd(io), 0, 0, capacity)
+        rc == 0 && return 0
+        err = Libc.errno()
+        err == Libc.EINTR || return err
+    end
 end
 
 # Portable reservation: write zeros over the extent (does not reserve on
@@ -262,132 +260,51 @@ end
 
 _needs_tape_size(::MmapCSTapeStorage) = true
 
-_open_tape_storage(storage::MmapCSTapeStorage, nbytes::Integer) =
-    _MmapTapeFile(storage.dir, nbytes)
+_open_tape_pool(storage::MmapCSTapeStorage, nbytes::Integer) = _MmapTapeFile(storage.dir, nbytes)
 
-# Drivers that record several tapes in a row (one per stride window or
-# bisection base step) reuse the extent.
-_rewind_tape_storage!(storage::_MmapTapeFile) = (storage.cursor = 0; storage)
+# A rewound file holds any tape up to its reservation; a larger one needs a
+# new file (the driver releases this one first).
+_holds_tape_bytes(file::_MmapTapeFile, nbytes::Integer) = !file.released && nbytes <= file.capacity
+
+function _rewind_tape_pool!(file::_MmapTapeFile)
+    _require_open(file)
+    file.cursor = 0
+    file.generation += 1
+    return file
+end
 
 # Unmap and close now: with the mapping and the descriptor gone, the unlinked
-# file's blocks return to the file system. Views handed out before are invalid
-# afterwards (their reverse-pass call has returned).
-function _release_tape_storage!(storage::_MmapTapeFile)
-    storage.closed && return nothing
-    storage.closed = true
-    _unmap_tape_extent!(storage)
-    close(storage.io)
-    # Drops the references; device buffers are freed by the next GC.
-    empty!(storage.read_caches)
+# file's blocks return to the file system. Its slots are stale afterwards.
+function _release_tape_pool!(file::_MmapTapeFile)
+    file.released && return nothing
+    file.released = true
+    file.generation += 1
+    _tape_synchronize(file.read_template)    # no copy still reads the mapping
+    _unmap_tape_extent!(file)
+    close(file.io)
+    _free_read_caches!(file)
     return nothing
 end
 
-"""
-    MmapCSTapeSlot
-
-One staged state in an `_MmapTapeFile`: the element type, the byte offset and
-the shape of each of the six panels.
-"""
-struct MmapCSTapeSlot{S <: _MmapTapeFile}
-    storage::S
-    eltype::DataType
-    offsets::NTuple{6, Int64}
-    shapes::NTuple{6, NTuple{3, Int}}
-end
-
-_require_open(storage::_MmapTapeFile) = storage.closed && throw(ArgumentError(
-    "the mmap tape in $(repr(storage.dir)) is closed: its reverse-pass call has returned"))
-
 # The base offset of `nbytes` more bytes of the reserved extent.
-function _bump_cursor!(storage::_MmapTapeFile, nbytes::Int64)
-    _require_open(storage)
-    base = storage.cursor
-    base + nbytes <= storage.capacity || error(
-        "the mmap adjoint tape in $(repr(storage.dir)) needs more than its reserved " *
-        "$(_format_tape_bytes(storage.capacity)): the tape byte count of the reverse-pass " *
+function _bump_cursor!(file::_MmapTapeFile, nbytes::Int64)
+    base = file.cursor
+    base + nbytes <= file.capacity || error(
+        "the mmap adjoint tape in $(repr(file.dir)) needs more than its reserved " *
+        "$(_format_tape_bytes(file.capacity)): the tape byte count of the reverse-pass " *
         "driver disagrees with the recorder")
-    storage.cursor = base + nbytes
+    file.cursor = base + nbytes
     return base
 end
 
-function _panel_offsets(base::Int64, nbytes_per::NTuple{6, Int64})
-    o1 = base
-    o2 = o1 + nbytes_per[1]
-    o3 = o2 + nbytes_per[2]
-    o4 = o3 + nbytes_per[3]
-    o5 = o4 + nbytes_per[4]
-    o6 = o5 + nbytes_per[5]
-    return (o1, o2, o3, o4, o5, o6)
+function _allocate_tape_slot(file::_MmapTapeFile, panels::NTuple{6})
+    _require_open(file)
+    _register_tape_read_backend!(file, panels)
+    base = _bump_cursor!(file, _tape_slot_bytes(panels))
+    return HostCSTapeSlot(file, _host_views(file.mapping + base, panels), file.generation)
 end
 
-# A panel of a slot: an array over the storage's one mapping (no new mapping).
-_tape_view(storage::_MmapTapeFile, ::Type{T}, shape::NTuple{3, Int}, offset::Int64) where {T} =
-    unsafe_wrap(Array, Ptr{T}(storage.mapping + offset), shape)
-
-"""
-    _mmap_prepare_for_panels!(storage, panels)
-
-Hook called once per slot allocation, before the span is handed out, that
-lets the storage install per-backend state (the backend of the device-side
-read caches, a backend `synchronize` callback).
-
-The default method assumes non-`Array` device panels (CuArray, ROCArray, …)
-and records their backend via `_register_tape_read_backend!`, so the read
-caches are allocated there on first read. The method for
-`NTuple{6, <:Array}` is a no-op, so the CPU read path returns views of the
-mapping without an intermediate copy. The CUDA and AMDGPU extensions add their
-`synchronize` hooks.
-"""
-function _mmap_prepare_for_panels!(storage::_MmapTapeFile, panels::NTuple{6})
-    _register_tape_read_backend!(storage, panels)
-    return storage
-end
-
-_mmap_prepare_for_panels!(storage::_MmapTapeFile, _panels::NTuple{6, <:Array}) = storage
-
-function _allocate_tape_slot(storage::_MmapTapeFile, panels::NTuple{6})
-    _require_open(storage)
-    _mmap_prepare_for_panels!(storage, panels)
-    T = eltype(panels[1])
-    shapes = ntuple(p -> size(panels[p]), 6)
-    nbytes_per = ntuple(p -> _align_tape_bytes(sizeof(T) * prod(shapes[p])), 6)
-    base = _bump_cursor!(storage, sum(nbytes_per))
-    return MmapCSTapeSlot(storage, T, _panel_offsets(base, nbytes_per), shapes)
-end
-
-# Works for CPU `Array` and GPU sources alike: `copyto!(::Array, ::CuArray)`
-# is a device→host transfer.
-function stage_panels!(slot::MmapCSTapeSlot, src::NTuple{6})
-    storage = slot.storage
-    _require_open(storage)
-    @inbounds for p in 1:6
-        copyto!(_tape_view(storage, slot.eltype, slot.shapes[p], slot.offsets[p]), src[p])
-    end
-    _after_tape_stage!(storage)
-    return slot
-end
-
-# The reverse walk reads slots one at a time; each read cache is overwritten
-# by the next read with the same role and shape, so this is not safe for
-# concurrent reverse walks on one storage. GPU runs (`read_template` set)
-# copy the views into the cache of `(role, slot.shapes)`: the role keeps the
-# air mass and tracer mass of one limited-PPM sweep record in two buffers
-# (issue #57). CPU runs return the views, a distinct array per read, valid
-# until the storage is released.
-function _tape_panels(slot::MmapCSTapeSlot, role::AbstractTapeReadRole)
-    storage = slot.storage
-    _require_open(storage)
-    views = ntuple(p -> _tape_view(storage, slot.eltype, slot.shapes[p], slot.offsets[p]), 6)
-    storage.read_template === nothing && return views
-    cache = _tape_read_cache!(storage, role, views)
-    @inbounds for p in 1:6
-        copyto!(cache[p], views[p])
-    end
-    _after_tape_read!(storage)
-    return cache
-end
-
-function Base.show(io::IO, storage::_MmapTapeFile)
-    print(io, "_MmapTapeFile(dir=", repr(storage.dir), ", bytes=", storage.cursor, "/",
-          storage.capacity, storage.closed ? ", closed" : "", ")")
+function Base.show(io::IO, file::_MmapTapeFile)
+    print(io, "_MmapTapeFile(dir=", repr(file.dir), ", bytes=", file.cursor, "/",
+          file.capacity, file.released ? ", released" : "", ")")
 end

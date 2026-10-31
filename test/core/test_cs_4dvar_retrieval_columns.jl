@@ -620,7 +620,8 @@ _layers(P, ks, v) = ntuple(_ -> (e = zeros(P.FT, P.Nc, P.Nc, P.Nz); e[:, :, ks] 
         @test length(full.stencils[11].retrieval_profile) == 20
         @test length(full.stencils[14].retrieval_profile) == 19
         @test isnan(full.stencils[4].surface_pressure_mismatch_pa) && isempty(full.stencils[5].retrieval_profile)
-        stride = _fourdvar(P, observations, controls; scheme, checkpoint = AT.StrideCheckpoint(2), physics(P)...)
+        stride = _fourdvar(P, observations, controls; scheme, tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(2)),
+                           physics(P)...)
         @test stride.simulated == full.simulated
         @test _relerr(stride.gradients, full.gradients) <= 1e-12
     end
@@ -707,7 +708,7 @@ end
         dir = joinpath(root, "tape")
         err = try
             _fourdvar(P, _bind(P, records; max_surface_pressure_mismatch_pa = 2000.0), controls;
-                      tape_storage = AT.MmapCSTapeStorage(dir))
+                      tape = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir)))
         catch e
             e
         end

@@ -91,7 +91,9 @@ cadence, the met windows and the air-mass resets of a driven run come in as a
 `CSStepSchedule` (`schedule` keyword; `CSStepSchedule(sim)` for a
 `DrivenSimulation`). `cs_adjoint_inputs(sim; tracer)` captures every input of
 a cubed-sphere `DrivenSimulation` configuration from production itself — the
-face fluxes of each step after window loading and flux scaling, the
+face fluxes of each step after window loading and flux scaling (one copy per
+met window, shared by its steps, as production's steps read the same
+arrays; one per step when the fluxes are interpolated within the window), the
 convection forcing and diffusion layer thickness of each met window, the
 tracer's emission rates, the schedule and fresh workspaces — so the adjoint
 of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
@@ -204,9 +206,9 @@ is convection over the whole window ``\Delta t_w`` with the window's forcing
 count computed from the reset air mass. The tape records the convection at
 that point with that interval, forcing and sub-step count; the observation
 sampling point of the last step (its end-of-step record) follows the window
-end. A checkpoint is a step boundary of the absolute schedule, so a Stride or
-Revolve window that restarts inside a met window runs that window's remaining
-steps and its window-end stages exactly as the recording run did.
+end. A checkpoint is a step boundary of the absolute schedule, so a Stride
+window that restarts inside a met window runs that window's remaining steps
+and its window-end stages exactly as the recording run did.
 
 The reverse pass applies the transposes in the opposite order.
 ``E_n`` enters only through ``\mathcal{S}_n``, so
@@ -240,9 +242,11 @@ are never read and have no record.
    convection, both diffusion couplings, diffusion without surface sources and
    both reset modes, the adjoint's forward replay, its tape recording and a
    checkpoint restart inside a met window reproduce the production
-   `DrivenSimulation` bit for bit; Full, Stride and Revolve footprints agree
-   exactly; and footprints and the initial-condition sensitivity match central
-   finite differences of the production simulation. A forward feature that
+   `DrivenSimulation` bit for bit; the captured fluxes are production's bit
+   for bit, one copy per met window, and shared and per-step copies give the
+   same footprints; Full and Stride footprints agree exactly; and
+   footprints and the initial-condition sensitivity match central finite
+   differences of the production simulation. A forward feature that
    changes the production step without a plan stage makes this test fail; a
    plan stage or operator without an adjoint makes the guard fail.
 
@@ -256,7 +260,7 @@ The inversion layer composes the reverse pass rather than reimplementing it:
 | `cs_surface_emission_footprint` | One scalar objective to per-step emission sensitivities. |
 | `cs_surface_flux_jacobian` | Batch objectives and aggregate steps into named control windows. |
 | `cs_surface_flux_4dvar` | Evaluate observation/background cost and its control gradient, with one forward run (which samples the observations and records the tape) and one reverse pass for all observations; `evaluation = CSCostOnly()` runs the forward run alone. |
-| `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`. |
+| `cs_surface_flux_4dvar_optimize` | Optimize with `CSGradientDescent` or `CSLBFGS`; every evaluation records into one tape pool. |
 | `read_observations`, `bind_to_mesh` | Read observation files (schema v2) and bind each record to its cell and time sampling: point records to `CSPlacedPointObjective`s placed in the column by the forward sampler's rule (height above ground and/or pressure), column records to column means. |
 | `build_departure_set`, `read_departures`, `write_departures` | Exchange modeled-minus-observed diagnostics with each observation's sampled steps, levels and placement. |
 
@@ -269,8 +273,8 @@ from the last assimilated step, adding every observation's weighted departure
 `(H(x) − y)/σ²` at the end of its step, before the transposed convection of
 that step (TM5 adds its forcing just before the adjoint of the operator after
 which it sampled). See the [single-sweep gradient](@ref single-sweep-4dvar-gradient).
-`cs_surface_flux_jacobian` records its tape once and walks it once per
-objective.
+`cs_surface_flux_jacobian` records its tape (with `StrideCheckpoint`, each
+window) once and walks it once per objective.
 
 Controls are `CSSurfaceFluxControl` values associated with
 `CSSurfaceFluxWindow`s. A `CSSurfaceFluxPreconditioner` can apply either a
@@ -286,43 +290,45 @@ step's recorder hooks. Lin-Rood horizontal updates use an additional dedicated
 record. The reverse loop dispatches on those record types and calls the
 matching transpose kernel.
 
-`tape_storage` controls where staged tape data lives:
+Every reverse-pass entry point takes one `tape = AdjointTape(; content,
+storage, checkpoint)` keyword (the inversion driver: `[adjoint.tape]`). The
+`storage` controls where staged tape data lives:
 
 | Value | Use |
 | --- | --- |
-| `:device` | Default and simplest choice for short runs. |
-| `:pinned_host` | Move staged data to pinned host memory when device memory is limiting. Reads come back through one device buffer per operand (air mass, tracer mass). |
+| `DeviceCSTapeStorage()` | Default and simplest choice when the tape fits on the device. |
+| `PinnedHostCSTapeStorage()` | Move staged data to pinned host memory when device memory is limiting. The host memory is allocated in large chunks, each pinned once; reads come back through one device buffer per operand (air mass, tracer mass). |
 | `MmapCSTapeStorage(dir)` | Store the tape in a scratch file in `dir` (required) for tapes larger than memory. |
 
-An mmap tape is sized before it is recorded: the call counts its largest
-tape on the forward replay, checks that `dir` has that much space plus 10 %
-free (an `ArgumentError` with the required and available bytes otherwise,
-raised after this sizing pass), and reserves it with `fallocate` in one
-unlinked file that is unmapped and closed when the call returns. Use a local
-file system that can reserve blocks (ext4, XFS); others, such as ZFS or NFS
-without `fallocate`, are rejected by name. Tapes are not persisted. Every
-storage works with every checkpoint policy. Lin-Rood currently supports device
-tape storage only.
+Each call opens the tape's memory once, reuses it for every stride window
+(and, in `cs_surface_flux_4dvar_optimize`, every evaluation), and frees it
+when it returns. An mmap tape is sized before it is recorded: the call counts
+its largest tape on the forward replay (once per optimization), checks that
+`dir` has that much space plus 10 % free (an `ArgumentError` with the
+required and available bytes otherwise, raised after this sizing pass), and
+reserves it with `fallocate` in one unlinked file that is unmapped and closed
+when the call returns. Use a local file system that can reserve blocks (ext4,
+XFS); others, such as ZFS or NFS without `fallocate`, are rejected by name.
+Tapes are not persisted. Every storage works with every checkpoint policy.
+Lin-Rood currently supports device tape storage only.
 
-The `checkpoint` keyword controls the memory/recompute trade-off:
+The `checkpoint` controls the memory/recompute trade-off:
 
 | Policy | Stored state | Recompute behavior |
 | --- | --- | --- |
 | `FullCheckpoint()` | Proportional to the number of steps. | No window replay. |
-| `StrideCheckpoint(k)` | Checkpoints every `k` steps. | Replays one `k`-step window at a time. |
-| `RevolveCheckpoint()` | Logarithmic-depth bisection snapshots. | Recursively replays subranges. |
+| `StrideCheckpoint(k)` | Checkpoints every `k` steps and one `k`-step window. | Re-records one `k`-step window at a time (one extra forward run), walked for every objective. |
 
-`RevolveCheckpoint()` is a bisection schedule inspired by Revolve, not the
-optimal binomial Griewank-Walther schedule and not a user-specified snapshot
-budget. All three schedules record the same states: a checkpoint holds the
-tracer and air mass with their halos and the persistent operator state (the
-surface sources' Kahan compensation, the convection and Dkg diffusion ledger
-carries, the CMFMC CFL cache), so a window that restarts at a step boundary,
-also inside a met window, replays the recording run bit for bit. Stride and
-Revolve footprints equal `FullCheckpoint`'s (exactly in one thread; the halo
-and Lin–Rood transposes accumulate with atomics when several threads run
-them) for every supported scheme, including limited PPM with diffusion and
-convection.
+Both schedules record the same states: a checkpoint holds the tracer and air
+mass with their halos and the persistent operator state (the surface sources'
+Kahan compensation, the convection and Dkg diffusion ledger carries, the
+CMFMC CFL cache), so a window that restarts at a step boundary, also inside a
+met window, replays the recording run bit for bit. Stride footprints equal
+`FullCheckpoint`'s (exactly in one thread; the halo and Lin–Rood transposes
+accumulate with atomics when several threads run them) for every supported
+scheme, including limited PPM with diffusion and convection. There is no
+logarithmic-memory (Revolve) schedule; an optimal binomial one will be added
+when a case needs it.
 
 ## How this maps to established systems
 

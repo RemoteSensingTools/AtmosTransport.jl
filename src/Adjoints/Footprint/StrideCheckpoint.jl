@@ -1,34 +1,36 @@
 # ---------------------------------------------------------------------------
-# Checkpoint drivers of the reverse pass: FullCheckpoint and StrideCheckpoint
-# (RevolveCheckpoint is in revolve_checkpoint.jl).
+# Checkpoint drivers of the reverse pass: FullCheckpoint and StrideCheckpoint.
 #
 # Every driver works on one replay (`_CSReplay`, StepReplay.jl) of the
 # production step plan, whatever the advection scheme: it propagates the
 # replay with the production call path, saves checkpoints of its state
 # (prognostic state with halos and persistent operator state,
 # `_replay_snapshot`), restores them, records windows of steps with a tape
-# recorder and walks each window's tape backwards. A checkpoint is a step
-# boundary of the absolute schedule, so a window that restarts inside a met
-# window runs the remaining steps of that met window and its window-end
-# stages exactly as the recording run did: whether a met window's convection
-# has run is a function of the step index.
+# recorder into the call's tape pool (`TapeRuntime.jl`) and walks each
+# window's tape backwards. A checkpoint is a step boundary of the absolute
+# schedule, so a window that restarts inside a met window runs the remaining
+# steps of that met window and its window-end stages exactly as the recording
+# run did: whether a met window's convection has run is a function of the
+# step index.
 #
 # A reverse-pass call runs one forward run of the replay and then its reverse
-# pass, in four calls on one replay:
+# pass, in four calls on one replay and one tape runtime:
 #
-#   1. `_begin_taped_run(checkpoint, replay, tape_storage, taped_steps)`,
-#      before the forward run: what the schedule needs before it (Full: the
-#      tape storage, sized first by a counting run when it reserves its
-#      extent);
+#   1. `_begin_taped_run(checkpoint, replay, runtime, taped_steps)`, before
+#      the forward run: what the schedule needs before it (Full: the tape
+#      pool, sized first by a counting run when the storage reserves its
+#      extent; Stride: the checkpoint of the initial state);
 #   2. `_run_forward!(run, replay; on_step_end)`: the forward run of every
 #      step of the replay, which keeps what the schedule's reverse pass needs
 #      for steps `1:taped_steps` (Full: the tape; Stride: the state at every
-#      K-step boundary; Revolve: the initial state) and passes each step to
-#      `on_step_end`;
+#      K-step boundary) and passes each step to `on_step_end`;
 #   3. `_reverse_taped_run(run, replay, starts, dt; nsteps, forcing)`, with
 #      the replay where the forward run left it: the reverse pass of steps
 #      `1:nsteps` (`nsteps <= taped_steps`) from each adjoint start;
-#   4. `_end_taped_run!(run)`: releases the storage the call opened.
+#   4. `_end_taped_run!(run)`: releases what the run holds outside the pool
+#      (checkpoints, Lin–Rood records); the pool stays with the runtime, which
+#      its entry point releases (after one call, or after every evaluation of
+#      an optimization).
 #
 # The footprint entry points run them back to back over every step
 # (`_collect_footprints`). The 4D-Var gradient samples its observations in
@@ -38,20 +40,6 @@
 # observation forcing (`_forced_reverse`): one forward run gives the simulated
 # values and the tape.
 # ---------------------------------------------------------------------------
-
-# The tape storage of a call is opened once, after the replay has counted the
-# bytes of the largest tape the call records, when the storage reserves them up
-# front (`MmapCSTapeStorage`): the recorder that counts them during a
-# propagation run from step 1, else none.
-_tape_size_counter(tape_storage) =
-    _needs_tape_size(tape_storage) ? _CSCountingRecorder() : NoStepRecorder()
-
-# The mmap bytes (`_tape_slot_bytes`) of the tape of `steps` (counted from step 1).
-_counted_slot_bytes(::NoStepRecorder, _steps::AbstractUnitRange) = 0
-function _counted_slot_bytes(counter::_CSCountingRecorder, steps::AbstractUnitRange)
-    through = counter.slot_bytes_through_step
-    return through[last(steps)] - (first(steps) == 1 ? 0 : through[first(steps) - 1])
-end
 
 # The reverse state of one adjoint start at the end of a run of `n` steps: the
 # starting adjoint state (from the replay's air mass, the state after step
@@ -118,35 +106,27 @@ end
 _taped_range(run) = 1:_taped_steps(run)
 
 # ---------------------------------------------------------------------------
-# FullCheckpoint: one tape for all starts, recorded by the forward run. A
-# storage that reserves its extent is sized first by a counting run of the
-# taped steps, from which the replay restarts at its initial snapshot; that
-# reproduces the recording run bit for bit.
+# FullCheckpoint: one tape for all starts, recorded by the forward run into
+# the runtime's pool. A storage that reserves its extent is sized first by a
+# counting run of the taped steps (once per runtime), from which the replay
+# restarts at its initial snapshot; that reproduces the recording run bit for
+# bit.
 # ---------------------------------------------------------------------------
 
-struct _FullTapedRun{T, R <: _CSTapeRecorder}
-    taped_steps  :: Int
-    tape_storage :: T       # the call's `tape_storage` argument
-    recorder     :: R       # records into the storage the call opened
+struct _FullTapedRun{R <: _CSTapeRecorder}
+    taped_steps :: Int
+    recorder    :: R       # records into the runtime's pool
 end
 
-function _begin_taped_run(::FullCheckpoint, replay::_CSReplay, tape_storage, taped_steps::Int)
-    steps = 1:taped_steps
-    counter = _tape_size_counter(tape_storage)
-    if counter isa _CSCountingRecorder
-        initial = _replay_snapshot(replay)
-        _replay_steps!(replay, steps; recorder = counter)
-        _replay_restore!(replay, initial)
-    end
-    storage = _open_tape_storage(tape_storage, _counted_slot_bytes(counter, steps))
-    return _FullTapedRun(taped_steps, tape_storage, _CSTapeRecorder(storage))
+function _begin_taped_run(::FullCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int)
+    pool = _tape_pool!(runtime, _counted_tape_bytes!(runtime, replay, 1:taped_steps))
+    return _FullTapedRun(taped_steps, _CSTapeRecorder(runtime.tape.content, pool))
 end
 
 _taped_steps(run::_FullTapedRun) = run.taped_steps
 _run_taped_steps!(run::_FullTapedRun, replay, on_step_end) =
     (_replay_steps!(replay, _taped_range(run); recorder = run.recorder, on_step_end); nothing)
-_end_taped_run!(run::_FullTapedRun) =
-    _release_opened_tape_storage!(run.recorder.storage, run.tape_storage)
+_end_taped_run!(run::_FullTapedRun) = _release_records!(run.recorder.ops)
 
 # The records of the tape through the end of step `nsteps` (its end-of-step
 # marker); the whole tape when `nsteps` is its last step.
@@ -168,58 +148,66 @@ end
 # ---------------------------------------------------------------------------
 # StrideCheckpoint(K): the forward run saves the replay state at every K-step
 # boundary of the taped steps (and counts the window tapes for a storage that
-# reserves its extent); the reverse pass re-records each window from its saved
-# left edge into the one storage of the call, walks it backwards and rewinds
-# the storage. Peak tape is one window; the forward run is shared by all
-# starts. The window boundaries do not depend on the run length, so the saved
-# states serve the reverse pass of any `nsteps <= taped_steps`.
+# reserves its extent, once per runtime); the reverse pass re-records each
+# window from its saved left edge into the runtime's pool, rewound for each
+# window, and walks it backwards for every start. Peak tape is one window;
+# the forward run and each window's recording are shared by all starts. The
+# window boundaries do not depend on the run length, so the saved states serve
+# the reverse pass of any `nsteps <= taped_steps`.
 # ---------------------------------------------------------------------------
 
-struct _StrideTapedRun{T, C}
-    schedule     :: StrideCheckpoint
-    taped_steps  :: Int
-    tape_storage :: T
-    counter      :: C              # counts the window tapes, or `NoStepRecorder()`
-    checkpoints  :: Vector{Any}    # the replay state at the left edge of each window
+struct _StrideTapedRun{R <: _TapeRuntime, C, S}
+    schedule    :: StrideCheckpoint
+    taped_steps :: Int
+    runtime     :: R
+    counter     :: C              # counts the window tapes, or `NoStepRecorder()`
+    checkpoints :: Vector{S}      # the replay state at the left edge of each window
 end
 
-_begin_taped_run(schedule::StrideCheckpoint, ::_CSReplay, tape_storage, taped_steps::Int) =
-    _StrideTapedRun(schedule, taped_steps, tape_storage, _tape_size_counter(tape_storage), Any[])
+# The first checkpoint is the state the forward run starts from.
+_begin_taped_run(schedule::StrideCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, taped_steps::Int) =
+    _StrideTapedRun(schedule, taped_steps, runtime, _tape_size_counter(runtime, taped_steps),
+                    [_replay_snapshot(replay)])
 
 _taped_steps(run::_StrideTapedRun) = run.taped_steps
-_end_taped_run!(::_StrideTapedRun) = nothing
+_end_taped_run!(run::_StrideTapedRun) = (foreach(_release_snapshot!, run.checkpoints); nothing)
 
 _stride_windows(schedule::StrideCheckpoint, n::Int) =
     [checkpoint_window_range(schedule, w, n) for w in 1:checkpoint_window_count(schedule, n)]
 
 function _run_taped_steps!(run::_StrideTapedRun, replay, on_step_end)
-    for steps in _stride_windows(run.schedule, run.taped_steps)
-        push!(run.checkpoints, _replay_snapshot(replay))
+    for (w, steps) in enumerate(_stride_windows(run.schedule, run.taped_steps))
+        w == 1 || push!(run.checkpoints, _replay_snapshot(replay))
         _replay_steps!(replay, steps; recorder = run.counter, on_step_end)
     end
+    _store_tape_count!(run.runtime, run.counter)
     return nothing
 end
 
+# Every start's reverse state is set up from the state the forward run ended
+# in; then each window, from the last, is restored, recorded once and walked
+# for every start. A start's walks run in the same order, on the same tapes,
+# as one start at a time would.
 function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt; nsteps::Int, forcing)
     windows = _stride_windows(run.schedule, nsteps)
-    final = _replay_snapshot(replay)
-    storage = _open_tape_storage(run.tape_storage,
-                                 maximum(steps -> _counted_slot_bytes(run.counter, steps), windows))
-    try
-        return map(starts) do start
-            _replay_restore!(replay, final)
-            lambda, footprints, ws = _start_reverse(replay, start, nsteps)
-            for w in reverse(eachindex(windows))
-                _rewind_tape_storage!(storage)
-                _replay_restore!(replay, run.checkpoints[w])
-                ops = _record_cs_tape!(replay, windows[w], storage)
+    runtime = run.runtime
+    through = runtime.slot_bytes_through_step
+    pool = _tape_pool!(runtime, maximum(steps -> _counted_slot_bytes(through, steps), windows))
+    reverses = [_start_reverse(replay, start, nsteps) for start in starts]
+    for w in reverse(eachindex(windows))
+        _rewind_tape_pool!(pool)
+        _replay_restore!(replay, run.checkpoints[w])
+        ops = _record_cs_tape!(replay, windows[w], runtime.tape.content, pool)
+        try
+            for (lambda, footprints, ws) in reverses
                 _walk!(footprints, lambda, ops, replay, ws, forcing)
             end
-            _footprint_result(start, footprints, lambda, dt, replay)
+        finally
+            _release_records!(ops)     # once every start has walked them, or a walk threw
         end
-    finally
-        _release_opened_tape_storage!(storage, run.tape_storage)
     end
+    return map((start, (lambda, footprints, _)) -> _footprint_result(start, footprints, lambda, dt, replay),
+               starts, reverses)
 end
 
 # ---------------------------------------------------------------------------
@@ -227,11 +215,10 @@ end
 # ---------------------------------------------------------------------------
 
 # Every step of the replay forward and its reverse pass from each start (the
-# footprint entry points).
-function _collect_footprints(checkpoint::AbstractCheckpointSchedule, replay::_CSReplay, starts, dt;
-                             tape_storage)
+# footprint entry points), with the tape of `runtime`.
+function _collect_footprints(replay::_CSReplay, starts, dt, runtime::_TapeRuntime)
     n = _replay_nsteps(replay)
-    run = _begin_taped_run(checkpoint, replay, tape_storage, n)
+    run = _begin_taped_run(runtime.tape.checkpoint, replay, runtime, n)
     try
         _run_forward!(run, replay)
         return _reverse_taped_run(run, replay, starts, dt; nsteps = n, forcing = NoStepForcing())
@@ -258,15 +245,11 @@ function _forced_reverse(run, replay::_CSReplay, dt; nsteps::Int, forcing::Abstr
     return only(_reverse_taped_run(run, replay, [_ZeroStart()], dt; nsteps, forcing))
 end
 
-# The storage checks the drivers rely on, made before any forward run: the
-# `tape_storage` argument is supported, and the Lin-Rood tape is device-only.
-# The 4D-Var gradient calls this before its forward run, so a rejected
-# combination does not waste that run.
-function _require_tape_storage_supported(scheme, tape_storage)
-    _validate_tape_storage(tape_storage)
-    return _require_scheme_tape_storage(scheme, tape_storage)
-end
-
-_require_scheme_tape_storage(::CSAdjointLinRoodScheme, tape_storage) =
-    _linrood_validate_tape_storage(tape_storage)
-_require_scheme_tape_storage(_scheme, _tape_storage) = nothing
+# The tape checks the drivers rely on, made before any forward run: the
+# Lin–Rood tape is device-only (its records hold device copies, not pool
+# slots; the check is the fenced Lin–Rood validator). The 4D-Var gradient
+# calls this before its forward run, so a rejected combination does not waste
+# that run.
+_require_tape_supported(::CSAdjointLinRoodScheme, tape::AdjointTape) =
+    _linrood_validate_tape_storage(tape.storage)
+_require_tape_supported(_scheme, ::AdjointTape) = nothing

@@ -676,8 +676,8 @@ limiter decisions.
 
 *Composition.* Per step the Lin–Rood tape is `H Z [diffusion] emissions
 [diffusion] Z H [convection]`, and the reverse pass applies the transposes in
-the opposite order. Stride and Revolve checkpointing store `(rm, m)` and record
-each window again from its checkpoint, so they reproduce the same branches;
+the opposite order. Stride checkpointing stores `(rm, m)` and records each
+window again from its checkpoint, so it reproduces the same branches;
 their footprints equal those of the full tape to rounding (`rtol = 1e-10`).
 
 *Frozen-limiter caveats.* The adjoint is the gradient of the piecewise-linear
@@ -702,7 +702,7 @@ the horizontal Lin–Rood adjoint.
   column-mean objectives, and both profiles (the signed one on a field that
   crosses zero); a linearity witness confirms that no limiter switches branch
   over the stencil.
-- Full, Stride and Revolve checkpointing give the same footprints to
+- Full and Stride checkpointing give the same footprints to
   rounding, and the tape's forward replay equals production transport bit for
   bit.
 

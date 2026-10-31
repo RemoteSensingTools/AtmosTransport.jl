@@ -275,6 +275,17 @@ _step_fluxes(am, bm, cm, scale) =
     CubedSphereFaceFluxState{DryBasis}(map(a -> scale .* a, am), map(b -> scale .* b, bm),
                                        map(c -> scale .* c, cm))
 
+# Face fluxes of steps `1:nsteps`. Consecutive steps given the same arrays (a
+# met window's fluxes, which `cs_adjoint_inputs` shares across the window's
+# steps) share one flux state, so a `flux_scale ≠ 1` scales each set once.
+function _replay_fluxes(am, bm, cm, nsteps::Int, scale)
+    previous = Ref{Any}(nothing)
+    return map(1:nsteps) do s
+        shared = s > 1 && am[s] === am[s - 1] && bm[s] === bm[s - 1] && cm[s] === cm[s - 1]
+        previous[] = shared ? previous[] : _step_fluxes(am[s], bm[s], cm[s], scale)
+    end
+end
+
 # One forcing per met window: production refreshes the convection forcing at
 # the window's first step only.
 function _validate_window_forcing(forcing::AbstractVector, steps::_ResolvedSchedule)
@@ -337,8 +348,7 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
     fill_panel_halos!(state.tracers_raw, mesh; dir = 0)
     grid = _replay_grid(mesh, Nz)
     fs = FT(flux_scale)
-    fluxes = [_step_fluxes(panels_am_steps[s], panels_bm_steps[s], panels_cm_steps[s], fs)
-              for s in 1:nsteps]
+    fluxes = _replay_fluxes(panels_am_steps, panels_bm_steps, panels_cm_steps, nsteps, fs)
     advection_ws = _cs_advection_workspace_for(scheme, state, grid)
 
     uses_diffusion = any(s -> !(_sequence_at(diffusion_op, s) isa NoDiffusion), 1:nsteps)

@@ -466,7 +466,8 @@ end
 
 """
     cs_surface_flux_4dvar_optimize(..., observations, controls;
-                                    optimizer = CSGradientDescent(...), kwargs...)
+                                    optimizer = CSGradientDescent(...),
+                                    tape = AdjointTape(), kwargs...)
         -> CS4DVarSolveResult
 
 Run an optimization loop around [`cs_surface_flux_4dvar`](@ref).
@@ -474,6 +475,11 @@ Run an optimization loop around [`cs_surface_flux_4dvar`](@ref).
 `optimizer::AbstractCSOptimizer` selects the backend; configure descent and
 logging on that object. The default uses the model precision for its step
 settings, including `min_step = sqrt(eps(FT))`.
+
+`tape` (an [`AdjointTape`](@ref AtmosTransport.Tape.AdjointTape)) is shared
+by every evaluation: they all record into one tape pool, opened by the first
+and rewound by each later one (an mmap file is reserved and its bytes counted
+once), and released when the optimization returns.
 
 Remaining keyword arguments are forwarded to `cs_surface_flux_4dvar`
 on every cost evaluation — including `preconditioner = ...` for the
@@ -492,15 +498,17 @@ function cs_surface_flux_4dvar_optimize(panels_rm0, panels_m0,
                                             sqrt(eps(eltype(panels_rm0[1]))),
                                             eltype(panels_rm0[1])(0.5),
                                             zero(eltype(panels_rm0[1])), true, false),
+                                        tape::AdjointTape = AdjointTape(),
                                         kwargs...)
     haskey(kwargs, :evaluation) && throw(ArgumentError(
         "cs_surface_flux_4dvar_optimize evaluates the cost and its gradient at every point; " *
         "do not pass `evaluation`"))
-    cost_fn = function (active_controls)
-        return cs_surface_flux_4dvar(
-            panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
-            mesh, observations, active_controls; kwargs...)
+    return _with_tape_runtime(tape) do runtime
+        cost_fn = function (active_controls)
+            return _cs_surface_flux_4dvar(
+                runtime, panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
+                mesh, observations, active_controls; kwargs...)
+        end
+        cs_surface_flux_4dvar_solve(optimizer, cost_fn, controls)
     end
-
-    return cs_surface_flux_4dvar_solve(optimizer, cost_fn, controls)
 end

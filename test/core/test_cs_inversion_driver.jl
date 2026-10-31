@@ -232,6 +232,50 @@ end
     @test_throws ArgumentError _run_config_text(with_advection("[advection]\nscheme = \"ppm\"\nlimiter = \"minmod\"\n"))
 end
 
+@testset "cs_4dvar.jl driver — [adjoint.tape] selects the AdjointTape" begin
+    base = read(CONFIG, String)
+    tape_of(block) = _adjoint_tape(TOML.parse(block))
+    @test tape_of("") === AT.AdjointTape()
+    @test tape_of("[adjoint.tape]\n") === AT.AdjointTape()
+    @test tape_of("[adjoint.tape]\ncontent = \"full_state\"\nstorage = \"pinned_host\"\n") ===
+          AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage())
+    @test tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = 4\n") ===
+          AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(4))
+    # Choices in any letter case, as in the other config tables (`parse_choice`).
+    @test tape_of("[adjoint.tape]\nstorage = \"Pinned_Host\"\ncheckpointing = \"STRIDE\"\nstride = 2\n") ===
+          AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))
+    mmap = tape_of("[adjoint.tape]\nstorage = \"mmap\"\nscratch_dir = \"/scratch/tape\"\ncheckpointing = \"full\"\n")
+    @test mmap.storage == AT.MmapCSTapeStorage("/scratch/tape") && mmap.checkpoint === AT.FullCheckpoint()
+    for bad in ("storage = \"disk\"", "checkpointing = \"revolve\"", "content = \"compact\"",
+                "storage = \"mmap\"",                                   # needs scratch_dir
+                "scratch_dir = \"/scratch/tape\"",                       # only with mmap
+                "checkpointing = \"stride\"",                           # needs stride
+                "stride = 4",                                           # only with stride
+                "checkpointing = \"stride\"\nstride = 0", "checkpointing = \"stride\"\nstride = true",
+                "checkpointing = \"stride\"\nstride = 4.0", "checkpointing = \"stride\"\nstride = \"4\"",
+                "storage = \"mmap\"\nscratch_dir = \"\"", "storage = \"mmap\"\nscratch_dir = 3",
+                "storage = 1", "budget_gb = 10")
+        @test_throws ArgumentError tape_of("[adjoint.tape]\n" * bad * "\n")
+    end
+    # The errors name the setting and the valid choices.
+    err = try tape_of("[adjoint.tape]\nstorage = \"disk\"\n") catch e e end
+    @test occursin("[adjoint.tape].storage", err.msg) && occursin("pinned_host", err.msg)
+    err = try tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = true\n") catch e e end
+    @test occursin("[adjoint.tape].stride", err.msg)
+    @test_throws ArgumentError _run_config_text(base * "\n[adjoint]\nstorage = \"device\"\n")
+    # The inversion runs with the chosen tape: Stride and mmap give the
+    # default tape's result (one evaluation's tape per optimization).
+    reference = run_inversion(CONFIG)
+    mktempdir() do dir
+        tape = "\n[adjoint.tape]\nstorage = \"mmap\"\nscratch_dir = \"$(dir)\"\n" *
+               "checkpointing = \"stride\"\nstride = 1\n"
+        result = _run_config_text(base * tape)
+        @test result.cost_history ≈ reference.cost_history rtol = 1e-12
+        @test isempty(readdir(dir))
+    end
+    @test_throws ArgumentError _run_config_text(base * "\n[adjoint.tape]\nstorage = \"disk\"\n")
+end
+
 @testset "cs_4dvar.jl driver — unknown tables and keys are rejected (#16)" begin
     base = read(CONFIG, String)
     @test_throws ArgumentError _run_config_text(base * "\n[diffusion]\nkind = \"constant\"\nvalue = 1.0\n")

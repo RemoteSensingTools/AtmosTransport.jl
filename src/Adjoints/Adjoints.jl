@@ -31,15 +31,15 @@ using ..Operators.StepPlans: AbstractStepStage, AirMassResetStage, ChemistryAfte
     plan_stages, restore_operator_state!
 using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractUnplacedPolicy,
     ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
-using ..Tape: AbstractCheckpointSchedule, CSTapeSlot, DeviceCSTapeStorage, FullCheckpoint,
-    MmapCSTapeSlot, MmapCSTapeStorage, PinnedHostCSTapeSlot, PinnedHostCSTapeStorage,
-    RevolveCheckpoint, StrideCheckpoint
+using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, CSTapeSlot,
+    DeviceCSTapeStorage, FullCheckpoint, FullStateTape, MmapCSTapeStorage,
+    PinnedHostCSTapeStorage, StrideCheckpoint
 
 export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
     CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
     CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
-    MmapCSTapeSlot, PinnedHostCSTapeSlot,
-    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, RevolveCheckpoint,
+    AdjointTape, AbstractTapeContent, FullStateTape,
+    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
     evaluate_objective, require_adjoint_support, adjoint_support
 
 # Sweeps whose record stages the tracer mass as well as the air mass.

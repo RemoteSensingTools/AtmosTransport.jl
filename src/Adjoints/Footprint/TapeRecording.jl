@@ -6,51 +6,42 @@
 # whose hooks stage each operator's input as production calls it. This file
 # keeps the record builders the recorder uses and the tape-size estimate:
 #
-#   * `_record_sweep!` — pushes a `_CSSweepRecord` for one advection sweep
-#     (air mass only for linear schemes; air and tracer mass for the schemes
-#     whose reverse replays limiter branches).
+#   * `_record_sweep!` — pushes a `_CSSweepRecord` for one advection sweep,
+#     by tape content and scheme (`FullStateTape`: air mass only for linear
+#     schemes; air and tracer mass for the schemes whose reverse replays
+#     limiter branches).
 #   * `_center_diffusion_records` — diffusion solves per palindrome center.
 #   * `cs_tape_byte_estimate` — counts the tape a recording would write, by
 #     replaying the transport with a counting recorder.
-#   * `_record_cs_adjoint_tape` — records the tape of a whole run (tests and
-#     diagnostics); the checkpoint drivers record per window.
+#   * `_record_cs_tape!` — records a range of steps into a tape pool (the
+#     Stride driver's windows).
 #
 # Loaded into the `Adjoints` module from `Adjoints.jl`.
 # ---------------------------------------------------------------------------
 
-# Full-panel tuples a sweep record stages: the air mass, plus the tracer mass
-# for the schemes whose reverse replays limiter branches.
-_staged_tuples_per_sweep(::CSAdjointLinearScheme) = 1
-_staged_tuples_per_sweep(::_RmTapedSweepScheme) = 2
+# Full-panel tuples a sweep record of the tape content stages: the air mass,
+# plus the tracer mass for the schemes whose reverse replays limiter branches.
+_staged_tuples_per_sweep(::FullStateTape, ::CSAdjointLinearScheme) = 1
+_staged_tuples_per_sweep(::FullStateTape, ::_RmTapedSweepScheme) = 2
 
-function _record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
-                        panels_m, panels_flux, flux_scale, tape_storage)
-    push!(ops, _CSSweepRecord(direction, scheme,
-                              _stage_panels(tape_storage, panels_m),
-                              nothing,
-                              panels_flux, flux_scale))
-    return nothing
-end
-
-function _record_sweep!(ops, direction::Symbol, scheme::_RmTapedSweepScheme,
-                        panels_m, panels_rm, panels_flux, flux_scale, tape_storage)
-    push!(ops, _CSSweepRecord(direction, scheme,
-                              _stage_panels(tape_storage, panels_m),
-                              _stage_panels(tape_storage, panels_rm),
-                              panels_flux, flux_scale))
-    return nothing
-end
-
-# A linear sweep's reverse needs only the air mass. This method accepts and
-# ignores the tracer mass so the recorder uses one signature for every scheme.
-#
 # The record holds the state ENTERING the sweep: the reverse kernels rebuild
 # each face coefficient from the donor air mass the forward kernel divided by
-# (issue #10), so the recorder hook runs before the sweep.
-_record_sweep!(ops, direction::Symbol, scheme::CSAdjointLinearScheme,
-               panels_m, panels_rm, panels_flux, flux_scale, tape_storage) =
-    _record_sweep!(ops, direction, scheme, panels_m, panels_flux, flux_scale,
-                   tape_storage)
+# (issue #10), so the recorder hook runs before the sweep. A linear sweep's
+# reverse needs only the air mass; the recorder passes the tracer mass to
+# every scheme, and the linear method ignores it.
+function _record_sweep!(ops, ::FullStateTape, direction::Symbol, scheme::CSAdjointLinearScheme,
+                        panels_m, _panels_rm, panels_flux, flux_scale, pool)
+    push!(ops, _CSSweepRecord(direction, scheme, _stage_panels(pool, panels_m), nothing,
+                              panels_flux, flux_scale))
+    return nothing
+end
+
+function _record_sweep!(ops, ::FullStateTape, direction::Symbol, scheme::_RmTapedSweepScheme,
+                        panels_m, panels_rm, panels_flux, flux_scale, pool)
+    push!(ops, _CSSweepRecord(direction, scheme, _stage_panels(pool, panels_m),
+                              _stage_panels(pool, panels_rm), panels_flux, flux_scale))
+    return nothing
+end
 
 # Diffusion records per step of a palindrome center with `coupling`, counted
 # by running the center composition itself so the estimate cannot drift from
@@ -62,15 +53,24 @@ function _center_diffusion_records(coupling)
 end
 
 """
-    _record_cs_tape!(replay, steps, storage) -> ops
+    _record_cs_tape!(replay, steps, content, pool) -> ops
 
-Run `steps` of `replay` with a tape recorder writing to `storage` and return
-the tape (one record per hook of the production step, plus an end-of-step
-marker after each step).
+Run `steps` of `replay` with a tape recorder staging `content` into the tape
+pool `pool` (`_open_tape_pool`) and return the tape (one record per hook of the
+production step, plus an end-of-step marker after each step). If the
+recording throws, the records it holds outside the pool are freed first
+(`_release_records!`; a Lin–Rood substep that throws between its first and
+last hook leaves its partial copies to the GC).
 """
-function _record_cs_tape!(replay::_CSReplay, steps::AbstractUnitRange, storage)
-    recorder = _CSTapeRecorder(storage)
-    _replay_steps!(replay, steps; recorder)
+function _record_cs_tape!(replay::_CSReplay, steps::AbstractUnitRange,
+                          content::AbstractTapeContent, pool)
+    recorder = _CSTapeRecorder(content, pool)
+    try
+        _replay_steps!(replay, steps; recorder)
+    catch
+        _release_records!(recorder.ops)
+        rethrow()
+    end
     return recorder.ops
 end
 
@@ -84,28 +84,28 @@ end
                           schedule = nothing, surface_flux = true, dt = nothing)
         -> CSTapeByteEstimate
 
-Size the tape that `cs_surface_emission_footprint` records for the given
-problem: per-record-class counts and the total `state_bytes`, the raw
-panel-data cost of the tape, independent of storage policy. The transport
+Size the tape (`FullStateTape` content) that `cs_surface_emission_footprint`
+records for the given problem: per-record-class counts and the total
+`state_bytes`, the raw panel-data cost of the tape, independent of storage. The transport
 records (sweeps, halos, Lin-Rood horizontal records, palindrome centers and
 air-mass resets) are counted by replaying the transport with a counting
 recorder; convection and diffusion do not change the air mass, so their
 records are counted from the step plan.
 
-The same `state_bytes` figure applies to all three storage policies
-because none of them compress the payload:
+The same `state_bytes` figure applies to every `storage` of an `AdjointTape`,
+because none of them compresses the payload:
 
-  * `tape_storage = :device` — `state_bytes` is the device-resident
-    RAM cost; the reverse loop holds the full tape on the backend.
-  * `tape_storage = :pinned_host` — `state_bytes` is the pinned host
-    RAM cost; at most two staged panel sets (one per read role: air
-    mass and tracer mass) are mirrored on the device at a time.
-  * `tape_storage = MmapCSTapeStorage(dir)` — `state_bytes` is the size of
-    the scratch file with `FullCheckpoint` (`StrideCheckpoint` reserves its
-    largest window, `RevolveCheckpoint` its largest step), which needs 10 %
-    more free space in `dir`; it is reserved before recording. On a GPU the
-    device read caches hold one `NTuple{6, T}` per read role and distinct
-    shape signature on top of that.
+  * `DeviceCSTapeStorage()` — `state_bytes` is the device-resident cost; the
+    reverse loop holds the full tape on the backend.
+  * `PinnedHostCSTapeStorage()` — `state_bytes` is the pinned host cost
+    (allocated in chunks of up to 1 GiB, each slot padded to 64 bytes); at
+    most two staged panel sets (one per read role: air mass and tracer mass)
+    are mirrored on the device at a time.
+  * `MmapCSTapeStorage(dir)` — `state_bytes` is the size of the scratch file
+    with `FullCheckpoint` (`StrideCheckpoint` reserves its largest window),
+    which needs 10 % more free space in `dir`; it is reserved before
+    recording. The read caches hold one `NTuple{6, T}` per read role and
+    distinct shape signature on top of that.
 
 `bytes_per_state` is the size of one full-panel state tuple. Lin-Rood's
 `state_bytes` also includes the face-panel tuples of its horizontal records,
@@ -133,7 +133,7 @@ function cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
     replay = _build_cs_replay(zero_rm, panels_m0, panels_am_steps, panels_bm_steps,
                               panels_cm_steps, mesh; scheme, schedule, nsteps,
                               flux_scale, surface_flux)
-    counter = _CSCountingRecorder()
+    counter = _CSCountingRecorder(FullStateTape())
     _replay_steps!(replay, 1:nsteps; recorder = counter)
 
     # Records of the stripped operators, from the plan.

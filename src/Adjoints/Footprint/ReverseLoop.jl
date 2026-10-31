@@ -24,7 +24,7 @@
 #                                step forcing (the single-sweep 4D-Var
 #                                gradient).
 #
-# The Full, Stride and Revolve drivers build the starting state with
+# The Full and Stride drivers build the starting state with
 # `_initial_adjoint_state` from the final air mass of their forward pass.
 # ---------------------------------------------------------------------------
 
