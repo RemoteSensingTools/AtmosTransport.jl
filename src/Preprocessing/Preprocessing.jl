@@ -57,8 +57,9 @@ mass construction or regridding, flux balancing, and `cm` diagnosis (with an
 optional dry-mass pin where the source has one); every path ends in the same
 write-time replay and positivity gates.
 
-The high-level transport-binary workflows are split under
-`transport_binary/`. Each meteorological source/target pair owns a
+Target workflows live in `Targets/LatLon`, `Targets/ReducedGaussian` and
+`Targets/CubedSphere`; shared binary APIs live in `TransportBinary`. Native-source
+day drivers remain in `transport_binary/` until PP4. Each supported pair owns a
 `process_day` method (binary regridding has its own entry point) while
 shared binary metadata, endpoint-delta, and replay helpers stay in common
 files.
@@ -145,8 +146,10 @@ using ..Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_le
 import ..State
 using ..State: AbstractMassBasis, DryBasis, MoistBasis,
                TotalSurfacePressure, DrySurfacePressure
+# The GEOS block-coarsen strategy (`transport_binary/geos_cs_resolution.jl`)
+# sums nested faces with `coarsen_xface_sum!` / `coarsen_yface_sum!`.
 using ..Regridding: build_regridder, apply_regridder!, coarsen_sum!, coarsen_area_weighted!,
-                    default_regrid_cache_dir
+                    coarsen_xface_sum!, coarsen_yface_sum!, default_regrid_cache_dir
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField
 using ..GriddedIO: source_latlon_mesh, SnappedFaces, find_coordinate, LongitudeAxis, LatitudeAxis
 using ..MetDrivers: poisson_balance_target, write_padded_header!, section_elements,
@@ -229,6 +232,10 @@ export verify_substep_positivity_rg!, verify_rg_window_contract!,
        verify_boundary_stub_flux_rg,
        init_rg_positivity_accumulator, update_rg_positivity_accumulator,
        summarize_rg_positivity_status
+# Experimental nested CS-binary coarsener (`Targets/CubedSphere`); the facade
+# exported it before PP3 and `scripts/preprocessing/coarsen_cs_transport_binary.jl`
+# and the binary-format manual name it.
+export coarsen_nested_cs_transport_binary
 
 # Pipeline stages load in dependency order. The facade preserves script names.
 include("Core/Core.jl")
@@ -344,7 +351,6 @@ import .MassClosure: AbstractFaceLengths,
     project_mean_zero!,
     require_cs_column_balance,
     recheck_cs_column_closure,
-    recompute_faceindexed_cm_from_divergence!,
     reconstruct_cs_fluxes!,
     recover_ll_cell_center_winds!,
     regrid_winds!,
@@ -389,28 +395,238 @@ import .PhysicsInputs: BLDiffColumnScratch,
     tm5_bldiff_kvh_column!,
     tm5_convection_to_basis!
 
-# Deferred target and source implementations remain in the facade until PP3/PP4.
-include("sources/era5_grib_geometry.jl")
-include("reduced_transport_helpers.jl")
-include("reduced_window_buffer.jl")
-include("reduced_spectral_day.jl")
-include("cs_transport_helpers.jl")
+# Shared binary APIs load below the target implementations that extend them.
+include("TransportBinary/TransportBinary.jl")
+import .TransportBinary: cached_or_build!, ranked_fidelity_ids
+import .TransportBinary: AbstractBinaryWriter,
+    AbstractColumnClosureRecord,
+    AbstractFluxFidelityEvidence,
+    AbstractFluxFidelityReason,
+    AbstractOmegaFidelityEvidence,
+    AbstractWindowContract,
+    AbstractWindowWorkspace,
+    CapturedNativeFluxSamples,
+    CapturedWindFluxSamples,
+    ColumnClosureRecord,
+    CubedSphereBinaryWriter,
+    EvidenceNotAttached,
+    FidelitySampleMap,
+    FluxBalanceSample,
+    FluxFidelityAccumulator,
+    FluxFidelityEvidenceBundle,
+    FluxFidelitySample,
+    GEOS_NATIVE_OMEGA_BASELINE,
+    HEADER_SIZE,
+    HybridLayerThickness,
+    LatLonBinaryWriter,
+    LineIntegralFidelityStencil,
+    MERRA2_WIND_OMEGA_BASELINE,
+    NativeFluxEvidence,
+    NativeFluxesNotRederivable,
+    NoColumnClosureRecord,
+    NoFluxFidelityEvidence,
+    NoSourceOmegaEvidence,
+    OMEGA_FIDELITY_PRESSURE_BANDS,
+    OUTPUT_REUSE_CONTRACT_KEYS,
+    OmegaFidelityBaseline,
+    OmegaFidelityCells,
+    OmegaFidelitySample,
+    POLE_ROW_ZONAL_FLUX_KEY,
+    PreprocessorRunCache,
+    PreverifiedWindow,
+    ReadyWindow,
+    ReducedGaussianBinaryWriter,
+    SourceHasNoOmega,
+    SourceNotOpened,
+    SourceOmegaEvidence,
+    SourcePayloadOnly,
+    StructuredFidelitySampler,
+    SubstepSchedulePolicy,
+    UnifiedPreprocessorDay,
+    WindDerivedFluxEvidence,
+    allocate_window_workspace,
+    build_v4_header,
+    capture_cs_wind_flux_samples,
+    capture_faceindexed_flux_samples,
+    capture_native_flux_samples,
+    capture_structured_wind_flux_samples,
+    clamp_substeps,
+    close_streaming_binary!,
+    column_closure_record,
+    combine_captured_flux_samples,
+    drain_ready_windows!,
+    driver_after_write_window!,
+    driver_before_close_writer!,
+    driver_drain_ready_windows!,
+    driver_flush_final_windows!,
+    driver_ingest_window!,
+    driver_windows_per_day,
+    ensure_preprocessor_pair_supported,
+    exact_steps_per_window,
+    existing_output_schema_matches,
+    expected_payload_sections,
+    faceindexed_wind_evidence,
+    fidelity_reason,
+    fidelity_sample_rule,
+    fidelity_status_label,
+    flush_final_windows!,
+    flux_fidelity_header!,
+    flux_fidelity_method,
+    full_window_column_closure_record,
+    generation_fingerprint,
+    ingest_window!,
+    init_positivity_accumulator,
+    initial_substeps,
+    merge_captured_flux_samples,
+    native_flux_evidence,
+    next_substeps,
+    output_binary_path,
+    payload_only_fidelity_header!,
+    process_day,
+    promote_streaming_binary!,
+    quarantine_streaming_binary!,
+    required_substeps,
+    rescale_substep_amounts!,
+    rescaled_column_closure_record,
+    resolve_qv_requirements,
+    run_unified_preprocessor_day!,
+    scale_captured_flux_samples,
+    script_provenance,
+    set_contract_steps_schedule!,
+    settings_include_surface,
+    source_omega_evidence_cs,
+    splitmix64,
+    structured_wind_evidence,
+    summarize_positivity_status,
+    summarize_status!,
+    ulp_distance,
+    update_accumulator!,
+    update_positivity_accumulator,
+    validate_cfl_limit,
+    validate_replay_tol,
+    validate_staged_binary!,
+    validate_staged_size,
+    verify_column_closure!,
+    verify_flux_fidelity!,
+    verify_omega_fidelity!,
+    verify_substep_positivity_cs!,
+    verify_window!,
+    wind_derived_evidence,
+    window_byte_sizes,
+    window_element_counts,
+    write_array!,
+    write_window!,
+    writer_final_path,
+    writer_staging_path
+include("Targets/LatLon/LatLon.jl")
+import .LatLon: AbstractQVWorkspace,
+    LLNextDayFields,
+    LLSpectralUnifiedDriverContext,
+    LLWorst,
+    LatLonBilinearWeights,
+    LatLonContract,
+    LatLonDeferredBinaryWriter,
+    LatLonSpectralWindowWorkspace,
+    MergeWorkspace,
+    NativeQVWorkspace,
+    NoQVWorkspace,
+    SpectralTransformWorkspace,
+    WindowStorage,
+    allocate_merge_workspace,
+    allocate_qv_workspace,
+    allocate_transform_workspace,
+    allocate_window_storage,
+    apply_dry_basis_if_needed!,
+    apply_mass_fix_if_needed!,
+    apply_poisson_balance!,
+    close_pole_faces!,
+    compute_window_deltas!,
+    fill_qv_endpoints!,
+    fill_window_mass_tendency!,
+    has_daily_qv,
+    init_ll_positivity_accumulator,
+    interpolate_ll_qv!,
+    log_mass_fix_configuration,
+    merge_native_window!,
+    merge_qv_output!,
+    next_day_merged_fields,
+    process_window!,
+    read_next_day_qv!,
+    read_window_qv!,
+    should_log_window,
+    store_qv_output!,
+    store_window_fields!,
+    summarize_ll_positivity_status,
+    update_ll_positivity_accumulator,
+    verify_ll_window_contract!,
+    verify_substep_positivity_ll!
+include("Targets/ReducedGaussian/ReducedGaussian.jl")
+import .ReducedGaussian: RGSpectralUnifiedDriverContext,
+    RGWorst,
+    ReducedFidelitySampler,
+    ReducedGaussianContract,
+    ReducedGaussianSpectralWindowWorkspace,
+    ReducedMergeWorkspace,
+    ReducedQVWorkspace,
+    ReducedSpectralThreadCache,
+    ReducedTransformWorkspace,
+    SlidingWindowBuffer,
+    allocate_reduced_merge_workspace,
+    allocate_reduced_qv_workspace,
+    allocate_reduced_transform_workspace,
+    allocate_sliding_window_buffer,
+    apply_dry_basis_reduced!,
+    apply_dry_basis_reduced_samples!,
+    balance_window!,
+    compute_reduced_dp_and_mass!,
+    compute_reduced_horizontal_fluxes!,
+    fill_buffer_slot!,
+    init_rg_positivity_accumulator,
+    load_rg_qv!,
+    merge_field_2d!,
+    merge_reduced_window!,
+    nsamples,
+    pin_convert_merge_window!,
+    rescale_reduced_fluxes_to_ps!,
+    rescale_reduced_samples_to_ps!,
+    sample_reduced_horizontal_fluxes!,
+    spectral_to_reduced_boundary!,
+    spectral_to_reduced_scalar!,
+    spectral_to_ring!,
+    summarize_rg_positivity_status,
+    synthesize_and_merge_window!,
+    synthesize_next_day_hour0!,
+    update_rg_positivity_accumulator,
+    verify_boundary_stub_flux_rg,
+    verify_rg_window_contract!,
+    verify_substep_positivity_rg!
+include("Targets/CubedSphere/CubedSphere.jl")
+import .CubedSphere: CSSpectralUnifiedDriverContext,
+    CSWorst,
+    CubedSphereContract,
+    CubedSpherePreprocessWorkspace,
+    CubedSphereSpectralWindowWorkspace,
+    allocate_cs_preprocess_workspace,
+    carried_tm5_convection_record,
+    coarsen_nested_cs_transport_binary,
+    convert_cs_mass_target_to_delta!,
+    copy_cs_panels!,
+    cs_spectral_contract_diag!,
+    fill_cs_window_mass_tendency!,
+    init_cs_positivity_accumulator,
+    rebuild_spectral_window_fluxes!,
+    regrid_2d_to_cs_panels!,
+    regrid_3d_to_cs_panels!,
+    regrid_ll_binary_to_cs,
+    regrid_transport_binary,
+    summarize_cs_positivity_status,
+    update_cs_positivity_accumulator,
+    verify_cs_window_contract!,
+    verify_write_replay_cs!
 
-# Transport-binary workflows and shared preprocessing contracts.
-include("transport_binary/core.jl")
-include("transport_binary/flux_fidelity.jl")
-include("transport_binary/window_contracts.jl")
-include("transport_binary/latlon_workspaces.jl")
-include("transport_binary/latlon_contracts.jl")
-include("transport_binary/cubed_sphere_contracts.jl")
-include("transport_binary/reduced_gaussian_contracts.jl")
-include("transport_binary/writer_adapters.jl")
-include("transport_binary/driver.jl")
-include("transport_binary/topology_dispatch.jl")
-include("transport_binary/cubed_sphere_spectral.jl")
-include("transport_binary/cubed_sphere_regrid.jl")
-include("transport_binary/latlon_spectral.jl")
-include("transport_binary/entrypoint.jl")
+# Source readers and per-source drivers remain in the facade for PP4.
+include("sources/era5_grib_geometry.jl")
+include("entrypoint.jl")
 
 # Native GEOS NetCDF reader
 include("sources/geos.jl")
@@ -443,9 +659,6 @@ include("transport_binary/geos_cs_resolution.jl")
 include("transport_binary/geos_cs_window.jl")
 include("transport_binary/cubed_sphere_geos.jl")
 
-# Experimental nested CS-binary operator restriction (for example C90 → C30).
-# Kept after the GEOS workflow so it reuses the same audited block-sum rules.
-include("transport_binary/cubed_sphere_coarsen.jl")
 
 # ERA5 N320 → CS transport-binary writer. Drives one UTC day end-to-end
 # through the per-window pipeline in `sources/era5*.jl` plus the

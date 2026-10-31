@@ -46,9 +46,6 @@ struct MergeWorkspace{FT}
     dbm_merged     :: Array{FT, 3}
     dcm_merged     :: Array{FT, 3}
     dm_merged      :: Array{FT, 3}
-    m_next_merged  :: Array{FT, 3}
-    am_next_merged :: Array{FT, 3}
-    bm_next_merged :: Array{FT, 3}
     ps_xface       :: Matrix{Float64}
     ps_yface       :: Matrix{Float64}
 end
@@ -151,7 +148,6 @@ struct NativeQVWorkspace{FT} <: AbstractQVWorkspace{FT}
     qv_native     :: Array{Float64, 3}   # (Nx_target, Ny_target, Nz_native)
     qv_native_ft  :: Array{FT, 3}
     qv_merged     :: Array{FT, 3}
-    include_qv    :: Bool
     qv_thermo     :: Array{Float64, 3}   # (Nx_thermo, Ny_thermo, Nz_native)
     weights       :: LatLonBilinearWeights
     qv_daily      :: Array{Float64, 4}   # (Nx_thermo, Ny_thermo, Nz_native, Nt) or empty
@@ -227,9 +223,6 @@ function allocate_merge_workspace(grid::LatLonTargetGeometry, Nz_native::Int, Nz
                               Array{FT}(undef, Nx, Ny + 1, Nz),
                               Array{FT}(undef, Nx, Ny, Nz + 1),
                               Array{FT}(undef, Nx, Ny, Nz),
-                              Array{FT}(undef, Nx, Ny, Nz),
-                              Array{FT}(undef, Nx + 1, Ny, Nz),
-                              Array{FT}(undef, Nx, Ny + 1, Nz),
                               Array{Float64}(undef, Nx + 1, Ny),
                               Array{Float64}(undef, Nx, Ny + 1))
 end
@@ -288,7 +281,6 @@ function allocate_qv_workspace(grid::LatLonTargetGeometry,
                                  Array{Float64}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz_native),
                                  Array{FT}(undef, Nx, Ny, Nz),
-                                 settings.include_qv,
                                  Array{Float64}(undef, Nx_thermo, Ny_thermo, Nz_native),
                                  weights,
                                  qv_daily)
@@ -318,12 +310,12 @@ function read_window_qv!(qv::NativeQVWorkspace,
     else
         qv.qv_thermo .= read_qv_from_thermo(qv.thermo_path, win_idx, Nx_t, Ny_t, Nz_native; FT=Float64)
     end
-    _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
+    interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
     return nothing
 end
 
 """
-    _interpolate_ll_qv!(dst, src, weights::LatLonBilinearWeights)
+    interpolate_ll_qv!(dst, src, weights::LatLonBilinearWeights)
 
 Bilinear-interpolate QV from the thermo grid `src` (point values, in the
 order of [`read_qv_from_thermo`](@ref)) to the target cell centres `dst`
@@ -334,7 +326,7 @@ ERA5 archive the source points are `(−180 + (i − 1)Δ, −90 + (j − 1)Δ)`
 same points as `transform.sp`, `merged.m_merged` and the other staging
 fields.
 """
-function _interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:Real, 3},
+function interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:Real, 3},
                               w::LatLonBilinearWeights)
     size(dst, 1) == length(w.i0) && size(dst, 2) == length(w.j0) ||
         throw(DimensionMismatch("interpolation weights are for $(length(w.i0))×$(length(w.j0)) " *
@@ -371,7 +363,7 @@ function read_next_day_qv!(qv::NativeQVWorkspace,
     isfile(next_thermo_path) || error("Thermo file not found: $next_thermo_path")
     Nx_t, Ny_t = size(qv.qv_thermo, 1), size(qv.qv_thermo, 2)
     qv.qv_thermo .= read_qv_from_thermo(next_thermo_path, 1, Nx_t, Ny_t, Nz_native; FT=Float64)
-    _interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
+    interpolate_ll_qv!(qv.qv_native, qv.qv_thermo, qv.weights)
     return nothing
 end
 
@@ -603,6 +595,21 @@ function apply_mass_fix_if_needed!(qv::NativeQVWorkspace,
     return nothing
 end
 
+"""Synthesize native LL fields using the workspace's unchanged spectral buffers."""
+function spectral_to_native_fields!(transform::SpectralTransformWorkspace,
+                                    lnsp, vo, d, T, vertical, grid, settings)
+    spectral_to_native_fields!(
+        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
+        transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
+        lnsp, vo, d,
+        T, vertical.level_range, vertical.ab, grid, settings.half_dt,
+        transform.P_buf, transform.fft_buf, transform.field_2d,
+        transform.P_buf_t, transform.fft_buf_t, transform.fft_out_t,
+        transform.u_spec_t, transform.v_spec_t, transform.field_2d_t,
+        transform.bfft_plans)
+    return nothing
+end
+
 """
     process_window!(win_idx, hour, spec, grid, vertical, settings, transform, merged, qv, storage, ps_offsets)
 
@@ -626,15 +633,8 @@ function process_window!(win_idx::Int,
     Ny = size(transform.sp, 2)
     t0 = time()
 
-    spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
-        transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
-        spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
-        spec.T, vertical.level_range, vertical.ab, grid, settings.half_dt,
-        transform.P_buf, transform.fft_buf, transform.field_2d,
-        transform.P_buf_t, transform.fft_buf_t, transform.fft_out_t,
-        transform.u_spec_t, transform.v_spec_t, transform.field_2d_t,
-        transform.bfft_plans)
+    spectral_to_native_fields!(transform, spec.lnsp_all[hour], spec.vo_by_hour[hour],
+                                spec.d_by_hour[hour], spec.T, vertical, grid, settings)
 
     read_window_qv!(qv, win_idx, Nx, Ny, vertical.Nz_native)
     apply_mass_fix_if_needed!(qv, transform, grid, vertical, settings, ps_offsets, win_idx)
@@ -642,7 +642,7 @@ function process_window!(win_idx::Int,
     merge_native_window!(merged, transform, qv, vertical, settings)
     store_window_fields!(storage, merged, transform.sp, qv, win_idx)
 
-    if _settings_include_surface(settings) && surface_reader !== nothing
+    if settings_include_surface(settings) && surface_reader !== nothing
         _store_window_surface_fields!(storage, win_idx, surface_reader, FT)
     end
 

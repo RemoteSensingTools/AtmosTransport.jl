@@ -20,7 +20,7 @@ end
 # only affects newly written files.
 const HEADER_SIZE = 32768
 
-_settings_include_surface(settings) =
+settings_include_surface(settings) =
     hasproperty(settings, :include_surface) && Bool(settings.include_surface)
 
 @inline function exact_steps_per_window(dt_met::Real, dt::Real)
@@ -33,14 +33,13 @@ _settings_include_surface(settings) =
 end
 
 """
-    script_provenance(; caller_file=nothing) -> NamedTuple
+    script_provenance() -> NamedTuple
 
-Collect reproducibility metadata. `caller_file` is the path of the CLI script
-that invoked the preprocessing (set by the entry point, not the library).
+Collect reproducibility metadata for the preprocessing source directory.
 """
-function script_provenance(; caller_file::Union{String, Nothing}=nothing)
+function script_provenance()
     preprocess_src_dir = dirname(@__DIR__)
-    script_path = caller_file !== nothing ? abspath(caller_file) : preprocess_src_dir
+    script_path = preprocess_src_dir
     script_mtime = isfile(script_path) ? mtime(script_path) : 0.0
     git_commit, state = source_revision()
     git_dirty = state != "clean"       # an unidentified tree never reuses a binary
@@ -105,7 +104,7 @@ function expected_payload_sections(settings)
     sections = String["m", "am", "bm", "cm", "ps"]
     settings.include_qv && append!(sections, ["qv_start", "qv_end"])
     append!(sections, ["dam", "dbm", "dcm", "dm"])
-    _settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
+    settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
     return sections
 end
 
@@ -135,7 +134,7 @@ function build_v4_header(date::Date,
                          provenance)
     payload_sections = expected_payload_sections(settings)
     var_names = copy(payload_sections)
-    include_surface = _settings_include_surface(settings)
+    include_surface = settings_include_surface(settings)
 
     ncell = sizes.Nx * sizes.Ny
     nface_h = (sizes.Nx + 1) * sizes.Ny + sizes.Nx * (sizes.Ny + 1)
@@ -372,7 +371,7 @@ function _peek_payload_sections(bin_path::AbstractString)
     return Set(String.(hdr["payload_sections"]))
 end
 
-const _OUTPUT_REUSE_CONTRACT_KEYS = (
+const OUTPUT_REUSE_CONTRACT_KEYS = (
     "format_version", "float_type", "float_bytes", "mass_basis",
     "surface_pressure_basis",
     "flux_fidelity_schema",
@@ -418,7 +417,7 @@ function existing_output_schema_matches(bin_path::AbstractString,
             disk_header = _peek_transport_header(bin_path)
             disk_header === nothing && return (false, "header unparseable")
             changed = String[]
-            for key in _OUTPUT_REUSE_CONTRACT_KEYS
+            for key in OUTPUT_REUSE_CONTRACT_KEYS
                 if !haskey(disk_header, key) || !haskey(expected_header, key) ||
                    JSON3.write(disk_header[key]) != JSON3.write(expected_header[key])
                     push!(changed, key)

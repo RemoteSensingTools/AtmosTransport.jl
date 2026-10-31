@@ -1,10 +1,8 @@
-"""
-Writer adapters.
+# Writer adapters.
 
-These wrappers put the existing topology-specific binary writers behind the
-typed `AbstractBinaryWriter{G, FT, Basis}` contract without changing the byte
-layout or current production call sites.
-"""
+# These wrappers put the existing topology-specific binary writers behind the
+# typed `AbstractBinaryWriter{G, FT, Basis}` contract without changing the byte
+# layout or current production call sites.
 
 mutable struct LatLonBinaryWriter{FT,
                                   Basis<:AbstractMassBasis,
@@ -200,7 +198,7 @@ function quarantine_streaming_binary!(writer::AbstractBinaryWriter)
     return writer.path
 end
 
-function _validate_staged_size(path::AbstractString, expected_bytes::Integer)
+function validate_staged_size(path::AbstractString, expected_bytes::Integer)
     isfile(path) || throw(ArgumentError(
         "staged transport binary is missing: $(path)"))
     actual_bytes = filesize(path)
@@ -210,21 +208,11 @@ function _validate_staged_size(path::AbstractString, expected_bytes::Integer)
     return path
 end
 
-function validate_staged_binary!(writer::LatLonBinaryWriter)
-    return _validate_staged_size(writer.path, writer.bytes_written)
-end
 
-function validate_staged_binary!(writer::ReducedGaussianBinaryWriter)
+
+function validate_staged_binary!(writer::Union{ReducedGaussianBinaryWriter, CubedSphereBinaryWriter})
     expected = writer.inner.header_bytes +
                writer.inner.expected_windows * writer.inner.elems_per_window *
                sizeof(eltype(writer.inner.pack_buffer))
-    return _validate_staged_size(writer.path, expected)
-end
-
-
-function validate_staged_binary!(writer::CubedSphereBinaryWriter)
-    expected = writer.inner.header_bytes +
-               writer.inner.expected_windows * writer.inner.elems_per_window *
-               sizeof(eltype(writer.inner.pack_buffer))
-    return _validate_staged_size(writer.path, expected)
+    return validate_staged_size(writer.path, expected)
 end

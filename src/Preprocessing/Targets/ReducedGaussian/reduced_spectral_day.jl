@@ -1,5 +1,5 @@
 # Reduced-Gaussian spectral preprocessing: window synthesis, mass pin and next-day end point, Poisson balance, driver hooks, process_day.
-# Split from reduced_transport_helpers.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Split from reduced_transport_helpers.jl (refactor phase 4); included by ReducedGaussian.jl in this order.
 
 # =========================================================================
 # RG window synthesis and process_day — mirrors the LL path
@@ -12,7 +12,7 @@
 
 Spectral synthesis → native fields → mass fix → dry conversion → level merge
 for one window. Results are left in `merged.m_merged`, `merged.hflux_merged`,
-`merged.cm_merged` and `work.sp` (surface pressure). No allocation.
+`work.sp` (surface pressure). The balanced window diagnoses `cm` later.
 
 When `qv_ws` is provided and `settings.mass_basis == :dry`, loads QV from the
 thermo file and interpolates it to RG cells; the window is then finished by

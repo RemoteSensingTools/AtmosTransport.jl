@@ -21,6 +21,7 @@ quick = [
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
     "core/test_structure.jl",
+    "core/test_undefined_names.jl",
     "core/test_physical_constants.jl",
     "core/test_readme_current.jl",
     "core/test_public_api_surface.jl",
@@ -46,7 +47,7 @@ quick = [
 ]
 
 [topics.health]
-description = "Package and repository hygiene: Aqua, JET, public API and docstrings, module READMEs, documentation links, environment variables, source revision, the test runner and these groups"
+description = "Package and repository hygiene: Aqua, JET, public API and docstrings, module READMEs, documentation links, environment variables, source revision, undefined global names, the test runner and these groups"
 files = [
     "core/test_aqua.jl",
     "core/test_jet.jl",
@@ -61,6 +62,7 @@ files = [
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
     "core/test_structure.jl",
+    "core/test_undefined_names.jl",
 ]
 paths = [
     "Project.toml",
@@ -349,10 +351,7 @@ files = [
     "core/test_era5_surface_reader.jl",
     "core/test_spectral_ring_synthesis.jl",
     "core/test_preprocessing_cache_io.jl",
-    "core/test_ll_spectral_unified_driver.jl",
-    "core/test_cs_spectral_unified_driver.jl",
-    "core/test_spectral_pole_rows.jl",
-    "core/test_rg_preprocessor_unified_driver.jl",
+    "core/test_spectral_targets.jl",
     "core/test_geos_reader.jl",
     "core/test_geos_cs_passthrough.jl",
     "core/test_geosfp_native_physics_fallback.jl",
@@ -363,12 +362,13 @@ files = [
 paths = [
     "src/Preprocessing/sources/**",
     "src/Preprocessing/Spectral/**",
-    "src/Preprocessing/reduced_*.jl",
+    "src/Preprocessing/Targets/ReducedGaussian/**",
     "src/Preprocessing/MassClosure/ring_poisson_balance.jl",
     "src/Preprocessing/Core/**",
     "src/Preprocessing/PhysicsInputs/era5_surface_reader.jl",
     "src/Preprocessing/transport_binary/{era5,geos,merra2}*.jl",
-    "src/Preprocessing/transport_binary/*_spectral.jl",
+    "src/Preprocessing/Targets/LatLon/*_spectral.jl",
+    "src/Preprocessing/Targets/CubedSphere/*_spectral.jl",
     "src/Preprocessing/sources/era5_grib_geometry.jl",
     "config/met_sources/**",
 ]

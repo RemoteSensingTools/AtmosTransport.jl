@@ -49,9 +49,9 @@ one that matches your downstream run:
 
 | Target | Topology-specific workspace |
 | --- | --- |
-| `LatLonTargetGeometry` | `LatLonSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/latlon_spectral.jl`) |
-| `ReducedGaussianTargetGeometry` | `ReducedGaussianSpectralWindowWorkspace` (`src/Preprocessing/reduced_window_buffer.jl`) |
-| `CubedSphereTargetGeometry` | `CubedSphereSpectralWindowWorkspace` (`src/Preprocessing/transport_binary/cubed_sphere_spectral.jl`) |
+| `LatLonTargetGeometry` | `LatLonSpectralWindowWorkspace` (`src/Preprocessing/Targets/LatLon/latlon_spectral.jl`) |
+| `ReducedGaussianTargetGeometry` | `ReducedGaussianSpectralWindowWorkspace` (`src/Preprocessing/Targets/ReducedGaussian/reduced_window_buffer.jl`) |
+| `CubedSphereTargetGeometry` | `CubedSphereSpectralWindowWorkspace` (`src/Preprocessing/Targets/CubedSphere/cubed_sphere_spectral.jl`) |
 
 All three workspaces subtype `AbstractWindowWorkspace{G, FT}` and are
 allocated once per day by `allocate_window_workspace`. The
@@ -154,7 +154,7 @@ the cross-polar column flux and change `bm` at every latitude. That
 happened until issue #58 (October 2026): the zeroing, once removed
 (`docs/resources/bug_archive/SESSION1_GRID_CM_FIX_2026-04-03.md`), had come
 back as a polar-CFL safeguard and stayed in the v4 spectral preprocessor.
-`test/core/test_spectral_pole_rows.jl` measures this with a solid-body
+`test/core/test_spectral_targets.jl` measures this with a solid-body
 rotation about an axis tilted 45° from the pole, one full-column layer, on
 96 × 48: for every face row it fits the ratio of the stored amounts to the
 rotation's and reports the worst ``|\text{ratio} − 1|``. Before the fix the

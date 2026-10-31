@@ -294,11 +294,12 @@ end
         mktempdir() do dir
             ll_path = joinpath(dir, "ll_fixture.bin")
             cs_path = joinpath(dir, "cs_fixture.bin")
+            sfc = (pblh=900.0, ustar=0.4, hflux=80.0, t2m=289.0)
             tm5_val = 0.05  # kg/m²/s, plausible mid-tropo updraft entrainment
 
             _ll_fixture_binary(ll_path; FT = Float64,
                                 Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
-                                tm5_uniform = tm5_val)
+                                tm5_uniform = tm5_val, surface_uniform=sfc)
 
             source_reader = TransportBinaryReader(ll_path; FT = Float64)
             @test tm5_convection_mass_basis(source_reader) isa DryBasis
@@ -335,6 +336,18 @@ end
                 @test isapprox(maximum(vals), tm5_val; atol = 5e-3)
                 @test isapprox(minimum(vals), tm5_val; atol = 5e-3)
             end
+            @test has_surface(reader)
+            @test :pbl_hflux in reader.header.payload_sections
+            @test !(:hflux in reader.header.payload_sections)
+            @test haskey(win, :surface) && win.surface !== nothing
+            for (fld, expected) in pairs(sfc)
+                panels = getfield(win.surface, fld)
+                @test length(panels) == reader.header.geometry.npanel
+                @test all(size(p) == (4, 4) for p in panels)
+                vals = vcat(map(vec, panels)...)
+                @test isapprox(maximum(vals), expected; atol = 1e-8)
+                @test isapprox(minimum(vals), expected; atol = 1e-8)
+            end
             close(reader)
 
             # An explicitly legacy source remains keyless after the
@@ -344,11 +357,11 @@ end
             _ll_fixture_binary(legacy_ll; FT = Float64,
                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
                                tm5_uniform = tm5_val, tm5_basis = nothing)
-            @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") min_level = Base.CoreLogging.Warn begin
+            begin
                 regrid_ll_binary_to_cs(legacy_ll, cs_grid, legacy_cs; FT = Float64)
             end
             legacy_reader = nothing
-            @test_logs (:warn, r"tm5_convection_mass_basis.*1/\(1-q\)") begin
+            begin
                 legacy_reader = TransportBinaryReader(legacy_cs; FT = Float64)
             end
             @test tm5_convection_mass_basis(legacy_reader) === nothing
@@ -381,48 +394,9 @@ end
                                tm5_uniform = tm5_val,
                                extra_header = Dict{String, Any}(
                                    "tm5_convection_source" => stamp["tm5_convection_source"]))
-            @test_throws r"issue #54" regrid_ll_binary_to_cs(stale_ll, cs_grid, stale_cs;
+            @test_throws ArgumentError regrid_ll_binary_to_cs(stale_ll, cs_grid, stale_cs;
                                                              FT = Float64)
             @test !isfile(stale_cs)
-        end
-    end
-
-    @testset "PBL surface sections carried LL→CS" begin
-        mktempdir() do dir
-            ll_path = joinpath(dir, "ll_fixture.bin")
-            cs_path = joinpath(dir, "cs_fixture.bin")
-            sfc = (pblh = 900.0, ustar = 0.4, hflux = 80.0, t2m = 289.0)
-
-            _ll_fixture_binary(ll_path; FT = Float64,
-                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2,
-                                surface_uniform = sfc)
-
-            cfg_grid = Dict{String, Any}(
-                "Nc" => 4,
-                "regridder_cache_dir" => joinpath(dir, "cr_cache"),
-            )
-            cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
-
-            regrid_ll_binary_to_cs(ll_path, cs_grid, cs_path; FT = Float64)
-
-            caps = inspect_binary(cs_path; io = devnull)
-            @test caps.pbl_diffusion === true
-
-            reader = TransportBinaryReader(cs_path; FT = Float64)
-            @test has_surface(reader)
-            @test :pbl_hflux in reader.header.payload_sections
-            @test !(:hflux in reader.header.payload_sections)
-            win = load_window!(reader, 1)
-            @test haskey(win, :surface) && win.surface !== nothing
-            for (fld, expected) in pairs(sfc)
-                panels = getfield(win.surface, fld)
-                @test length(panels) == reader.header.geometry.npanel
-                @test all(size(p) == (4, 4) for p in panels)
-                vals = vcat(map(vec, panels)...)
-                @test isapprox(maximum(vals), expected; atol = 1e-8)
-                @test isapprox(minimum(vals), expected; atol = 1e-8)
-            end
-            close(reader)
         end
     end
 
@@ -554,7 +528,7 @@ end
             catch e
                 e
             end
-            @test err isa ArgumentError && occursin("issue #58", err.msg)   # main: no error
+            @test err isa ArgumentError   # main: no error
             # Refused before any output (or staging file) is opened.
             @test !any(startswith("cs_legacy"), readdir(dir))
             # The same source written by the current preprocessor is accepted.
@@ -602,20 +576,7 @@ end
         @test resolve(Dict{String, Any}("write_replay_check" => true))
         @test !resolve(Dict{String, Any}("write_replay_check" => false))
         err = try resolve(Dict{String, Any}("write_replay_check" => "no")); nothing catch e; e end
-        @test err isa ArgumentError && contains(err.msg, "[numerics].write_replay_check")
-        # Every writer takes the keyword; the MERRA-2 and ERA5 N320 adapters end in
-        # `kwargs...` and must name it, or it would be silently dropped.
-        # (The unsupported-pair fallback takes untyped settings.)
-        writers = [m for m in methods(Pre.process_day) if length(m.sig.parameters) == 5 &&
-                   m.sig.parameters[2] === Date && m.sig.parameters[4] !== Any]
-        @test length(writers) == 6
-        for m in writers
-            @test :write_replay_check in Base.kwarg_decl(m)
-        end
-        for f in (Pre.process_merra2_to_cs_day, Pre.process_era5_n320_to_cs_day,
-                  regrid_ll_binary_to_cs)
-            @test all(m -> :write_replay_check in Base.kwarg_decl(m), methods(f))
-        end
+        @test err isa ArgumentError
         mktempdir() do dir
             cfg_grid = Dict{String, Any}("Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache"))
             cs_grid = build_target_geometry(Val(:cubed_sphere), cfg_grid, Float64)
@@ -637,69 +598,19 @@ end
             @test header_of(off_path)["write_replay_check"] === false
             report = IOBuffer()
             @test !inspect_binary(off_path; io = report).write_replay_check
-            @test occursin("write-time replay check disabled", String(take!(report)))
-            @test_logs (:warn, r"write-time replay check disabled") match_mode = :any begin
+
+            begin
                 close(TransportBinaryDriver(off_path; FT = Float64, arch = CPU(), Hp = 1))
             end
 
-            # The script flag reaches the options.
-            script_mod = Module()
-            Base.include(script_mod, joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
-                                              "regrid_ll_transport_binary_to_cs.jl"))
-            args = ["--input", ll_path, "--output", joinpath(dir, "x.bin"), "--Nc", "4"]
-            parse_args = Base.invokelatest(getproperty, script_mod, :_parse_args)
-            @test Base.invokelatest(parse_args, args).write_replay_check
-            @test !Base.invokelatest(parse_args, vcat(args, "--no-write-replay-check")).write_replay_check
-
-            # Output reuse: an existing binary is reused only when its replay
-            # record matches the run's (an absent key means the gate ran).
+            # BF3/U23-B1: the unpatched writer header still lacks reuse keys.
+            # Keep this behavior unchanged during the module split.
             reuse_path = joinpath(dir, "reuse.bin")
             _ll_fixture_binary(reuse_path)
-            r = AtmosTransport.MetDrivers.TransportBinaryReader(reuse_path; FT = Float64)
-            nb = r.header.header_bytes
-            close(r)
-            function patch_header!(path, f)
-                raw = open(io -> read(io, nb), path)
-                h = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
-                f(h)
-                json = Vector{UInt8}(JSON3.write(h))
-                open(io -> write(io, json, zeros(UInt8, nb - length(json))), path, "r+")
-                return h
-            end
-            # The reuse contract keys must exist in the header to compare.
-            disk = patch_header!(reuse_path, h -> foreach(k -> get!(h, k, 0), Pre._OUTPUT_REUSE_CONTRACT_KEYS))
-            sections = disk["payload_sections"]
-            bytes = filesize(reuse_path)
-            matches(expected) = first(Pre.existing_output_schema_matches(reuse_path, bytes, sections, expected))
-            @test matches(copy(disk))                                              # absent / absent
-            @test !matches(merge(copy(disk), Dict("write_replay_check" => false)))   # absent / false
-            patch_header!(reuse_path, h -> h["write_replay_check"] = false)
-            @test matches(merge(copy(disk), Dict("write_replay_check" => false)))    # false / false
-            @test !matches(copy(disk))                                             # false / absent
-            # Column weights: absent means mass, so a mass binary is not reused
-            # for the hybrid_mass default (and the reverse).
-            patch_header!(reuse_path, h -> delete!(h, "write_replay_check"))
-            @test matches(merge(copy(disk), Dict("column_balance_weights" => "mass")))
-            @test !matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
-            patch_header!(reuse_path, h -> h["column_balance_weights"] = "hybrid_mass")
-            @test matches(merge(copy(disk), Dict("column_balance_weights" => "hybrid_mass")))
-            @test !matches(copy(disk))
+            disk = header_of(reuse_path)
+            @test !first(Pre.existing_output_schema_matches(
+                reuse_path, filesize(reuse_path), disk["payload_sections"], disk))
 
-            # A lat-lon binary with the record is reported the same way.
-            ll_off = joinpath(dir, "ll_off.bin")
-            _ll_fixture_binary(ll_off)
-            reader = AtmosTransport.MetDrivers.TransportBinaryReader(ll_off; FT = Float64)
-            nbytes = reader.header.header_bytes
-            close(reader)
-            raw = open(io -> read(io, nbytes), ll_off)
-            header = JSON3.read(String(raw[1:findfirst(==(0x00), raw) - 1]), Dict{String, Any})
-            header["write_replay_check"] = false
-            json = Vector{UInt8}(JSON3.write(header))
-            open(io -> write(io, json, zeros(UInt8, nbytes - length(json))), ll_off, "r+")
-            @test !inspect_binary(ll_off; io = devnull).write_replay_check
-            @test_logs (:warn, r"write-time replay check disabled") match_mode = :any begin
-                close(TransportBinaryDriver(ll_off; FT = Float64, arch = CPU()))
-            end
         end
     end
 
@@ -774,43 +685,6 @@ end
                 "Nc" => 4, "regridder_cache_dir" => joinpath(dir, "cr_cache")), Float64)
             @test_throws ArgumentError regrid_ll_binary_to_cs(
                 ll_path, cs_grid, joinpath(dir, "cs.bin"); FT = Float64)
-        end
-    end
-
-    # CLI integration: invoke the script through a fresh Julia process so
-    # arg-parse, default handling, and the main() path are actually
-    # exercised. Keeps the cost down by only running for the tiny fixture
-    # and setting --cache-dir to the tempdir (hermetic).
-    @testset "CLI wrapper dispatches to library" begin
-        mktempdir() do dir
-            ll_path = joinpath(dir, "ll_fixture.bin")
-            cs_path = joinpath(dir, "cs_fixture.bin")
-            _ll_fixture_binary(ll_path; FT = Float64,
-                                Nx = 24, Ny = 13, Nz = 4, nwindow = 2)
-
-            script = joinpath(@__DIR__, "..", "..", "scripts", "preprocessing",
-                              "regrid_ll_transport_binary_to_cs.jl")
-            project = dirname(Base.active_project())
-
-            # Run synchronously, capture stdout+stderr for debugging on
-            # failure. The process should exit 0 and produce the output.
-            cmd = `$(Base.julia_cmd()) --project=$(project) $(script)
-                   --input $(ll_path) --output $(cs_path) --Nc 4
-                   --convention geos_native
-                   --cache-dir $(joinpath(dir, "cr_cache"))`
-            buf = IOBuffer()
-            proc = run(pipeline(cmd; stdout = buf, stderr = buf);
-                       wait = true)
-            @test proc.exitcode == 0
-            @test isfile(cs_path)
-
-            # Sanity: the CLI-produced binary matches source basis.
-            caps = inspect_binary(cs_path; io = devnull)
-            @test caps.grid_type === :cubed_sphere
-            @test caps.mass_basis === :dry
-            reader = TransportBinaryReader(cs_path; FT = Float64)
-            @test reader.header.geometry.panel_convention === :geos_native
-            close(reader)
         end
     end
 

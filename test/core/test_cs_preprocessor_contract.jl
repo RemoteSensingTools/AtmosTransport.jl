@@ -264,34 +264,6 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test isinf(diag.ratio)
     end
 
-    @testset "positivity: halo_width skips halo cells" begin
-        # Build a haloed buffer with the violation seeded in the halo region;
-        # the interior is clean (all-zero fluxes, m = 1e9), so positivity
-        # must report ok = true.
-        FT = Float64
-        Nc = 4
-        Nz = 3
-        Hp = 1
-        m = ntuple(_ -> begin
-            arr = fill(FT(1e9), Nc + 2Hp, Nc + 2Hp, Nz)
-            arr[1, 1, 1] = -1.0  # in the halo
-            arr
-        end, 6)
-        am = ntuple(_ -> zeros(FT, Nc + 2Hp + 1, Nc + 2Hp, Nz), 6)
-        bm = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp + 1, Nz), 6)
-        cm = ntuple(_ -> zeros(FT, Nc + 2Hp, Nc + 2Hp, Nz + 1), 6)
-        diag = verify_substep_positivity_cs!(m, am, bm, cm;
-                                              cfl_limit = 0.95, halo_width = Hp)
-        @test diag.ok
-        @test diag.ratio == 0.0
-        # Same buffer with halo_width = 0 must catch the same violation.
-        diag0 = verify_substep_positivity_cs!(m, am, bm, cm;
-                                               cfl_limit = 0.95, halo_width = 0)
-        @test !diag0.ok
-        @test isinf(diag0.ratio)
-        @test diag0.location == (1, 1, 1, 1)
-    end
-
     # ------------------------------------------------------------------
     # verify_cs_window_contract!
     # ------------------------------------------------------------------
@@ -343,210 +315,9 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test result.positivity.location == (2, 1, 1, 1)
     end
 
-    # ------------------------------------------------------------------
-    # accumulator
-    # ------------------------------------------------------------------
-
-    @testset "accumulator: tracks worst window across the loop" begin
-        worst = init_cs_positivity_accumulator()
-        @test worst.ratio == 0.0
-        @test worst.direction === :none
-        @test worst.win == 0
-        @test worst.location == (0, 0, 0, 0)
-
-        worst = update_cs_positivity_accumulator(worst,
-            (direction = :x, ratio = 0.3, location = (1, 2, 3, 4), ok = true), 5)
-        @test worst.ratio ≈ 0.3
-        @test worst.direction === :x
-        @test worst.win == 5
-        @test worst.location == (1, 2, 3, 4)
-
-        # Smaller ratio is ignored — the older worst is preserved.
-        worst = update_cs_positivity_accumulator(worst,
-            (direction = :y, ratio = 0.1, location = (2, 1, 1, 1), ok = true), 6)
-        @test worst.ratio ≈ 0.3
-        @test worst.win == 5
-
-        worst = update_cs_positivity_accumulator(worst,
-            (direction = :z, ratio = Inf, location = (3, 2, 2, 2), ok = false), 7)
-        @test isinf(worst.ratio)
-        @test worst.direction === :z
-        @test worst.win == 7
-        @test worst.location == (3, 2, 2, 2)
-    end
-
-    @testset "accumulator: direction === nothing is normalized to :none" begin
-        worst = update_cs_positivity_accumulator(init_cs_positivity_accumulator(),
-            (direction = nothing, ratio = 0.5, location = (1, 1, 1, 1), ok = true), 1)
-        @test worst.direction === :none
-        @test worst.ratio ≈ 0.5
-    end
-
-    # ------------------------------------------------------------------
-    # summarize_cs_positivity_status
-    # ------------------------------------------------------------------
-
-    @testset "summary: ratio within limit returns nothing" begin
-        worst = (ratio = 0.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        @test summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                              steps_per_window = 8) === nothing
-    end
-
-    @testset "summary: finite violation + require=true errors with rescue advice" begin
-        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        err = try
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = true)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        # The error message must include the recommended steps_per_window
-        # (ceil(1.5 / 0.95) * 8 = 16) so the operator can act on it.
-        @test occursin("steps_per_window=16", err.msg)
-    end
-
-    @testset "summary: finite violation + require=false warns and returns nothing" begin
-        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        r = with_quiet_logger() do
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = false)
-        end
-        @test r === nothing
-    end
-
-    @testset "summary: Inf ratio + require=true throws ErrorException, NOT InexactError (round-2 fix)" begin
-        # Before the round-2 fix this branch hit `ceil(Int, Inf)` and threw
-        # `InexactError(:Int64, Inf)` BEFORE the intended error/warn path.
-        # That broke the `require_substep_positivity = false` escape hatch for
-        # exactly the failure modes that produce `Inf`/`NaN` ratios — the only
-        # ones an operator might legitimately want to record-and-continue.
-        worst = (ratio = Inf, direction = :z, win = 4, location = (2, 3, 3, 2))
-        err = try
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = true)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test !(err isa InexactError)
-        # Round-2 used a dedicated "non-finite" message; round-3 merged the
-        # non-finite and finite-but-pathologically-large branches under one
-        # "no representable rescue" message so both are handled uniformly.
-        @test occursin("no representable", err.msg)
-    end
-
-    @testset "summary: Inf ratio + require=false warns (no InexactError) (round-2 fix)" begin
-        worst = (ratio = Inf, direction = :z, win = 4, location = (2, 3, 3, 2))
-        r = with_quiet_logger() do
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = false)
-        end
-        @test r === nothing
-    end
-
-    @testset "summary: quarantine_path is deleted on error" begin
-        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        tmp = tempname() * ".bin"
-        write(tmp, b"contents")
-        @test isfile(tmp)
-        @test_throws ErrorException summarize_cs_positivity_status(
-            worst; cfl_limit = 0.95, steps_per_window = 8,
-            require_substep_positivity = true, quarantine_path = tmp,
-        )
-        @test !isfile(tmp)
-    end
-
-    @testset "summary: missing quarantine_path is benign" begin
-        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        missing_path = tempname() * ".bin"
-        @test !isfile(missing_path)
-        @test_throws ErrorException summarize_cs_positivity_status(
-            worst; cfl_limit = 0.95, steps_per_window = 8,
-            require_substep_positivity = true, quarantine_path = missing_path,
-        )
-    end
-
-    # ------------------------------------------------------------------
-    # Round-3: the `isfinite(worst.ratio)` guard from round-2 only covered
-    # `Inf`/`NaN`; `ceil(Int, ratio / cfl_limit)` could still throw
-    # `InexactError` for finite-but-huge ratios (e.g. `1e308`) or when an
-    # invalid `cfl_limit = 0.0` drives the divide to `Inf`. The fix
-    # routes both through the same "no representable rescue" branch and
-    # validates `0 < cfl_limit <= 1` at TOML resolve time.
-    # ------------------------------------------------------------------
-
-    @testset "summary: finite-but-pathologically-large ratio + require=true (round-3 fix)" begin
-        # ceil(Int, 1e308 / 0.95) overflows Int — the pre-round-3 path
-        # threw InexactError before the intended error/warn branch.
-        worst = (ratio = 1e308, direction = :z, win = 4, location = (2, 3, 3, 2))
-        err = try
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = true)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test !(err isa InexactError)
-        @test occursin("no representable", err.msg)
-    end
-
-    @testset "summary: finite-but-pathologically-large ratio + require=false (round-3 fix)" begin
-        worst = (ratio = 1e308, direction = :z, win = 4, location = (2, 3, 3, 2))
-        r = with_quiet_logger() do
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = false)
-        end
-        @test r === nothing
-    end
-
-    @testset "summary: cfl_limit = 0.0 + require=true (round-3 fix)" begin
-        # 1.5 / 0.0 = Inf → ceil(Int, Inf) hit InexactError pre-round-3.
-        # The entrypoint resolver now rejects cfl_limit = 0 at TOML load
-        # time, but the summary helper is also called from inspectors and
-        # direct callers, so it must defend itself.
-        worst = (ratio = 1.5, direction = :x, win = 1, location = (1, 1, 1, 1))
-        err = try
-            summarize_cs_positivity_status(worst; cfl_limit = 0.0,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = true)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test !(err isa InexactError)
-        @test occursin("no representable", err.msg)
-    end
-
-    @testset "summary: boundary ratio_factor at typemax(Int) ÷ steps_per_window (round-3)" begin
-        # The Float64 representation of `typemax(Int) ÷ 8` is at the edge
-        # of Int64 exactness; the guard must route the case through the
-        # "no representable rescue" branch rather than risk silent
-        # `ceil(Int, _) * 8` overflow.
-        max_factor = typemax(Int) ÷ 8
-        worst = (ratio = Float64(max_factor) * 0.95, direction = :z, win = 1,
-                 location = (1, 1, 1, 1))
-        err = try
-            summarize_cs_positivity_status(worst; cfl_limit = 0.95,
-                                            steps_per_window = 8,
-                                            require_substep_positivity = true)
-            nothing
-        catch e
-            e
-        end
-        @test err isa ErrorException
-        @test !(err isa InexactError)
-    end
+    # The accumulator, summary, contract-constructor and direct-wrapper
+    # policy checks for all three topologies live in the shared testsets at
+    # the end of this file.
 
     # ------------------------------------------------------------------
     # Round-3: TOML-resolver validation of `[numerics].positivity_cfl_limit`.
@@ -556,148 +327,9 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test _resolve_positivity_cfl_limit(Dict{String, Any}()) == 0.95
     end
 
-    @testset "entrypoint: valid cfl_limit values are accepted" begin
-        for v in (0.1, 0.5, 0.95, 1.0)
-            cfg = Dict("numerics" => Dict("positivity_cfl_limit" => v))
-            @test _resolve_positivity_cfl_limit(cfg) == v
-        end
-    end
-
-    @testset "entrypoint: invalid cfl_limit values are rejected at TOML load" begin
-        for v in (0.0, -0.5, 1.5, Inf, -Inf, NaN)
-            cfg = Dict("numerics" => Dict("positivity_cfl_limit" => v))
-            err = try
-                _resolve_positivity_cfl_limit(cfg)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-            @test occursin("positivity_cfl_limit", err.msg)
-            @test occursin("0, 1", err.msg)
-        end
-    end
-
-    # ------------------------------------------------------------------
-    # CubedSphereContract construction validation (codex round-1 — Inf
-    # would silently disable replay; NaN would fail every window late).
-    # The typed concrete validates every policy knob at construction so
-    # an invalid TOML value fails BEFORE any window is preprocessed.
-    # ------------------------------------------------------------------
-
-    @testset "CubedSphereContract: construction validates policy fields" begin
-        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
-            @test_throws ErrorException CubedSphereContract{Float64}(
-                replay_tol = bad, positivity_cfl_limit = 0.95,
-                steps_per_window = 1)
-        end
-        @test_throws ErrorException CubedSphereContract{Float64}(
-            replay_tol = 1e-12, positivity_cfl_limit = 0.0,
-            steps_per_window = 1)
-        @test_throws ErrorException CubedSphereContract{Float64}(
-            replay_tol = 1e-12, positivity_cfl_limit = 1.5,
-            steps_per_window = 1)
-        @test_throws ErrorException CubedSphereContract{Float64}(
-            replay_tol = 1e-12, positivity_cfl_limit = NaN,
-            steps_per_window = 1)
-        @test_throws ErrorException CubedSphereContract{Float64}(
-            replay_tol = 1e-12, positivity_cfl_limit = 0.95,
-            steps_per_window = 0)
-        @test_throws ErrorException CubedSphereContract{Float64}(
-            replay_tol = 1e-12, positivity_cfl_limit = 0.95,
-            steps_per_window = 1, halo_width = -1)
-        c = CubedSphereContract{Float64}(replay_tol = 1e-12,
-                                          positivity_cfl_limit = 0.95,
-                                          steps_per_window = 8)
-        @test c isa AbstractWindowContract
-        @test c.replay_tol == 1e-12
-        @test c.positivity_cfl_limit == 0.95
-        @test c.require_substep_positivity == true
-        @test c.steps_per_window == 8
-        @test c.halo_width == 0
-        @test c.worst.ratio == 0.0
-    end
-
-    # ------------------------------------------------------------------
-    # Direct-wrapper policy validation (codex review round 3 of f5224a6).
-    # The CS production paths in `cubed_sphere_spectral.jl`,
-    # the GEOS workflow, and `cubed_sphere_regrid.jl` call
-    # `verify_cs_window_contract!` / `verify_substep_positivity_cs!` /
-    # `verify_write_replay_cs!` directly without going through
-    # `CubedSphereContract`. Codex reproduced a bypass where
-    # `replay_tol = Inf` returned passing replay; the wrappers must
-    # validate independently of the contract constructor.
-    # ------------------------------------------------------------------
-
-    @testset "direct wrapper: invalid replay_tol is rejected at verify_cs_window_contract!" begin
-        w = build_clean_cs_window(Float64)
-        for bad in (Inf, NaN, 0.0, -1e-12, -Inf)
-            err = try
-                verify_cs_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
-                                            w.steps, 1;
-                                            replay_tol = bad,
-                                            positivity_cfl_limit = 0.95)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-            @test occursin("replay_tol", err.msg)
-        end
-    end
-
-    @testset "direct wrapper: invalid positivity_cfl_limit is rejected at verify_cs_window_contract!" begin
-        w = build_clean_cs_window(Float64)
-        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
-            err = try
-                verify_cs_window_contract!(w.m_cur, w.am, w.bm, w.cm, w.m_next,
-                                            w.steps, 1;
-                                            replay_tol = 1e-12,
-                                            positivity_cfl_limit = bad)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-            @test occursin("cfl_limit", err.msg)
-        end
-    end
-
-    @testset "direct wrapper: invalid cfl_limit is rejected at verify_substep_positivity_cs!" begin
-        w = build_clean_cs_window(Float64)
-        for bad in (Inf, NaN, 0.0, -0.1, 1.5)
-            err = try
-                verify_substep_positivity_cs!(w.m_cur, w.am, w.bm, w.cm;
-                                                cfl_limit = bad)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-            @test occursin("cfl_limit", err.msg)
-        end
-    end
-
-    @testset "CubedSphereContract: scratch is lazily allocated once and reused (codex round-2)" begin
-        # P2 watchpoint closed: the trait `verify_window!` allocates
-        # the panel-shared `_replay_scratch` on the first call and reuses
-        # it thereafter. Eliminates the per-window `Array{Float64}`
-        # allocation the original `verify_window_continuity_cs` would
-        # produce inside the legacy convenience wrapper.
-        w = build_clean_cs_window(Float64)
-        contract = CubedSphereContract{Float64}(replay_tol = 1e-12,
-                                                 positivity_cfl_limit = 0.95,
-                                                 steps_per_window = w.steps)
-        @test contract._replay_scratch === nothing
-        # Build a window NamedTuple matching the typed-concrete surface.
-        window = (m_cur = w.m_cur, am = w.am, bm = w.bm,
-                  cm = w.cm, m_next = w.m_next)
-        AtmosTransport.Preprocessing.verify_window!(window, contract, 1)
-        @test contract._replay_scratch isa AtmosTransport.MetDrivers.ReplayScratch{Array{Float64, 3}}
-        @test size(contract._replay_scratch) == size(w.m_cur[1])
-        ds = contract._replay_scratch
-        AtmosTransport.Preprocessing.verify_window!(window, contract, 2)
-        @test contract._replay_scratch === ds
+    @testset "entrypoint: invalid cfl_limit is rejected at TOML load" begin
+        @test_throws ErrorException _resolve_positivity_cfl_limit(
+            Dict("numerics" => Dict("positivity_cfl_limit" => 0.0)))
     end
 
     @testset "CubedSphereContract: write_replay_on = false runs only the positivity gate" begin
@@ -718,5 +350,94 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
                                                                 cfl_limit = 0.95, m_next = bad_next)
         @test diag.positivity.ratio > verify_substep_positivity_cs!(w.m_cur, w.am, w.bm, w.cm;
                                                                      cfl_limit = 0.95).ratio
+    end
+end
+
+@testset "Shared target contract policy and worst-window lifecycle" begin
+    P = AtmosTransport.Preprocessing
+    for (Contract, init, update, summarize, N) in (
+        (P.LatLonContract, P.init_ll_positivity_accumulator,
+         P.update_ll_positivity_accumulator, P.summarize_ll_positivity_status, 3),
+        (P.CubedSphereContract, P.init_cs_positivity_accumulator,
+         P.update_cs_positivity_accumulator, P.summarize_cs_positivity_status, 4),
+        (P.ReducedGaussianContract, P.init_rg_positivity_accumulator,
+         P.update_rg_positivity_accumulator, P.summarize_rg_positivity_status, 2))
+        extra = N == 2 ? (; face_left=Int32[1], face_right=Int32[2]) : (;)
+        for FT in (Float32, Float64)
+            for tol in (0.0, -1.0, Inf, NaN)
+                @test_throws ErrorException Contract{FT}(; replay_tol=tol, steps_per_window=2, extra...)
+            end
+            for limit in (0.0, -0.1, 1.01, Inf, NaN)
+                @test_throws ErrorException Contract{FT}(; replay_tol=1e-5,
+                    positivity_cfl_limit=limit, steps_per_window=2, extra...)
+            end
+            @test_throws ErrorException Contract{FT}(; replay_tol=1e-5, steps_per_window=0, extra...)
+        end
+        location = ntuple(identity, N)
+        worst = update(init(), (ratio=0.7, direction=:x, location=location), 2)
+        @test worst.ratio == 0.7 && worst.win == 2 && worst.location == location
+        @test update(worst, (ratio=0.7, direction=:z, location=location), 3) == worst
+        @test update(worst, (ratio=0.1, direction=:z, location=location), 4) == worst
+        contract = Contract{Float64}(; replay_tol=1e-5, steps_per_window=2, extra...)
+        P.update_accumulator!(contract, (ratio=0.7, direction=:x, location=location), 2)
+        @test contract.worst == worst
+        @test with_quiet_logger(() -> P.summarize_status!(contract)) === nothing
+        for ratio in (1.5,), require_positive in (true, false)
+            bad = merge(worst, (; ratio))
+            call_summary() = with_quiet_logger() do
+                summarize(bad; cfl_limit=0.95, steps_per_window=2,
+                          require_substep_positivity=require_positive)
+            end
+            if require_positive
+                @test_throws ErrorException call_summary()
+            else
+                @test call_summary() === nothing
+            end
+        end
+        mktempdir() do dir
+            path=joinpath(dir,"invalid.bin"); write(path, "invalid")
+            @test_throws ErrorException with_quiet_logger() do
+                summarize(merge(worst,(;ratio=1.5)); cfl_limit=0.95,
+                          steps_per_window=2, quarantine_path=path)
+            end
+            @test !isfile(path)
+            write(path,"diagnostic")
+            @test with_quiet_logger() do
+                summarize(merge(worst,(;ratio=1.5)); cfl_limit=0.95,
+                          steps_per_window=2, require_substep_positivity=false,
+                          quarantine_path=path) === nothing
+            end
+            @test isfile(path)
+        end
+    end
+    for bad in (-1.0, Inf, NaN)
+        @test_throws ErrorException P.ReducedGaussianContract{Float64}(;
+            replay_tol=1e-5, steps_per_window=2, boundary_stub_tol=bad,
+            face_left=Int32[1], face_right=Int32[2])
+    end
+    @test_throws ErrorException P.ReducedGaussianContract{Float64}(;
+        replay_tol=1e-5, steps_per_window=2,
+        face_left=Int32[1,2], face_right=Int32[2])
+end
+
+@testset "Target gate entry points reject invalid numerical policy" begin
+    P=AtmosTransport.Preprocessing
+    m=ones(2,2,1); am=zeros(3,2,1); bm=zeros(2,3,1); cm=zeros(2,2,2)
+    ll(tol, limit)=P.verify_ll_window_contract!(m,am,bm,cm,m,1,1;
+        replay_tol=tol, positivity_cfl_limit=limit)
+    cs(tol, limit)=P.verify_cs_window_contract!((m,),(am,),(bm,),(cm,),(m,),1,1;
+        replay_tol=tol, positivity_cfl_limit=limit)
+    rg(tol, limit)=P.verify_rg_window_contract!(ones(2,1),zeros(1,1),zeros(2,2),
+        ones(2,1),Int32[1],Int32[2],1,1; replay_tol=tol, positivity_cfl_limit=limit)
+    for check in (ll,cs,rg), bad in (0.0,-1.0,Inf,NaN)
+        @test_throws ErrorException check(bad,0.95)
+        @test_throws ErrorException check(1e-5,bad)
+    end
+    scans=(limit -> P.verify_substep_positivity_ll!(m,am,bm,cm;cfl_limit=limit),
+           limit -> P.verify_substep_positivity_cs!((m,),(am,),(bm,),(cm,);cfl_limit=limit),
+           limit -> P.verify_substep_positivity_rg!(ones(2,1),zeros(1,1),zeros(2,2),
+               Int32[1],Int32[2];cfl_limit=limit))
+    for scan in scans, bad in (0.0,-1.0,1.01,Inf,NaN)
+        @test_throws ErrorException scan(bad)
     end
 end

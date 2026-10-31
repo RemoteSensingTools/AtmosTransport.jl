@@ -1,4 +1,3 @@
 # Existing debt only; resolved entries removed by the owning cleanup.
 [allow]
 "src/Preprocessing/transport_binary/geos_cs_omega.jl|8a6cfbc26a7036d42effb6dc60d9ae1e66c82d3d970fc41e8e5c6e528d9706a3" = "P1 baseline: src/Preprocessing/transport_binary/geos_cs_omega.jl:416: unattached docstring; remove this allowance when the owning cleanup lands."
-"src/Preprocessing/transport_binary/writer_adapters.jl|b31e86e4c35abb92a264fed7586f67da82222b468e3be0747a1757774edb286a" = "P1 baseline: src/Preprocessing/transport_binary/writer_adapters.jl:1: unattached docstring; remove this allowance when the owning cleanup lands."
