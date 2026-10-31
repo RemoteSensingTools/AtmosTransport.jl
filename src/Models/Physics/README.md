@@ -14,7 +14,9 @@ refresh methods dispatch on Runner's `DrivenSimulation` and Core's
   operator composition. Each binary is validated independently.
 - `RuntimePhysicsMetadata.jl`: physics and met/binary provenance attributes.
 - `driven_physics_refresh.jl`: per-window dz/Kz/convection refresh and midpoint
-  forcing; the one-step-window rule remains unchanged.
+  forcing; the one-step-window rule remains unchanged. `_refreshes_fluxes`
+  says at which steps `_refresh_forcing!` rewrites the face fluxes (a
+  window's first step, or every step when interpolated).
 
 ## Depends on
 
@@ -39,5 +41,6 @@ InitialConditionIO and InputStaging now import directly from ConfigChecks.
 
 ## Forward<->adjoint mirrors
 
-Core's `cs_adjoint_inputs` invokes production forcing refresh. This folder
-contains no separate adjoint arithmetic; forcing is captured for replay.
+Core's `cs_adjoint_inputs` invokes production forcing refresh and copies the
+fluxes exactly when `_refreshes_fluxes` says production rewrote them. This
+folder contains no separate adjoint arithmetic; forcing is captured for replay.

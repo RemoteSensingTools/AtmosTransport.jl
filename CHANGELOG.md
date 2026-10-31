@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **`cs_adjoint_inputs` copies the face fluxes once per met window.** It
+  copied `am`, `bm` and `cm` at every step, although production rewrites them
+  only at a window's first step (window-constant fluxes); the steps of a
+  window now reference one copy (`panels_am_steps[s] === panels_am_steps[s +
+  1]` inside a window), and fluxes interpolated within the window are still
+  copied every step. The adjoint's replay builds one flux state per shared
+  set, so `flux_scale ≠ 1` scales each set once instead of copying every
+  step. The captures of a MERRA-2 day (Float32; measured bytes per flux set
+  times the steps or windows of the day) hold 1.16 instead of 10.0 GB of
+  fluxes at C90 (207 steps) and 4.34 instead of 73.2 GB at C180 (405 steps),
+  in the memory of the simulation's backend (host or GPU). Gradients are
+  bit-identical. The adjoint
+  tape's bitwise gate gains two cases whose inputs `cs_adjoint_inputs`
+  captures from a production simulation (CFL subcycles, full-window flux
+  scaling, CMFMC sub-steps, per-window forcing and layer thickness; the
+  binary window contract with a window-end reset); their digests are recorded
+  from main.
 - **The 4D-Var evaluation runs the forward model once.** The forward run of
   `cs_surface_flux_4dvar` that samples the observations now also records what
   the reverse pass needs (the tape with `FullCheckpoint`, the K-step

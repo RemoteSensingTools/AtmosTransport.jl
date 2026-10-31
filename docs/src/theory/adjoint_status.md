@@ -121,9 +121,11 @@ hooks of the production step (`AbstractStepRecorder`; production passes
   rejects, before recording, every stage or operator without a record and an
   adjoint (`adjoint_support(x)` is the trait), naming it.
 - `cs_adjoint_inputs(sim; tracer)` captures the adjoint's inputs from a
-  production `DrivenSimulation` (per-step face fluxes as production refreshes
-  them, per-window convection forcing, diffusion layer thickness and Kz,
-  emission rates, the schedule, fresh workspaces). Capture rejects initial nonzero
+  production `DrivenSimulation` (the face fluxes of every step as production
+  refreshes them, one copy per met window that the window's steps share, or
+  one per step when they are interpolated within the window; per-window
+  convection forcing, diffusion layer thickness and Kz, emission rates, the
+  schedule, fresh workspaces). Capture rejects initial nonzero
   compensation or carries and valid CMFMC CFL caches, including models continued
   across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
   operators and retains chemistry. Reset windows and targets use the model backend.
@@ -139,7 +141,9 @@ convection, both diffusion couplings, diffusion without surface sources and
 both reset modes. Each case compares the forward replay, the tape recording and
 a restart from a checkpoint inside a met window with the production
 `DrivenSimulation` (`==` in one thread), Full/Stride/Revolve footprints with
-each other, and, on a subset, footprints and the initial-condition sensitivity
+each other, the captured fluxes with production's at every step (one copy per
+met window; shared and per-step copies give the same footprints) and, on a
+subset, footprints and the initial-condition sensitivity
 with central differences of the production simulation (Upwind ``\sim
 10^{-14}``, monotone PPM ``4\times10^{-12}``, Lin–Rood ``5\times10^{-11}``
 relative).
@@ -195,7 +199,7 @@ system. A file system that cannot reserve blocks for in-place writes (no
 
 ### Bitwise gate of the tape
 
-`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of seven
+`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of nine
 configurations in a single-threaded subprocess
 (`test/helpers/cs_adjoint_tape_harness.jl`): upwind, unlimited slopes and
 PPM, monotone and CW84 PPM, Float64 and Float32, TM5, CMFMC and CMFMC-matrix
@@ -215,8 +219,13 @@ also evaluate every observation operator of the 4D-Var (a time window, placed
 points by height and by pressure, averaging-kernel columns with the rebin and
 the hat projection, a cell average, a column the surface-pressure screen
 leaves out, so that the reverse pass starts before the end of the tape, and a
-co-sample after it), with background terms and in the preconditioned space. The full matrix of 50
-configurations is the opt-in
+co-sample after it), with background terms and in the preconditioned space.
+Two others take their inputs from `cs_adjoint_inputs` of a production
+`DrivenSimulation` with rough met windows, so the gate also covers the
+capture: each met window's shared fluxes under CFL subcycles, full-window flux
+storage scaled per window, CMFMC sub-steps and per-window diffusion layer
+thickness, and under the binary window contract with a window-end reset. The
+full matrix (50 configurations and the two captured ones) is the opt-in
 `test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
 
 ### Inversion scaffold

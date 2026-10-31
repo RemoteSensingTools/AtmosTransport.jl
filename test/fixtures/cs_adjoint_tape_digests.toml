@@ -1,5 +1,41 @@
 # Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
-# recorded from main (0b09e749d) on the [host] below; see test/README.md.
+# recorded from main (e182ba100) on the [host] below; see test/README.md.
+
+[cases.captured_cw84_tm5win_boundary_vmr.footprint]
+footprints = "2409503a14d9f1b2495e43cb7cf607d87bc04886"
+initial_adjoint = "0273d5c61dc14ef439edfdb022779c0de9dd7f61"
+
+[cases.captured_cw84_tm5win_boundary_vmr.fourdvar]
+cost = "c1b682eead572007d71eb073ba43e6d03730f538"
+gradients = "0cb4b18314972b2d03d7b847ef2042950523cce9"
+simulated = "25c49fecc8db91e487e4939d88951efe2a73b96d"
+
+[cases.captured_cw84_tm5win_boundary_vmr.jacobian]
+footprints = "4d3ea80295b25ff5c3d6def4749a3a6b1473307e"
+initial_adjoint = "094b75b868845d9ee0ffa86c8a501ecf90ccaf65"
+windows = "334bf3fb0934a9e974664c63c5902241e1c63d55"
+
+[cases.captured_cw84_tm5win_boundary_vmr.seeded]
+footprints = "bba633bff27160e0ed9d19e77df48cc120e89c20"
+initial_adjoint = "9927b8d12e4a0a110697abc7120cc8fac6730689"
+
+[cases.captured_monotone_cmfmcsub_split_mass_cfl.footprint]
+footprints = "ca04e3f2fe957cb7edd24cef1efa4e3a6d3f0fec"
+initial_adjoint = "596bece02b102917be12a51002f8ee6bca2007fc"
+
+[cases.captured_monotone_cmfmcsub_split_mass_cfl.fourdvar]
+cost = "890466d086463b76209a6911439a6ab9ef9802ec"
+gradients = "74284e74e1161d5396250dc735928ee1cd2fc455"
+simulated = "9669642111178f2e7e9585fc41dc7993a30afba6"
+
+[cases.captured_monotone_cmfmcsub_split_mass_cfl.jacobian]
+footprints = "b0f138938bbbd8e610f6b6795e00b844a82d8251"
+initial_adjoint = "0e6925ca01323fffa6af100b3787b3efb49fff87"
+windows = "3d8c2422f8945b6a7386af9e8096dafc8591cae4"
+
+[cases.captured_monotone_cmfmcsub_split_mass_cfl.seeded]
+footprints = "e7fc7ca724272e0e85be04bb853f0b8802fe3e1b"
+initial_adjoint = "f44a50f7e8de1eff38aa0e6c7ec6814161074e4f"
 
 [cases.f32_cw84_matrixwin_split_none.footprint]
 footprints = "9f036e24e0d090e6872045b0e11bf7ac31c61d33"

@@ -13,7 +13,9 @@ include order. `TransportModel` and `DrivenSimulation` keep their old paths.
 - `driven_stepping.jl`: driven constructor, window advance, surface-flux
   staging, plan phases, `run_window!` and `run!`.
 - `adjoint_schedule.jl`: adjoint support, `CSStepSchedule(sim)`,
-  `cs_adjoint_inputs`, fresh persistent-state checks and capture.
+  `cs_adjoint_inputs`, fresh persistent-state checks and capture (one copy
+  of the face fluxes each time production rewrites them, shared by the steps
+  of a met window).
 
 ## Depends on
 

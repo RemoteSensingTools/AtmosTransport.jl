@@ -150,7 +150,9 @@ the reverse walk lives in `../Adjoints/Footprint/ReverseLoop.jl`.
   `TracerMassRead()` (one shared cache gave the kernel `m === rm`, issue #57).
 - Only staged slots are copied. Flux tuples (`_CSSweepRecord.panels_flux`)
   and forcing/operator objects are kept by reference, so callers must not
-  change them before the reverse pass ends.
+  change them before the reverse pass ends. The steps of a met window
+  captured by `cs_adjoint_inputs` share one flux tuple, so their records
+  reference the same arrays.
 - `RevolveCheckpoint` is plain bisection, not optimal binomial Revolve.
   Every recorded step starts with production's step-start halo refresh, so a
   window that restarts at a step boundary records the states of the full

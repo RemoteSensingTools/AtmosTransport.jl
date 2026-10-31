@@ -10,6 +10,9 @@
 #   adjoint's forward replay and its tape recording reproduce the production
 #   run BIT FOR BIT, and so do the replays of the Stride and Revolve
 #   checkpoint drivers (restarts inside met windows).
+# * Capture: `cs_adjoint_inputs` copies the face fluxes each time production
+#   rewrites them (once per met window, every step when interpolated), bit for
+#   bit production's; shared and per-step copies give the same footprints.
 # * OF-114: with `physics_cadence = :window` (the default) production runs
 #   convection once per met window; the replay matches it, and the old
 #   per-step composition does not.
@@ -99,6 +102,63 @@ const EXTRA_CASES = (
         @test count(op -> op isa AT.Tape._CSConvectionRecord, r.ops) == nconv
         @test count(op -> op isa AT.Tape._CSMidpointRecord, r.ops) == (c.emissions ? n : 0)
     end
+end
+
+# ---------------------------------------------------------------------------
+# Capture: one copy of the face fluxes each time production rewrites them
+# ---------------------------------------------------------------------------
+
+_flux_sets(inp) = [(inp.am[s], inp.bm[s], inp.cm[s]) for s in eachindex(inp.am)]
+_unshared(v) = [map(copy, x) for x in v]
+
+@testset "cs_adjoint_inputs shares each met window's fluxes" begin
+    for c in (Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :split,
+                   cadence = :substep, contract = false, vary_ps = true,
+                   flux_kind = :full_window_mass_amount),
+              Case(conv = :tm5, diffusion = :boundary, reset = :preserve_vmr))
+        inp = _adjoint_inputs(c)
+        # The fluxes each production step read (nothing writes them between
+        # the step and the next refresh).
+        sim = _simulation(c)
+        production = Any[]
+        while sim.iteration < sim.final_iteration
+            AT.step!(sim)
+            push!(production, map(f -> map(copy, f), (sim.model.fluxes.am, sim.model.fluxes.bm,
+                                                      sim.model.fluxes.cm)))
+        end
+        sets = _flux_sets(inp)
+        @test all(isequal(sets[s], production[s]) for s in eachindex(sets))
+        # The steps of a window reference one copy; every window has its own.
+        window_first = cumsum([1; c.steps[1:end-1]])
+        @test all((sets[s] === sets[s - 1]) == !(s in window_first) for s in 2:length(sets))
+        @test length(unique(objectid, sets)) == length(c.steps)
+
+        # Shared and per-step copies give the same footprints, also with a
+        # `flux_scale` (the replay scales each shared set once).
+        objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
+        for flux_scale in (1.0, 0.5)
+            replay = _replay(inp; flux_scale)
+            @test length(unique(objectid, replay.fluxes)) == length(c.steps)
+            @test all(isequal(replay.fluxes[s].am, map(a -> flux_scale .* a, inp.am[s]))
+                      for s in eachindex(inp.am))
+            # Without a scale the replay references the captured arrays.
+            @test all((replay.fluxes[s].am === inp.am[s]) == isone(flux_scale)
+                      for s in eachindex(inp.am))
+            footprint(am, bm, cm) = AT.cs_surface_emission_footprint(
+                inp.rm0, inp.m0, am, bm, cm, MESH, objective; _footprint_kwargs(inp)..., flux_scale)
+            shared = footprint(inp.am, inp.bm, inp.cm)
+            copied = footprint(_unshared(inp.am), _unshared(inp.bm), _unshared(inp.cm))
+            @test all(exact(shared.footprints[s][p], copied.footprints[s][p])
+                      for s in eachindex(copied.footprints), p in 1:6)
+            @test all(exact(shared.initial_adjoint[p], copied.initial_adjoint[p]) for p in 1:6)
+        end
+    end
+
+    # Fluxes interpolated within the window are rewritten, so copied, every step.
+    c = Case(conv = :tm5)
+    inp = _adjoint_inputs(c; interpolate_fluxes_within_window = true)
+    @test length(unique(objectid, _flux_sets(inp))) == sum(c.steps)
+    @test all(isequal.(_flux_sets(inp), _flux_sets(_adjoint_inputs(c))))
 end
 
 @testset "Full, Stride and Revolve footprints agree across met windows" begin

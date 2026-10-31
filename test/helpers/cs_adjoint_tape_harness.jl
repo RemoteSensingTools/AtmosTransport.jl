@@ -12,7 +12,11 @@
 # The cases use rough fields (random values, spikes, exact zeros and ties, sign
 # changes, nonzero emission rates), so the limited PPM reverse meets every
 # branch of its limiters; `limiter_code_counts` histograms those branches on
-# the recorded tape and the test requires each one to occur.
+# the recorded tape and the test requires each one to occur. Most cases pass
+# their inputs directly; the `CapturedInputs` cases capture them with
+# `cs_adjoint_inputs` from a production `DrivenSimulation` (rough met windows
+# on the mock driver of `cs_adjoint_step_plan.jl`), so the gate also covers
+# the capture: per-window flux sharing and scaling, per-window forcing.
 #
 # CPU kernels scatter with atomic adds, so results are bitwise reproducible
 # only single-threaded: the test runs this file in a `--threads=1` subprocess.
@@ -48,6 +52,13 @@ const TapeMod = AT.Tape
 const Adv = AT.Operators.Advection
 
 const HP = 3
+
+# The small driven configuration of the step-plan parity tests (C4, 5 levels,
+# Float64): its mock met driver, grid, convection forcing and operators.
+module StepPlanConfig
+include(joinpath(@__DIR__, "cs_adjoint_step_plan.jl"))
+end
+const SPC = StepPlanConfig
 
 # ---------------------------------------------------------------------------
 # Deterministic rough fields: a splitmix64 hash of the indices, the same on
@@ -145,6 +156,25 @@ _rates(::Type{FT}, Nc, nsteps) where FT =
 # Cases
 # ---------------------------------------------------------------------------
 
+"""The case's inputs go to the entry points directly: rough fluxes of every step."""
+struct DirectInputs end
+
+"""
+    CapturedInputs(; flux_kind = :full_window_mass_amount, vary_ps = true)
+
+The case's inputs are `cs_adjoint_inputs` of a production `DrivenSimulation`
+on the mock met driver of `cs_adjoint_step_plan.jl`, with rough met windows
+(air mass, tracer, face fluxes of streamfunction amplitude `flow`, window mass
+change) and nonzero rough emission rates: one shared flux set per met window,
+scaled by production for `flux_kind = :full_window_mass_amount` (by
+`1/(2 steps)`, different per window), and with `vary_ps` a surface pressure,
+hence a diffusion layer thickness, per window. Float64, `Nc = 4`, `Nz = 5`.
+"""
+Base.@kwdef struct CapturedInputs
+    flux_kind::Symbol = :full_window_mass_amount
+    vary_ps::Bool = true
+end
+
 """One configuration of the production step, run with every tape variant."""
 Base.@kwdef struct Case
     name::String
@@ -162,10 +192,28 @@ Base.@kwdef struct Case
     stride::Int = 2                     # StrideCheckpoint K of the variants
     storages::Vector{String} = ["pinned_host", "mmap"]   # host storages of the variants
     operators::Bool = false             # also run the 4D-Var observation operators (`fourdvar_operators`)
+    inputs = DirectInputs()             # or `CapturedInputs` (cs_adjoint_inputs of a DrivenSimulation)
 end
 
 _limited(scheme) = scheme isa AT.PPMScheme &&
                    (scheme.limiter isa AT.MonotoneLimiter || scheme.limiter isa AT.CW84Limiter)
+
+# The cases whose inputs `cs_adjoint_inputs` captures from a production
+# simulation, in both tiers. The first shares each met window's fluxes under
+# CFL subcycles (counted from the shared arrays at every step), full-window
+# flux storage scaled differently per window, substep CMFMC convection and a
+# diffusion layer thickness per window; the second under the binary window
+# contract with a window-end reset, window TM5 convection and substep flux
+# storage. The 4D-Var control windows (steps 1:3 and 3:7) cross the met
+# windows [2, 3, 2].
+const CAPTURED_CASES = [
+    Case(name = "captured_monotone_cmfmcsub_split_mass_cfl", scheme = AT.PPMScheme(AT.MonotoneLimiter()),
+         conv = :cmfmc, diffusion = :split, cadence = :substep, contract = false,
+         reset = :preserve_tracer_mass, flow = 2.4, storages = ["mmap"], inputs = CapturedInputs()),
+    Case(name = "captured_cw84_tm5win_boundary_vmr", scheme = AT.PPMScheme(AT.CW84Limiter()),
+         conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, stride = 3, storages = ["pinned_host"],
+         inputs = CapturedInputs(flux_kind = :substep_mass_amount)),
+]
 
 # The pairwise core set: each scheme, both float types, every convection
 # operator and diffusion coupling, both cadences, every reset mode, CFL
@@ -175,7 +223,7 @@ _limited(scheme) = scheme isa AT.PPMScheme &&
 # both strides, and the mmap tape (sized by counting on the replay) meets CFL
 # subcycles and substep CMFMC convection. The observation operators run on one
 # Float64 case with CFL subcycles and the mmap tape and one Float32 case with
-# the pinned-host tape.
+# the pinned-host tape. The captured cases (both tiers) close the set.
 const CORE_CASES = [
     Case(name = "f64_cw84_tm5win_boundary_vmr", scheme = AT.PPMScheme(AT.CW84Limiter()),
          conv = :tm5, diffusion = :boundary, reset = :preserve_vmr, storages = ["mmap"]),
@@ -194,6 +242,7 @@ const CORE_CASES = [
          storages = ["pinned_host"]),
     Case(name = "f32_ppm_none_boundary_mass", FT = Float32, scheme = AT.PPMScheme(AT.NoLimiter()),
          diffusion = :boundary, reset = :preserve_tracer_mass, storages = ["mmap"]),
+    CAPTURED_CASES...,
 ]
 
 # The full matrix (opt-in): every scheme × float type × physics family.
@@ -212,13 +261,15 @@ function full_cases()
                          (ph.contract ? "" : "_cfl"))
         push!(cases, Case(; name, FT, scheme, ph...))
     end
-    return cases
+    return append!(cases, CAPTURED_CASES)
 end
 
 # The inputs of a case: the step's fluxes, schedule, reset targets, surface
 # rates and the keywords of its operators (built fresh for every call: the
 # workspaces carry scratch).
-function problem(c::Case)
+problem(c::Case) = problem(c, c.inputs)
+
+function problem(c::Case, ::DirectInputs)
     FT = c.FT
     mesh = AT.CubedSphereMesh(Nc = c.Nc, Hp = HP, FT = FT)
     nsteps = sum(c.steps)
@@ -238,7 +289,9 @@ function problem(c::Case)
             rates = _rates(FT, c.Nc, nsteps))
 end
 
-function physics_kwargs(P)
+physics_kwargs(P) = physics_kwargs(P, P.case.inputs)
+
+function physics_kwargs(P, ::DirectInputs)
     c = P.case
     FT, Nc, Nz = c.FT, c.Nc, c.Nz
     kw = (;)
@@ -282,6 +335,61 @@ function physics_kwargs(P)
             convection_workspace = AT.Operators.Convection.CMFMCMatrixWorkspace(P.m0;
                 cell_metrics = metrics, halo_width = HP))
 end
+
+# Met window `w` of a captured case: rough air mass, face fluxes and window
+# mass change on the step-plan grid (mass in units of its `S`, about
+# 1500 kg m⁻² per layer), the step plan's convection forcing of window `w`
+# (its CMFMC 40 times stronger, so the CMFMC CFL needs 2-3 sub-steps) and a
+# surface pressure that changes per window with `vary_ps`.
+function _captured_window(c::Case, inputs::CapturedInputs, w::Int)
+    mesh, Nc, Nz, S = SPC.MESH, SPC.NC, SPC.NZ, SPC.S
+    N = Nc + 2HP
+    m = map(a -> S .* a, _air_mass(Float64, mesh, Nz, 200 + w))
+    am, bm, cm = map(f -> map(a -> S .* a, f), _step_fluxes(Float64, mesh, Nz, 200 + w, c.flow))
+    dm = ntuple(p -> [S * 0.002 * _sym(_u(210 + w, p, i, j, k)) for i in 1:N, j in 1:N, k in 1:Nz], 6)
+    cmfmc(f) = AT.ConvectionForcing(map(a -> 40 .* a, f.cmfmc), map(a -> 40 .* a, f.dtrain), nothing)
+    forcing = c.conv === :tm5 ? SPC._tm5_forcing(w) :
+              c.conv in (:cmfmc, :cmfmc_matrix) ? cmfmc(SPC._cmfmc_forcing(w)) : nothing
+    ps = inputs.vary_ps ? 95_000.0 - 3000.0w : 95_000.0
+    return AT.TransportWindow(m, ntuple(_ -> fill(ps, Nc, Nc), 6),
+                              AT.CubedSphereFaceFluxState{AT.DryBasis}(am, bm, cm);
+                              deltas = AT.MetDrivers.CubedSphereFluxDeltas(dm), convection = forcing,
+                              dkg = ntuple(_ -> fill(S * 1e-5, Nc, Nc, Nz), 6))
+end
+
+# The production simulation of a captured case (not yet run): the case's
+# scheme and operators on the mock driver, a rough tracer and nonzero rough
+# emission rates of both signs.
+function _captured_simulation(c::Case, inputs::CapturedInputs)
+    c.FT === Float64 && c.Nc == SPC.NC && c.Nz == SPC.NZ ||
+        error("$(c.name): captured cases run on the step-plan grid (Float64, Nc = $(SPC.NC), Nz = $(SPC.NZ))")
+    windows = [_captured_window(c, inputs, w) for w in eachindex(c.steps)]
+    driver = SPC._PlanDriver{Float64, typeof(SPC.GRID), eltype(windows)}(
+        SPC.GRID, windows, SPC.WINDOW_DT, c.steps, c.contract, inputs.flux_kind)
+    air = map(copy, windows[1].air_mass)
+    state = AT.CubedSphereState(AT.DryBasis, SPC.MESH, air; CO2 = _tracer_mass(air, SPC.MESH, 10))
+    model = AT.TransportModel(state, AT.allocate_face_fluxes(SPC.MESH, SPC.NZ; basis = AT.DryBasis),
+                              SPC.GRID, c.scheme; diffusion = SPC._diffusion_op(c.diffusion),
+                              convection = SPC._convection_op(c.conv))
+    rates = ntuple(p -> [SPC.S * 1e-6 * _nonzero(_sym(_u(122, p, i, j))) for i in 1:SPC.NC, j in 1:SPC.NC], 6)
+    return AT.DrivenSimulation(model, driver; surface_sources = (AT.SurfaceFluxSource(:CO2, rates),),
+                               physics_cadence = c.cadence, air_mass_reset_mode = c.reset)
+end
+
+_capture(c::Case, inputs::CapturedInputs) =
+    AT.cs_adjoint_inputs(_captured_simulation(c, inputs); tracer = :CO2)
+
+function problem(c::Case, inputs::CapturedInputs)
+    x = _capture(c, inputs)
+    return (; case = c, mesh = x.mesh, m0 = x.panels_m0, rm0 = x.panels_rm0, am = x.panels_am_steps,
+            bm = x.panels_bm_steps, cm = x.panels_cm_steps, schedule = x.kwargs.schedule,
+            nsteps = length(x.panels_am_steps), rates = x.kwargs.emission_rates)
+end
+
+# The operator keywords of a fresh capture (its workspaces carry scratch).
+physics_kwargs(P, inputs::CapturedInputs) =
+    Base.structdiff(_capture(P.case, inputs).kwargs,
+                    NamedTuple{(:scheme, :schedule, :surface_flux, :emission_rates)})
 
 # ---------------------------------------------------------------------------
 # Variants `checkpoint/storage`: the reference is the device tape with

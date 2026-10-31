@@ -10,6 +10,9 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `FootprintResult.jl`: `CSFootprintResult` and `CSTapeByteEstimate`.
 - `StepReplay.jl`: `CSStepSchedule`, resolved windows, replay setup, stepping,
   snapshots and restore. Clock arithmetic is shared with Models via StepPlans.
+  Consecutive steps given the same flux arrays (a met window's, as
+  `cs_adjoint_inputs` shares them) share one flux state, so `flux_scale ≠ 1`
+  scales each set once.
 - `ReplaySupport.jl`: replay-specific extension of `require_adjoint_support`.
 - `TapeRecorder.jl`: production recorder hooks and counting recorder (also
   the per-step byte count an mmap tape reserves before recording).

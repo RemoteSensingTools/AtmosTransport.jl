@@ -40,19 +40,32 @@ and `kwargs` for the adjoint entry points: `scheme`, `schedule =
 CSStepSchedule(sim)`, `surface_flux`, `emission_rates` (the tracer's static
 surface source per step, or `nothing`), the diffusion operator and a
 workspace with production's layer thickness per met window (`diffusion_op`,
-`diffusion_workspace`; the operator is copied per window when its Kz field is
-refreshed per window), and the convection operator, its forcing per step (one
-object per met window) and a fresh workspace.
+`diffusion_workspace`; the operator is copied at every window, after
+production refreshed its Kz field), and the convection operator, its forcing
+per step (one object per met window) and a fresh workspace.
+
+The face fluxes are copied each time production rewrites the model's
+fluxes. With window-constant fluxes (`sim.interpolate_fluxes_within_window ==
+false`: the driver's default for a binary with `flux_sampling =
+:window_constant` or without flux deltas, unless the `DrivenSimulation`
+keyword overrides it) that is a window's first step, and the window's steps
+reference that one copy (`panels_am_steps[s] === panels_am_steps[s + 1]`
+inside a window), as production's steps read the same arrays. Fluxes
+interpolated within the window are rewritten and copied every step. The
+adjoint only reads these arrays; do not modify them before the reverse pass
+ends (a change to one step's arrays changes every step of its window).
 
 `require_adjoint_support(sim)` runs first. The capture runs the simulation's
 met refresh through every window (not its tracer transport, which it leaves
 in an unspecified state), so `sim` cannot be run afterwards: build a second,
 identical simulation for the production run. Memory grows with the run: one
-set of face fluxes per step. A time-varying surface source of `tracer` is an
-error (pass its per-step rates yourself). Initial persistent operator state must
-be fresh: nonzero surface-source Kahan compensation, diffusion/Dkg or convection
-ledger carries, or a valid CMFMC CFL cache are rejected before capture. This
-also rejects continued models whose new simulation has `iteration == 0`.
+set of face fluxes per met window (per step when interpolated), and the
+per-window convection forcing and diffusion operator and workspace. A
+time-varying surface source of `tracer` is an error (pass its per-step rates
+yourself). Initial persistent operator state must be fresh: nonzero
+surface-source Kahan compensation, diffusion/Dkg or convection ledger
+carries, or a valid CMFMC CFL cache are rejected before capture. This also
+rejects continued models whose new simulation has `iteration == 0`.
 
 ```julia
 inputs = cs_adjoint_inputs(sim; tracer = :CO2)
@@ -83,15 +96,20 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
     has_convection = !(model.convection isa NoConvection)
     am, bm, cm = Any[], Any[], Any[]
     diffusion_op, diffusion_workspace, forcing = Any[], Any[], Any[]
-    window_op = window_ws = window_forcing = nothing
+    fluxes = window_op = window_ws = window_forcing = nothing
     try
         while sim.iteration < sim.final_iteration
             _maybe_advance_window!(sim)
             substep = substep_index(sim)
             _refresh_forcing!(sim, substep)
-            push!(am, map(copy, model.fluxes.am))
-            push!(bm, map(copy, model.fluxes.bm))
-            push!(cm, map(copy, model.fluxes.cm))
+            # One copy each time production rewrites the fluxes; the steps in
+            # between read the same arrays and share it.
+            if _refreshes_fluxes(sim, substep)
+                fluxes = map(f -> map(copy, f), (model.fluxes.am, model.fluxes.bm, model.fluxes.cm))
+            end
+            push!(am, fluxes[1])
+            push!(bm, fluxes[2])
+            push!(cm, fluxes[3])
             if substep == 1
                 has_convection && (window_forcing = deepcopy(model.convection_forcing))
                 if has_diffusion

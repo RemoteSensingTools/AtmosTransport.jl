@@ -91,10 +91,11 @@ cadence, the met windows and the air-mass resets of a driven run come in as a
 `CSStepSchedule` (`schedule` keyword; `CSStepSchedule(sim)` for a
 `DrivenSimulation`). `cs_adjoint_inputs(sim; tracer)` captures every input of
 a cubed-sphere `DrivenSimulation` configuration from production itself — the
-face fluxes of each step after window loading and flux scaling, the
-convection forcing and diffusion layer thickness of each met window, the
-tracer's emission rates, the schedule and fresh workspaces — so the adjoint
-of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
+face fluxes of each step after window loading and flux scaling (one copy per
+met window, shared by its steps, as production's steps read the same
+arrays), the convection forcing and diffusion layer thickness of each met
+window, the tracer's emission rates, the schedule and fresh workspaces — so
+the adjoint of a driven run needs no hand assembly. Every entry point checks the whole step plan before it
 records anything (below): an operator without an adjoint is an error that
 names it, never a silent approximation. `CSStepSchedule(sim)` also runs that
 check and retains the production chemistry operator, so a schedule cannot hide
@@ -240,9 +241,11 @@ are never read and have no record.
    convection, both diffusion couplings, diffusion without surface sources and
    both reset modes, the adjoint's forward replay, its tape recording and a
    checkpoint restart inside a met window reproduce the production
-   `DrivenSimulation` bit for bit; Full, Stride and Revolve footprints agree
-   exactly; and footprints and the initial-condition sensitivity match central
-   finite differences of the production simulation. A forward feature that
+   `DrivenSimulation` bit for bit; the captured fluxes are production's bit
+   for bit, one copy per met window, and shared and per-step copies give the
+   same footprints; Full, Stride and Revolve footprints agree exactly; and
+   footprints and the initial-condition sensitivity match central finite
+   differences of the production simulation. A forward feature that
    changes the production step without a plan stage makes this test fail; a
    plan stage or operator without an adjoint makes the guard fail.
 
