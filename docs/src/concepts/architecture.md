@@ -292,6 +292,12 @@ shrink relative to a validated base ref; a missing base fails. Each folder has a
 shrink-only size allowances for today's oversized folders. README contract
 headings are reported only in this first rollout.
 
+The snapshots are keyed by module, folder and file names. A change that moves,
+renames or splits a unit declares each budget transfer as a reviewed row in
+`test/structure/migrations.toml`; the
+[structure ratchet page](../development/structure.md) gives the rules. After
+the merge the rows are inert, and the next edit of that file deletes them.
+
 Read the [generated code map](../development/code_map.md) and the folder
 README before editing. The map lists each folder's files, size, dependencies,
 users, public-name count, and forward/adjoint mirrors. The structure gate

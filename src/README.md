@@ -105,6 +105,9 @@ checker rejects new dependency edges, later-module references, cycles, new
 duplicate helpers, body clones, private reach-ins, and detached docstrings.
 Existing debt is snapshotted under
 [`test/structure/`](../test/structure/README.md); allowances only shrink.
+Moves, renames and splits declare their budget transfers as reviewed rows in
+`test/structure/migrations.toml` (see the
+[structure ratchet page](../docs/src/development/structure.md)).
 Each folder has a 65,000-token budget (immediate Julia source bytes / 3.5);
 subfolders are budgeted separately. Existing oversized folders have exact,
 shrink-only byte ceilings. Core modules cannot depend on Visualization,
