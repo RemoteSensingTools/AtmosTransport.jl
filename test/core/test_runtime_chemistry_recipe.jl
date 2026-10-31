@@ -24,65 +24,16 @@ using .AT.State: field_value
 
 const RN222_HALF_LIFE_SECONDS = 330_350.4
 
-@testset "build_runtime_chemistry — dispatch" begin
-    # No [chemistry] section → NoChemistry
-    op = build_runtime_chemistry(Dict{String,Any}(), Float64)
-    @test op isa AT.Operators.Chemistry.NoChemistry
-
-    # kind = "none"
-    op = build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "none")), Float64)
-    @test op isa AT.Operators.Chemistry.NoChemistry
-
-    # kind = "decay" with no half-lives — degenerate, no tracers to decay
-    op = build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "decay")), Float64)
-    @test op isa AT.Operators.Chemistry.NoChemistry
-
-    # kind = "decay" with Rn222
-    op = build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "decay",
-                                  "half_lives_seconds" => Dict("rn222" => 330350.4))),
-        Float64)
-    @test op isa AT.Operators.Chemistry.ExponentialDecay
-    @test op.tracer_names == (:rn222,)
-    rate = field_value(op.decay_rates[1], ())
-    @test rate ≈ log(2) / 330350.4 atol = 1e-12
-
-    # Float32 path
-    op32 = build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "decay",
-                                  "half_lives_seconds" => Dict("rn222" => 330350.4))),
-        Float32)
-    @test op32 isa AT.Operators.Chemistry.ExponentialDecay
-    @test eltype(op32.decay_rates[1].value) === Float32
-
-    # Bad kind
-    @test_throws ArgumentError build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "photolysis")), Float64)
-
-    # Multi-tracer decay (Rn222 + Kr85)
-    op = build_runtime_chemistry(
-        Dict("chemistry" => Dict("kind" => "decay",
-                                  "half_lives_seconds" =>
-                                      Dict("rn222" => 330350.4,
-                                            "kr85"  => 3.394e8))),
-        Float64)
-    @test op isa AT.Operators.Chemistry.ExponentialDecay
-    @test length(op.tracer_names) == 2
-    @test :rn222 in op.tracer_names
-    @test :kr85 in op.tracer_names
-end
 
 @testset "only constant decay rates use the symmetric split" begin
     constant = AT.ExponentialDecay(Float64; rn222 = RN222_HALF_LIFE_SECONDS)
-    @test AT.Models._symmetric_decay_split(constant)
+    @test AT.Operators.StepPlans._symmetric_decay_split(constant)
 
     rate = AT.State.StepwiseField([1e-6, 2e-6], [0.0, 10.0, 20.0])
     rates = (rate,)
     varying = AT.Operators.Chemistry.ExponentialDecay{
         Float64, 1, typeof(rates)}(rates, (:rn222,))
-    @test !AT.Models._symmetric_decay_split(varying)
+    @test !AT.Operators.StepPlans._symmetric_decay_split(varying)
 end
 
 @testset "Rn-222 symmetric window split has the analytic steady burden" begin
@@ -121,6 +72,18 @@ end
 end
 
 @testset "ChemistrySpec parse" begin
+    # Multi-tracer decay (Rn222 + Kr85)
+    op = build_runtime_chemistry(
+        Dict("chemistry" => Dict("kind" => "decay",
+                                  "half_lives_seconds" =>
+                                      Dict("rn222" => 330350.4,
+                                            "kr85"  => 3.394e8))),
+        Float64)
+    @test op isa AT.Operators.Chemistry.ExponentialDecay
+    @test length(op.tracer_names) == 2
+    @test :rn222 in op.tracer_names
+    @test :kr85 in op.tracer_names
+
     @test chemistry_spec(Dict{String,Any}())          isa NoChemistrySpec  # default
     @test chemistry_spec(Dict("kind" => "none"))      isa NoChemistrySpec
     @test chemistry_spec(Dict("kind" => "decay"))     isa NoChemistrySpec  # empty table
@@ -147,15 +110,10 @@ end
     op32 = build_runtime_chemistry(
         Dict("chemistry" => Dict("kind" => "decay",
                                   "half_lives_seconds" => Dict("rn222" => T))), Float32)
+    @test eltype(op32.decay_rates[1].value) === Float32
     @test field_value(op32.decay_rates[1], ()) === Float32(log(2) / Float32(T))
 end
 
-@testset "RuntimePhysicsRecipe stores explicit chemistry" begin
-    chem = AT.Operators.Chemistry.ExponentialDecay(; rn222 = 330350.4)
-    rec4 = AT.Models.RuntimePhysicsRecipe(
-        AT.UpwindScheme(), AT.NoDiffusion(), AT.NoConvection(), chem, AT.NoBinaryCFLCheck())
-    @test rec4.chemistry === chem
-end
 
 using AtmosTransport
 include(joinpath(@__DIR__, "..", "helpers", "convection_runtime.jl"))

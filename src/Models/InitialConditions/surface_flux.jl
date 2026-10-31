@@ -70,27 +70,8 @@ end
 # The inventory year in a file name: a standalone 19xx/20xx not preceded by a
 # version marker (`GCP-GridFEDv2024.0_2022.short.nc` is 2022). Several
 # distinct candidates are ambiguous and must be resolved with `year`.
-function _infer_year_from_path(path::AbstractString)
-    name = basename(path)
-    years = Int[]
-    for m in eachmatch(r"(?<!\d)(?:19|20)\d{2}(?!\d)", name)
-        m.offset > 1 && name[prevind(name, m.offset)] in ('v', 'V') && continue
-        push!(years, parse(Int, m.match))
-    end
-    unique!(years)
-    isempty(years) && return nothing
-    length(years) == 1 || throw(ArgumentError(
-        "surface-flux file name $(repr(name)) contains several years $(years); " *
-        "set surface_flux.year"))
-    return only(years)
-end
-
-function _infer_year_from_time_units(ds)
-    haskey(ds, "time") || return nothing
-    units = String(get(ds["time"].attrib, "units", ""))
-    m = match(r"((?:19|20)\d{2})-\d{1,2}-\d{1,2}", units)
-    return m === nothing ? nothing : parse(Int, m.captures[1])
-end
+using ...GriddedIO: infer_year_from_path as _infer_year_from_path,
+                    infer_year_from_time_units as _infer_year_from_time_units
 
 function _surface_flux_year(cfg, file::AbstractString, ds)
     haskey(cfg, "year") && return Int(cfg["year"])
@@ -969,3 +950,9 @@ function build_surface_flux_sources(grid, tracer_specs, ::Type{FT};
     end
     return Tuple(sources)
 end
+
+const load_file_surface_flux_field = _load_file_surface_flux_field
+export load_file_surface_flux_field
+
+const surface_flux_storage_scale = _surface_flux_storage_scale
+export surface_flux_storage_scale

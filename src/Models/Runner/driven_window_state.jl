@@ -26,39 +26,30 @@ end
     return adaptor === Array ? window : Base.invokelatest(Adapt.adapt, adaptor, window)
 end
 
-@inline function _copy_optional_storage!(dest, src, field::Symbol)
+@inline function _copy_optional!(copier, dest, src, capability)
     if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window capability for `$(field)` changed between windows"))
+        dest === src || throw(ArgumentError(
+            capability isa Symbol ?
+            "transport window capability for `$(capability)` changed between windows" :
+            "transport window $(capability) capability changed between windows"))
         return dest
     end
-    return _copy_storage!(dest, src)
+    return copier(dest, src)
 end
 
-@inline function _copy_optional_convection!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window convection capability changed between windows"))
-        return dest
-    end
-    return copy_convection_forcing!(dest, src)
-end
+@inline _copy_optional_storage!(dest, src, field::Symbol) =
+    _copy_optional!(_copy_storage!, dest, src, field)
 
-@inline function _copy_optional_surface!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window surface-forcing capability changed between windows"))
-        return dest
-    end
-    return _copy_surface_forcing!(dest, src)
-end
+@inline _copy_optional_convection!(dest, src) =
+    _copy_optional!(copy_convection_forcing!, dest, src, "convection")
 
-@inline function _copy_optional_vdiff!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window VDIFF capability changed between windows"))
-        return dest
-    end
+@inline _copy_optional_surface!(dest, src) =
+    _copy_optional!(_copy_surface_forcing!, dest, src, "surface-forcing")
+
+@inline _copy_optional_vdiff!(dest, src) =
+    _copy_optional!(_copy_vdiff!, dest, src, "VDIFF")
+
+@inline function _copy_vdiff!(dest, src)
     propertynames(dest) == propertynames(src) ||
         throw(ArgumentError("transport window VDIFF fields changed between windows"))
     for name in propertynames(dest)
@@ -99,14 +90,8 @@ end
     return dest
 end
 
-@inline function _copy_optional_deltas!(dest, src)
-    if dest === nothing || src === nothing
-        dest === src ||
-            throw(ArgumentError("transport window flux-delta capability changed between windows"))
-        return dest
-    end
-    return _copy_flux_deltas!(dest, src)
-end
+@inline _copy_optional_deltas!(dest, src) =
+    _copy_optional!(_copy_flux_deltas!, dest, src, "flux-delta")
 
 function _copy_common_window_payload!(dest, src)
     _copy_storage!(dest.air_mass, src.air_mass)

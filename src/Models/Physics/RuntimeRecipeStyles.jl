@@ -11,3 +11,6 @@ abstract type AbstractStructuredRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle
 struct LatLonRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
 struct ReducedGaussianRuntimeRecipeStyle <: AbstractStructuredRuntimeRecipeStyle end
 struct CubedSphereRuntimeRecipeStyle <: AbstractRuntimeRecipeStyle end
+
+# Runtime config/metadata spelling; keep the existing default value and type.
+const DEFAULT_AIR_MASS_RESET_MODE = "preserve_tracer_mass"

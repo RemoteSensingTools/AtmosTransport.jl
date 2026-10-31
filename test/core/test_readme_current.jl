@@ -49,14 +49,14 @@ const README_DIRS = [
     "src/State",
     "src/State/Fields",
     # Models and drivers
-    "src/Models",
+    "src/Models", "src/Models/Core", "src/Models/Physics",
     "src/MetDrivers",
     # Grids
     "src/Grids",
     # Remaining modules and subfolders with READMEs
     "src/Extras", "src/Adjoints", "src/Extras/Analysis", "src/Diagnostics", "src/Extras/Downloads", "src/Adjoints/Footprint",
     "src/Adjoints/Inversion", "src/Adjoints/Inversion/Observations", "src/Adjoints/Inversion/Solver", "src/MetDrivers/BinaryFormat", "src/MetDrivers/BinaryReaders",
-    "src/Models/initial_conditions", "src/Models/runner", "src/Output",
+    "src/Models/InitialConditions", "src/Models/Runner", "src/Output",
     "src/Observations", "src/Observations/Retrievals", "src/Observations/Sources", "src/Observations/Sampling", "src/Parameters", "src/Preprocessing",
     "src/Preprocessing/Core", "src/Preprocessing/Vertical", "src/Preprocessing/Spectral",
     "src/Preprocessing/MassClosure", "src/Preprocessing/PhysicsInputs",

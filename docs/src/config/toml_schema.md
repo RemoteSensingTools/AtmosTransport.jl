@@ -74,7 +74,7 @@ file_pattern = "{YYYYMMDD}"   # optional; default scans for date stamp
 ```
 
 Path expansion + continuity validation lives in
-`src/Models/BinaryPathExpander.jl`.
+`src/Models/Runner/BinaryPathExpander.jl`.
 Shape B asserts that the resolved binaries form a contiguous date
 sequence; gaps fail at expansion time, not at first window-load.
 Both shapes accept TOML dates (e.g. `start_date = 2021-12-01`) or quoted
@@ -138,7 +138,7 @@ not content checksums: source binaries must remain immutable during a run.
 Cleanup removes this run's staged files and metadata, preserving unrelated
 files in the directory. Completed staged binaries and metadata sidecars are
 published through `AtomicFiles`, so readers never open a partial copy.
-Implementation: `src/Models/InputStaging.jl`.
+Implementation: `src/Models/Runner/InputStaging.jl`.
 
 ### `[architecture]` — backend selection
 
@@ -218,8 +218,8 @@ enhancement = 1.0e-4          # extra dry VMR in lowest n_layers (LL only)
 n_layers    = 3
 ```
 
-Initial-condition kinds (LL/RG builders in `src/Models/InitialConditionIO.jl`,
-CS builder in `src/Models/initial_conditions/cubed_sphere.jl`):
+Initial-condition kinds (LL/RG builders in `src/Models/InitialConditions/InitialConditionIO.jl`,
+CS builder in `src/Models/InitialConditions/cubed_sphere.jl`):
 
 | Kind | LL | RG | CS | Required keys |
 |---|---|---|---|---|
@@ -250,7 +250,7 @@ mapping where `bp = 0`, and extends the nearest end layer if a pressure-level
 source does not span the target top or surface. This avoids making an initial
 VMR depend on topographic differences or the preprocessing dry-mass pin; see
 the equations and CATRINE measurements in
-[`src/Models/initial_conditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/initial_conditions/README.md).
+[`src/Models/InitialConditions/README.md`](https://github.com/RemoteSensingTools/AtmosTransport/blob/main/src/Models/InitialConditions/README.md).
 
 The dry-air weighting uses source specific humidity only when it is explicitly
 selected with `humidity_variable = "name"`; without that key, source humidity
@@ -313,7 +313,7 @@ species  = "co2"                    # required: the name "ocean" implies no spec
 ```
 
 Registered surface-flux source kinds (`_SURFACE_FLUX_KINDS` in
-`src/Models/initial_conditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
+`src/Models/InitialConditions/surface_flux.jl`): `lmdz_co2`, `gridfed_fossil_co2`,
 `edgar_sf6`, `zhang_rn222`, plus a generic `file` for arbitrary
 NetCDF sources and `cs_native` for time-varying fluxes already on the native
 cubed-sphere grid. Any other kind is an error. There is no `edgar_co2` kind — use

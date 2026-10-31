@@ -130,15 +130,6 @@ function _check_window_ranges(layouts, start_window::Int, stop_window)
     return nothing
 end
 
-# Tracer specs as the runner reads them: `[tracers]`, which cubed-sphere runs
-# require, or on lat-lon and reduced-Gaussian grids the legacy single tracer.
-function _run_tracer_specs(cfg, ::CubedSphereMesh)
-    specs = _parse_tracer_specs(cfg)
-    specs === nothing && throw(ArgumentError("cubed-sphere runs require a [tracers] table, as the runner does"))
-    return specs
-end
-_run_tracer_specs(cfg, mesh) = _structured_tracer_specs(cfg)
-
 # Window length, window count and steps per window from a binary's header, as
 # the runner reads them (`binary_capabilities`, `steps_per_window_schedule`).
 function _binary_window_layout(path::AbstractString)

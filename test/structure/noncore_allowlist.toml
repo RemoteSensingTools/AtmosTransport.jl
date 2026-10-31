@@ -1,6 +1,4 @@
-# Existing facade-to-Extras sites only shrink; every allowance needs a reason.
-# src/Extras/** and the Makie extension are non-core regardless of module name.
-# AtmosTransport.Diagnostics is core and has no boundary exception.
+# Existing debt only; resolved entries removed by the owning cleanup.
 [allow]
 "src/AtmosTransport.jl|AtmosTransport|AtmosTransport.Analysis" = "Existing top-level package facade re-export of AtmosTransport.Analysis from src/Extras/Analysis; preserve the public entry points until Extras/package separation. Core implementation modules must not add imports."
 "src/AtmosTransport.jl|AtmosTransport|AtmosTransport.DataDownloads" = "Existing top-level package facade re-export of AtmosTransport.DataDownloads from src/Extras/Downloads; preserve the public entry points until Extras/package separation. Core implementation modules must not add imports."

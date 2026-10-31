@@ -40,9 +40,9 @@ topology-dispatched VMR builders for the unified runtime.
   `time_varying = true` — satisfying the per-cell rate contract of
   `SurfaceFluxSource` (`src/Operators/SurfaceFlux/sources.jl`).
 
-Private helpers (underscore-prefixed) stay unexported and are
-accessed by callers (including the canonical driven runtime)
-via `AtmosTransport.Models.InitialConditionIO.<name>` if needed.
+Shared inventory operations have public aliases; the explicitly shared
+internal runner seams are listed in this folder's README. Legacy qualified
+helper names remain reachable.
 """
 module InitialConditionIO
 
@@ -52,7 +52,7 @@ using ..Grids: cell_areas
 
 using NCDatasets
 using Dates
-using ..Models: _config_bool
+using ...ConfigChecks: config_bool as _config_bool
 
 import ...expand_data_path
 using ...ConfigChecks: key_suggestion
@@ -73,6 +73,13 @@ using ..Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
 # The conventions of native gridded input files (coordinates, orientation,
 # fill values, source meshes, time axes, flux units) and the `cs_native` flux
 # file (reader, cell-area gate) are owned by GriddedIO.
+using ...GriddedIO: hybrid_surface_first as _hybrid_surface_first,
+                    validate_ap_units as _validate_ap_units,
+                    VERTICAL_ORDERS as _VERTICAL_ORDERS,
+                    parse_vertical_order as _parse_vertical_order,
+                    PRESSURE_UNITS as _PRESSURE_UNITS,
+                    HEIGHT_UNITS as _HEIGHT_UNITS,
+                    file_vertical_order as _file_vertical_order
 using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, VerticalAxis,
                     latlon_orientation, orient, orient_coordinates, read_raw, MaskedAsZero,
                     source_latlon_mesh, decode_time, decode_time_bounds, decode_month_keys,
@@ -112,25 +119,36 @@ struct CatrineCO2InitialConditionSpec <: AbstractInitialConditionSpec end
 struct PressureLayerInitialConditionSpec <: AbstractInitialConditionSpec end
 struct CSNativeInitialConditionSpec <: AbstractInitialConditionSpec end
 
+# One alias table for typed parsing, topology builders and runner key checks.
+const INITIAL_CONDITION_KINDS = Dict(
+    "uniform" => UniformInitialConditionSpec,
+    "latitude_step" => LatitudeStepInitialConditionSpec,
+    "lat_step" => LatitudeStepInitialConditionSpec,
+    "hemisphere_step" => LatitudeStepInitialConditionSpec,
+    "bl_enhanced" => BoundaryLayerEnhancedInitialConditionSpec,
+    "gaussian_blob" => GaussianBlobInitialConditionSpec,
+    "file" => FileInitialConditionSpec,
+    "netcdf" => FileInitialConditionSpec,
+    "file_field" => FileInitialConditionSpec,
+    "catrine_co2" => CatrineCO2InitialConditionSpec,
+    "pressure_layer" => PressureLayerInitialConditionSpec,
+    "cs_native" => CSNativeInitialConditionSpec)
+export INITIAL_CONDITION_KINDS
+
 "Parse an initial-condition kind once at the runtime configuration boundary."
 function initial_condition_spec(cfg::AbstractDict)
     kind = lowercase(String(get(cfg, "kind", "uniform")))
-    kind == "uniform" && return UniformInitialConditionSpec()
-    kind in ("latitude_step", "lat_step", "hemisphere_step") &&
-        return LatitudeStepInitialConditionSpec()
-    kind == "bl_enhanced" && return BoundaryLayerEnhancedInitialConditionSpec()
-    kind == "gaussian_blob" && return GaussianBlobInitialConditionSpec()
-    kind in ("file", "netcdf", "file_field") && return FileInitialConditionSpec()
-    kind == "catrine_co2" && return CatrineCO2InitialConditionSpec()
-    kind == "pressure_layer" && return PressureLayerInitialConditionSpec()
-    kind == "cs_native" && return CSNativeInitialConditionSpec()
+    spec_type = get(INITIAL_CONDITION_KINDS, kind, nothing)
+    spec_type === nothing || return spec_type()
     throw(ArgumentError("unsupported init.kind=$(repr(kind))"))
 end
 
 @inline _init_kind(cfg) = Symbol(lowercase(String(get(cfg, "kind", "uniform"))))
-@inline _is_file_init_kind(kind::Symbol) = kind in (:file, :netcdf, :file_field, :catrine_co2)
+@inline _is_file_init_kind(kind::Symbol) =
+    get(INITIAL_CONDITION_KINDS, String(kind), nothing) in
+        (FileInitialConditionSpec, CatrineCO2InitialConditionSpec)
 @inline _is_latitude_step_kind(kind::Symbol) =
-    kind in (:latitude_step, :lat_step, :hemisphere_step)
+    get(INITIAL_CONDITION_KINDS, String(kind), nothing) === LatitudeStepInitialConditionSpec
 
 function _cfg_get_alias(cfg, key::String, alias::String, default)
     haskey(cfg, key) && return cfg[key]
@@ -371,71 +389,6 @@ function _load_file_initial_condition_source(cfg, ::Type{FT}, Nz_target::Integer
     end
 end
 
-# Whether hybrid interface coefficients run from the surface to the top
-# (pressure decreasing with index), checked at standard surface pressure.
-function _hybrid_surface_first(ap, bp)
-    p_first = ap[1] + bp[1] * STANDARD_PRESSURE
-    p_last = ap[end] + bp[end] * STANDARD_PRESSURE
-    p_first == p_last && throw(ArgumentError(
-        "hybrid coefficients give the same pressure at both ends of the column"))
-    return p_first > p_last
-end
-
-# Hybrid A coefficients are pressures. Explicit units must be Pa; without a
-# units attribute, values above 2000 unambiguously indicate Pa, while an
-# all-zero pure-sigma A is unit-independent. Smaller nonzero magnitudes are
-# ambiguous with hPa and must not be guessed.
-function _validate_ap_units(ap_var, ap, file)
-    raw_units = String(string(get(ap_var.attrib, "units", "")))
-    units = lowercase(strip(raw_units))
-    units = replace(units, r"[\s_-]+" => "")
-    if !isempty(units)
-        units in ("pa", "pascal", "pascals") || throw(ArgumentError(
-            "hybrid coefficient ap in $(file) must use Pa; got units = " *
-            repr(raw_units)))
-        return nothing
-    end
-    scale = maximum(abs, ap; init = 0.0)
-    (iszero(scale) || scale > 2000) || throw(ArgumentError(
-        "hybrid coefficient ap in $(file) has no units and maximum magnitude $scale, " *
-        "which is ambiguous with hPa; add units = \"Pa\""))
-    return nothing
-end
-
-# `init.vertical_order` of a file: which end of its levels comes first.
-const _VERTICAL_ORDERS = (:surface_first, :toa_first)
-
-function _parse_vertical_order(raw)
-    order = raw isa AbstractString ? Symbol(lowercase(raw)) : nothing
-    order in _VERTICAL_ORDERS || throw(ArgumentError(
-        "init.vertical_order must be \"surface_first\" or \"toa_first\"; got $(repr(raw))"))
-    return order
-end
-
-const _PRESSURE_UNITS = ("pa", "hpa", "kpa", "mb", "mbar", "millibar", "millibars", "bar",
-                         "pascal", "pascals", "hectopascal", "hectopascals")
-const _HEIGHT_UNITS = ("m", "km", "cm", "meter", "meters", "metre", "metres",
-                       "kilometer", "kilometers", "kilometre", "kilometres")
-
-# Level order of a file without hybrid coefficients: `init.vertical_order` when
-# given, else from the vertical coordinate. Pressure units or CF `positive =
-# "down"` mean the values grow toward the surface, height units or `positive =
-# "up"` that they grow toward the top; a coordinate that says neither needs
-# `vertical_order`.
-function _file_vertical_order(cfg, lev_var, lev_values, file)
-    haskey(cfg, "vertical_order") && return _parse_vertical_order(cfg["vertical_order"])
-    positive = lowercase(strip(string(get(lev_var.attrib, "positive", ""))))
-    units = lowercase(strip(string(get(lev_var.attrib, "units", ""))))
-    grows_down = positive == "down" || (isempty(positive) && units in _PRESSURE_UNITS)
-    grows_up = positive == "up" || (isempty(positive) && units in _HEIGHT_UNITS)
-    grows_down || grows_up || throw(ArgumentError(
-        "cannot tell which end of the levels of $(file) is the top: its vertical coordinate " *
-        "has neither pressure or height units nor a CF positive attribute, and the file " *
-        "has no hybrid coefficients; set init.vertical_order = \"toa_first\" or \"surface_first\""))
-    increasing = length(lev_values) < 2 || lev_values[end] > lev_values[1]
-    return increasing == grows_down ? :toa_first : :surface_first
-end
-
 # ---------------------------------------------------------------------------
 # Conservative hybrid-coordinate remapping
 # ---------------------------------------------------------------------------
@@ -649,6 +602,31 @@ end
 #   CS: NTuple{6, Array{FT, 3}} of (Nc, Nc, Nz)
 # ---------------------------------------------------------------------------
 
+function _gaussian_blob_params(cfg, background::FT) where {FT}
+    lon0 = FT(get(cfg, "lon0_deg", 0.0))
+    lat0 = FT(get(cfg, "lat0_deg", 0.0))
+    sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
+    sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
+    amplitude = FT(get(cfg, "amplitude", background))
+    return lon0, lat0, sigma_lon, sigma_lat, amplitude
+end
+
+@inline function _gaussian_blob_value(lon, lat, background::FT, lon0, lat0,
+                                      sigma_lon, sigma_lat, amplitude) where {FT}
+    dlon = wrapped_longitude_distance(lon, lon0)
+    dlat = lat - lat0
+    return background + amplitude * exp(-FT(0.5) * ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
+end
+
+"""
+    uniform_background(cfg, FT = Float64)
+
+Return the runtime's uniform initial VMR, converted to `FT`.
+"""
+uniform_background(cfg, ::Type{FT} = Float64) where {FT} =
+    FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
+
+
 """
     build_initial_mixing_ratio(air_mass, mesh, cfg)
     build_initial_mixing_ratio(air_mass, grid::AtmosGrid, cfg;
@@ -685,7 +663,7 @@ or an `NTuple{6}` of interior `(Nc, Nc, Nz)` arrays for cubed-sphere grids.
 """
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
-    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
+    background = uniform_background(cfg, FT)
     if kind === :uniform
         return fill(background, size(air_mass))
     elseif _is_latitude_step_kind(kind)
@@ -709,16 +687,11 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::LatLonMes
         @views q[:, :, (Nz - n_layers + 1):Nz] .+= enhancement
         return q
     elseif kind === :gaussian_blob
-        lon0 = FT(get(cfg, "lon0_deg", 0.0))
-        lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        amplitude = FT(get(cfg, "amplitude", background))
+        lon0, lat0, sigma_lon, sigma_lat, amplitude = _gaussian_blob_params(cfg, background)
         q = Array{FT}(undef, size(air_mass))
         for k in axes(q, 3), j in axes(q, 2), i in axes(q, 1)
-            dlon = wrapped_longitude_distance(mesh.λᶜ[i], lon0)
-            dlat = mesh.φᶜ[j] - lat0
-            q[i, j, k] = background + amplitude * exp(-FT(0.5) * ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
+            q[i, j, k] = _gaussian_blob_value(mesh.λᶜ[i], mesh.φᶜ[j], background,
+                                             lon0, lat0, sigma_lon, sigma_lat, amplitude)
         end
         return q
     else
@@ -728,7 +701,7 @@ end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGaussianMesh{FT}, cfg) where FT
     kind = _init_kind(cfg)
-    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
+    background = uniform_background(cfg, FT)
     if kind === :uniform
         return fill(background, size(air_mass))
     elseif _is_latitude_step_kind(kind)
@@ -743,20 +716,15 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGa
         end
         return q
     elseif kind === :gaussian_blob
-        lon0 = FT(get(cfg, "lon0_deg", 0.0))
-        lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        amplitude = FT(get(cfg, "amplitude", background))
+        lon0, lat0, sigma_lon, sigma_lat, amplitude = _gaussian_blob_params(cfg, background)
         q = Array{FT}(undef, size(air_mass))
         for j in 1:nrings(mesh)
             lats = mesh.latitudes[j]
             lons = ring_longitudes(mesh, j)
             for i in eachindex(lons)
                 c = cell_index(mesh, i, j)
-                dlon = wrapped_longitude_distance(lons[i], lon0)
-                dlat = lats - lat0
-                value = background + amplitude * exp(-FT(0.5) * ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
+                value = _gaussian_blob_value(lons[i], lats, background,
+                                              lon0, lat0, sigma_lon, sigma_lat, amplitude)
                 @views q[c, :] .= value
             end
         end
@@ -764,6 +732,38 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT}, mesh::ReducedGa
     else
         throw(ArgumentError("unsupported init.kind=$(kind) for ReducedGaussianMesh"))
     end
+end
+
+# Setup scratch shared by the four file-IC column loops. The remapper's
+# pressure/cumulative arrays deliberately remain Float64 for both precisions.
+struct HybridRemapScratch{FT}
+    q::Vector{FT}
+    qv::Vector{FT}
+    pressure::Vector{Float64}
+    cumulative::Vector{Float64}
+    dry_cumulative::Vector{Float64}
+end
+
+function HybridRemapScratch(::Type{FT}, nlevel, ninterface) where {FT}
+    q = Vector{FT}(undef, nlevel)
+    qv = similar(q)
+    pressure = Vector{Float64}(undef, ninterface)
+    return HybridRemapScratch(q, qv, pressure, similar(pressure), similar(pressure))
+end
+
+function _file_ic_column!(dest, scratch::HybridRemapScratch, source_qv,
+                          needs_vinterp, ap, bp, pressure_basis, ps_stored,
+                          A_tgt, B_tgt, target_qv)
+    if needs_vinterp
+        ps_total = _total_surface_pressure(
+            pressure_basis, ps_stored, A_tgt, B_tgt, target_qv)
+        _remap_hybrid_profile!(dest, scratch.q, source_qv, ap, bp,
+                               A_tgt, B_tgt, ps_total, scratch.pressure,
+                               scratch.cumulative, scratch.dry_cumulative)
+    else
+        _copy_profile!(dest, scratch.q)
+    end
+    return dest
 end
 
 function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
@@ -778,13 +778,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     source = _load_file_initial_condition_source(cfg, FT, size(air_mass, 3))
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
-    src_q = Vector{FT}(undef, size(source.raw, 3))
-    # Keep the loop-local scratch concrete even when source humidity is absent.
-    # Its values are only consumed when `source.qv !== nothing`.
-    src_qv = similar(src_q)
-    src_p = Vector{Float64}(undef, length(source.ap))
-    cumulative = similar(src_p)
-    dry_cumulative = similar(src_p)
+    scratch = HybridRemapScratch(FT, size(source.raw, 3), length(source.ap))
+    src_q, src_qv = scratch.q, scratch.qv
     A_tgt = grid.vertical.A
     B_tgt = grid.vertical.B
     surface_pressure === nothing && throw(ArgumentError(
@@ -808,18 +803,12 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             source.qv === nothing || _sample_bilinear_profile!(
                 src_qv, source.qv, source.lon, source.lat, lon, lat)
-            if source.needs_vinterp
-                target_qv = qv === nothing ? nothing : @view(qv[i, j, :])
-                ps_total = _total_surface_pressure(
-                    pressure_basis, surface_pressure[i, j], A_tgt, B_tgt, target_qv)
-                source_qv = source.qv === nothing ? nothing : src_qv
-                _remap_hybrid_profile!(@view(q[i, j, :]), src_q, source_qv,
-                                       source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total,
-                                       src_p, cumulative, dry_cumulative)
-            else
-                _copy_profile!(@view(q[i, j, :]), src_q)
-            end
+            target_qv = !source.needs_vinterp || qv === nothing ? nothing : @view(qv[i, j, :])
+            source_qv = source.qv === nothing ? nothing : src_qv
+            _file_ic_column!(@view(q[i, j, :]), scratch, source_qv,
+                             source.needs_vinterp, source.ap, source.bp,
+                             pressure_basis, source.needs_vinterp ? surface_pressure[i, j] : nothing,
+                             A_tgt, B_tgt, target_qv)
         end
     end
 
@@ -838,13 +827,8 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
     source = _load_file_initial_condition_source(cfg, FT, size(air_mass, 2))
     mesh = grid.horizontal
     q = Array{FT}(undef, size(air_mass))
-    src_q = Vector{FT}(undef, size(source.raw, 3))
-    # Keep the loop-local scratch concrete even when source humidity is absent.
-    # Its values are only consumed when `source.qv !== nothing`.
-    src_qv = similar(src_q)
-    src_p = Vector{Float64}(undef, length(source.ap))
-    cumulative = similar(src_p)
-    dry_cumulative = similar(src_p)
+    scratch = HybridRemapScratch(FT, size(source.raw, 3), length(source.ap))
+    src_q, src_qv = scratch.q, scratch.qv
     A_tgt = grid.vertical.A
     B_tgt = grid.vertical.B
     surface_pressure === nothing && throw(ArgumentError(
@@ -868,18 +852,12 @@ function build_initial_mixing_ratio(air_mass::AbstractArray{FT},
             _sample_bilinear_profile!(src_q, source.raw, source.lon, source.lat, lon, lat)
             source.qv === nothing || _sample_bilinear_profile!(
                 src_qv, source.qv, source.lon, source.lat, lon, lat)
-            if source.needs_vinterp
-                target_qv = qv === nothing ? nothing : @view(qv[c, :])
-                ps_total = _total_surface_pressure(
-                    pressure_basis, surface_pressure[c], A_tgt, B_tgt, target_qv)
-                source_qv = source.qv === nothing ? nothing : src_qv
-                _remap_hybrid_profile!(@view(q[c, :]), src_q, source_qv,
-                                       source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total,
-                                       src_p, cumulative, dry_cumulative)
-            else
-                _copy_profile!(@view(q[c, :]), src_q)
-            end
+            target_qv = !source.needs_vinterp || qv === nothing ? nothing : @view(qv[c, :])
+            source_qv = source.qv === nothing ? nothing : src_qv
+            _file_ic_column!(@view(q[c, :]), scratch, source_qv,
+                             source.needs_vinterp, source.ap, source.bp,
+                             pressure_basis, source.needs_vinterp ? surface_pressure[c] : nothing,
+                             A_tgt, B_tgt, target_qv)
         end
     end
 
@@ -931,15 +909,12 @@ function pack_initial_tracer_mass(grid::AtmosGrid, air_mass, vmr_dry;
     return _pack_tracer_mass(grid, air_mass, vmr_dry, mass_basis, qv)
 end
 
-function _pack_tracer_mass(::AtmosGrid{<:LatLonMesh}, air_mass, vmr_dry, ::DryBasis, qv)
+function _pack_tracer_mass(::AtmosGrid{<:Union{LatLonMesh,ReducedGaussianMesh}}, air_mass, vmr_dry, ::DryBasis, qv)
     return vmr_dry .* air_mass
 end
 
-function _pack_tracer_mass(::AtmosGrid{<:ReducedGaussianMesh}, air_mass, vmr_dry, ::DryBasis, qv)
-    return vmr_dry .* air_mass
-end
 
-function _pack_tracer_mass(::AtmosGrid{<:LatLonMesh}, air_mass, vmr_dry, ::MoistBasis, qv)
+function _pack_tracer_mass(::AtmosGrid{<:Union{LatLonMesh,ReducedGaussianMesh}}, air_mass, vmr_dry, ::MoistBasis, qv)
     qv === nothing && throw(ArgumentError(
         "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
         "from the first transport window to convert dry VMR to moist storage; got qv=nothing."))
@@ -948,22 +923,15 @@ function _pack_tracer_mass(::AtmosGrid{<:LatLonMesh}, air_mass, vmr_dry, ::Moist
     return vmr_dry .* air_mass .* (1 .- qv)
 end
 
-function _pack_tracer_mass(::AtmosGrid{<:ReducedGaussianMesh}, air_mass, vmr_dry, ::MoistBasis, qv)
-    qv === nothing && throw(ArgumentError(
-        "pack_initial_tracer_mass on MoistBasis requires qv (specific humidity) " *
-        "from the first transport window to convert dry VMR to moist storage; got qv=nothing."))
-    size(qv) == size(air_mass) || throw(DimensionMismatch(
-        "qv shape $(size(qv)) must match air_mass shape $(size(air_mass))"))
-    return vmr_dry .* air_mass .* (1 .- qv)
-end
 
-include("initial_conditions/cubed_sphere.jl")
-include("initial_conditions/surface_flux.jl")
+include("cubed_sphere.jl")
+include("surface_flux.jl")
 
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
 
+export uniform_background
 export FileInitialConditionSource
 export AbstractInitialConditionSpec, UniformInitialConditionSpec
 export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec

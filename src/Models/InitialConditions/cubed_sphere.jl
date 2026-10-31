@@ -42,7 +42,7 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
     mesh = grid.horizontal
     Nc = mesh.Nc
     Nz = size(air_mass[1], 3)
-    background = FT(get(cfg, "background", DEFAULT_BACKGROUND_VMR))
+    background = uniform_background(cfg, FT)
 
     if kind === :uniform
         vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
@@ -61,20 +61,14 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
         end
         return vmr
     elseif kind === :gaussian_blob
-        lon0 = FT(get(cfg, "lon0_deg", 0.0))
-        lat0 = FT(get(cfg, "lat0_deg", 0.0))
-        sigma_lon = FT(get(cfg, "sigma_lon_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        sigma_lat = FT(get(cfg, "sigma_lat_deg", DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG))
-        amplitude = FT(get(cfg, "amplitude", background))
+        lon0, lat0, sigma_lon, sigma_lat, amplitude = _gaussian_blob_params(cfg, background)
         vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
         for p in 1:CS_PANEL_COUNT
             lons, lats = panel_cell_center_lonlat(mesh, p)
             q = vmr[p]
             for j in 1:Nc, i in 1:Nc
-                dlon = wrapped_longitude_distance(lons[i, j], lon0)
-                dlat = lats[i, j] - lat0
-                value = background + amplitude * exp(-FT(0.5) *
-                    ((dlon / sigma_lon)^2 + (dlat / sigma_lat)^2))
+                value = _gaussian_blob_value(lons[i, j], lats[i, j], background,
+                                              lon0, lat0, sigma_lon, sigma_lat, amplitude)
                 @views q[i, j, :] .= value
             end
         end
@@ -157,13 +151,8 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
 
     # Vertical remap column-by-column into interior `(Nc, Nc, Nz)` tuple.
     vmr = ntuple(_ -> Array{FT}(undef, Nc, Nc, Nz), CS_PANEL_COUNT)
-    src_q = Vector{FT}(undef, Nlev_src)
-    # Keep the loop-local scratch concrete even when source humidity is absent.
-    # Its values are only consumed when `source_qv_levels !== nothing`.
-    src_qv = similar(src_q)
-    src_p = Vector{Float64}(undef, length(source.ap))
-    cumulative = similar(src_p)
-    dry_cumulative = similar(src_p)
+    scratch = HybridRemapScratch(FT, Nlev_src, length(source.ap))
+    src_q, src_qv = scratch.q, scratch.qv
     source.needs_vinterp &&
         _warn_surface_pressure_approximation(pressure_basis, target_qv_panels)
 
@@ -172,19 +161,13 @@ function _build_cs_file_ic(grid::AtmosGrid{<:CubedSphereMesh},
             @views copyto!(src_q, vmr_src_levels[p][i, j, :])
             source_qv_levels === nothing || @views copyto!(
                 src_qv, source_qv_levels[p][i, j, :])
-            if source.needs_vinterp
-                target_qv = target_qv_panels === nothing ? nothing :
-                            @view(target_qv_panels[p][i, j, :])
-                ps_total = _total_surface_pressure(
-                    pressure_basis, ps_tgt_panels[p][i, j], A_tgt, B_tgt, target_qv)
-                source_qv = source_qv_levels === nothing ? nothing : src_qv
-                _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_q, source_qv,
-                                       source.ap, source.bp,
-                                       A_tgt, B_tgt, ps_total,
-                                       src_p, cumulative, dry_cumulative)
-            else
-                _copy_profile!(@view(vmr[p][i, j, :]), src_q)
-            end
+            target_qv = !source.needs_vinterp || target_qv_panels === nothing ? nothing :
+                        @view(target_qv_panels[p][i, j, :])
+            source_qv = source_qv_levels === nothing ? nothing : src_qv
+            _file_ic_column!(@view(vmr[p][i, j, :]), scratch, source_qv,
+                             source.needs_vinterp, source.ap, source.bp,
+                             pressure_basis, source.needs_vinterp ? ps_tgt_panels[p][i, j] : nothing,
+                             A_tgt, B_tgt, target_qv)
         end
     end
 
@@ -356,11 +339,8 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
 
     _warn_surface_pressure_approximation(pressure_basis, qv)
     A_tgt, B_tgt = grid.vertical.A, grid.vertical.B
-    src_profile = Vector{FT}(undef, Nsrc)
-    src_qv_profile = similar(src_profile)
-    src_p = Vector{Float64}(undef, Nsrc + 1)
-    cumulative = similar(src_p)
-    dry_cumulative = similar(src_p)
+    scratch = HybridRemapScratch(FT, Nsrc, Nsrc + 1)
+    src_profile, src_qv_profile = scratch.q, scratch.qv
     for p in 1:CS_PANEL_COUNT, j in 1:Nc, i in 1:Nc
         @inbounds for k in 1:Nsrc
             value = raw[i, j, p, k]
@@ -368,13 +348,10 @@ function _build_cs_native_ic(grid::AtmosGrid{<:CubedSphereMesh},
             source_qv === nothing || (src_qv_profile[k] = source_qv[i, j, p, k])
         end
         target_qv = qv === nothing ? nothing : @view(qv[p][i, j, :])
-        ps_total = _total_surface_pressure(
-            pressure_basis, surface_pressure[p][i, j], A_tgt, B_tgt, target_qv)
         source_qv_profile_or_nothing = source_qv === nothing ? nothing : src_qv_profile
-        _remap_hybrid_profile!(@view(vmr[p][i, j, :]), src_profile,
-                               source_qv_profile_or_nothing, ap, bp,
-                               A_tgt, B_tgt, ps_total,
-                               src_p, cumulative, dry_cumulative)
+        _file_ic_column!(@view(vmr[p][i, j, :]), scratch, source_qv_profile_or_nothing,
+                         true, ap, bp, pressure_basis, surface_pressure[p][i, j],
+                         A_tgt, B_tgt, target_qv)
     end
     return vmr
 end

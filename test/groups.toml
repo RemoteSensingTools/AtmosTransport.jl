@@ -96,8 +96,8 @@ files = [
 paths = [
     "src/Parameters/**",
     "src/ConfigChecks.jl",
-    "src/Models/runner/config_keys.jl",
-    "src/Models/runner/configuration.jl",
+    "src/Models/Runner/config_keys.jl",
+    "src/Models/Runner/configuration.jl",
     "src/Models/**",
     "src/MetDrivers/**",
     "src/Preprocessing/**",
@@ -214,7 +214,7 @@ paths = [
     "src/Operators/SurfaceFlux/surface_flux_kernels.jl",
     "src/Adjoints/DiffusionAdjoint.jl",
     "src/Preprocessing/PhysicsInputs/tm5_bldiff.jl",
-    "src/Models/driven_physics_refresh.jl",
+    "src/Models/Physics/driven_physics_refresh.jl",
 ]
 
 [topics.surface_flux_chemistry]
@@ -241,8 +241,8 @@ paths = [
     "src/State/Fields/StepwiseField.jl",
     "src/Operators/StepPlan/**",
     "src/Operators/OperatorState.jl",
-    "src/Models/{TransportModel,driven_stepping}.jl",
-    "src/Models/initial_conditions/surface_flux*.jl",
+    "src/Models/Core/{TransportModel,driven_stepping}.jl",
+    "src/Models/InitialConditions/surface_flux*.jl",
 ]
 
 [topics.gridded_io]
@@ -277,8 +277,8 @@ files = [
     "core/test_cs_pressure_layer_initialization.jl",
 ]
 paths = [
-    "src/Models/InitialConditionIO.jl",
-    "src/Models/initial_conditions/**",
+    "src/Models/InitialConditions/InitialConditionIO.jl",
+    "src/Models/InitialConditions/**",
 ]
 
 [topics.metdrivers_binary]
@@ -301,10 +301,10 @@ files = [
 paths = [
     "src/MetDrivers/**",
     "src/AtomicFiles.jl",
-    "src/Models/BinaryPathExpander.jl",
-    "src/Models/InputStaging.jl",
-    "src/Models/driven_window_state.jl",
-    "src/Models/runner/resources.jl",
+    "src/Models/Runner/BinaryPathExpander.jl",
+    "src/Models/Runner/InputStaging.jl",
+    "src/Models/Runner/driven_window_state.jl",
+    "src/Models/Runner/resources.jl",
     "scripts/diagnostics/inspect_transport_binary.jl",
     "scripts/validation/verify_cs_binary_continuity.jl",
     "scripts/postprocess/**",
@@ -383,7 +383,6 @@ files = [
     "core/test_cubed_sphere_runtime.jl",
     "core/test_run_transport_binary_recipe.jl",
     "core/test_run_logging_checks.jl",
-    "core/test_run_progress_timer.jl",
     "core/test_section_timer.jl",
 ]
 paths = [
@@ -406,7 +405,7 @@ files = [
 ]
 paths = [
     "src/Output/*.jl",
-    "src/Models/runner/output.jl",
+    "src/Models/Runner/output.jl",
 ]
 
 [topics.observations]
@@ -424,7 +423,7 @@ files = [
 ]
 paths = [
     "src/{Output,Observations}/**",
-    "src/Models/runner/observations.jl",
+    "src/Models/Runner/observations.jl",
     "schemas/observation_sites.schema.json",
 ]
 
@@ -469,7 +468,7 @@ paths = [
     "src/Operators/StepPlan/**",
     "src/Operators/OperatorState.jl",
     "src/Operators/StepRecording.jl",
-    "src/Models/{driven_stepping,adjoint_schedule,TransportModel}.jl",
+    "src/Models/Core/{driven_stepping,adjoint_schedule,TransportModel}.jl",
 ]
 
 [topics.inversion]
@@ -516,7 +515,7 @@ files = [
 ]
 paths = [
     "src/Regridding/**",
-    "src/Models/initial_conditions/surface_flux_regridding.jl",
+    "src/Models/InitialConditions/surface_flux_regridding.jl",
 ]
 
 [topics.harnesses]

@@ -140,7 +140,6 @@ function runtime_physics_attributes(cfg, driver, surface_sources, mass_basis::Sy
     attributes["physics_cadence"] = String(_resolve_physics_cadence(
         get(run_cfg, "physics_cadence", nothing)))
     attributes["physics_air_mass_reset_mode"] = String(_normalize_air_mass_reset_mode(
-        get(run_cfg, "air_mass_reset_mode", "preserve_tracer_mass")))
+        get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)))
     return attributes
 end
-

@@ -185,6 +185,11 @@ function _check_tm5_convection_provenance(reader::TransportBinaryReader)
 end
 
 has_cmfmc(r::TransportBinaryReader) = :cmfmc in r.header.payload_sections
+"Whether the binary carries the explicit DTRAIN payload (reader or capability summary)."
+has_dtrain(r::TransportBinaryReader) = :dtrain in r.header.payload_sections
+has_dtrain(caps) = :dtrain in caps.payload_sections
+"Whether the binary carries the exact precomputed Dkg payload."
+has_dkg(r::TransportBinaryReader) = :dkg in r.header.payload_sections
 has_surface(r::TransportBinaryReader) =
     all(s in r.header.payload_sections for s in PBL_SURFACE_PAYLOAD_SECTIONS)
 has_vdiff_fields(r::TransportBinaryReader) =

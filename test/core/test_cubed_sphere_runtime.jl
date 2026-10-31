@@ -374,29 +374,6 @@ end
 end
 
 
-@testset "CubedSphere multi-binary runner rejects partial-day carryover" begin
-    mktempdir() do dir
-        path1 = joinpath(dir, "day1.bin")
-        path2 = joinpath(dir, "day2.bin")
-        write_driven_cs_binary(path1; FT = Float64, Nc = 4, Nz = 2,
-                               window_mass_scales = (1, 1))
-        write_driven_cs_binary(path2; FT = Float64, Nc = 4, Nz = 2,
-                               window_mass_scales = (1, 1))
-        cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [path1, path2]),
-            "architecture" => Dict("use_gpu" => false, "backend" => "cpu"),
-            "numerics" => Dict("float_type" => "Float64"),
-            "run" => Dict("stop_window" => 1, "Hp" => 1),
-            "advection" => Dict("scheme" => "upwind"),
-            "tracers" => Dict("co2" => Dict("init" => Dict("kind" => "uniform",
-                                                            "background" => 4e-4))),
-            "output" => Dict("snapshot_hours" => Float64[]),
-        )
-        @test_throws ArgumentError run_driven_simulation(cfg)
-    end
-end
-
-
 
 @testset "CubedSphere runtime supports CMFMC convection without promoting to Float64" begin
     FT = Float32

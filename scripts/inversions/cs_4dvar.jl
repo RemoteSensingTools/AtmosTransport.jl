@@ -139,7 +139,7 @@ const Adv = AtmosTransport.Operators.Advection
 # Config validation. Every table and key the driver reads is listed here;
 # unknown tables and keys are errors, and known keys that the selected kind
 # leaves unread are warnings, as in the forward-run checks
-# (`src/Models/runner/config_keys.jl`).
+# (`src/Models/Runner/config_keys.jl`).
 # ---------------------------------------------------------------------------
 
 const _GRADIENT_DESCENT_KEYS = ("initial_step", "min_step", "step_shrink", "line_search")
@@ -158,7 +158,7 @@ const _INVERSION_TABLE_KEYS = Dict(
     "mesh"           => ("Nc", "Hp", "float_type"),
     "time"           => ("nsteps", "dt_seconds", "start"),
     "meteo"          => ("source", _HYDROSTATIC_METEO_KEYS...),
-    "advection"      => AT.Models._ADVECTION_SPEC_KEYS,   # read by `advection_spec`
+    "advection"      => AT.Models.ADVECTION_SPEC_KEYS,   # read by `advection_spec`
     "observations"   => ("entries", _OBSERVATION_FILE_KEYS...),
     "control"        => ("name", "steps", "normalize", "initial"),
     "covariance"     => ("kind", "sigma_value", "correlation_length_cells"),
@@ -336,7 +336,7 @@ function _bind_observation_file(cfg, mesh)
                                           AT.read_observations(path), mesh, start, dt, nsteps, tracer,
                                           out_of_range_policy)
     return AT.bind_to_mesh(set, mesh, start, dt; nsteps, tracer_filter = tracer, out_of_range_policy,
-                           placement, terrain = AT.Models.DrivenRunner._observation_terrain(placement, mesh),
+                           placement, terrain = AT.Models.DrivenRunner.observation_terrain(placement, mesh),
                            max_surface_pressure_mismatch_pa = _max_surface_pressure_mismatch(cfg),
                            flagged_records = get(obs_cfg, "flagged_records", "drop"), cell_averaging)
 end

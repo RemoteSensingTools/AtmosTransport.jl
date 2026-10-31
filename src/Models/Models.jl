@@ -1,7 +1,8 @@
 """
     Models
 
-Minimal standalone runtime layer for `src`.
+Runtime composition; plain Core/Physics/InitialConditions/Runner folders retain
+the existing module identities and interleaved type/method assembly.
 """
 module Models
 
@@ -49,12 +50,12 @@ using ..ConfigChecks: config_bool as _config_bool
 using ..ConfigChecks: config_int
 using ..Parameters: DEFAULT_LINROOD_PPM_ORDER
 
-include("TransportModel.jl")
-include("RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)
-include("RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceananigans-style)
-include("RuntimePhysicsRecipe.jl")
-include("RuntimePhysicsMetadata.jl")
-include("InitialConditionIO.jl")
+include("Core/TransportModel.jl")
+include("Physics/RuntimeRecipeStyles.jl")    # runtime-style traits (dispatched on by specs)
+include("Physics/RuntimePhysicsSpecs.jl")    # typed config specs + materialize (Oceananigans-style)
+include("Physics/RuntimePhysicsRecipe.jl")
+include("Physics/RuntimePhysicsMetadata.jl")
+include("InitialConditions/InitialConditionIO.jl")
 using .InitialConditionIO: FileInitialConditionSource,
                            AbstractInitialConditionSpec,
                            UniformInitialConditionSpec,
@@ -78,23 +79,31 @@ export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
 export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
 export CSNativeInitialConditionSpec
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
-include("BinaryPathExpander.jl")  # `[input]` folder+date-range
+include("Runner/BinaryPathExpander.jl")  # `[input]` folder+date-range
 using .BinaryPathExpander: expand_binary_paths
 export expand_binary_paths
-include("InputStaging.jl")        # rolling NVMe staging of the daily binaries
+include("Runner/InputStaging.jl")        # rolling NVMe staging of the daily binaries
 using .InputStaging: InputStager, staged_path_for!, cleanup_staging!
 export InputStager, staged_path_for!, cleanup_staging!
-include("Simulation.jl")
-include("Callbacks.jl")          # schedules, Callback, NaNChecker (Oceananigans-style)
+include("Core/Simulation.jl")
+include("Core/Callbacks.jl")          # schedules, Callback, NaNChecker (Oceananigans-style)
 export AbstractSchedule, IterationInterval, WindowInterval, WallTimeInterval, Callback, NaNChecker
-include("DrivenSimulation.jl")
-include("driven_window_state.jl")
-include("driven_physics_refresh.jl")
-include("driven_stepping.jl")
-include("adjoint_schedule.jl")    # the adjoint of a DrivenSimulation configuration
+include("Runner/DrivenSimulation.jl")
+include("Runner/driven_window_state.jl")
+include("Physics/driven_physics_refresh.jl")
+include("Core/driven_stepping.jl")
+include("Core/adjoint_schedule.jl")    # the adjoint of a DrivenSimulation configuration
 export cs_adjoint_inputs
-include("DrivenRunner.jl")        # library-level driven runner
+include("Runner/DrivenRunner.jl")        # library-level driven runner
 using .DrivenRunner: run_driven_simulation, validate_config, TransportTracerSpec
 export run_driven_simulation, validate_config, TransportTracerSpec
+
+# Shared runtime interface; preserve all earlier facade bindings.
+using .InitialConditionIO: uniform_background
+export uniform_background
+using .DrivenRunner: binary_date_label, configured_float_type, check_multifile_window_count, layout_run_hours, parse_tracer_specs, run_reference_time, run_time_origin, run_time_span, run_window_index, runtime_window_layout, structured_tracer_specs, runtime_output_origin, window_end_hours, observation_terrain, run_tracer_specs
+export binary_date_label, configured_float_type, check_multifile_window_count, layout_run_hours, parse_tracer_specs, run_reference_time, run_time_origin, run_time_span, run_window_index, runtime_window_layout, structured_tracer_specs, runtime_output_origin, window_end_hours, observation_terrain, run_tracer_specs
+const ADVECTION_SPEC_KEYS = _ADVECTION_SPEC_KEYS
+export ADVECTION_SPEC_KEYS
 
 end # module Models

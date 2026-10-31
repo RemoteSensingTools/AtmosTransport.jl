@@ -240,3 +240,10 @@ projection live in `helpers/cs_inversion_reference.jl`. Upward Upwind vertical
 flux and FV3 Lin–Rood footprint differences share the matrix in
 `core/test_cs_linrood_fv3_adjoint.jl`. Tape storage rejections share
 `core/test_cs_tape_path.jl`.
+
+Models IC checks are in `core/test_initial_condition_io.jl`; surface-inventory
+calendar, coverage and species checks are in `core/test_surface_flux_ingestion.jl`,
+unit conversion in `core/test_flux_units.jl`, native storage/time encoding in
+`core/test_native_cs_surface_flux.jl`, and CS packing in
+`core/test_cs_initial_state_packing.jl`. The C90 CATRINE near-surface remap
+invariant is opt-in at `real_data/test_catrine_initial_condition.jl`.

@@ -28,7 +28,7 @@ using AtmosTransport.GriddedIO: decode_time, decode_month_keys, CFDecoder, Month
                                 seconds_since, check_last_month
 const GIO = AtmosTransport.GriddedIO
 
-# ---- Frozen runtime parser (src/Models/initial_conditions/surface_flux.jl) ----
+# ---- Frozen runtime parser (src/Models/InitialConditions/surface_flux.jl) ----
 
 function frozen_parse_cf_time_origin(s::AbstractString)
     ss = replace(strip(String(s)), "T" => " ")

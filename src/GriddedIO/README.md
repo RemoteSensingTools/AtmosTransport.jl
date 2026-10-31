@@ -34,6 +34,7 @@ SHA. It never imports `Preprocessing` or `Models`, so the runtime loaders
 
 | File | Contents |
 |---|---|
+| [`initial_condition_conventions.jl`](initial_condition_conventions.jl) | Hybrid coefficient Pa validation, vertical-order inference and surface-inventory year inference; moved without changing defaults or errors. |
 | [`GriddedIO.jl`](GriddedIO.jl) | Module, imports, exports, includes. |
 | [`coordinates.jl`](coordinates.jl) | `AbstractAxis` (`LongitudeAxis`, `LatitudeAxis`, `TimeAxis`, `VerticalAxis`) and `find_coordinate`; `LatLonOrientation`, `latlon_orientation`, `orient`, `orient_coordinates`; `AbstractFillPolicy` (`MaskedAsZero`, `MaskedAsNaN`, `FillValueOnly`) and `read_raw([T,] ds, name, policy, idx...)`. |
 | [`source_meshes.jl`](source_meshes.jl) | `source_latlon_mesh(lon, lat, rule; radius)` with `AbstractFaceRule` / `SnappedFaces`: snapping, centre-on-0/180, midpoint and pole rules on `LatLonMesh(λᶠ, φᶠ; radius)`. |
@@ -303,7 +304,12 @@ The exports in `GriddedIO.jl` define coordinate discovery, fill and orientation
 policies, source-face reconstruction, time decoding, flux units, staging and
 flux/terrain schemas. Geometry comes from Grids (`float64_twin`,
 `cell_centers`, and the bilinear brackets); species metadata comes from
-Parameters. MonthsSince index arithmetic and calendar-attribute reads each
+Parameters. `initial_condition_conventions.jl` additionally owns
+`hybrid_surface_first`, `validate_ap_units`, `VERTICAL_ORDERS`,
+`parse_vertical_order`, `file_vertical_order`, `PRESSURE_UNITS`, `HEIGHT_UNITS`,
+`infer_year_from_path` and `infer_year_from_time_units`; Models keeps aliases
+for its previous qualified helper paths. Pa thresholds, native-file defaults,
+error messages and year inference are unchanged. MonthsSince index arithmetic and calendar-attribute reads each
 have one private helper in `time_axes.jl`.
 
 ## Forward<->adjoint mirrors
