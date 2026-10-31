@@ -63,7 +63,7 @@ All in [`../SectionTimer.jl`](../SectionTimer.jl):
 ## How A Run Uses It
 
 - `_run_driven_simulation` in
-  [`../Models/Runner/DrivenRunner.jl`](../Models/Runner/DrivenRunner.jl) does four things:
+  [`../Models/Runner/DrivenRunner/DrivenRunner.jl`](../Models/Runner/DrivenRunner/DrivenRunner.jl) does four things:
   1. Calls `maybe_enable_from_env!()` before opening inputs.
   2. Calls `disable!()` in a `finally` block.
   3. Calls `report(stderr)`.

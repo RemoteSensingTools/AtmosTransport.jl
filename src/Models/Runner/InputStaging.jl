@@ -21,8 +21,8 @@
 
 module InputStaging
 
-using ...ConfigChecks: config_bool as _config_bool
-using ...AtomicFiles: atomic_publish
+using ....ConfigChecks: config_bool as _config_bool
+using ....AtomicFiles: atomic_publish
 using FileWatching: Pidfile
 import TOML
 

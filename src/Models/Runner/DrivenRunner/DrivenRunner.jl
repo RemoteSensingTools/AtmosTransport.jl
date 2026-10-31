@@ -65,56 +65,58 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ..Models: DEFAULT_AIR_MASS_RESET_MODE, _config_bool, _spec_int, Callback, NaNChecker, WindowInterval,
-                AbstractInitialConditionSpec, initial_condition_spec
+using ....Models.Physics: DEFAULT_AIR_MASS_RESET_MODE, _spec_int
+using ....ConfigChecks: config_bool as _config_bool
+using ....Models.Core: Callback, NaNChecker, WindowInterval
+using ....Models.InitialConditionIO: AbstractInitialConditionSpec, initial_condition_spec
 using Dates: Dates, Date, DateTime, Day, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
-using ...LogLevels: log_level, with_log_level
+using ....LogLevels: log_level, with_log_level
 using ProgressMeter: Progress, next!, finish!, update!
 
-import ...expand_data_path
-using ...SectionTimer
-using ...ConfigChecks: unknown_key_messages, config_int, config_date, parse_float_type
-using ...Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
-using ..State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis, CellState,
+import ....expand_data_path
+using ....SectionTimer
+using ....ConfigChecks: unknown_key_messages, config_int, config_date, parse_float_type
+using ....Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE
+using ....State: AbstractMassBasis, DryBasis, MoistBasis, mass_basis, CellState,
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
-using ..Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
-using ..Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
+using ....Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
+using ....Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion, TimeVaryingSurfaceFluxSource,
                   total_emission_rate,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
                   NoConvection, TM5Convection, CMFMCConvection,
                   CMFMCMatrixConvection
-using ..Architectures: AbstractArchitecture, architecture_from_config,
+using ....Architectures: AbstractArchitecture, architecture_from_config,
                        is_gpu, ensure_runtime!,
                        array_adapter, architecture_label, device_name,
                        backend_name, synchronize_architecture!,
                        assert_residency!, assert_float_type!
-using ..MetDrivers: AbstractMetDriver, TransportBinaryDriver,
+using ....MetDrivers: AbstractMetDriver, TransportBinaryDriver,
                      load_transport_window, driver_grid, air_mass_basis,
                      total_windows, window_dt, binary_capabilities,
                      inspect_binary, steps_per_window,
                      steps_per_window_schedule, release_payload!, same_window_layout,
                      surface_pressure_basis, supports_moisture, has_dtrain,
                      TransportBinaryReader, load_vdiff_qv_window!
-using ..InitialConditionIO: INITIAL_CONDITION_KINDS,
+using ....Models.InitialConditionIO: INITIAL_CONDITION_KINDS,
                             UniformInitialConditionSpec, LatitudeStepInitialConditionSpec,
                             BoundaryLayerEnhancedInitialConditionSpec, GaussianBlobInitialConditionSpec,
                             FileInitialConditionSpec, CatrineCO2InitialConditionSpec,
                             CSNativeInitialConditionSpec, PressureLayerInitialConditionSpec,
                             _regridding_method, _surface_flux_kind, surface_flux_species,
                             _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
-using ..InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
+using ....Models.InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources,
                              TotalSurfacePressure
-using ...GriddedIO: read_model_surface_height, read_point_elevation
+using ....GriddedIO: read_model_surface_height, read_point_elevation
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
-using ..Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
+using ....Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
                 check_output_targets, AbstractSnapshotFrame, NetCDFSnapshotStream, append_snapshot!,
                 SnapshotFrame, AbstractOutputPartition, SingleOutputFile, DailyOutputFiles,
                 AbstractOutputFormat, NetCDFOutput, BinaryMmapOutput, RuntimeOutputSpec,
@@ -122,31 +124,31 @@ using ..Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT
                 output_enabled, output_path, output_path_for_day, capture_snapshot,
                 write_snapshot_netcdf, write_snapshot_binary, SNAPSHOT_SCHEDULE_KEYS,
                 SNAPSHOT_INTERVAL_KEYS, schedule_has_times
-using ..Observations: NoObservationOutput, ObservationOutputSpec, observation_output_spec,
+using ....Observations: NoObservationOutput, ObservationOutputSpec, observation_output_spec,
                       AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                       samples_observations, begin_observation_day!, observe_window_boundary!,
                       finish_observations!, check_observation_tracer_names,
                       observation_needs_humidity, averaging_kernel_tracers, observation_output_path,
                       SoundingMode, SiteMode, VerticalPlacementSpec, ObservationTerrain,
                       NoModelSurfaceHeight, NoPointElevation
-# TransportModel + DrivenSimulation live alongside us in the Models module;
-# reach up to the parent and pull them in.
-using ..Models: TransportModel
-import ..Models: DrivenSimulation, run_window!, run!, step!, allocate_face_fluxes,
-                  _finish_window_prefetch!
+# Import concrete types and shared generics from their owners.
+using ....Models.Core: TransportModel
+import ..Runner: DrivenSimulation, run_window!, _finish_window_prefetch!
+import ....Models.Core: run!, step!
+using ....MetDrivers: allocate_face_fluxes
 # Physics-recipe helpers: `build_runtime_physics_recipe` /
 # `validate_runtime_physics_recipe` are defined in `RuntimePhysicsRecipe.jl`
 # (loaded before us in Models). Pull them in so we don't have to stutter
 # through `Main.AtmosTransport.*`.
-using ..Models: build_runtime_physics_recipe, validate_runtime_physics_recipe,
+using ....Models.Physics: build_runtime_physics_recipe, validate_runtime_physics_recipe,
                  build_runtime_advection, configured_halo_width,
                  CubedSphereRuntimeRecipeStyle, runtime_physics_attributes
 # Config-only parsers, run by `validate_config` before any binary is opened.
-using ..Models: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
+using ....Models.Physics: advection_spec, diffusion_spec, convection_spec, chemistry_spec,
                  _ADVECTION_SPEC_KEYS,
                  _advection_section, _diffusion_section, _convection_section,
-                 _chemistry_section, _normalize_air_mass_reset_mode,
-                 _resolve_physics_cadence, binary_cfl_check
+                 _chemistry_section, binary_cfl_check
+using ....Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 

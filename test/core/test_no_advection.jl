@@ -114,7 +114,7 @@ struct _TapeRecorderStandIn <: AtmosTransport.Operators.AbstractStepRecorder end
 
     # CS workspace allocator returns nothing for NoAdvection — no scratch
     # buffers needed.
-    @test AtmosTransport.Models._cs_advection_workspace_for(
+    @test AtmosTransport.Operators.StepPlans._cs_advection_workspace_for(
               NoAdvection(), cs_state, grid) === nothing
 
     air_before = deepcopy(cs_state.air_mass)
