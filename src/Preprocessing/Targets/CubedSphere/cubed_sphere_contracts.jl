@@ -78,7 +78,7 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                  tol_rel::Real,
                                  win_idx::Int;
                                  replay_scratch::Union{Nothing, ReplayScratch} = nothing) where {FT, NP}
-    _validate_replay_tol(tol_rel, "verify_write_replay_cs!")
+    validate_replay_tol(tol_rel, "verify_write_replay_cs!")
     NP >= 1 ||
         error("verify_write_replay_cs!: requires at least one panel.")
     panel_shape = size(m_cur[1])
@@ -100,130 +100,9 @@ function verify_write_replay_cs!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
 end
 
 """
-    verify_substep_positivity_cs!(m, am, bm, cm; cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
-                                  halo_width = 0, m_next = nothing)
-
-Verify the per-substep horizontal+vertical positivity contract that the runtime's
-`_cs_static_palindrome_subcycle_count` depends on. For every interior cell on every panel
-(any rectangular block; the lat-lon gate `verify_substep_positivity_ll!` passes
-its window as one block):
-
-  1. The cell air mass itself must be positive (`m > 0`), a preprocessing
-     invariant enforced here (the runtime CFL scan skips such cells). A
-     non-positive cell mass is reported with `ratio = Inf` regardless of flux
-     magnitude.
-  2. The combined Strang-palindrome outgoing budget
-     `2 * (out_x + out_y + out_z)` must not exceed `cfl_limit * m_ref`, where
-     `m_ref = min(m, m_next)` when `m_next` is supplied by a caller that wants
-     endpoint tightening, and `m_ref = m` otherwise. The factor of 2 is
-     required because the CS runtime applies the
-     direction sequence `X-Y-Z-Z-Y-X` for every met substep.
-
-Returns a NamedTuple `(direction, ratio, ratio_xy, ratio_z, location, ok)`:
-* `direction :: Union{Symbol, Nothing}` — the dominant contributor among
-  `:x`, `:y`, `:z`, or `nothing` when no cell was inspected.
-* `ratio :: Float64` — worst observed palindrome outgoing budget over the
-  reference mass, or `Inf` if any inspected cell had invalid mass or flux.
-* `ratio_xy :: Float64` — worst observed horizontal-only palindrome outgoing
-  budget over the reference mass.
-* `ratio_z :: Float64` — worst observed vertical-only palindrome outgoing
-  budget over the reference mass.
-* `location :: NTuple{4, Int}` — `(panel, i, j, k)` of the worst cell.
-* `ok :: Bool` — `true` iff `ratio <= cfl_limit`.
-
-The replay gate (`verify_write_replay_cs!`) only checks endpoint continuity. A
-binary that drives a cell mass negative mid-sweep can still pass replay because
-the cell re-fills from inflow before the window ends — but the runtime cannot
-recover. This gate is the actual contract the runtime depends on.
-
-`halo_width` defaults to `0` (panel arrays are stored unhaloed at preprocess
-time); pass `> 0` to scan only the interior of a haloed buffer.
-"""
-function verify_substep_positivity_cs!(m::NTuple{NP, <:AbstractArray{FT, 3}},
-                                       am::NTuple{NP, <:AbstractArray},
-                                       bm::NTuple{NP, <:AbstractArray},
-                                       cm::NTuple{NP, <:AbstractArray};
-                                       cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
-                                       halo_width::Integer = 0,
-                                       m_next::Union{Nothing, NTuple{NP, <:AbstractArray}} = nothing) where {FT, NP}
-    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_cs!")
-    Hp = Int(halo_width)
-    # All buffers share the same interior extent `(Ni, Nj, Nz)`; derive from m.
-    Ni = size(m[1], 1) - 2Hp
-    Nj = size(m[1], 2) - 2Hp
-    Nz = size(m[1], 3)
-    iL, jL = Hp + 1, Hp + 1
-    iH, jH = Hp + Ni, Hp + Nj
-    worst_dir = nothing
-    worst_ratio = 0.0
-    worst_ratio_xy = 0.0
-    worst_ratio_z = 0.0
-    worst_loc = (0, 0, 0, 0)
-    for p in 1:NP
-        m_p = m[p]
-        m_next_p = m_next === nothing ? nothing : m_next[p]
-        m_int = view(m_p, iL:iH, jL:jH, 1:Nz)
-        m_next_int = m_next_p === nothing ? nothing :
-                     view(m_next_p, iL:iH, jL:jH, 1:Nz)
-        am_lo = view(am[p], iL    :iH,     jL:jH,     1:Nz)
-        am_hi = view(am[p], iL + 1:iH + 1, jL:jH,     1:Nz)
-        bm_lo = view(bm[p], iL:iH,     jL    :jH,     1:Nz)
-        bm_hi = view(bm[p], iL:iH,     jL + 1:jH + 1, 1:Nz)
-        cm_lo = view(cm[p], iL:iH, jL:jH, 1    :Nz)
-        cm_hi = view(cm[p], iL:iH, jL:jH, 2:Nz + 1)
-        for k in 1:Nz, j in 1:Nj, i in 1:Ni
-            mi = m_int[i, j, k]
-            mi_next = m_next_int === nothing ? mi : m_next_int[i, j, k]
-            ax_l = am_lo[i, j, k]
-            ax_h = am_hi[i, j, k]
-            by_l = bm_lo[i, j, k]
-            by_h = bm_hi[i, j, k]
-            cz_l = cm_lo[i, j, k]
-            cz_h = cm_hi[i, j, k]
-            if !isfinite(mi) || mi <= zero(FT) ||
-               !isfinite(mi_next) || mi_next <= zero(FT) ||
-               !isfinite(ax_l) || !isfinite(ax_h) ||
-               !isfinite(by_l) || !isfinite(by_h) ||
-               !isfinite(cz_l) || !isfinite(cz_h)
-                if !isinf(worst_ratio)
-                    worst_ratio = Inf
-                    worst_ratio_xy = Inf
-                    worst_ratio_z = Inf
-                    worst_dir = :x
-                    worst_loc = (p, i, j, k)
-                end
-                continue
-            end
-            out_x = max(zero(FT), -ax_l) + max(zero(FT), ax_h)
-            out_y = max(zero(FT), -by_l) + max(zero(FT), by_h)
-            out_z = max(zero(FT), -cz_l) + max(zero(FT), cz_h)
-            m_ref = min(mi, mi_next)
-            outgoing_xy = FT(2) * (out_x + out_y)
-            outgoing_z = FT(2) * out_z
-            outgoing = outgoing_xy + outgoing_z
-            ratio_xy = outgoing_xy / m_ref
-            ratio_z = outgoing_z / m_ref
-            ratio = outgoing / m_ref
-            worst_ratio_xy = max(worst_ratio_xy, Float64(ratio_xy))
-            worst_ratio_z = max(worst_ratio_z, Float64(ratio_z))
-            if ratio > worst_ratio
-                worst_ratio = ratio
-                worst_dir = out_x >= out_y && out_x >= out_z ? :x :
-                            out_y >= out_z ? :y : :z
-                worst_loc = (p, i, j, k)
-            end
-        end
-    end
-    return (direction = worst_dir, ratio = Float64(worst_ratio),
-            ratio_xy = Float64(worst_ratio_xy),
-            ratio_z = Float64(worst_ratio_z),
-            location = worst_loc, ok = worst_ratio <= cfl_limit)
-end
-
-"""
     verify_cs_window_contract!(m_cur, am, bm, cm, m_next, steps_per_window, win_idx;
                                replay_tol, positivity_cfl_limit = DEFAULT_POSITIVITY_CFL_LIMIT,
-                               halo_width = 0, replay_scratch = nothing)
+                               replay_scratch = nothing)
 
 Single canonical per-window CS binary contract check. Runs the replay gate
 (`verify_write_replay_cs!`, errors on failure) followed by the per-substep
@@ -245,16 +124,14 @@ function verify_cs_window_contract!(m_cur::NTuple{NP, <:AbstractArray{FT, 3}},
                                     win_idx::Int;
                                     replay_tol::Real,
                                     positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
-                                    halo_width::Integer = 0,
                                     replay_scratch::Union{Nothing, ReplayScratch} = nothing) where {FT, NP}
-    _validate_replay_tol(replay_tol, "verify_cs_window_contract!")
-    _validate_cfl_limit(positivity_cfl_limit, "verify_cs_window_contract!")
+    validate_replay_tol(replay_tol, "verify_cs_window_contract!")
+    validate_cfl_limit(positivity_cfl_limit, "verify_cs_window_contract!")
     replay = verify_write_replay_cs!(m_cur, am, bm, cm, m_next,
                                      steps_per_window, replay_tol, win_idx;
                                      replay_scratch = replay_scratch)
     positivity = verify_substep_positivity_cs!(m_cur, am, bm, cm;
                                                cfl_limit = positivity_cfl_limit,
-                                               halo_width = halo_width,
                                                m_next = m_next)
     return (replay = replay, positivity = positivity)
 end
@@ -265,7 +142,7 @@ end
 Zero-valued state for accumulating the worst per-window positivity diagnostic
 across a preprocessing loop. Pair with `update_cs_positivity_accumulator!`.
 """
-init_cs_positivity_accumulator() = CSWorst((0.0, :none, 0, (0, 0, 0, 0)))
+init_cs_positivity_accumulator() = init_positivity_accumulator(Val(4))
 
 """
     update_cs_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
@@ -274,11 +151,7 @@ Return an updated accumulator from a fresh per-window diagnostic.
 """
 function update_cs_positivity_accumulator(worst::CSWorst, diag::NamedTuple,
                                             win_idx::Int)
-    diag.ratio > worst.ratio || return worst
-    return CSWorst((Float64(diag.ratio),
-                    diag.direction === nothing ? :none : Symbol(diag.direction),
-                    Int(win_idx),
-                    NTuple{4, Int}(diag.location)))
+    return update_positivity_accumulator(worst, diag, win_idx)
 end
 
 """
@@ -300,58 +173,9 @@ function summarize_cs_positivity_status(worst::CSWorst;
                                         steps_per_window::Int,
                                         require_substep_positivity::Bool = true,
                                         quarantine_path::Union{Nothing, AbstractString} = nothing)
-    msg = @sprintf("max palindrome outgoing/m_ref=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
-                   worst.ratio, worst.direction, worst.win,
-                   worst.location, cfl_limit)
-    if worst.ratio <= cfl_limit
-        @info "  Per-substep positivity gate: $msg"
-        return nothing
-    end
-
-    # A useful integer step recommendation requires that (a) the observed
-    # ratio is finite, (b) the configured `cfl_limit` is a sensible positive
-    # finite divisor, and (c) `ceil(Int, ratio / cfl_limit) * steps_per_window`
-    # fits in `Int`. Any of these failing — `Inf`/`NaN` ratio from m<=0 or
-    # NaN-mass/flux, an invalid `cfl_limit = 0` that produces `Inf` from the
-    # divide, or a finite-but-pathologically-large ratio like `1e308` — would
-    # throw `InexactError` from `ceil(Int, ...)` BEFORE the intended
-    # error/warn path runs, which would re-break the
-    # `require_substep_positivity = false` escape hatch exactly when an
-    # operator needs it most. Branch *before* the rescue arithmetic.
-    max_safe_factor       = typemax(Int) ÷ max(steps_per_window, 1)
-    useful_recommendation = isfinite(worst.ratio) &&
-                             isfinite(cfl_limit) && cfl_limit > 0 &&
-                             worst.ratio / cfl_limit <= max_safe_factor
-
-    detail = if useful_recommendation
-        recommended = max(steps_per_window,
-                          ceil(Int, worst.ratio / cfl_limit) * steps_per_window)
-        "Per-substep positivity contract violated: $msg. " *
-        "The binary stores fluxes that violate positivity at the recorded " *
-        "`steps_per_window=$(steps_per_window)`. Re-run with " *
-        "`steps_per_window=$(recommended)` (or higher) on the source " *
-        "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
-        "to suppress."
-    else
-        "Per-substep positivity contract violated, and no representable " *
-        "`steps_per_window` can rescue it: $msg. " *
-        "The observed ratio is `Inf`/`NaN` (m<=0, NaN-mass/flux, or Inf-flux) " *
-        "or finite but pathologically large; the configured `cfl_limit` may " *
-        "also be non-positive. Either the source data has been corrupted " *
-        "upstream of preprocessing, the pressure-fixer / endpoint-balance " *
-        "pass drove a cell negative, or `[numerics].positivity_cfl_limit` is " *
-        "misconfigured (must satisfy `0 < cfl_limit <= 1`). Investigate the " *
-        "source field at the reported cell location, or set " *
-        "`[numerics].require_substep_positivity = false` to record the " *
-        "violation as a warning and keep the binary for diagnostic inspection."
-    end
-    if require_substep_positivity
-        quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
-        error(detail)
-    else
-        @warn detail
-    end
-    return nothing
+    return summarize_positivity_status(worst; budget_label="palindrome outgoing/m_ref",
+                                        cfl_limit, steps_per_window,
+                                        require_substep_positivity, quarantine_path)
 end
 
 # ===========================================================================
@@ -385,7 +209,6 @@ Fields:
     errors (`true`) or warns (`false`) on a positivity violation.
   - `steps_per_window::Int` — for the recommended-steps message in the
     summary's escape-hatch detail. Must be ≥ 1.
-  - `halo_width::Int` — passed through to `verify_substep_positivity_cs!`.
   - `worst::NamedTuple` — mutable accumulator (initially zero).
 
 Construct with explicit kwargs; defaults match the CS round-2/round-3
@@ -397,7 +220,6 @@ mutable struct CubedSphereContract{FT} <:
     positivity_cfl_limit        :: Float64
     require_substep_positivity  :: Bool
     steps_per_window            :: Int
-    halo_width                  :: Int
     worst                       :: CSWorst
     # Lazy scratch (codex round-2): allocated on first `verify_window!`
     # call from the window's panel shape and reused thereafter. Eliminates
@@ -409,26 +231,16 @@ mutable struct CubedSphereContract{FT} <:
                                       replay_tol::Real,
                                       positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                       require_substep_positivity::Bool = true,
-                                      steps_per_window::Integer,
-                                      halo_width::Integer = 0) where FT
-        isfinite(replay_tol) && replay_tol > 0 ||
-            error("CubedSphereContract: replay_tol = $(replay_tol); " *
-                  "must be finite and > 0 (Inf would silently disable replay; " *
-                  "NaN would fail every window late).")
-        isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
-            error("CubedSphereContract: positivity_cfl_limit = " *
-                  "$(positivity_cfl_limit); must be in (0, 1].")
+                                      steps_per_window::Integer) where FT
+        validate_replay_tol(replay_tol, "CubedSphereContract")
+        validate_cfl_limit(positivity_cfl_limit, "CubedSphereContract")
         steps_per_window ≥ 1 ||
             error("CubedSphereContract: steps_per_window = " *
                   "$(steps_per_window); must be ≥ 1.")
-        halo_width ≥ 0 ||
-            error("CubedSphereContract: halo_width = $(halo_width); " *
-                  "must be ≥ 0.")
         return new(Float64(replay_tol),
                    Float64(positivity_cfl_limit),
                    require_substep_positivity,
                    Int(steps_per_window),
-                   Int(halo_width),
                    init_cs_positivity_accumulator(),
                    nothing)
     end
@@ -452,7 +264,6 @@ function verify_window!(window, contract::CubedSphereContract, win_idx::Integer;
     if !write_replay_on
         positivity = verify_substep_positivity_cs!(window.m_cur, window.am, window.bm, window.cm;
                                                    cfl_limit  = contract.positivity_cfl_limit,
-                                                   halo_width = contract.halo_width,
                                                    m_next     = window.m_next)
         return (replay = (max_rel_err = 0.0, max_abs_err = 0.0, worst_idx = (0, 0, 0, 0)),
                 positivity = positivity)
@@ -470,7 +281,6 @@ function verify_window!(window, contract::CubedSphereContract, win_idx::Integer;
                                        contract.steps_per_window, Int(win_idx);
                                        replay_tol           = contract.replay_tol,
                                        positivity_cfl_limit = contract.positivity_cfl_limit,
-                                       halo_width           = contract.halo_width,
                                        replay_scratch       = contract._replay_scratch)
 end
 

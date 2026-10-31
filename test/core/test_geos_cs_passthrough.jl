@@ -386,6 +386,36 @@ end
         end
     end
 
+    # Native C(2n) -> C(n) block coarsening (production: GEOS-IT C180 -> C90/C45).
+    # The face amounts are block sums of the native faces; the stored mass is the
+    # block sum of the native dry mass, so the global mass equals the passthrough's.
+    @testset "process_day block-coarsens native GEOS fluxes to a nested target" begin
+        coarse_grid = build_target_geometry(
+            Dict{String,Any}("type" => "cubed_sphere", "Nc" => NC ÷ 2,
+                              "panel_convention" => "geos_native"),
+            FT_TEST,
+        )
+        coarse_path = joinpath(tmpdir, "out_cs_coarse.bin")
+        coarse = process_day(Date(2021, 12, 1), coarse_grid, settings, vertical;
+                             out_path = coarse_path, dt_met_seconds = 3600.0,
+                             FT = FT_TEST, mass_basis = :dry, replay_tol = 1e-12)
+        @test coarse.worst_replay_rel < 1e-12
+        fine_reader = TransportBinaryReader(joinpath(tmpdir, "out_cs.bin"); FT = FT_TEST)
+        reader = TransportBinaryReader(coarse_path; FT = FT_TEST)
+        try
+            @test reader.header.geometry.Nc == NC ÷ 2
+            @test reader.header.nwindow == 24
+            window = assert_cs_window_replay(reader, 1)
+            @test any(panel -> any(x -> x != 0, panel), window.am)
+            fine_window = load_window!(fine_reader, 1)
+            total(w) = sum(sum(Float64, panel) for panel in w.m)
+            @test total(window) ≈ total(fine_window) rtol = 1e-12
+        finally
+            close(reader)
+            close(fine_reader)
+        end
+    end
+
     @testset "process_day supports GEOS native vertical merge above pressure" begin
         @test vertical_merged.groups == [1:2, 3:3, 4:4]
         @test vertical_merged.Nz == 3

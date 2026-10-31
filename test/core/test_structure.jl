@@ -523,3 +523,12 @@ end
               ("AtmosTransport.Upper.Lower", "local_value")
     end
 end
+
+@testset "absolute package imports cannot bind a target module with the same leaf name" begin
+    structure_fixture() do root
+        write_toml(joinpath(root, "Project.toml"), Dict("deps" => Dict("Lower" => "external-package")))
+        inv = StructureCheck.inventory(root)
+        @test StructureCheck.module_path(inv, "AtmosTransport.Upper", ["Lower", "Geometry"], 0) == ""
+        @test StructureCheck.module_path(inv, "AtmosTransport.Upper", ["Lower"], 2) == "AtmosTransport.Lower"
+    end
+end

@@ -37,15 +37,8 @@ function next_day_merged_fields(next_day_hour0,
     Ny = size(transform.sp, 2)
     @info "  Computing next day hour 0 for last-window delta..."
 
-    spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
-        transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
-        next_day_hour0.lnsp, next_day_hour0.vo, next_day_hour0.d,
-        next_day_hour0.T, vertical.level_range, vertical.ab, grid, settings.half_dt,
-        transform.P_buf, transform.fft_buf, transform.field_2d,
-        transform.P_buf_t, transform.fft_buf_t, transform.fft_out_t,
-        transform.u_spec_t, transform.v_spec_t, transform.field_2d_t,
-        transform.bfft_plans)
+    spectral_to_native_fields!(transform, next_day_hour0.lnsp, next_day_hour0.vo,
+                                next_day_hour0.d, next_day_hour0.T, vertical, grid, settings)
 
     read_next_day_qv!(qv, date, settings, Nx, Ny, vertical.Nz_native)
     apply_mass_fix_if_needed!(qv, transform, grid, vertical, settings, ps_offsets, length(ps_offsets))
@@ -291,7 +284,7 @@ function write_window!(io::IO,
     bytes_written += write_array!(io, merged.dcm_merged)
     bytes_written += write_array!(io, merged.dm_merged)
 
-    if _settings_include_surface(settings)
+    if settings_include_surface(settings)
         bytes_written += write_array!(io, storage.all_pblh[win_idx])
         bytes_written += write_array!(io, storage.all_t2m[win_idx])
         bytes_written += write_array!(io, storage.all_ustar[win_idx])
@@ -348,7 +341,7 @@ function verify_substep_positivity_ll!(m::AbstractArray{FT, 3},
                                         cm::AbstractArray;
                                         cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                         m_next::Union{Nothing, AbstractArray} = nothing) where FT
-    _validate_cfl_limit(cfl_limit, "verify_substep_positivity_ll!")
+    validate_cfl_limit(cfl_limit, "verify_substep_positivity_ll!")
     Nx, Ny, Nz = size(m)
     size(am) == (Nx + 1, Ny, Nz) ||
         error("verify_substep_positivity_ll!: am shape $(size(am)) " *
@@ -395,8 +388,8 @@ function verify_ll_window_contract!(m_cur::AbstractArray{FT, 3},
                                      replay_tol::Real,
                                      positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                      replay_scratch::Union{Nothing, ReplayScratch} = nothing) where FT
-    _validate_replay_tol(replay_tol, "verify_ll_window_contract!")
-    _validate_cfl_limit(positivity_cfl_limit, "verify_ll_window_contract!")
+    validate_replay_tol(replay_tol, "verify_ll_window_contract!")
+    validate_cfl_limit(positivity_cfl_limit, "verify_ll_window_contract!")
     if replay_scratch === nothing
         replay_scratch = ReplayScratch(size(m_cur))
     else
@@ -425,7 +418,7 @@ Zero-valued state for accumulating the worst per-window LL positivity
 diagnostic across a preprocessing loop. Pair with
 `update_ll_positivity_accumulator`.
 """
-init_ll_positivity_accumulator() = LLWorst((0.0, :none, 0, (0, 0, 0)))
+init_ll_positivity_accumulator() = init_positivity_accumulator(Val(3))
 
 """
     update_ll_positivity_accumulator(worst, diag, win_idx) -> NamedTuple
@@ -434,11 +427,7 @@ Return an updated LL accumulator from a fresh per-window diagnostic.
 """
 function update_ll_positivity_accumulator(worst::LLWorst, diag::NamedTuple,
                                             win_idx::Integer)
-    diag.ratio > worst.ratio || return worst
-    return LLWorst((Float64(diag.ratio),
-                    diag.direction === nothing ? :none : Symbol(diag.direction),
-                    Int(win_idx),
-                    NTuple{3, Int}(diag.location)))
+    return update_positivity_accumulator(worst, diag, win_idx)
 end
 
 """
@@ -461,48 +450,9 @@ function summarize_ll_positivity_status(worst::LLWorst;
                                           steps_per_window::Integer,
                                           require_substep_positivity::Bool = true,
                                           quarantine_path::Union{Nothing, AbstractString} = nothing)
-    msg = @sprintf("max palindrome outgoing/m_ref=%.3f dir=%s win=%d cell=%s (limit=%.2f)",
-                   worst.ratio, worst.direction, worst.win,
-                   worst.location, cfl_limit)
-    if worst.ratio <= cfl_limit
-        @info "  Per-substep positivity gate: $msg"
-        return nothing
-    end
-
-    max_safe_factor       = typemax(Int) ÷ max(Int(steps_per_window), 1)
-    useful_recommendation = isfinite(worst.ratio) &&
-                             isfinite(cfl_limit) && cfl_limit > 0 &&
-                             worst.ratio / cfl_limit <= max_safe_factor
-
-    detail = if useful_recommendation
-        recommended = max(Int(steps_per_window),
-                          ceil(Int, worst.ratio / cfl_limit) * Int(steps_per_window))
-        "Per-substep positivity contract violated: $msg. " *
-        "The binary stores fluxes that violate positivity at the recorded " *
-        "`steps_per_window=$(steps_per_window)`. Re-run with " *
-        "`steps_per_window=$(recommended)` (or higher) on the source " *
-        "preprocessing config, or set `[numerics].require_substep_positivity = false` " *
-        "to suppress."
-    else
-        "Per-substep positivity contract violated, and no representable " *
-        "`steps_per_window` can rescue it: $msg. " *
-        "The observed ratio is `Inf`/`NaN` (m<=0, NaN-mass/flux, or Inf-flux) " *
-        "or finite but pathologically large; the configured `cfl_limit` may " *
-        "also be non-positive. Either the source data has been corrupted " *
-        "upstream of preprocessing, the pressure-fixer / endpoint-balance " *
-        "pass drove a cell negative, or `[numerics].positivity_cfl_limit` is " *
-        "misconfigured (must satisfy `0 < cfl_limit <= 1`). Investigate the " *
-        "source field at the reported cell location, or set " *
-        "`[numerics].require_substep_positivity = false` to record the " *
-        "violation as a warning and keep the binary for diagnostic inspection."
-    end
-    if require_substep_positivity
-        quarantine_path === nothing || (isfile(quarantine_path) && rm(quarantine_path; force = true))
-        error(detail)
-    else
-        @warn detail
-    end
-    return nothing
+    return summarize_positivity_status(worst; budget_label="palindrome outgoing/m_ref",
+                                        cfl_limit, steps_per_window,
+                                        require_substep_positivity, quarantine_path)
 end
 
 # ---------------------------------------------------------------------------
@@ -538,13 +488,8 @@ mutable struct LatLonContract{FT} <:
                                  positivity_cfl_limit::Real = DEFAULT_POSITIVITY_CFL_LIMIT,
                                  require_substep_positivity::Bool = true,
                                  steps_per_window::Integer) where FT
-        isfinite(replay_tol) && replay_tol > 0 ||
-            error("LatLonContract: replay_tol = $(replay_tol); " *
-                  "must be finite and > 0 (Inf would silently disable replay; " *
-                  "NaN would fail every window late).")
-        isfinite(positivity_cfl_limit) && 0 < positivity_cfl_limit ≤ 1 ||
-            error("LatLonContract: positivity_cfl_limit = " *
-                  "$(positivity_cfl_limit); must be in (0, 1].")
+        validate_replay_tol(replay_tol, "LatLonContract")
+        validate_cfl_limit(positivity_cfl_limit, "LatLonContract")
         steps_per_window ≥ 1 ||
             error("LatLonContract: steps_per_window = " *
                   "$(steps_per_window); must be ≥ 1.")

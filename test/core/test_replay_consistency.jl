@@ -437,20 +437,12 @@ end
         am[2, 1, :] .= FT[1, 3]
         bm = zeros(FT, 1, 2, 2)
         cm_ll = zeros(FT, 1, 1, 3)
-        cm_rg = zeros(FT, 1, 3)
-        hflux = reshape(FT[1, 3], 1, 2)
-        left, right = Int32[1], Int32[0]
-        div = zeros(1, 2)
 
         # Column divergence is 4: ΔB = 1/2 gives cm = [0, 1, 0].
         P.recompute_cm_from_divergence!(cm_ll, am, bm, m; B_ifc=[0.0, 0.5, 1.0])
-        P.recompute_faceindexed_cm_from_divergence!(cm_rg, hflux, left, right, div;
-                                                    B_ifc=[0.0, 0.5, 1.0])
         @test vec(cm_ll) == FT[0, 1, 0]
-        @test vec(cm_rg) == FT[0, 1, 0]
         for B in (Float64[], [0.0, 1.0], [0.0, 0.25, 0.5, 1.0])
             @test_throws ArgumentError P.recompute_cm_from_divergence!(cm_ll, am, bm, m; B_ifc=B)
-            @test_throws ArgumentError P.recompute_faceindexed_cm_from_divergence!(cm_rg, hflux, left, right, div; B_ifc=B)
         end
     end
 end

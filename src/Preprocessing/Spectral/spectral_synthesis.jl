@@ -409,7 +409,7 @@ function compute_mass_fluxes!(am, bm, u_stag, v_stag, ps,
     # included: they are cells centred at ±(90° − Δφ/2), not pole points.
     # Do NOT zero am in rows 1 and Nlat (issue #58; bug archive
     # SESSION1_GRID_CM_FIX_2026-04-03.md, section 3); the regression test is
-    # test/core/test_spectral_pole_rows.jl.
+    # the pole-row testsets of test/core/test_spectral_targets.jl.
     # Face ps uses Jensen correction: exp(mean(ln ps)) instead of mean(exp(ln ps)).
     # log(ps) is computed inline to avoid allocating a scratch matrix.
     @inbounds for k in 1:Nz, j in 1:Nlat, i in 1:(Nlon + 1)

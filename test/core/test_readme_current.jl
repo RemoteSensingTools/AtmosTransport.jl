@@ -61,6 +61,8 @@ const README_DIRS = [
     "src/Observations", "src/Observations/Retrievals", "src/Observations/Sources", "src/Observations/Sampling", "src/Parameters", "src/Preprocessing",
     "src/Preprocessing/Core", "src/Preprocessing/Vertical", "src/Preprocessing/Spectral",
     "src/Preprocessing/MassClosure", "src/Preprocessing/PhysicsInputs",
+    "src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon",
+    "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere",
     "src/Preprocessing/sources", "src/Preprocessing/transport_binary",
     "src/Quantities", "src/Regridding", "src/GriddedIO", "src/Tape", "src/Extras/Visualization",
 ]

@@ -224,12 +224,13 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    ReadyWindow{G, FT}(index, payload::NamedTuple)
+    ReadyWindow{G, FT}(index, payload::NamedTuple, fidelity::FluxFidelityEvidenceBundle)
 
 Typed wrapper for a topology-specific window payload that is ready to be
 verified and written. `G` is the target geometry, `FT` is the on-disk float
-type, and `payload` is the existing topology NamedTuple (`m_cur`/`am`/... for
-LL/CS, `m_cur`/`hflux`/... for RG).
+type, `payload` is the existing topology NamedTuple (`m_cur`/`am`/... for
+LL/CS, `m_cur`/`hflux`/... for RG), and `fidelity` is the window's explicit
+flux-fidelity evidence (there is no default evidence).
 
 Unknown property access is forwarded to `payload`, so existing
 `verify_window!(window, contract, win_idx)` methods can accept either a raw
@@ -246,10 +247,6 @@ struct ReadyWindow{G <: AbstractTargetGeometry, FT, P <: NamedTuple, F}
         return new{G, FT, P, F}(Int(index), payload, fidelity)
     end
 end
-
-ReadyWindow{G, FT}(index::Integer, payload::P) where
-    {G <: AbstractTargetGeometry, FT, P <: NamedTuple} =
-        ReadyWindow{G, FT}(index, payload, default_fidelity_evidence(G, FT))
 
 ReadyWindow{G, FT}(index::Integer, payload::P, fidelity::F) where
     {G <: AbstractTargetGeometry, FT, P <: NamedTuple, F} =
@@ -311,11 +308,21 @@ PreprocessorRunCache{G, FT}() where {G <: AbstractTargetGeometry, FT} =
 PreprocessorRunCache(::Type{G}, ::Type{FT}) where
     {G <: AbstractTargetGeometry, FT} = PreprocessorRunCache{G, FT}()
 
-Base.haskey(cache::PreprocessorRunCache, key::Symbol) = haskey(cache.entries, key)
-Base.getindex(cache::PreprocessorRunCache, key::Symbol) = cache.entries[key]
 Base.get(cache::PreprocessorRunCache, key::Symbol, default) = get(cache.entries, key, default)
 Base.setindex!(cache::PreprocessorRunCache, value, key::Symbol) =
     setindex!(cache.entries, value, key)
+
+"""Reuse one cached object, or build/store it once; return `(value, reused)`.
+
+Callers retain their own cache key and geometry construction policy.
+"""
+function cached_or_build!(build, cache, key::Symbol)
+    cached = cache === nothing ? nothing : get(cache, key, nothing)
+    cached !== nothing && return (cached, true)
+    value = build()
+    cache === nothing || (cache[key] = value)
+    return (value, false)
+end
 
 # Generic trait functions. The four below are the canonical contract
 # surface that every concrete `AbstractWindowContract{G, FT}` registers
@@ -442,7 +449,7 @@ writer_final_path(writer::AbstractBinaryWriter) = writer.final_path
 # in the compiled code.
 # ---------------------------------------------------------------------------
 
-@inline function _validate_replay_tol(replay_tol::Real, caller::AbstractString)
+@inline function validate_replay_tol(replay_tol::Real, caller::AbstractString)
     isfinite(replay_tol) && replay_tol > 0 ||
         error("$(caller): replay_tol = $(replay_tol); must be finite and " *
               "> 0 (Inf silently disables replay; NaN would fail every " *
@@ -450,7 +457,7 @@ writer_final_path(writer::AbstractBinaryWriter) = writer.final_path
     return nothing
 end
 
-@inline function _validate_cfl_limit(cfl_limit::Real, caller::AbstractString)
+@inline function validate_cfl_limit(cfl_limit::Real, caller::AbstractString)
     isfinite(cfl_limit) && 0 < cfl_limit ≤ 1 ||
         error("$(caller): cfl_limit = $(cfl_limit); must be finite and " *
               "in (0, 1] (Inf/NaN silently disable the gate).")

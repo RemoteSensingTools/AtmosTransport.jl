@@ -72,26 +72,15 @@ function _get_or_build_ll_binary_to_cs_regridder!(cache,
                                                   Nx_ll::Integer,
                                                   Ny_ll::Integer)
     cache_key = _ll_binary_to_cs_regridder_cache_key(grid, Nx_ll, Ny_ll)
-    cached = cache === nothing ? nothing : get(cache, cache_key, nothing)
     t_reg = time()
-    if cached !== nothing
-        n_src = length(cached.src_areas)
-        n_dst = length(cached.dst_areas)
-        @info @sprintf("  Regridder: reused %d→%d  nnz=%d (%.1fs)",
-                       n_src, n_dst, length(cached.intersections.nzval),
-                       time() - t_reg)
-        return cached
+    regridder, reused = cached_or_build!(cache, cache_key) do
+        build_regridder(ll_mesh, grid.mesh; normalize=false, cache_dir=grid.cache_dir)
     end
-
-    regridder = build_regridder(ll_mesh, grid.mesh;
-                                normalize=false,
-                                cache_dir=grid.cache_dir)
-    cache === nothing || (cache[cache_key] = regridder)
     n_src = length(regridder.src_areas)
     n_dst = length(regridder.dst_areas)
-    @info @sprintf("  Regridder: %d→%d  nnz=%d (%.1fs)",
-                   n_src, n_dst, length(regridder.intersections.nzval),
-                   time() - t_reg)
+    @info @sprintf("  Regridder: %s%d→%d  nnz=%d (%.1fs)",
+                   reused ? "reused " : "", n_src, n_dst,
+                   length(regridder.intersections.nzval), time() - t_reg)
     return regridder
 end
 
@@ -505,9 +494,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     nxt_entd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
     nxt_detd = source_has_tm5 ? ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT) : nothing
 
-    @inline function _copy_panels_regrid!(dst, src)
-        for p in 1:CS_PANEL_COUNT; copyto!(dst[p], src[p]); end
-    end
+
 
     worst_pre = 0.0; worst_post = 0.0; worst_iter = 0
     worst_replay_rel = 0.0
@@ -517,34 +504,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
     worst_positivity = init_cs_positivity_accumulator()
     @info "  Applying column CS mass-balance correction; diagnosing cm from endpoint mass tendency..."
 
-    # --- Process first window ---
-    t0 = time()
-    _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
-                             pblh_out = cur_pblh, ustar_out = cur_ustar,
-                             hflux_out = cur_hflux, t2m_out = cur_t2m,
-                             entu_out = cur_entu, detu_out = cur_detu,
-                             entd_out = cur_entd, detd_out = cur_detd)
-    @info @sprintf("    Window  1/%d: read+regrid %.2fs", Nt, time() - t0)
-
-    _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
-    _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
-    _copy_panels_regrid!(cur_am, cs_ws.am_panels)
-    _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
-    # cur_entu/detu/entd/detd were filled directly by `_read_and_regrid_to_cs!`
-    # (TM5 sections need no rebalancing — they're vertical-flux carriers).
-
-    # --- Sliding-window loop: windows 2..Nt ---
-    for win in 2:Nt
-        t0 = time()
-        _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
-                                 pblh_out = nxt_pblh, ustar_out = nxt_ustar,
-                                 hflux_out = nxt_hflux, t2m_out = nxt_t2m,
-                                 entu_out = nxt_entu, detu_out = nxt_detu,
-                                 entd_out = nxt_entd, detd_out = nxt_detd)
-        t_read = time() - t0
-
-        _copy_panels_regrid!(cs_ws.m_next_panels, cs_ws.m_panels)
-
+    function _emit_regridded_window!(win_idx)
         t_bal = time()
         bal_diag = balance_cs_column_mass_fluxes!(
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
@@ -559,28 +519,27 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         worst_post = max(worst_post, bal_diag.max_post_residual)
         worst_iter = max(worst_iter, bal_diag.max_cg_iter)
 
-        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
 
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
-        for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
+
         cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                             cur_m, Nc, Nz, bal_diag,
-                                            "LL-to-CS window $(win - 1)", balance_weights)
-        out_schedule[win - 1] = _select_regrid_output_steps!(
+                                            "LL-to-CS window $(win_idx)", balance_weights)
+        out_schedule[win_idx] = _select_regrid_output_steps!(
             out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
         closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
                                                 cs_ws.m_next_panels, cs_grid, base_steps,
-                                                out_schedule[win - 1])
+                                                out_schedule[win_idx])
         pos_diag = if write_replay_on
             contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
                                                   cs_ws.m_next_panels,
-                                                  out_schedule[win - 1], win - 1;
+                                                  out_schedule[win_idx], win_idx;
                                                   replay_tol = replay_tol,
                                                   positivity_cfl_limit = positivity_cfl_limit)
             if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
                 worst_replay_rel = contract.replay.max_rel_err
                 worst_replay_abs = contract.replay.max_abs_err
-                worst_replay_win = win - 1
+                worst_replay_win = win_idx
                 worst_replay_idx = contract.replay.worst_idx
             end
             contract.positivity
@@ -589,7 +548,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                          cfl_limit = positivity_cfl_limit,
                                          m_next = cs_ws.m_next_panels)
         end
-        worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win - 1)
+        worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, win_idx)
         convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
 
         window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
@@ -605,7 +564,39 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                            entd=cur_entd, detd=cur_detd),))
         end
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-            win - 1, window_nt, _regrid_window_evidence(FT, closure)))
+            win_idx, window_nt, _regrid_window_evidence(FT, closure)))
+        return (t_bal, bal_diag)
+    end
+
+    # --- Process first window ---
+    t0 = time()
+    _read_and_regrid_to_cs!(1, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                             pblh_out = cur_pblh, ustar_out = cur_ustar,
+                             hflux_out = cur_hflux, t2m_out = cur_t2m,
+                             entu_out = cur_entu, detu_out = cur_detu,
+                             entd_out = cur_entd, detd_out = cur_detd)
+    @info @sprintf("    Window  1/%d: read+regrid %.2fs", Nt, time() - t0)
+
+    copy_cs_panels!(cur_m,  cs_ws.m_panels)
+    copy_cs_panels!(cur_ps, cs_ws.ps_panels)
+    copy_cs_panels!(cur_am, cs_ws.am_panels)
+    copy_cs_panels!(cur_bm, cs_ws.bm_panels)
+    # cur_entu/detu/entd/detd were filled directly by `_read_and_regrid_to_cs!`
+    # (TM5 sections need no rebalancing — they're vertical-flux carriers).
+
+    # --- Sliding-window loop: windows 2..Nt ---
+    for win in 2:Nt
+        t0 = time()
+        _read_and_regrid_to_cs!(win, cs_ws.m_panels, cs_ws.ps_panels, cs_ws.am_panels, cs_ws.bm_panels;
+                                 pblh_out = nxt_pblh, ustar_out = nxt_ustar,
+                                 hflux_out = nxt_hflux, t2m_out = nxt_t2m,
+                                 entu_out = nxt_entu, detu_out = nxt_detu,
+                                 entd_out = nxt_entd, detd_out = nxt_detd)
+        t_read = time() - t0
+
+        copy_cs_panels!(cs_ws.m_next_panels, cs_ws.m_panels)
+
+        t_bal, bal_diag = _emit_regridded_window!(win - 1)
 
         if should_log_window(win - 1, Nt)
             @info @sprintf("    Window %2d/%d: wrote (colbal %.2fs pre=%.2e post=%.2e iter=%d) | read %2d (%.2fs)",
@@ -613,21 +604,21 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                            bal_diag.max_post_residual, bal_diag.max_cg_iter, win, t_read)
         end
 
-        _copy_panels_regrid!(cur_m,  cs_ws.m_panels)
-        _copy_panels_regrid!(cur_ps, cs_ws.ps_panels)
-        _copy_panels_regrid!(cur_am, cs_ws.am_panels)
-        _copy_panels_regrid!(cur_bm, cs_ws.bm_panels)
+        copy_cs_panels!(cur_m,  cs_ws.m_panels)
+        copy_cs_panels!(cur_ps, cs_ws.ps_panels)
+        copy_cs_panels!(cur_am, cs_ws.am_panels)
+        copy_cs_panels!(cur_bm, cs_ws.bm_panels)
         if source_has_surface
-            _copy_panels_regrid!(cur_pblh, nxt_pblh)
-            _copy_panels_regrid!(cur_ustar, nxt_ustar)
-            _copy_panels_regrid!(cur_hflux, nxt_hflux)
-            _copy_panels_regrid!(cur_t2m, nxt_t2m)
+            copy_cs_panels!(cur_pblh, nxt_pblh)
+            copy_cs_panels!(cur_ustar, nxt_ustar)
+            copy_cs_panels!(cur_hflux, nxt_hflux)
+            copy_cs_panels!(cur_t2m, nxt_t2m)
         end
         if source_has_tm5
-            _copy_panels_regrid!(cur_entu, nxt_entu)
-            _copy_panels_regrid!(cur_detu, nxt_detu)
-            _copy_panels_regrid!(cur_entd, nxt_entd)
-            _copy_panels_regrid!(cur_detd, nxt_detd)
+            copy_cs_panels!(cur_entu, nxt_entu)
+            copy_cs_panels!(cur_detu, nxt_detu)
+            copy_cs_panels!(cur_entd, nxt_entd)
+            copy_cs_panels!(cur_detd, nxt_detd)
         end
     end
 
@@ -644,69 +635,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
                                 cs_ws, Nc, ExtensiveCellField())
     else
         @warn "regrid_ll_binary_to_cs: using zero-tendency fallback for the final CS window because source `dm` is unavailable."
-        _copy_panels_regrid!(cs_ws.m_next_panels, cur_m)
+        copy_cs_panels!(cs_ws.m_next_panels, cur_m)
     end
-    t_bal = time()
-    bal_diag = balance_cs_column_mass_fluxes!(
-        cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
-        cs_grid.face_table, cs_grid.cell_degree, base_steps,
-        cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
-        max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
-        project_every=Int(cs_balance_project_every),
-        weights=balance_weights)
-    t_bal = time() - t_bal
-
-    worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)
-    worst_post = max(worst_post, bal_diag.max_post_residual)
-    worst_iter = max(worst_iter, bal_diag.max_cg_iter)
-
-    sync_all_cs_boundary_mirrors!(cur_am, cur_bm, cs_grid.mesh.connectivity, Nc, Nz)
-
-    fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m, cs_ws.m_next_panels, base_steps)
-    for p in 1:CS_PANEL_COUNT; fill!(cur_cm[p], zero(FT)); end
-    cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
-                                        cur_m, Nc, Nz, bal_diag,
-                                        "LL-to-CS window $Nt", balance_weights)
-    out_schedule[Nt] = _select_regrid_output_steps!(
-        out_policy, base_steps, cur_m, cur_am, cur_bm, cur_cm, cs_ws.m_next_panels)
-    closure = _regrid_stored_closure_record(bal_diag, cm_diag, cur_am, cur_bm, cur_m,
-                                            cs_ws.m_next_panels, cs_grid, base_steps,
-                                            out_schedule[Nt])
-    pos_diag = if write_replay_on
-        contract = verify_cs_window_contract!(cur_m, cur_am, cur_bm, cur_cm,
-                                              cs_ws.m_next_panels,
-                                              out_schedule[Nt], Nt;
-                                              replay_tol = replay_tol,
-                                              positivity_cfl_limit = positivity_cfl_limit)
-        if worst_replay_win == 0 || contract.replay.max_rel_err > worst_replay_rel
-            worst_replay_rel = contract.replay.max_rel_err
-            worst_replay_abs = contract.replay.max_abs_err
-            worst_replay_win = Nt
-            worst_replay_idx = contract.replay.worst_idx
-        end
-        contract.positivity
-    else
-        verify_substep_positivity_cs!(cur_m, cur_am, cur_bm, cur_cm;
-                                     cfl_limit = positivity_cfl_limit,
-                                     m_next = cs_ws.m_next_panels)
-    end
-    worst_positivity = update_cs_positivity_accumulator(worst_positivity, pos_diag, Nt)
-    convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
-
-    window_nt = (m=cur_m, am=cur_am, bm=cur_bm, cm=cur_cm, ps=cur_ps,
-                 dm=cs_ws.m_next_panels)
-    if source_has_surface
-        window_nt = merge(window_nt,
-                          (surface=(pblh=cur_pblh, ustar=cur_ustar,
-                                    hflux=cur_hflux, t2m=cur_t2m),))
-    end
-    if source_has_tm5
-        window_nt = merge(window_nt,
-                          (tm5_fields=(entu=cur_entu, detu=cur_detu,
-                                       entd=cur_entd, detd=cur_detd),))
-    end
-    write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
-        Nt, window_nt, _regrid_window_evidence(FT, closure)))
+    t_bal, bal_diag = _emit_regridded_window!(Nt)
 
     @info @sprintf("    Window %2d/%d (last): colbal %.2fs  pre=%.2e post=%.2e iter=%d",
                    Nt, Nt, t_bal, bal_diag.max_pre_residual,

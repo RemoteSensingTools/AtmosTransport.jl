@@ -33,7 +33,6 @@ struct CubedSpherePreprocessWorkspace{FT}
     ps_panels     :: NTuple{CS_PANEL_COUNT, Matrix{FT}}      # (Nc, Nc)
     am_panels     :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}   # (Nc+1, Nc, Nz)
     bm_panels     :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}   # (Nc, Nc+1, Nz)
-    cm_panels     :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}   # (Nc, Nc, Nz+1)
     # Next-window mass for Poisson balance look-ahead
     m_next_panels :: NTuple{CS_PANEL_COUNT, Array{FT, 3}}   # (Nc, Nc, Nz)
     # Regridded cell-center winds on CS panels
@@ -63,7 +62,6 @@ function allocate_cs_preprocess_workspace(Nc::Int, Nx_stg::Int, Ny_stg::Int,
         ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc + 1, Nc, Nz), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc, Nc + 1, Nz), CS_PANEL_COUNT),
-        ntuple(_ -> zeros(FT, Nc, Nc, Nz + 1), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT),
         ntuple(_ -> zeros(FT, Nc, Nc, Nz), CS_PANEL_COUNT),

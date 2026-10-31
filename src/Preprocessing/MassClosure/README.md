@@ -13,7 +13,7 @@ Horizontal flux construction, wind rotation, Poisson balance and vertical mass-f
 - [`cs_wind_rotation.jl`](cs_wind_rotation.jl) — geographic to panel winds and LL flux wind recovery.
 - [`face_line_integrals.jl`](face_line_integrals.jl) — source-grid midpoint quadrature and shared thickness adapters.
 - [`flux_construction.jl`](flux_construction.jl) — typed face methods, validation and wind regridding.
-- [`ring_closure.jl`](ring_closure.jl) — shared mean-zero projection and RG divergence closure.
+- [`ring_closure.jl`](ring_closure.jl) — shared mean-zero projection.
 - [`ring_poisson_balance.jl`](ring_poisson_balance.jl) — compressed RG graph Laplacian and column balance.
 
 ## Depends on
@@ -89,7 +89,6 @@ Deferred target and source workflows call these stage APIs.
 - `prepare_cell_winds!`
 - `project_mean_zero!`
 - `recheck_cs_column_closure`
-- `recompute_faceindexed_cm_from_divergence!`
 - `reconstruct_cs_fluxes!`
 - `recover_ll_cell_center_winds!`
 - `regrid_winds!`
@@ -120,7 +119,7 @@ Flux construction (`face_flux_method`, `face_fluxes!`, `line_integral_face_fluxe
 balance (`balance_cs_column_mass_fluxes!`, `balance_cs_global_mass_fluxes!`,
 `balance_compressed_column_fluxes!`, `solve_cs_poisson_pcg!`,
 `solve_compressed_poisson_pcg!`) and cm diagnosis (`diagnose_cs_cm!`,
-`diagnose_balanced_cs_cm!`, `recompute_faceindexed_cm_from_divergence!`) remain
+`diagnose_balanced_cs_cm!`) remain
 separately callable. The later TM5 spectral strategy can share the graph/face
 geometry, wind rotation, Laplacian/PCG primitives, correction mapping and seam
 synchronization here. Its direct spectral quadrature is separate from the

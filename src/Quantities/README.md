@@ -38,11 +38,11 @@ traits:
   there. Winds go through `rotate_winds_to_panel_local!`, and face fluxes
   through `reconstruct_cs_fluxes!`.
 - `regrid_3d_to_cs_panels!` and `regrid_2d_to_cs_panels!` in
-  [`../Preprocessing/cs_transport_helpers.jl`](../Preprocessing/cs_transport_helpers.jl)
+  [`../Preprocessing/Targets/CubedSphere/cs_transport_helpers.jl`](../Preprocessing/Targets/CubedSphere/cs_transport_helpers.jl)
   take `kind::QuantityKind = IntensiveCellField()` and pass it on.
-- The call sites in `../Preprocessing/transport_binary/`
-  (`cubed_sphere_regrid.jl`, `cubed_sphere_spectral.jl`,
-  `era5_n320_regrid.jl`, `merra2_latlon_regrid.jl`) tag `m` with
+- The target call sites in `../Preprocessing/Targets/CubedSphere/`
+  (`cubed_sphere_regrid.jl`, `cubed_sphere_spectral.jl`) and source day drivers
+  (`era5_n320_regrid.jl`, `merra2_latlon_regrid.jl`) tag `m` with
   `ExtensiveCellField()` and surface or state fields with
   `IntensiveCellField()`.
 

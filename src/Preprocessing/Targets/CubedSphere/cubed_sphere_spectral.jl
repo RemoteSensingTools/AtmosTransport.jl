@@ -42,27 +42,15 @@ function _get_or_build_cs_regridder!(cache,
                                      grid::CubedSphereTargetGeometry,
                                      staging_grid::LatLonTargetGeometry)
     cache_key = _cs_regridder_cache_key(grid)
-    cached = cache === nothing ? nothing : get(cache, cache_key, nothing)
     t_reg = time()
-    if cached !== nothing
-        regridder = cached
-        n_src = length(regridder.src_areas)
-        n_dst = length(regridder.dst_areas)
-        @info @sprintf("  Regridder: reused %d×%d  nnz=%d (%.1fs)",
-                       n_src, n_dst, length(regridder.intersections.nzval),
-                       time() - t_reg)
-        return regridder
+    regridder, reused = cached_or_build!(cache, cache_key) do
+        build_regridder(staging_grid.mesh, grid.mesh; normalize=false, cache_dir=grid.cache_dir)
     end
-
-    regridder = build_regridder(staging_grid.mesh, grid.mesh;
-                                normalize = false,
-                                cache_dir = grid.cache_dir)
-    cache === nothing || (cache[cache_key] = regridder)
     n_src = length(regridder.src_areas)
     n_dst = length(regridder.dst_areas)
-    @info @sprintf("  Regridder: %d×%d  nnz=%d (%.1fs)",
-                   n_src, n_dst, length(regridder.intersections.nzval),
-                   time() - t_reg)
+    @info @sprintf("  Regridder: %s%d×%d  nnz=%d (%.1fs)",
+                   reused ? "reused " : "", n_src, n_dst,
+                   length(regridder.intersections.nzval), time() - t_reg)
     return regridder
 end
 
@@ -233,15 +221,8 @@ function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
     Nc = grid.Nc
     Nz = vertical.Nz
 
-    spectral_to_native_fields!(
-        transform.m_arr, transform.am_arr, transform.bm_arr, transform.sp,
-        transform.u_cc, transform.v_cc, transform.u_stag, transform.v_stag, transform.dp,
-        spec.lnsp_all[hour], spec.vo_by_hour[hour], spec.d_by_hour[hour],
-        spec.T, vertical.level_range, vertical.ab, staging_grid, settings.half_dt,
-        transform.P_buf, transform.fft_buf, transform.field_2d,
-        transform.P_buf_t, transform.fft_buf_t, transform.fft_out_t,
-        transform.u_spec_t, transform.v_spec_t, transform.field_2d_t,
-        transform.bfft_plans)
+    spectral_to_native_fields!(transform, spec.lnsp_all[hour], spec.vo_by_hour[hour],
+                                spec.d_by_hour[hour], spec.T, vertical, staging_grid, settings)
 
     read_window_qv!(workspace.qv, win_idx, Nx_stg, Ny_stg, Nz_native)
     apply_mass_fix_if_needed!(workspace.qv, transform, staging_grid, vertical,
@@ -269,7 +250,7 @@ function ingest_window!(workspace::CubedSphereSpectralWindowWorkspace{FT},
     return time() - t0
 end
 
-@inline function _copy_cs_spectral_panels!(dst, src)
+@inline function copy_cs_panels!(dst, src)
     for p in 1:CS_PANEL_COUNT
         copyto!(dst[p], src[p])
     end
@@ -277,7 +258,7 @@ end
 end
 
 """
-    _rebuild_spectral_window_fluxes!(workspace, end_am, end_bm, sampling,
+    rebuild_spectral_window_fluxes!(workspace, end_am, end_bm, sampling,
                                      base_steps, steps)
 
 Rebuild the unbalanced face amount for a window from immutable endpoint
@@ -292,7 +273,7 @@ changes only the half-substep duration. Repeating this operation on an
 adaptive retry therefore never rescales a face field that has already been
 balanced.
 """
-function _rebuild_spectral_window_fluxes!(workspace, end_am, end_bm,
+function rebuild_spectral_window_fluxes!(workspace, end_am, end_bm,
                                           sampling::Symbol,
                                           base_steps::Int, steps::Int)
     scale = eltype(workspace.cur_am[1])(base_steps / steps)
@@ -372,16 +353,16 @@ function driver_ingest_window!(workspace::CubedSphereSpectralWindowWorkspace,
                              cs_ws.am_panels, cs_ws.bm_panels)
     ctx.total_synth_regrid += t_synth
     if win == 1
-        _copy_cs_spectral_panels!(workspace.cur_m,  cs_ws.m_panels)
-        _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
-        _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
-        _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+        copy_cs_panels!(workspace.cur_m,  cs_ws.m_panels)
+        copy_cs_panels!(workspace.cur_ps, cs_ws.ps_panels)
+        copy_cs_panels!(workspace.endpoint_am, cs_ws.am_panels)
+        copy_cs_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
         workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     end
     return nothing
 end
 
-function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspace{FT},
+function cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspace{FT},
                                      contract::CubedSphereContract{FT},
                                      ctx::CSSpectralUnifiedDriverContext,
                                      win::Int,
@@ -399,7 +380,7 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
     contract_diag = nothing
     closure = NoColumnClosureRecord()
     while true
-        _rebuild_spectral_window_fluxes!(workspace, cs_ws.am_panels,
+        rebuild_spectral_window_fluxes!(workspace, cs_ws.am_panels,
                                          cs_ws.bm_panels,
                                          ctx.settings.flux_time_sampling,
                                          ctx.steps_per_met, steps)
@@ -422,13 +403,8 @@ function _cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspa
         ctx.worst_post = max(ctx.worst_post, bal_diag.max_post_residual)
         ctx.worst_iter = max(ctx.worst_iter, bal_diag.max_cg_iter)
 
-        sync_all_cs_boundary_mirrors!(cur_am, cur_bm, grid.mesh.connectivity,
-                                      Nc, Nz)
         fill_cs_window_mass_tendency!(cs_ws.dm_panels, cur_m,
                                       cs_ws.m_next_panels, steps)
-        for p in 1:CS_PANEL_COUNT
-            fill!(cur_cm[p], zero(FT))
-        end
         cm_diag = diagnose_balanced_cs_cm!(cur_cm, cur_am, cur_bm, cs_ws.dm_panels,
                                             cur_m, Nc, Nz, bal_diag,
                                             "ERA5 spectral window $win", ctx.balance_weights)
@@ -483,9 +459,9 @@ function driver_drain_ready_windows!(workspace::CubedSphereSpectralWindowWorkspa
                                      win::Int,
                                      ctx::CSSpectralUnifiedDriverContext) where FT
     win == 1 && return ()
-    _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
+    copy_cs_panels!(workspace.cs_ws.m_next_panels,
                               workspace.cs_ws.m_panels)
-    return (_cs_spectral_contract_diag!(workspace, contract, ctx, win - 1,
+    return (cs_spectral_contract_diag!(workspace, contract, ctx, win - 1,
                                         DEFAULT_POISSON_BALANCE_MAX_ITER),)
 end
 
@@ -522,19 +498,19 @@ function driver_flush_final_windows!(workspace::CubedSphereSpectralWindowWorkspa
         _capture_spectral_endpoint_fidelity!(workspace, grid,
             workspace.cs_ws.am_panels, workspace.cs_ws.bm_panels, ctx.vertical.Nz)
     else
-        _copy_cs_spectral_panels!(workspace.cs_ws.m_next_panels,
+        copy_cs_panels!(workspace.cs_ws.m_next_panels,
                                   workspace.cur_m)
         # At an explicit archive boundary no right endpoint exists. Holding
         # the start endpoint makes the final trapezoid reduce to window-start
         # sampling and keeps the fallback auditable in the header.
         ctx.final_boundary_fallback = ctx.settings.flux_time_sampling === :window_mean
-        _copy_cs_spectral_panels!(workspace.cs_ws.am_panels,
+        copy_cs_panels!(workspace.cs_ws.am_panels,
                                   workspace.endpoint_am)
-        _copy_cs_spectral_panels!(workspace.cs_ws.bm_panels,
+        copy_cs_panels!(workspace.cs_ws.bm_panels,
                                   workspace.endpoint_bm)
         workspace.latest_fidelity_capture[] = workspace.endpoint_fidelity_capture[]
     end
-    return (_cs_spectral_contract_diag!(workspace, contract, ctx, Nt,
+    return (cs_spectral_contract_diag!(workspace, contract, ctx, Nt,
                                         DEFAULT_POISSON_BALANCE_MAX_ITER),)
 end
 
@@ -544,10 +520,10 @@ function driver_after_write_window!(workspace::CubedSphereSpectralWindowWorkspac
                                     ctx::CSSpectralUnifiedDriverContext)
     ready.index >= ctx.spec.n_times && return nothing
     cs_ws = workspace.cs_ws
-    _copy_cs_spectral_panels!(workspace.cur_m,  cs_ws.m_panels)
-    _copy_cs_spectral_panels!(workspace.cur_ps, cs_ws.ps_panels)
-    _copy_cs_spectral_panels!(workspace.endpoint_am, cs_ws.am_panels)
-    _copy_cs_spectral_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
+    copy_cs_panels!(workspace.cur_m,  cs_ws.m_panels)
+    copy_cs_panels!(workspace.cur_ps, cs_ws.ps_panels)
+    copy_cs_panels!(workspace.endpoint_am, cs_ws.am_panels)
+    copy_cs_panels!(workspace.endpoint_bm, cs_ws.bm_panels)
     workspace.endpoint_fidelity_capture[] = workspace.latest_fidelity_capture[]
     return nothing
 end

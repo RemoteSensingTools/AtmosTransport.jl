@@ -261,6 +261,14 @@ parent_module(m) = contains(m, '.') ? first(rsplit(m, '.'; limit = 2)) : ""
 
 function module_path(inv, mod, names, dots)
     isempty(names) && return ""
+    # Absolute package imports cannot resolve to a nested module with the same
+    # leaf name (e.g. CubedSphere.SphericalGeometry vs Preprocessing.CubedSphere).
+    # Relative imports still resolve through the ordinary lexical scope below.
+    project = joinpath(inv.root, "Project.toml")
+    if dots == 0 && isfile(project) &&
+       haskey(get(TOML.parsefile(project), "deps", Dict()), first(names))
+        return ""
+    end
     if dots > 0
         parts = String.(split(mod, '.'))
         base = parts[1:max(0, length(parts) - dots + 1)]

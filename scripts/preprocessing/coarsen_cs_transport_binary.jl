@@ -22,10 +22,12 @@ if !isdefined(AtmosTransport.Preprocessing, :coarsen_nested_cs_transport_binary)
     isdefined(AtmosTransport.Regridding, :coarsen_sum!) ||
         Base.include(AtmosTransport.Regridding,
                      joinpath(@__DIR__, "..", "..", "src", "Regridding", "cs_nesting.jl"))
-    Base.include(
-        AtmosTransport.Preprocessing,
-        joinpath(@__DIR__, "..", "..", "src", "Preprocessing",
-                 "transport_binary", "cubed_sphere_coarsen.jl"))
+    coarsener = joinpath(@__DIR__, "..", "..", "src", "Preprocessing",
+                         "Targets", "CubedSphere", "cubed_sphere_coarsen.jl")
+    # The current file lives in a child module; the pinned v4 tree assembles
+    # it in its parent facade. Only the relative import depth changes.
+    source = replace(read(coarsener, String), "using ..." => "using ..")
+    Base.include_string(AtmosTransport.Preprocessing, source, coarsener)
 end
 const coarsen_nested_cs_transport_binary =
     AtmosTransport.Preprocessing.coarsen_nested_cs_transport_binary

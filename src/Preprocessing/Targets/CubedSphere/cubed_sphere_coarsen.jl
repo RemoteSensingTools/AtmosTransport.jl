@@ -7,13 +7,14 @@
 # C90 diffusion operator for block-uniform tracer concentrations; it is not a
 # fresh nonlinear TM5 bldiff calculation on C30 meteorology.
 
-# HACK: `scripts/preprocessing/coarsen_cs_transport_binary.jl` also `Base.include`s
-# this file into the format-v4 tree's Preprocessing module, which lacks these names
-# in its shared import list (`Preprocessing.jl`). TODO: drop these lines together
+# HACK: `scripts/preprocessing/coarsen_cs_transport_binary.jl` also includes this
+# file into the format-v4 tree's Preprocessing module (one level shallower, so the
+# script strips one leading dot from the two import paths below). That module
+# lacks these names in its shared import list. TODO: drop these lines together
 # with that script's HACK block once the C90 campaign leaves the format-v4 tree.
-using ..Parameters: COARSEN_SUBSTEP_CFL_TARGET, DEFAULT_POSITIVITY_CFL_LIMIT,
+using ...Parameters: COARSEN_SUBSTEP_CFL_TARGET, DEFAULT_POSITIVITY_CFL_LIMIT,
                     DEFAULT_MAX_STEPS_PER_WINDOW
-using ..Regridding: coarsen_sum!, coarsen_area_weighted!, coarsen_xface_sum!, coarsen_yface_sum!
+using ...Regridding: coarsen_sum!, coarsen_area_weighted!, coarsen_xface_sum!, coarsen_yface_sum!
 
 const _EXPERIMENTAL_CS_COARSEN_SECTIONS = Set((
     :m, :am, :bm, :cm, :ps, :dm,
