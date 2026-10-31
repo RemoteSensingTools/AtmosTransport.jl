@@ -116,10 +116,6 @@ function SnapshotWriteOptions(; float_type::DataType=Float32,
 end
 
 
-function _copy_cpu_array(a)
-    return Array(a)
-end
-
 function _strip_cs_halo(panel, mesh::CubedSphereMesh, halo_width::Integer)
     Hp = Int(halo_width)
     Nc = mesh.Nc
@@ -129,8 +125,8 @@ function _strip_cs_halo(panel, mesh::CubedSphereMesh, halo_width::Integer)
     return Array(panel[Hp + 1 : Hp + Nc, Hp + 1 : Hp + Nc, :])
 end
 
-_extract_for_output(a, ::LatLonMesh; halo_width::Integer=0) = _copy_cpu_array(a)
-_extract_for_output(a, ::ReducedGaussianMesh; halo_width::Integer=0) = _copy_cpu_array(a)
+_extract_for_output(a, ::LatLonMesh; halo_width::Integer=0) = Array(a)
+_extract_for_output(a, ::ReducedGaussianMesh; halo_width::Integer=0) = Array(a)
 
 function _extract_for_output(a::NTuple{6, <:Any}, mesh::CubedSphereMesh;
                              halo_width::Integer=0)

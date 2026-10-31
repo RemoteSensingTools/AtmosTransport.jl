@@ -25,7 +25,12 @@
 #               "planet_radius_m": float },     # absent in older files: EARTH_RADIUS
 #     "fields": [ "air_mass", tracer_name_1, ... ],   # air_mass is always first
 #     "times_hours": [ float, ... ],
+#     "time_units": "hours" | "hours since YYYY-mm-dd HH:MM:SS",
+#     "time_calendar": "none" | "proleptic_gregorian",
 #     "tracer_total_mass": { tracer_name_1: [float64, ...], ... },
+#     "tracer_total_mass_dtype": "Float64",
+#     "tracer_total_mass_storage": "mixing_ratio_times_carrier_air_mass",
+#     "physics_<name>": str, ...,                     # runtime physics attributes
 #     "n_frames": int, "payload_offset": int, "payload_bytes": int }
 #
 # Tracer storage is mass (not mixing ratio) — same contract as `SnapshotFrame`.
@@ -58,11 +63,7 @@ function write_snapshot_binary(path::AbstractString,
     mesh = grid.horizontal
     mesh isa CubedSphereMesh || throw(ArgumentError(
         "write_snapshot_binary currently supports cubed-sphere grids only; got $(typeof(mesh))"))
-    isempty(frames) && throw(ArgumentError(
-        "write_snapshot_binary requires at least one SnapshotFrame"))
-    _check_same_keys(frames)
-    _check_mass_basis(frames, mass_basis)
-    _check_frame_shapes(frames, mesh)
+    _validate_snapshot_inputs(frames, mesh, mass_basis; writer = "write_snapshot_binary")
     options.float_type === Float32 || throw(ArgumentError(
         "binary writer only supports Float32 on-disk dtype; got $(options.float_type)"))
 
@@ -97,9 +98,8 @@ function write_snapshot_binary(path::AbstractString,
         ),
         "fields" => field_names,
         "times_hours" => [frame.time_hours for frame in frames],
-        "time_units" => time_origin === nothing ? "hours" :
-            "hours since " * Dates.format(time_origin, "yyyy-mm-dd HH:MM:SS"),
-        "time_calendar" => time_origin === nothing ? "none" : "proleptic_gregorian",
+        "time_units" => _time_units(time_origin),
+        "time_calendar" => time_origin === nothing ? "none" : _TIME_CALENDAR,
         "tracer_total_mass" => Dict(
             String(name) => [frame.tracer_total_mass[name] for frame in frames]
             for name in tracer_keys),
@@ -109,9 +109,7 @@ function write_snapshot_binary(path::AbstractString,
         "payload_bytes" => payload_bytes,
     )
     for key in sort!(collect(keys(physics_attributes)))
-        startswith(key, "physics_") || throw(ArgumentError(
-            "runtime physics attribute $(repr(key)) must start with `physics_`"))
-        header[String(key)] = String(physics_attributes[key])
+        header[String(_physics_attribute_key(key))] = String(physics_attributes[key])
     end
     header_bytes = Vector{UInt8}(JSON3.write(header))
     fixed_prefix = length(_ATMSNAP_MAGIC) + sizeof(UInt64)   # 8 + 8 = 16

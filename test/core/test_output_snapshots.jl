@@ -6,10 +6,11 @@ using Dates
 using AtmosTransport
 # AtmosTransport re-exports only a subset of Output's names (e.g.
 # `runtime_output_spec`); the output-spec accessors used below
-# (`output_enabled`, `output_field_spec`, `snapshot_hours`, `layer_selection`,
-# `output_fields`, `output_path_for_day`, …) live in the Output submodule, so
+# (`output_enabled`, `output_field_spec`, `snapshot_hours`, `output_fields`,
+# `output_path_for_day`, …) live in the Output submodule, so
 # pull them in directly to keep this file self-sufficient.
 using .AtmosTransport.Output
+using AtmosTransport.Parameters: IFS_EARTH_RADIUS
 
 @testset "explicit snapshot schedules validate Float64 vectors" begin
     hours = [6.0, 0.0, 3.0]
@@ -81,12 +82,13 @@ end
         end
     end
 
-    @testset "ATMSNAP header preserves authoritative signed totals" begin
+    @testset "ATMSNAP header preserves authoritative signed totals and the radius" begin
         mktempdir() do dir
-            mesh = CubedSphereMesh(; FT=Float32, Nc=2)
+            # A non-default radius: the reader must take it from the header.
+            mesh = CubedSphereMesh(; FT=Float32, Nc=2, radius=IFS_EARTH_RADIUS)
             grid = AtmosGrid(mesh,
                              HybridSigmaPressure(Float32[0, 1], Float32[0, 1]),
-                             CPU(); FT=Float32)
+                             CPU(); FT=Float32, radius=IFS_EARTH_RADIUS)
             air = ntuple(_ -> ones(Float32, 2, 2, 1), 6)
             signed = ntuple(6) do panel
                 values = zeros(Float32, 2, 2, 1)
@@ -117,13 +119,13 @@ end
             @test header["time_units"] == "hours since 2021-12-01 00:00:00"
             @test header["time_calendar"] == "proleptic_gregorian"
             @test header["physics_advection_scheme"] == "upwind"
+            @test header["grid"]["planet_radius_m"] == IFS_EARTH_RADIUS
             loaded = read_snapshot_binary(path)
             @test loaded.mass_basis === :dry
             @test loaded.grid.horizontal.radius === mesh.radius
             @test loaded.frames[1].air_mass == air
             @test loaded.frames[1].tracers[:signed] == signed
             @test loaded.frames[1].tracer_total_mass[:signed] === 1.0
-
         end
     end
 

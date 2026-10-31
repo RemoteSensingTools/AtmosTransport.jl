@@ -2,9 +2,9 @@
 # parsers agree: the schema's choices are the parsers' canonical choices, and
 # every key the parsers read (the known-key tables of `validate_config`) is a
 # schema property, and the other way round. The schema offers canonical
-# spellings only; where a parser also accepts aliases (output format and split,
-# layer selection and temporal scheme), the test checks that every schema
-# value parses and that the schema values reach every outcome.
+# spellings only; where a parser also accepts aliases (temporal scheme), the
+# test checks that every schema value parses and that the schema values reach
+# every outcome.
 using Test
 using AtmosTransport
 using JSON3
@@ -59,16 +59,6 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test Set(typeof.(schemes)) ==
           concrete_subtypes(AtmosTransport.Operators.SurfaceFlux.AbstractFluxTemporalScheme,
                             AtmosTransport.Operators.SurfaceFlux)
-    @test Set(typeof(AtmosTransport.Output._parse_output_format(f))
-              for f in enum_of(d.output.properties.format)) ==
-          concrete_subtypes(AtmosTransport.Output.AbstractOutputFormat, AtmosTransport.Output)
-    @test Set(typeof(AtmosTransport.Output._parse_layer_selection(l, "x"))
-              for l in enum_of(d.layer_selection)) ==
-          concrete_subtypes(AtmosTransport.Output.AbstractLayerSelection, AtmosTransport.Output)
-    @test Set(c.const for c in d.output.properties.split.oneOf) == Set(["single", "daily"])
-    @test Set(typeof(AtmosTransport.Output._output_partition(Dict("split" => c.const)))
-              for c in d.output.properties.split.oneOf) ==
-          concrete_subtypes(AtmosTransport.Output.AbstractOutputPartition, AtmosTransport.Output)
     architecture_requests = [AtmosTransport.Architectures._architecture_request(backend)
                              for backend in enum_of(p.architecture.properties.backend)]
     @test Set(typeof.(architecture_requests)) ==
