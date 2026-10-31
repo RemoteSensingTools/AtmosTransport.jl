@@ -211,6 +211,18 @@ end
         layers["folder_order"] = ["src/Upper", "src/Lower", "src"]
         write_toml(path, layers)
         @test any(occursin("later folder", e) for e in check_fixture(root).errors)
+        # An order exception is kept only for a reverse edge that the order
+        # rules would reject: not for a missing edge, nor for module child
+        # wiring such as the package facade including a child module.
+        layers["folder_order"] = ["src/Lower", "src/Upper", "src"]
+        for id in ("src/Lower|src/Upper", "src|src/Lower")
+            layers["folder_order_allow"] = Dict(id => "fixture exception")
+            write_toml(path, layers)
+            @test check_fixture(root).errors == ["T1 remove unneeded folder order allowance: $id"]
+        end
+        layers["folder_order"] = ["src", "src/Lower", "src/Upper"]
+        write_toml(path, layers)
+        @test check_fixture(root).errors == ["T1 remove unneeded folder order allowance: src|src/Lower"]
     end
     folder_fixture() do root
         # Same module, new folder: module-edge enforcement alone misses this.
@@ -330,6 +342,12 @@ end
         end
         StructureCheck.check_ratchet!(errors, root, base, files)
         @test isempty(errors)
+        # The checkout's migration rows are validated against the same base.
+        write_toml(joinpath(root, StructureCheck.MIGRATIONS), Dict("migration" => [Dict(
+            "from" => "src", "to" => ["src"], "reason" => "fixture identity row")]))
+        StructureCheck.check_ratchet!(errors, root, base, files)
+        @test errors == ["migration src -> src is unused; remove it"]
+        rm(joinpath(root, StructureCheck.MIGRATIONS)); empty!(errors)
         write_toml(joinpath(root, StructureCheck.SNAPSHOTS["clone"]), Dict("allow" => Dict("new" => "hidden debt")))
         StructureCheck.check_ratchet!(errors, root, base, files)
         @test any(occursin("allowlists only shrink", e) for e in errors)
@@ -362,134 +380,100 @@ end
     @test length(StructureCheck.allowance_growth(size_before, size_after, StructureCheck.FOLDER_SIZES)) == 1
 end
 
-@testset "X1 relocates identities without accepting new debt" begin
-    private_file = StructureCheck.SNAPSHOTS["private_use"]
-    old = "src/Analysis/run_context.jl|AtmosTransport.Analysis|AtmosTransport.Models.DrivenRunner|_cfg_float_type"
-    moved = "src/Diagnostics/run_context.jl|AtmosTransport.Diagnostics|AtmosTransport.Models.DrivenRunner|_cfg_float_type"
-    before = Dict("allow" => Dict(old => "existing site"))
-    after = Dict("allow" => Dict(moved => "relocated site"))
-    @test isempty(StructureCheck.allowance_growth(before, after, private_file))
-    changed = Dict("allow" => Dict(replace(moved, "_cfg_float_type" => "_new_helper") => "new site"))
-    @test !isempty(StructureCheck.allowance_growth(before, changed, private_file))
-    copied = Dict("allow" => Dict(old => "old copy", moved => "new copy"))
-    @test !isempty(StructureCheck.allowance_growth(before, copied, private_file))
-    @test !isempty(StructureCheck.allowance_growth(after, copied, private_file))
+@testset "migration rows transfer only reviewed base budgets" begin
+    layers = "src/LAYERS.toml"
+    row(from, to; reason = "fixture move") = Dict("from" => from, "to" => to, "reason" => reason)
+    rows(list...) = Dict("migration" => collect(list))
+    base = Dict("modules" => Dict("Rich" => ["Lower"], "Empty" => String[], "Lower" => String[],
+                                  "Consumer" => ["Rich"]),
+                "folders" => Dict("src/Old" => ["src/Lower"], "src" => ["src/Old"]),
+                "folder_order_allow" => Dict("src|src/Old" => "facade includes Old"))
+    # Rename Rich to Moved; split src/Old into ordered First and Second folders.
+    moved = Dict("modules" => Dict("Moved" => ["Lower"], "Empty" => String[], "Lower" => String[],
+                                   "Consumer" => ["Moved"]),
+                 "folders" => Dict("src/New/First" => ["src/Lower"], "src" => ["src/New/First", "src/New/Second"],
+                                   "src/New/Second" => ["src/Lower", "src/New/First"]),
+                 "folder_order_allow" => Dict("src|src/New/Second" => "facade includes Second"))
+    valid = [row("Rich", ["Moved"]), row("src/Old", ["src/New/First", "src/New/Second"])]
+    errors(after, list; before = base, applied = Dict(), warnings = String[]) =
+        StructureCheck.ratchet_errors([(layers, before, after)], rows(list...), applied; warnings)
+    has(errs, text) = any(occursin(text, e) for e in errs)
 
-    for file in (StructureCheck.SNAPSHOTS["clone"], StructureCheck.SNAPSHOTS["docstring"])
-        old = "digest|src/Analysis/mass_totals.jl|AtmosTransport.Analysis|helper|signature"
-        moved = replace(old, "src/Analysis/" => "src/Diagnostics/",
-                        "AtmosTransport.Analysis" => "AtmosTransport.Diagnostics")
-        before = Dict("allow" => Dict(old => "existing body"))
-        after = Dict("allow" => Dict(moved => "relocated body"))
-        @test isempty(StructureCheck.allowance_growth(before, after, file))
-        for field in ("digest", "signature")
-            changed = Dict("allow" => Dict(replace(moved, field => "changed") => "changed body"))
-            @test !isempty(StructureCheck.allowance_growth(before, changed, file))
-        end
+    @test length(errors(moved, [])) == 8 # without rows every moved edge is new
+    @test isempty(errors(moved, valid))
+    # A target may use no more than its donor's base budget.
+    for (table, owner, dep) in (("modules", "Moved", "Empty"), ("folders", "src/New/First", "src/Elsewhere"))
+        richer = deepcopy(moved)
+        push!(richer[table][owner], dep)
+        @test has(errors(richer, valid), "new $table allowance $owner -> $dep")
     end
-    before = Dict("allow" => Dict("src/Downloads" => Dict("bytes" => 300_000, "reason" => "existing")))
-    after = Dict("allow" => Dict("src/Extras/Downloads" => Dict("bytes" => 300_000, "reason" => "moved")))
-    @test isempty(StructureCheck.allowance_growth(before, after, StructureCheck.FOLDER_SIZES))
-    after["allow"]["src/Extras/Downloads"]["bytes"] += 1
-    @test !isempty(StructureCheck.allowance_growth(before, after, StructureCheck.FOLDER_SIZES))
+    # A folder-order exception moves to one target; it is never copied to every piece.
+    copied = deepcopy(moved)
+    copied["folder_order_allow"]["src|src/New/First"] = "copied exception"
+    @test has(errors(copied, valid), "new folder order allowance src|src/New/")
+    # A split cannot carry a facade's wiring into a reverse edge of a new folder:
+    # main keeps no exceptions for child wiring, so there is none to move.
+    facade = Dict("folders" => Dict("src" => ["src/Models"], "src/Models" => String[]),
+                  "folder_order_allow" => Dict())
+    foundation = Dict("folders" => Dict("src" => ["src/Models", "src/Foundation"], "src/Models" => String[],
+                                        "src/Foundation" => ["src/Models"]),
+                      "folder_order_allow" => Dict("src/Foundation|src/Models" => "moved facade exception"))
+    @test has(errors(foundation, [row("src", ["src", "src/Foundation"])]; before = facade),
+              "new folder order allowance src/Foundation|src/Models")
+    # Rows name a base module, folder or Julia file and current identities of
+    # the same kind; helper names and digests cannot be renamed.
+    @test has(errors(moved, [valid; row("Nowhere", ["Moved"])]), "Nowhere is not a module, folder or Julia file")
+    @test has(errors(moved, [valid; row("_hidden", ["_other"])]), "_hidden is not a module, folder or Julia file")
+    @test has(errors(moved, [row("Rich", ["Moved", "src/New/First"]), valid[2]]), "src/New/First is not a current module")
+    # An applied row is inert. Unchanged migrations.toml (main): a warning;
+    # a PR editing the file must delete it.
+    notes = String[]
+    @test isempty(errors(moved, valid; before = moved, applied = rows(valid...), warnings = notes))
+    @test has(notes, "migration Rich was applied by the base")
+    @test has(errors(moved, valid[1:1]; before = moved, applied = rows(valid...)), "migration Rich was applied by the base")
+    # Unused and redundant rows or targets fail.
+    @test has(errors(moved, [row("Rich", ["Moved", "Lower"]), valid[2]]), "migration Rich -> Lower is unused")
+    twin = deepcopy(base)
+    twin["modules"]["Copy"] = ["Lower"]
+    @test has(errors(moved, [valid; row("Copy", ["Moved"])]; before = twin),
+              "migration Copy -> Moved is redundant with migration Rich -> Moved")
+    # Every row needs a reason and well-formed identities.
+    @test has(errors(moved, [row("Rich", ["Moved"]; reason = " "), valid[2]]), "migration Rich needs a reason")
+    @test has(errors(moved, [Dict("from" => "Rich", "reason" => "no target"), valid[2]]), "distinct to identities")
+    # A vacated name reused by another unit (Empty renamed to Rich) keeps no
+    # budget of its own, even with a row for the rename.
+    reuse = deepcopy(moved)
+    delete!(reuse["modules"], "Empty")
+    reuse["modules"]["Rich"] = ["Lower"]
+    @test has(errors(reuse, valid), "new modules allowance Rich -> Lower")
+    @test has(errors(reuse, [valid; row("Empty", ["Rich"])]), "new modules allowance Rich -> Lower")
+    reuse["modules"]["Consumer"] = ["Moved", "Rich"]
+    @test has(errors(reuse, valid), "new modules allowance Consumer -> Rich")
 
-    before = Dict("modules" => Dict("AtmosTransport" => ["AtmosTransport.Analysis"],
-                                   "AtmosTransport.Analysis" => ["AtmosTransport.Models"]))
-    after = StructureCheck.relocate_x1_baseline(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    push!(after["modules"]["AtmosTransport.Diagnostics"], "AtmosTransport.Visualization")
-    @test !isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-end
-
-@testset "O1 relocates observation dependencies without expanding debt budgets" begin
-    before = Dict("modules" => Dict(
-        "AtmosTransport" => ["AtmosTransport.Output"],
-        "AtmosTransport.Output" => ["AtmosTransport", "AtmosTransport.Grids"],
-        "AtmosTransport.Adjoints" => ["AtmosTransport.Output"]))
-    after = StructureCheck.relocate_o1_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test StructureCheck.relocate_o1_layers(after, "src/LAYERS.toml") == after
-    push!(after["modules"]["AtmosTransport.Observations.Sources"], "AtmosTransport.GriddedIO")
-    @test !isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    debt = Dict("allow" => Dict("old" => "existing debt"))
-    @test StructureCheck.relocate_o1_layers(debt, "test/structure/private_use_allowlist.toml") == debt
-end
-
-@testset "M1 relocates only the binary dependency budget" begin
-    parent = "AtmosTransport.MetDrivers"
-    format, readers = parent * ".BinaryFormat", parent * ".BinaryReaders"
-    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids", "AtmosTransport.State"],
-                                    "AtmosTransport.Preprocessing" => [parent]))
-    after = StructureCheck.relocate_m1_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test format in after["modules"][readers]
-    expanded = deepcopy(after)
-    push!(expanded["modules"][format], "AtmosTransport.Operators")
-    @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-    @test !isempty(StructureCheck.allowance_growth(after, expanded, "src/LAYERS.toml"))
-    debt = Dict("allow" => Dict("old" => "unchanged debt"))
-    @test StructureCheck.relocate_m1_layers(debt, "private") == debt
-end
-
-@testset "PP1 relocates ordered preprocessing stages without accepting reverse edges" begin
-    parent = "AtmosTransport.Preprocessing"
-    core, vertical, spectral = [parent * "." * n for n in ("Core", "Vertical", "Spectral")]
-    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids"],
-                                    "AtmosTransport" => [parent]),
-                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/sources"]))
-    after = StructureCheck.relocate_pp1_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test vertical in after["modules"][spectral]
-    @test !(parent in after["modules"][core])
-    @test !("src/Preprocessing/sources" in after["folders"]["src/Preprocessing/Core"])
-    for (from, to) in ((core, vertical), (vertical, spectral), (core, parent))
-        expanded = deepcopy(after)
-        push!(expanded["modules"][from], to)
-        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-        @test !isempty(StructureCheck.allowance_growth(after, expanded, "src/LAYERS.toml"))
-    end
-    debt = Dict("allow" => Dict("old" => "unchanged debt"))
-    @test StructureCheck.relocate_pp1_layers(debt, "clone") == debt
-end
-
-@testset "PP2 stages inherit lower dependencies without reverse edges" begin
-    parent = "AtmosTransport.Preprocessing"
-    core, spectral, closure, physics = parent .* [".Core", ".Spectral", ".MassClosure", ".PhysicsInputs"]
-    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids", core, spectral],
-                                    core => ["AtmosTransport.Grids"],
-                                    spectral => [core]),
-                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/Core"]))
-    after = StructureCheck.relocate_pp2_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test spectral in after["modules"][closure]
-    @test spectral in after["modules"][physics]
-    @test !(closure in after["modules"][physics])
-    @test after["modules"][core] == before["modules"][core]
-    @test StructureCheck.relocate_pp2_layers(after, "src/LAYERS.toml") == after
-    for (from, to) in ((closure, physics), (physics, closure), (closure, parent), (core, closure))
-        expanded = deepcopy(after)
-        push!(expanded["modules"][from], to)
-        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-    end
-    debt = Dict("allow" => Dict("old" => "existing debt"))
-    @test StructureCheck.relocate_pp2_layers(debt, "clone") == debt
+    # Allowance ids follow moved files without copies or new helpers.
+    private = StructureCheck.SNAPSHOTS["private_use"]
+    old_id = "src/Old/helpers.jl|AtmosTransport.Old|AtmosTransport.Lower|_hidden"
+    new_id = replace(old_id, "src/Old/" => "src/New/Second/")
+    debt(ids...) = Dict("allow" => Dict(id => "existing site" for id in ids))
+    debt_errors(after, list = valid; files = (base = Set{String}(), head = Set{String}())) =
+        StructureCheck.ratchet_errors([(layers, base, moved), (private, debt(old_id), after)], rows(list...); files)
+    @test isempty(debt_errors(debt(new_id)))
+    @test has(debt_errors(debt(new_id, replace(new_id, "Second" => "First"))), "new or copied $private entry")
+    @test has(debt_errors(debt(replace(new_id, "_hidden" => "_other"))), "new or copied $private entry")
+    renamed = replace(old_id, "src/Old/helpers.jl" => "src/New/Second/stages.jl")
+    files = (base = Set(["src/Old/helpers.jl"]), head = Set(["src/New/Second/stages.jl"]))
+    @test isempty(debt_errors(debt(renamed), [valid; row("src/Old/helpers.jl", ["src/New/Second/stages.jl"])]; files))
+    # Byte ceilings split across targets may not exceed the old ceiling in sum.
+    sizes(pairs...) = Dict("allow" => Dict(f => Dict("bytes" => b, "reason" => "debt") for (f, b) in pairs))
+    size_errors(after) = StructureCheck.ratchet_errors(
+        [(layers, base, moved), (StructureCheck.FOLDER_SIZES, sizes("src/Old" => 300_000), after)], rows(valid...))
+    @test isempty(size_errors(sizes("src/New/First" => 200_000, "src/New/Second" => 100_000)))
+    @test has(size_errors(sizes("src/New/First" => 200_000, "src/New/Second" => 150_000)), "raised folder budget src/Old")
 end
 
 @testset "A1 shared-module folder wiring preserves sibling order" begin
     home = StructureCheck.A1_HOME
     children = StructureCheck.A1_CHILDREN
-    before = Dict("folders" => Dict(home => ["src/Grids"], "src/Adjoints" => [home]))
-    after = StructureCheck.relocate_a1_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test StructureCheck.relocate_a1_layers(after, "src/LAYERS.toml") == after
-    for (from, to) in ((children[1], children[3]), (children[2], "src/Adjoints"))
-        expanded = deepcopy(after)
-        push!(expanded["folders"][from], to)
-        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-    end
-    debt = Dict("allow" => Dict("old" => "existing"))
-    @test StructureCheck.relocate_a1_layers(debt, StructureCheck.SNAPSHOTS["private_use"]) == debt
-
     mktempdir() do root
         files = Dict(
             "src/AtmosTransport.jl" => "module AtmosTransport\ninclude(\"Operators/Operators.jl\")\nend\n",
@@ -540,60 +524,11 @@ end
     end
 end
 
-@testset "PP3 target and binary identities retain one-way dependencies" begin
-    parent = "AtmosTransport.Preprocessing"
-    stages = parent .* [".Core", ".Vertical", ".Spectral", ".MassClosure", ".PhysicsInputs"]
-    children = parent .* [".TransportBinary", ".LatLon", ".ReducedGaussian", ".CubedSphere"]
-    before = Dict("modules" => Dict(parent => ["AtmosTransport.Grids"; stages],
-                                    stages[1] => ["AtmosTransport.Grids"]),
-                  "folders" => Dict("src/Preprocessing" => ["src/Grids", "src/Preprocessing/Core"]))
-    after = StructureCheck.relocate_pp3_layers(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test StructureCheck.relocate_pp3_layers(after, "src/LAYERS.toml") == after
-    @test after["modules"][stages[1]] == before["modules"][stages[1]]
-    @test children[1] in after["modules"][children[2]]
-    @test children[2] in after["modules"][children[3]]
-    @test children[2] in after["modules"][children[4]]
-    for (from,to) in ((children[1],children[2]),(children[2],children[4]),
-                      (children[4],children[3]),(children[3],parent),(stages[1],children[1]))
-        expanded=deepcopy(after); push!(expanded["modules"][from],to)
-        @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-    end
-    debt=Dict("allow"=>Dict("old"=>"existing debt"))
-    @test StructureCheck.relocate_pp3_layers(debt,"clone") == debt
-end
-
 @testset "absolute package imports cannot bind a target module with the same leaf name" begin
     structure_fixture() do root
-        write_toml(joinpath(root,"Project.toml"), Dict("deps"=>Dict("Lower"=>"external-package")))
-        inv=StructureCheck.inventory(root)
-        @test StructureCheck.module_path(inv,"AtmosTransport.Upper",["Lower","Geometry"],0) == ""
-        @test StructureCheck.module_path(inv,"AtmosTransport.Upper",["Lower"],2) == "AtmosTransport.Lower"
+        write_toml(joinpath(root, "Project.toml"), Dict("deps" => Dict("Lower" => "external-package")))
+        inv = StructureCheck.inventory(root)
+        @test StructureCheck.module_path(inv, "AtmosTransport.Upper", ["Lower", "Geometry"], 0) == ""
+        @test StructureCheck.module_path(inv, "AtmosTransport.Upper", ["Lower"], 2) == "AtmosTransport.Lower"
     end
-end
-
-@testset "MD1 moves preserve dependency and helper debt limits" begin
-    home = StructureCheck.MD1_HOME
-    old_ic, old_runner = home * "/initial_conditions", home * "/runner"
-    before = Dict("folders" => Dict(home => ["src/Grids", old_ic, old_runner],
-        old_ic => [home, "src/Grids"], old_runner => [home, old_ic],
-        "src/Diagnostics" => [home, old_runner]),
-        "folder_order_allow" => Dict("$old_ic|$home" => "old IC wiring",
-                                     "$old_runner|$home" => "old runner wiring"))
-    after = StructureCheck.relocate_md1_baseline(before, "src/LAYERS.toml")
-    @test isempty(StructureCheck.allowance_growth(before, after, "src/LAYERS.toml"))
-    @test isempty(after["folder_order_allow"])
-    @test StructureCheck.relocate_md1_baseline(after, "src/LAYERS.toml") == after
-    expanded = deepcopy(after)
-    push!(expanded["folders"][home * "/Core"], "src/Diagnostics")
-    @test !isempty(StructureCheck.allowance_growth(before, expanded, "src/LAYERS.toml"))
-
-    path = StructureCheck.SNAPSHOTS["private_use"]
-    old_key = "src/Models/DrivenRunner.jl|AtmosTransport.Models.DrivenRunner|AtmosTransport.Models|_spec_int"
-    new_key = replace(old_key, "src/Models/DrivenRunner.jl" => "src/Models/Runner/DrivenRunner.jl")
-    debt = Dict("allow" => Dict(old_key => "same historical site"))
-    moved = Dict("allow" => Dict(new_key => "same historical site"))
-    @test isempty(StructureCheck.allowance_growth(debt, moved, path))
-    moved["allow"][replace(new_key, "_spec_int" => "_new_private")] = "new debt"
-    @test !isempty(StructureCheck.allowance_growth(debt, moved, path))
 end

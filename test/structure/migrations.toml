@@ -1,0 +1,20 @@
+# Reviewed identity migrations for scripts/checks/check_structure.jl.
+# A PR that moves, renames or splits a module or source folder declares each
+# budget transfer here; see test/structure/README.md for the semantics. Rows
+# already in the base are inert: the checker warns, and a PR that edits this
+# file must delete them.
+#
+# [[migration]]
+# from = "src/Old"
+# to = ["src/New/Lower", "src/New/Upper"]
+# reason = "Why the split keeps the old dependency budget"
+
+[[migration]]
+from = "AtmosTransport.Preprocessing"
+to = ["AtmosTransport.Preprocessing", "AtmosTransport.Preprocessing.TransportBinary", "AtmosTransport.Preprocessing.LatLon", "AtmosTransport.Preprocessing.ReducedGaussian", "AtmosTransport.Preprocessing.CubedSphere"]
+reason = "PP3: binary protocols/writers and the three grid targets leave the Preprocessing module as ordered submodules"
+
+[[migration]]
+from = "src/Preprocessing/transport_binary"
+to = ["src/Preprocessing/transport_binary", "src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon", "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere"]
+reason = "PP3: binary and target files leave transport_binary, which keeps the source-specific drivers until PP4"

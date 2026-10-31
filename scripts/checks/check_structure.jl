@@ -17,6 +17,7 @@ const SNAPSHOTS = Dict("duplicate" => "test/structure/duplicate_allowlist.toml",
                        "noncore" => "test/structure/noncore_allowlist.toml")
 const FOLDER_SIZES = "test/structure/folder_size_allowlist.toml"
 const MIRRORS = "test/structure/mirrors.toml"
+const MIGRATIONS = "test/structure/migrations.toml"
 const CODE_MAP = "docs/src/development/code_map.md"
 const README_SECTIONS = ("Depends on", "Used by", "Shared helpers owned here",
                          "Forward<->adjoint mirrors")
@@ -538,451 +539,202 @@ function has_cycle(edges)
     return any(visit, keys(graph))
 end
 
-# Compare tracked allowances with the selected base. P1's base has none; once
-# landed, raising allowances in the same diff as a violation cannot hide it.
-function relocate_x1_baseline(before, file)
-    # One-way migration of P1 identities for X1's reviewed layout. This changes
-    # only historical keys: no new digest, signature, helper or byte ceiling is
-    # accepted. A base already using the X1 layout is compared without migration.
-    extras(path) = replace(path, r"^src/(Analysis|Visualization|Downloads)(/|$)" => s"src/Extras/\1\2")
-    if file == "src/LAYERS.toml"
-        modules = get(before, "modules", Dict())
-        haskey(modules, "AtmosTransport.Diagnostics") && return before
-        haskey(modules, "AtmosTransport.Analysis") || return before
-        migrated = deepcopy(before)
-        mods = migrated["modules"]
-        # The former Analysis dependencies now belong to core Diagnostics.
-        # Analysis re-exports Diagnostics; the facade includes the new module.
-        mods["AtmosTransport.Diagnostics"] = copy(modules["AtmosTransport.Analysis"])
-        push!(mods["AtmosTransport.Analysis"], "AtmosTransport.Diagnostics")
-        push!(mods["AtmosTransport"], "AtmosTransport.Diagnostics")
-        if haskey(before, "folders")
-            # SectionTimer moved to src so late Diagnostics can follow Models
-            # without a new reverse-folder exception or a folder cycle.
-            folder(path) = path == "src/Diagnostics" ? "src" : extras(path)
-            migrated["folders"] = Dict(folder(a) => unique([folder(b) for b in deps if folder(b) != folder(a)])
-                                       for (a, deps) in before["folders"] if a != "src/Diagnostics")
-            migrated["folders"]["src/Diagnostics"] = extras.(before["folders"]["src/Analysis"])
-            push!(migrated["folders"]["src/Extras/Analysis"], "src/Diagnostics")
-            push!(migrated["folders"]["src"], "src/Diagnostics")
-            # Reuse the old facade->timer exception for facade->Diagnostics.
-            migrated["folder_order_allow"] = Dict(join(extras.(split(id, '|')), '|') => reason
-                for (id, reason) in get(before, "folder_order_allow", Dict()))
+# Kinds of the `|`-separated fields of each snapshot's allowance ids. Migration
+# rows rename only module, folder and file fields, never helper names or digests.
+const ID_FIELDS = Dict(SNAPSHOTS["duplicate"] => (:name, :module),
+                       SNAPSHOTS["clone"] => (:digest, :file, :module, :name, :digest),
+                       SNAPSHOTS["private_use"] => (:file, :module, :module, :name),
+                       SNAPSHOTS["docstring"] => (:file, :digest),
+                       SNAPSHOTS["noncore"] => (:file, :module, :module),
+                       FOLDER_SIZES => (:folder,))
+
+# Reviewed `[[migration]]` rows (from, to, reason) of test/structure/migrations.toml.
+function migration_rows!(errors, raw)
+    rows = NamedTuple{(:from, :to),Tuple{String,Vector{String}}}[]
+    for row in get(raw, "migration", [])
+        from, to, reason = row isa AbstractDict ? (get(row, k, "") for k in ("from", "to", "reason")) : ("", "", "")
+        if !(from isa String && !isempty(from) && to isa Vector && !isempty(to) &&
+             all(t -> t isa String && !isempty(t), to) && allunique(to))
+            push!(errors, "migration rows need a from identity and distinct to identities: $row")
+        elseif !(reason isa String && !isempty(strip(reason)))
+            push!(errors, "migration $from needs a reason")
+        else
+            push!(rows, (; from, to = String.(to)))
         end
-        return migrated
     end
-    haskey(before, "allow") || return before
-    entries = Dict{String,Any}()
-    for (id, reason) in before["allow"]
-        parts = split(id, '|')
-        core = any(p -> p in ("src/Analysis/budget_closure.jl", "src/Analysis/run_context.jl",
-                              "src/Analysis/snapshot_series.jl", "src/Analysis/mass_totals.jl"), parts) ||
-               ("src/Analysis/Analysis.jl" in parts && last(parts) != "_neumaier_sum")
-        parts = [core ? replace(p, "src/Analysis/Analysis.jl" => "src/Diagnostics/Diagnostics.jl",
-                                  "src/Analysis/" => "src/Diagnostics/",
-                                  "AtmosTransport.Analysis" => "AtmosTransport.Diagnostics") : p for p in parts]
-        entries[join(extras.(parts), '|')] = reason
-    end
-    return Dict("allow" => entries)
+    return rows
 end
 
-function relocate_o1_layers(before, file)
-    # O1 splits the former Output observation unit into three lower modules
-    # and a facade. Translate only its historical dependency budget; duplicate,
-    # clone, private-use and size allowances receive no new identities.
-    file == "src/LAYERS.toml" || return before
-    mods = get(before, "modules", Dict())
-    haskey(mods, "AtmosTransport.Output") || return before
-    haskey(mods, "AtmosTransport.Observations") && return before
-    migrated = deepcopy(before)
-    output = "AtmosTransport.Output"
-    observations = "AtmosTransport.Observations"
-    children = observations .* [".Retrievals", ".Sources", ".Sampling"]
-    for deps in values(migrated["modules"])
-        output in deps && append!(deps, [observations; children])
+# A row moves one base module, folder or Julia file to current identities of the same kind.
+function row_kind!(errors, row, base, head)
+    for kind in (:module, :folder, :file)
+        row.from in base[kind] || continue
+        wrong = filter(t -> !(t in head[kind]), row.to)
+        isempty(wrong) && return kind
+        push!(errors, "migration $(row.from): $(join(wrong, ", ")) is not a current $kind")
+        return nothing
     end
-    migrated["modules"][observations] = children
-    migrated["modules"][children[1]] = String[]
-    migrated["modules"][children[2]] = ["AtmosTransport", "AtmosTransport.ConfigChecks", children[1]]
-    migrated["modules"][children[3]] = [mods[output]; output; children[1:2]]
-    folders = get(migrated, "folders", Dict())
-    old = "src/Output/observations"
-    if haskey(folders, old)
-        new = ["src/Observations", "src/Observations/Retrievals",
-               "src/Observations/Sources", "src/Observations/Sampling"]
-        for deps in values(folders)
-            old in deps && append!(deps, new)
-        end
-        folders[new[1]] = new[2:4]
-        folders[new[2]] = String[]
-        folders[new[3]] = ["src", new[2]]
-        folders[new[4]] = [folders[old]; new[2:3]]
-        # The package facade now also includes the new facade module. This is
-        # the same foundation/facade folder exception as src -> Output.
-        "src/Output" in get(folders, "src", String[]) && push!(folders["src"], new[1])
-        exceptions = get!(migrated, "folder_order_allow", Dict())
-        haskey(exceptions, "src|src/Output") &&
-            (exceptions["src|src/Observations"] = exceptions["src|src/Output"])
-    end
-    return migrated
+    push!(errors, "migration $(row.from) is not a module, folder or Julia file of the base")
+    return nothing
 end
 
-function relocate_m1_layers(before, file)
-    # M1 splits the former single-namespace binary implementation. Only its
-    # historical dependency budget moves: no private/clone/size debt is added.
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.MetDrivers"
-    fmt, readers = parent * ".BinaryFormat", parent * ".BinaryReaders"
-    mods = get(before, "modules", Dict())
-    haskey(mods, fmt) && return before
-    haskey(mods, parent) || return before
-    migrated = deepcopy(before)
-    prior = filter(!=(parent * ".ERA5"), mods[parent])
-    for deps in values(migrated["modules"])
-        parent in deps && append!(deps, [fmt, readers])
-    end
-    migrated["modules"][parent] = [prior; fmt; readers]
-    migrated["modules"][fmt] = [prior; parent]
-    migrated["modules"][readers] = [prior; parent; fmt]
-    folders = get(migrated, "folders", Dict())
-    old, root = "src/MetDrivers/transport_binary", "src/MetDrivers"
-    new = [root * "/BinaryFormat", root * "/BinaryReaders"]
-    if haskey(folders, old)
-        prior_folders = filter(x -> !(x in (old, "src/MetDrivers/ERA5")), folders[root])
-        for deps in values(folders)
-            old in deps && append!(deps, new)
-        end
-        folders[root] = [prior_folders; new]
-        folders[new[1]] = [prior_folders; root]
-        folders[new[2]] = [prior_folders; root; new[1]]
-        # ERA5 GRIB geometry now belongs to preprocessing. The facade keeps
-        # the same geometry bindings, whose defining file moved with them.
-        "src/MetDrivers/ERA5" in get(folders, "src", String[]) &&
-            push!(folders["src"], "src/Preprocessing/sources")
-    end
-    return migrated
+function substitutions(rows)
+    subs = Dict(kind => Dict{String,Vector{String}}() for kind in (:module, :folder, :file))
+    foreach(row -> append!(get!(subs[row.kind], row.from, String[]), row.to), rows)
+    return subs
 end
 
-# C1 splits one existing dependency budget into a facade and two children.
-# Only LAYERS identities migrate: helper/clone/docstring allowances still shrink.
-function relocate_c1_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.Operators.Convection"
-    modules = get(before, "modules", Dict())
-    haskey(modules, parent * ".TM5") && return before
-    haskey(modules, parent) || return before
-    migrated = deepcopy(before)
-    for (table, home) in (("modules", parent), ("folders", "src/Operators/Convection"))
-        budgets = get(migrated, table, Dict())
-        haskey(budgets, home) || continue
-        children = [home * (table == "modules" ? ".TM5" : "/TM5"),
-                    home * (table == "modules" ? ".CMFMC" : "/CMFMC")]
-        prior = copy(budgets[home])
-        for deps in values(budgets)
-            home in deps && append!(deps, children)
-        end
-        budgets[home] = [prior; children]
-        budgets[children[1]] = [prior; home]
-        budgets[children[2]] = [prior; home; children[1]]
-    end
-    return migrated
+# A field names its row's targets instead of `from`; a file also follows its folder.
+function substitute(subs, kind, part)
+    kind == :file || return get(get(subs, kind, Dict()), part, [part])
+    haskey(subs[:file], part) && return subs[:file][part]
+    folder = get(subs[:folder], dirname(part), nothing)
+    return folder === nothing ? [part] : [t * "/" * basename(part) for t in folder]
 end
 
-# PP1 relocates the existing preprocessing dependency budget to ordered stages.
-# This applies only to LAYERS identities; clone/private/docstring debt still
-# shrinks exactly. A base already containing Core gets no special treatment.
-function relocate_pp1_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.Preprocessing"
-    modules = get(before, "modules", Dict())
-    haskey(modules, parent * ".Core") && return before
-    haskey(modules, parent) || return before
-    migrated = deepcopy(before)
-    for (table, home, sep) in (("modules", parent, "."),
-                               ("folders", "src/Preprocessing", "/"))
-        budgets = get(migrated, table, Dict())
-        haskey(budgets, home) || continue
-        children = [home * sep * name for name in ("Core", "Vertical", "Spectral")]
-        prior = copy(budgets[home])
-        lower = filter(d -> d != home && !startswith(d, home * sep), prior)
-        for deps in values(budgets)
-            home in deps && append!(deps, children)
-        end
-        budgets[home] = [prior; children]
-        for i in eachindex(children)
-            budgets[children[i]] = [lower; children[1:i-1]]
-        end
+# Current id => base ids it may come from (itself, or its migrated forms).
+function origins(table, subs, fields)
+    found = Dict{String,Vector{String}}()
+    for id in keys(table), parts in Iterators.product(
+            (substitute(subs, get(fields, i, :name), p) for (i, p) in enumerate(split(id, '|')))...)
+        push!(get!(found, join(parts, '|'), String[]), id)
     end
-    return migrated
+    return found
 end
 
-# PP2 gives the next two pipeline stages their existing dependency budget.
-# PhysicsInputs can use Spectral but does not depend on MassClosure.
-function relocate_pp2_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.Preprocessing"
-    modules = get(before, "modules", Dict())
-    haskey(modules, parent * ".MassClosure") && return before
-    haskey(modules, parent) || return before
-    migrated = deepcopy(before)
-    for (table, home, sep) in (("modules", parent, "."),
-                               ("folders", "src/Preprocessing", "/"))
-        budgets = get(migrated, table, Dict())
-        haskey(budgets, home) || continue
-        children = [home * sep * name for name in ("MassClosure", "PhysicsInputs")]
-        prior = copy(budgets[home])
-        lower = filter(d -> d != home && !startswith(d, home * sep), prior)
-        for (owner, deps) in budgets
-            # Existing consumers of the facade can follow its moved bindings.
-            # PP1 children retain their already established one-way contracts.
-            startswith(owner, home * sep) && owner in
-                home .* sep .* ["Core", "Vertical", "Spectral"] && continue
-            home in deps && append!(deps, children)
-        end
-        budgets[home] = [prior; children]
-        budgets[children[1]] = [lower; home * sep * "Core";
-                              home * sep * "Vertical"; home * sep * "Spectral"]
-        budgets[children[2]] = [lower; home * sep * "Core";
-                              home * sep * "Vertical"; home * sep * "Spectral"]
+# Current ids that cannot each be traced to a distinct base id (augmenting-path
+# matching): an allowance or exception moves to at most one place, never copies.
+function unmatched(ids, origin)
+    owner = Dict{String,String}()
+    claim(id, seen) = any(get(origin, id, String[])) do source
+        source in seen && return false
+        push!(seen, source)
+        (!haskey(owner, source) || claim(owner[source], seen)) && (owner[source] = id; true)
     end
-    return migrated
+    return sort!([id for id in ids if !claim(id, Set{String}())])
 end
 
-# PP3 relocates target/binary identities only. The binary protocols load below
-# LL, then RG/CS (which reuse LL spectral staging/logging). PP1/PP2 stages keep
-# their existing budgets. GS1 can express these four ordered child mappings
-# directly in migrations.toml; no clone/private/docstring/size debt migrates.
-function relocate_pp3_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.Preprocessing"
-    modules = get(before, "modules", Dict())
-    haskey(modules, parent * ".TransportBinary") && return before
-    haskey(modules, parent) || return before
-    migrated = deepcopy(before)
-    for (table, home, sep, names) in (
-        ("modules", parent, ".", ["TransportBinary", "LatLon", "ReducedGaussian", "CubedSphere"]),
-        ("folders", "src/Preprocessing", "/",
-         ["TransportBinary", "Targets/LatLon", "Targets/ReducedGaussian", "Targets/CubedSphere"]))
-        budgets = get(migrated, table, Dict())
-        haskey(budgets, home) || continue
-        children = home .* sep .* names
-        stages = home .* sep .* ["Core", "Vertical", "Spectral", "MassClosure", "PhysicsInputs"]
-        prior = copy(budgets[home])
-        lower = filter(d -> d != home && !startswith(d, home * sep), prior)
-        for (owner, deps) in budgets
-            owner in stages && continue
-            (home in deps || home * sep * "transport_binary" in deps) && append!(deps, children)
-        end
-        budgets[home] = [prior; children]
-        for (i, child) in enumerate(children)
-            earlier = i == 1 ? String[] : children[1:min(i - 1, 2)]
-            budgets[child] = [lower; stages; earlier]
-        end
+# Each target receives from's base budget and may use the row's other targets
+# (the owner's own use of itself is substituted); a base use of `from` may use
+# any target; `from` keeps its budget and users only if it is also a target.
+function migrated_budgets(budgets, subs)
+    swap(id) = get(subs, id, [id])
+    moved = Dict{String,Vector{String}}()
+    for (owner, deps) in budgets, target in swap(owner)
+        append!(get!(moved, target, String[]), filter(!=(target), reduce(vcat, swap.([deps; owner]))))
     end
-    return migrated
+    return moved
 end
 
-# A1 retains one module because the fenced root workspaces/Lin-Rood kernels
-# and the topology files share types. Split its existing folder budget only;
-# sibling dependencies remain Reconstruction <- Structured <- CubedSphere.
-const A1_HOME = "src/Operators/Advection"
-const A1_CHILDREN = A1_HOME .* ["/Reconstruction", "/Structured", "/CubedSphere"]
-function relocate_a1_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    folders = get(before, "folders", Dict())
-    haskey(folders, A1_HOME) || return before
-    haskey(folders, first(A1_CHILDREN)) && return before
-    migrated = deepcopy(before)
-    budgets = migrated["folders"]
-    prior = copy(budgets[A1_HOME])
-    for deps in values(budgets)
-        A1_HOME in deps && append!(deps, A1_CHILDREN)
-    end
-    budgets[A1_HOME] = [prior; A1_CHILDREN]
-    for (i, child) in enumerate(A1_CHILDREN)
-        budgets[child] = [prior; A1_HOME; A1_CHILDREN[1:i-1]]
-    end
-    return migrated
-end
+const NO_MIGRATIONS = substitutions([])
 
-# T1 separates the existing Adjoints unit into core, replay, observation
-# and solver modules. Children inherit only the old lower dependency budget.
-# No clone/private-use/size identities migrate and no reverse exception is added.
-function relocate_t1_layers(before, file)
-    file == "src/LAYERS.toml" || return before
-    parent = "AtmosTransport.Adjoints"
-    modules = get(before, "modules", Dict())
-    haskey(modules, parent * ".Footprint") && return before
-    haskey(modules, parent) || return before
-    migrated = deepcopy(before)
-    mods = migrated["modules"]
-    fp, inv = parent * ".Footprint", parent * ".Inversion"
-    obs, sol = inv * ".Observations", inv * ".Solver"
-    prior = copy(mods[parent])
-    for deps in values(mods)
-        parent in deps && append!(deps, [fp, inv, obs, sol])
-    end
-    mods[parent] = [prior; fp; inv]
-    mods[fp] = [prior; parent]
-    mods[inv] = [obs, sol]
-    mods[obs] = [prior; parent; fp]
-    mods[sol] = [prior; parent; fp; obs]
-    folders = get(migrated, "folders", Dict())
-    core, oldfp, oldinv = "src/Adjoints", "src/Footprint", "src/Inversion"
-    haskey(folders, oldfp) && haskey(folders, oldinv) || return migrated
-    newfp, newinv = core * "/Footprint", core * "/Inversion"
-    newobs, newsol = newinv * "/Observations", newinv * "/Solver"
-    # Step forcing moved down from Footprint into core; Inversion split up.
-    expand(f) = f == oldfp ? [core, newfp] :
-                f == oldinv ? [newinv, newobs, newsol] : [f]
-    old = deepcopy(folders)
-    for (f, deps) in old
-        f in (core, oldfp, oldinv) && continue
-        folders[f] = unique(reduce(vcat, expand.(deps); init = String[]))
-    end
-    prior_core = filter(f -> f ∉ (oldfp, oldinv), old[core])
-    prior_fp = filter(f -> f != oldinv, old[oldfp])
-    prior_inv = filter(f -> f != oldfp, old[oldinv])
-    folders[core] = [prior_core; newfp; newinv]
-    folders[newfp] = prior_fp
-    folders[newinv] = [newobs, newsol]
-    folders[newobs] = [prior_inv; prior_core; newfp]
-    folders[newsol] = [prior_inv; prior_core; newfp; newobs]
-    delete!(folders, oldfp); delete!(folders, oldinv)
-    # These historical cycles are eliminated, not renamed.
-    exceptions = get(migrated, "folder_order_allow", Dict())
-    for id in ("$core|$oldfp", "$core|$oldinv", "$oldfp|$oldinv")
-        delete!(exceptions, id)
-    end
-    return migrated
-end
-
-# MD1 uses plain folders where Models still shares runtime types. Translate
-# historical file identities only; helper names, digests and ceilings never grow.
-const MD1_HOME = "src/Models"
-const MD1_FOLDERS = MD1_HOME .* ["/Physics", "/Core", "/InitialConditions", "/Runner"]
-const MD1_FILES = Dict(
-    "Core" => ("TransportModel", "Simulation", "Callbacks", "driven_stepping", "adjoint_schedule"),
-    "Physics" => ("RuntimeRecipeStyles", "RuntimePhysicsSpecs", "RuntimePhysicsRecipe",
-                  "RuntimePhysicsMetadata", "driven_physics_refresh"),
-    "InitialConditions" => ("InitialConditionIO",),
-    "Runner" => ("DrivenRunner", "DrivenSimulation", "driven_window_state", "InputStaging", "BinaryPathExpander"))
-
-function md1_path(path)
-    path = replace(path, "src/Models/initial_conditions/" => "src/Models/InitialConditions/",
-                         "src/Models/runner/" => "src/Models/Runner/")
-    for (folder, files) in MD1_FILES, file in files
-        path == "$MD1_HOME/$file.jl" && return "$MD1_HOME/$folder/$file.jl"
-    end
-    return path
-end
-
-function relocate_md1_baseline(before, file)
-    if file == "src/LAYERS.toml"
-        folders = get(before, "folders", Dict())
-        haskey(folders, MD1_HOME) || return before
-        haskey(folders, first(MD1_FOLDERS)) && return before
-        migrated = deepcopy(before)
-        old_family = (MD1_HOME, MD1_HOME * "/initial_conditions", MD1_HOME * "/runner")
-        new_family = [MD1_HOME; MD1_FOLDERS]
-        expand(f) = f in old_family ? new_family : [f]
-        budgets = migrated["folders"]
-        for (f, deps) in folders
-            f in old_family && continue
-            budgets[f] = unique(reduce(vcat, expand.(deps); init = String[]))
-        end
-        # All these files already shared the Models dependency budget. Keep
-        # only its former lower dependencies plus internal folder wiring.
-        prior = unique(reduce(vcat, (get(folders, f, String[]) for f in old_family)))
-        prior = filter(f -> f ∉ old_family, prior)
-        for f in new_family
-            budgets[f] = filter(!=(f), [prior; new_family])
-        end
-        for f in old_family[2:end]
-            delete!(budgets, f)
-        end
-        exceptions = get(migrated, "folder_order_allow", Dict())
-        for id in ("$(old_family[2])|$MD1_HOME", "$(old_family[3])|$MD1_HOME")
-            delete!(exceptions, id)
-        end
-        return migrated
-    end
-    haskey(before, "allow") || return before
-    entries = Dict(join(md1_path.(split(id, '|')), '|') => reason
-                   for (id, reason) in before["allow"])
-    return merge(before, Dict("allow" => entries))
-end
-
-function allowance_growth(before, after, file)
+function allowance_growth(before, after, file, subs = NO_MIGRATIONS)
     before == after && return String[]
-    original_count = length(get(before, "allow", Dict()))
-    before = relocate_x1_baseline(before, file)
-    before = relocate_o1_layers(before, file)
-    before = relocate_m1_layers(before, file)
-    before = relocate_c1_layers(before, file)
-    before = relocate_pp1_layers(before, file)
-    before = relocate_pp2_layers(before, file)
-    before = relocate_pp3_layers(before, file)
-    before = relocate_a1_layers(before, file)
-    before = relocate_t1_layers(before, file)
-    before = relocate_md1_baseline(before, file)
     if file == "src/LAYERS.toml"
         growth = String[]
-        for table in ("modules", "folders")
+        for (table, kind) in (("modules", :module), ("folders", :folder))
+            budgets = migrated_budgets(get(before, table, Dict()), subs[kind])
             append!(growth, ["new $table allowance $mod -> $dep" for (mod, deps) in get(after, table, Dict())
-                    for dep in setdiff(deps, get(get(before, table, Dict()), mod, String[]))])
+                    for dep in setdiff(deps, get(budgets, mod, String[]))])
         end
-        append!(growth, ["new folder order allowance $id" for id in
-            setdiff(keys(get(after, "folder_order_allow", Dict())), keys(get(before, "folder_order_allow", Dict())))])
-        return growth
-    elseif file == FOLDER_SIZES
-        old = get(before, "allow", Dict())
-        return ["raised folder budget $folder" for (folder, entry) in get(after, "allow", Dict())
-                if !haskey(old, folder) || entry["bytes"] > old[folder]["bytes"]]
+        origin = origins(get(before, "folder_order_allow", Dict()), subs, (:folder, :folder))
+        return [growth; "new folder order allowance " .* unmatched(keys(get(after, "folder_order_allow", Dict())), origin)]
     end
-    growth = ["new $file entry $id" for id in
-              setdiff(keys(get(after, "allow", Dict())), keys(get(before, "allow", Dict())))]
-    length(get(after, "allow", Dict())) > original_count && isempty(growth) &&
-        push!(growth, "increased $file allowance count")
-    return growth
+    old, new = get(before, "allow", Dict()), get(after, "allow", Dict())
+    origin = origins(old, subs, get(ID_FIELDS, file, ()))
+    file == FOLDER_SIZES || return "new or copied $file entry " .* unmatched(keys(new), origin)
+    # The ceilings drawn from one base ceiling may not exceed it in sum.
+    raised = [folder for folder in keys(new) if !haskey(origin, folder)]
+    for (folder, entry) in old
+        drawn = sum(new[f]["bytes"] for f in keys(new) if folder in get(origin, f, String[]); init = 0)
+        drawn > entry["bytes"] && push!(raised, folder)
+    end
+    return "raised folder budget " .* sort!(unique(raised))
 end
 
-function check_ratchet!(errors, root, base, files)
-    base === nothing && return
+# Allowances only shrink relative to the base, except for transfers declared by
+# migration rows. A row already in the base was applied there and is inert: a
+# warning asks to delete it, and a PR that edits migrations.toml must do so. A
+# row target that discharges no growth fails as unused or redundant.
+function ratchet_errors(snapshots, migrations, applied = Dict{String,Any}();
+                        files = (base = Set{String}(), head = Set{String}()), warnings = String[])
+    errors = String[]
+    layers = [(b, a) for (f, b, a) in snapshots if f == "src/LAYERS.toml"]
+    before, after = isempty(layers) ? (Dict(), Dict()) : only(layers)
+    ids(layers, paths) = Dict(:module => keys(get(layers, "modules", Dict())),
+                              :folder => keys(get(layers, "folders", Dict())), :file => paths)
+    done = [(row.from, sort(row.to)) for row in migration_rows!(String[], applied)]
+    rows = []
+    for row in migration_rows!(errors, migrations)
+        if (row.from, sort(row.to)) in done
+            push!(migrations == applied ? warnings : errors,
+                  "migration $(row.from) was applied by the base; delete the row")
+        elseif (kind = row_kind!(errors, row, ids(before, files.base), ids(after, files.head))) !== nothing
+            push!(rows, (; row..., kind))
+        end
+    end
+    growth(list) = unique(reduce(vcat, (allowance_growth(b, a, f, substitutions(list))
+                                        for (f, b, a) in snapshots); init = String[]))
+    found = growth(rows)
+    append!(errors, "allowlists only shrink: " .* found)
+    without(list, i, t) = [j == i ? (; r..., to = filter(!=(t), r.to)) : r for (j, r) in enumerate(list)]
+    for (i, row) in enumerate(rows), target in row.to
+        fewer = without(rows, i, target)
+        issubset(growth(fewer), found) || continue
+        twin = findfirst(j -> j != i && target in rows[j].to &&
+                              !issubset(growth(without(fewer, j, target)), found), eachindex(rows))
+        push!(errors, twin === nothing ? "migration $(row.from) -> $target is unused; remove it" :
+              "migration $(row.from) -> $target is redundant with migration $(rows[twin].from) -> $target; keep one")
+    end
+    return errors
+end
+
+# Captured stdout of a git command, or nothing on failure. Fresh buffers: Julia
+# 1.10 can retain a process-backed IOBuffer's contents after take!.
+function git_output(root, args)
     out = IOBuffer()
-    proc = run(pipeline(ignorestatus(`git -C $root rev-parse --verify --quiet --end-of-options $(base * "^{commit}")`);
-                        stdout = out, stderr = devnull))
-    if !success(proc)
+    proc = run(pipeline(ignorestatus(`git -C $root $args`); stdout = out, stderr = devnull))
+    return success(proc) ? String(take!(out)) : nothing
+end
+
+# Parsed `file` at the base commit; nothing if absent (first introduction) or unreadable.
+function base_toml!(errors, root, commit, base, file)
+    listing = git_output(root, `ls-tree $commit -- $file`)
+    listing === nothing && (push!(errors, "cannot inspect $file at structure base '$base'"); return nothing)
+    isempty(listing) && return nothing
+    text = git_output(root, `show $commit\:$file`)
+    text === nothing && (push!(errors, "cannot read $file at structure base '$base'"); return nothing)
+    return TOML.parse(text)
+end
+
+julia_files(paths) = Set(String(p) for p in paths if endswith(p, ".jl"))
+
+function check_ratchet!(errors, root, base, files; io = stdout)
+    base === nothing && return
+    commit = git_output(root, `rev-parse --verify --quiet --end-of-options $(base * "^{commit}")`)
+    if commit === nothing
         branch = startswith(base, "origin/") ? base[8:end] : base
         push!(errors, "cannot validate structure base ref '$base'; fetch the base branch with " *
                       "git fetch --no-tags --depth=1 origin '+refs/heads/$branch:refs/remotes/origin/$branch', " *
                       "then set ATMOSTR_STRUCTURE_BASE=origin/$branch (or pass an existing commit)")
         return
     end
-    commit = strip(String(take!(out)))
+    commit = strip(commit)
+    snapshots = []
     for file in files
-        # Only a genuinely absent path at a valid commit is first introduction.
-        # Use fresh buffers: Julia 1.10 can retain a process-backed IOBuffer's
-        # contents after take!, unlike newer Julia versions.
-        out = IOBuffer()
-        proc = run(pipeline(ignorestatus(`git -C $root ls-tree $commit -- $file`);
-                            stdout = out, stderr = devnull))
-        if !success(proc)
-            push!(errors, "cannot inspect $file at structure base '$base'")
-            continue
-        end
-        isempty(String(take!(out))) && continue
-        cmd = `git -C $root show $commit\:$file`
-        out = IOBuffer()
-        proc = run(pipeline(ignorestatus(cmd); stdout = out, stderr = devnull))
-        if !success(proc)
-            push!(errors, "cannot read $file at structure base '$base'")
-            continue
-        end
-        before = TOML.parse(String(take!(out)))
-        after = isfile(joinpath(root, file)) ? TOML.parsefile(joinpath(root, file)) : Dict{String,Any}()
-        append!(errors, ["allowlists only shrink: $entry" for entry in allowance_growth(before, after, file)])
+        before = base_toml!(errors, root, commit, base, file)
+        path = joinpath(root, file)
+        before === nothing || push!(snapshots, (file, before, isfile(path) ? TOML.parsefile(path) : Dict()))
     end
+    base_files = julia_files(split(something(git_output(root, `ls-tree -r --name-only $commit -- src ext`), ""), '\n'))
+    head_files = julia_files(relpath(joinpath(dir, f), root) for top in ("src", "ext") if isdir(joinpath(root, top))
+                             for (dir, _, names) in walkdir(joinpath(root, top)) for f in names)
+    path = joinpath(root, MIGRATIONS)
+    applied = something(base_toml!(errors, root, commit, base, MIGRATIONS), Dict())
+    warnings = String[]
+    append!(errors, ratchet_errors(snapshots, isfile(path) ? TOML.parsefile(path) : Dict(), applied;
+                                   files = (base = base_files, head = head_files), warnings))
+    foreach(w -> println(io, "warning: ", w), warnings)
 end
 
 # A folder owns its immediate Julia files; subfolders have their own budgets.
@@ -998,6 +750,12 @@ end
 
 folder_bytes(inv, files) = sum(f -> filesize(joinpath(inv.root, f)), files; init = 0)
 
+# Shared-module folders whose wiring check_folders! permits explicitly (A1, MD1).
+const A1_HOME = "src/Operators/Advection"
+const A1_CHILDREN = A1_HOME .* ["/Reconstruction", "/Structured", "/CubedSphere"]
+const MD1_HOME = "src/Models"
+const MD1_FOLDERS = MD1_HOME .* ["/Physics", "/Core", "/InitialConditions", "/Runner"]
+
 function check_folders!(errors, inv, found, layers; io = stdout)
     folders = source_folders(inv)
     order = get(layers, "folder_order", String[])
@@ -1010,6 +768,7 @@ function check_folders!(errors, inv, found, layers; io = stdout)
     for folder in keys(folders)
         haskey(positions, folder) && haskey(allowed, folder) || push!(errors, "T1 undeclared folder: $folder")
     end
+    needed = Set{String}()
     for (a, b) in sort!(collect(found.folder_edges))
         b in get(allowed, a, String[]) || push!(errors, "T1 new folder dependency: $a -> $b")
         # Module assembly may wire its children. A1 also permits its explicitly
@@ -1030,9 +789,13 @@ function check_folders!(errors, inv, found, layers; io = stdout)
         shared_models_wiring = a in [MD1_HOME; MD1_FOLDERS] && b in [MD1_HOME; MD1_FOLDERS] &&
             any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, a, String[])) &&
             any(inv.files[f] == "AtmosTransport.Models" for f in get(folders, b, String[]))
-        if !child_wiring && !shared_advection_wiring && !shared_models_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0) && !haskey(exceptions, "$a|$b")
-            push!(errors, "T1 reference to later folder: $a -> $b")
+        if !child_wiring && !shared_advection_wiring && !shared_models_wiring && get(positions, b, typemax(Int)) >= get(positions, a, 0)
+            haskey(exceptions, "$a|$b") ? push!(needed, "$a|$b") : push!(errors, "T1 reference to later folder: $a -> $b")
         end
+    end
+    # An exception is kept only for a reverse edge the rules above would reject.
+    for id in sort!(collect(setdiff(keys(exceptions), needed)))
+        push!(errors, "T1 remove unneeded folder order allowance: $id")
     end
     println(io, "T1 folders: $(length(folders)) folders, $(length(found.folder_edges)) edges, $(length(exceptions)) existing order exceptions")
     sizes = TOML.parsefile(joinpath(inv.root, FOLDER_SIZES))["allow"]
@@ -1169,7 +932,7 @@ function check_structure(root = ROOT; io = stdout, base = "origin/main", check_m
     end
     println(io, "T6 README sections: $(length(missing)) incomplete (report only)")
     foreach(s -> println(io, "  missing: ", s), missing)
-    check_ratchet!(errors, root, base, vcat(["src/LAYERS.toml", FOLDER_SIZES], collect(values(SNAPSHOTS))))
+    check_ratchet!(errors, root, base, vcat(["src/LAYERS.toml", FOLDER_SIZES], collect(values(SNAPSHOTS))); io)
     foreach(e -> println(io, "ERROR: ", e), errors)
     println(io, isempty(errors) ? "structure check passed (existing debt reported)" : "structure check FAILED")
     return (; errors, inventory = inv, findings = found)
