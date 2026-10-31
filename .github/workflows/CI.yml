@@ -4,9 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '23 8 * * *'  # Nightly at 08:23 UTC.
+  workflow_dispatch:
 
+# The event name keeps nightly and manual runs on main out of the push group:
+# a queued run cancels the pending run of its group, so a shared group would
+# delay pushes behind the nightly and drop the run of an earlier merge.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 env:
@@ -17,9 +23,49 @@ env:
   ATMOSTR_STRUCTURE_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || github.event.before || 'HEAD^1' }}
 
 jobs:
+  changes:
+    name: Classify PR changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none  # a name-only diff needs commits and trees, not blobs
+      - name: Detect documentation-only changes
+        id: classify
+        shell: python
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          import os
+          import subprocess
+
+          docs_only = False
+          try:
+              changed = subprocess.check_output([
+                  "git", "diff", "--no-renames", "--name-only", "-z",
+                  f'{os.environ["PR_BASE_SHA"]}...{os.environ["PR_HEAD_SHA"]}', "--",
+              ]).split(b"\0")
+              paths = [path for path in changed if path]
+              docs_only = bool(paths) and all(
+                  path.startswith(b"docs/") or path.endswith(b".md")
+                  for path in paths
+              )
+          except Exception as error:
+              print(f"::warning::Change detection failed; running the full suite: {error}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"docs_only={str(docs_only).lower()}\n")
+
   # Early feedback: the quick set of test/groups.toml (metadata gates, Aqua,
   # JET, physics smokes) reports in minutes. It does not replace the full suite
-  # below, which is the merge check.
+  # below for PRs with changes outside documentation. It holds every test that
+  # reads docs/ or *.md files, so documentation-only PRs still run them.
   quick:
     name: Quick tests (Julia 1)
     runs-on: ubuntu-latest
@@ -51,6 +97,10 @@ jobs:
 
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
+    needs: changes
+    # Missing output (including a failed checkout/classifier) runs everything.
+    # always() also permits non-PR runs, where the classifier is skipped.
+    if: ${{ always() && !cancelled() && needs.changes.outputs.docs_only != 'true' }}
     runs-on: ${{ matrix.os }}
     permissions:
       actions: write   # julia-actions/cache deletes superseded caches
@@ -59,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.10', '1.12', '1.13']
+        version: ['1.10', '1.13']
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
@@ -97,3 +147,32 @@ jobs:
           # Codecov must not fail CI (for example before the Codecov app is
           # enabled for the repository).
           fail_ci_if_error: false
+
+  # One check name that always reports, for merge decisions and any future
+  # required check: a skipped matrix reports only under its unexpanded name, so
+  # the lane names never report on documentation-only PRs. `always()` (not
+  # `!cancelled()`) makes a cancelled run fail here instead of being skipped,
+  # which would count as success.
+  full-suite:
+    name: Full suite
+    needs: [changes, test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check the full-suite result
+        env:
+          EVENT: ${{ github.event_name }}
+          CLASSIFIER: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          MATRIX: ${{ needs.test.result }}
+        run: |
+          if [[ "$MATRIX" == success ]]; then
+            echo "The full suite passed on every Julia version."
+          elif [[ "$MATRIX" == skipped && "$EVENT" == pull_request &&
+                  "$CLASSIFIER" == success && "$DOCS_ONLY" == true ]]; then
+            echo "Documentation-only pull request: the full suite is not required."
+          else
+            echo "::error::Full suite: $MATRIX (classifier: $CLASSIFIER, docs_only: ${DOCS_ONLY:-unset})"
+            exit 1
+          fi

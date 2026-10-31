@@ -11,19 +11,23 @@
 #      process (`test/runtests.jl --quick --changed=<ref>`).
 #
 # Every step runs; the script prints a summary and exits non-zero if any step
-# failed. The full suite (no flags) remains the merge requirement in CI.
+# failed. CI runs the full suite for changes outside documentation; see
+# test/README.md for the documentation-only exception and merge requirements.
 #
 # Usage (from anywhere in the checkout):
 #
 #   scripts/dev/quick_gate.sh [<git-ref>]      # default: ATMOSTR_STRUCTURE_BASE or origin/main
 #
 # Environment: JULIA (default `julia`) selects the Julia binary, e.g.
-# JULIA="julia +1.10". The test environment must be prepared once:
+# JULIA="julia +1.10". JULIA_NUM_THREADS defaults to 1 when unset, matching CI
+# and keeping reverse-halo atomic summation deterministic. An explicit thread
+# count is preserved. The test environment must be prepared once:
 #   julia --project=test -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 
 set -u
 ref="${1:-${ATMOSTR_STRUCTURE_BASE:-origin/main}}"
 export ATMOSTR_STRUCTURE_BASE="$ref"
+export JULIA_NUM_THREADS="${JULIA_NUM_THREADS-1}"
 julia_cmd=(${JULIA:-julia})
 root="$(git rev-parse --show-toplevel)" || exit 2
 cd "$root" || exit 2
@@ -77,6 +81,6 @@ printf '  %s\n' "${summary[@]}"
 if [ "$status" -ne 0 ]; then
     echo "quick gate FAILED"
 else
-    echo "quick gate passed; CI runs the full suite before merge"
+    echo "quick gate passed; see test/README.md for CI merge requirements"
 fi
 exit "$status"
