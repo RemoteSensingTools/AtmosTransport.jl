@@ -22,7 +22,7 @@ as first introduction. Synthetic fixtures explicitly opt out of base checking.
 
 - T1: `src/LAYERS.toml` records allowed internal module edges. Imports,
   imported/re-exported bindings, and qualified references are resolved through
-  the include tree. New edges, later-module references, cycles (excluding
+  the include tree. Undeclared edges, later-module references, cycles (excluding
   parent-to-child wiring), unparsed includes, and unreached Julia files fail.
   `order` records the snapshot's include order; later-module checks use the
   actual include order, even if the TOML is edited.
@@ -32,8 +32,12 @@ as first introduction. Synthetic fixtures explicitly opt out of base checking.
   definitions across folders that currently share a module. Module imports
   point to the module's entry folder; named bindings also point to definition
   folders. Existing reverse edges in this unaligned layout have reasons in
-  `folder_order_allow`; these exceptions and allowed edges only shrink. An
-  exception is kept only for a reverse edge that the order rules would
+  `folder_order_allow`; these exceptions only shrink. A PR may declare new
+  module or folder edges in `LAYERS.toml` when they point strictly downward:
+  from a later identity to an earlier one in `order` or `folder_order`.
+  Extensions follow the package, so `ext/` dependencies on `src/` identities
+  are downward. New upward or sideways edges still fail; removing edges is
+  allowed. An exception is kept only for a reverse edge that the order rules would
   otherwise reject; module child wiring and shared-module wiring need none.
   Folder-order enforcement also rejects new cycles: a cycle needs a reverse
   edge. Existing exceptions can preserve current cycles until folder cleanup.
@@ -80,12 +84,14 @@ as first introduction. Synthetic fixtures explicitly opt out of base checking.
 strings at module scope. A blank line or comment separating a docstring from
 its definition can silently detach it; a new detached string fails.
 
-All allowances snapshot P1's source state and contain reasons. Remove entries
-as cleanup eliminates debt; stale entries are reported. The checker compares
+The debt allowances snapshot P1's source state and contain reasons. Remove
+entries as cleanup eliminates debt; stale entries are reported. The checker compares
 allowance keys and dependency edges against `--base` and rejects additions
-where that base already contains the snapshot. P1's base has no snapshots, so
-this first introduction is reviewed in the PR. There is no allowance
-regeneration or accept-all flag. New allowances require an explicit owner decision.
+where that base already contains the snapshot, except for declared downward
+module and folder edges. Migration rows retain the transfer rules below.
+P1's base has no snapshots, so this first introduction is reviewed in the PR.
+There is no allowance regeneration or accept-all flag. New debt allowances
+require an explicit owner decision.
 
 ## Migrations
 

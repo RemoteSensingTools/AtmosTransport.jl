@@ -354,7 +354,60 @@ end
     end
 end
 
-@testset "allowances only shrink" begin
+@testset "new declared dependencies must point downward" begin
+    for (name, table, owner, dep, mode, expected) in (
+        ("module", "modules", "AtmosTransport.Upper", "AtmosTransport.Lower", :declared, String[]),
+        ("folder", "folders", "src/Upper", "src/Lower", :declared, String[]),
+        ("extension module", "modules", "FixtureExt", "AtmosTransport.Lower", :declared, String[]),
+        ("extension folder", "folders", "ext", "src/Lower", :declared, String[]),
+        ("upward module", "modules", "AtmosTransport.Lower", "AtmosTransport.Upper", :declared,
+         ["allowlists only shrink: new modules allowance AtmosTransport.Lower -> AtmosTransport.Upper"]),
+        ("upward folder", "folders", "src/Lower", "src/Upper", :declared,
+         ["allowlists only shrink: new folders allowance src/Lower -> src/Upper"]),
+        ("sideways module", "modules", "AtmosTransport.Upper", "AtmosTransport.Upper", :declared,
+         ["allowlists only shrink: new modules allowance AtmosTransport.Upper -> AtmosTransport.Upper"]),
+        ("sideways folder", "folders", "src/Upper", "src/Upper", :declared,
+         ["allowlists only shrink: new folders allowance src/Upper -> src/Upper"]),
+        ("order exception", "folder_order_allow", "src/Upper|src/Lower", "fixture reverse edge", :exception,
+         ["allowlists only shrink: new folder order allowance src/Upper|src/Lower"]),
+        ("undeclared module", "modules", "AtmosTransport.Upper", "AtmosTransport.Lower", :undeclared,
+         ["T1 new dependency: AtmosTransport.Upper -> AtmosTransport.Lower"]),
+        ("undeclared folder", "folders", "src/Upper", "src/Lower", :undeclared,
+         ["T1 new folder dependency: src/Upper -> src/Lower"]))
+        @testset "$name" begin
+            folder_fixture() do root
+                mkpath(joinpath(root, "ext"))
+                write(joinpath(root, "ext", "FixtureExt.jl"),
+                      "module FixtureExt\nusing AtmosTransport.Lower: base\nend\n")
+                inv = StructureCheck.inventory(root)
+                found = StructureCheck.findings(inv)
+                path = joinpath(root, "src", "LAYERS.toml")
+                after = TOML.parsefile(path)
+                after["order"] = inv.order
+                after["modules"] = Dict(m => [b for (a, b) in found.edges if a == m] for m in inv.order)
+                push!(after["folder_order"], "ext")
+                after["folders"]["ext"] = [b for (a, b) in found.folder_edges if a == "ext"]
+                before = deepcopy(after)
+                if mode == :exception
+                    after["folder_order"] = ["src/Upper", "src/Lower", "src", "ext"]
+                    after[table] = Dict(owner => dep)
+                elseif mode == :undeclared
+                    filter!(!=(dep), after[table][owner])
+                elseif dep in after[table][owner]
+                    filter!(!=(dep), before[table][owner])
+                else
+                    push!(after[table][owner], dep)
+                end
+                write_toml(path, after)
+                errors = [check_fixture(root).errors;
+                          StructureCheck.ratchet_errors([("src/LAYERS.toml", before, after)], Dict())]
+                @test errors == expected
+            end
+        end
+    end
+end
+
+@testset "other allowances only shrink" begin
     original = Dict("allow" => Dict("existing" => "reason"))
     removed = Dict("allow" => Dict{String,String}())
     expanded = Dict("allow" => Dict("existing" => "reason", "new" => "reason"))
