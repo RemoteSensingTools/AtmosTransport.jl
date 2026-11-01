@@ -544,7 +544,7 @@ function process_era5_n320_window!(pipeline::ERA5N320ToC180Pipeline,
                                      handles::ERA5GRIBDayHandles,
                                      date::Date,
                                      hour::Integer)
-    _prof = get(ENV, "ERA5_N320_PROFILE", "") == "1"
+    _prof = env_flag("ERA5_N320_PROFILE"; true_values = ("1",), case_sensitive = true)
     _t = time()
     read_era5_n320_window_fields!(pipeline.window_fields, pipeline.spectral_ws,
                                     handles, date, hour)

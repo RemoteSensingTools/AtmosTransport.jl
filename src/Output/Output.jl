@@ -28,7 +28,7 @@ module Output
 using ..Parameters: EARTH_RADIUS
 using ..Grids: HybridSigmaPressure, cell_centers, parse_panel_convention, parse_cs_definition,
                panel_convention_tag
-using ..State: basis_symbol
+using ..State: basis_symbol, panel_interior
 
 using Dates
 using HDF5_jll

@@ -53,12 +53,7 @@ _result_objective(start::_ObjectiveStart) = start.objective
 _result_objective(::Union{_SeedStart, _ZeroStart}) = CSSeedObjective()
 
 function _initial_adjoint_state(start::_ObjectiveStart, final_m, mesh::CubedSphereMesh)
-    FT = eltype(final_m[1])
-    lambda_panels = ntuple(p -> begin
-        a = similar(final_m[p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
+    lambda_panels = zeros_like(final_m)
     _seed_objective!(lambda_panels, start.objective, final_m, mesh)
     return lambda_panels
 end
@@ -77,7 +72,7 @@ function _initial_adjoint_state(start::_SeedStart, _final_m, mesh::CubedSphereMe
 end
 
 _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
-    _zero_panel_tuple_like(final_m)
+    zeros_like(final_m)
 
 # Walk `ops` backwards from `lambda_panels` (mutated in place; chain calls in
 # window-reverse order so the adjoint state flows from final to initial across
@@ -126,9 +121,7 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
             # record's `panels_m` / `panels_am` / `panels_bm`, so the substep's
             # internal air-mass adjoint starts from zero and is discarded, as
             # in the split-sweep reverse, which has no air-mass adjoint at all.
-            lambda_m_panels = ntuple(p -> begin
-                a = similar(lambda_panels[p]); fill!(a, zero(eltype(a))); a
-            end, Val(6))
+            lambda_m_panels = zeros_like(lambda_panels)
             _apply_cs_linrood_horizontal_adjoint!(lambda_panels,
                                                   lambda_m_panels, op, mesh)
         else

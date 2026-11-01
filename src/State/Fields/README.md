@@ -34,7 +34,7 @@ separate contracts.
 
 ## Depends on
 
-Adapt and Parameters (GEOS-Chem parameter container defaults). No operator
+Architectures (host staging), Adapt and Parameters (GEOS-Chem parameter container defaults). No operator
 dependency.
 
 ## Used by
@@ -57,3 +57,6 @@ PBL and diffusion transpose kernels live in Operators/Diffusion.
 
 `test/core/test_fields.jl`, `test/core/test_diffusion_flux_form.jl`,
 `test/core/test_conservative_dkg.jl` and `test/core/test_gchp_nonlocal_pbl.jl`.
+
+Architectures.host_array stages StepwiseField boundaries on the host; Array
+inputs alias and views are copied, preserving the boundary-search policy.

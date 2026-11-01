@@ -1,5 +1,6 @@
 module CMFMC
 
+using ....Architectures: host_array, fill_zero!
 using Adapt
 import KernelAbstractions
 using KernelAbstractions: @kernel, @index, @Const, @localmem, @synchronize,

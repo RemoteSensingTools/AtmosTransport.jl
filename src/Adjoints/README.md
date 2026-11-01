@@ -23,7 +23,7 @@ remain available through Adjoints and as qualified AtmosTransport names.
 
 ## Depends on
 
-Grids, State, Parameters, MetDrivers, Operators (including StepPlans), Tape,
+Architectures, Grids, State, Parameters, MetDrivers, Operators (including StepPlans), Tape,
 and Observations (placement and retrieval types). External: KernelAbstractions.
 Child includes and re-exports assemble the facade; core implementation never
 calls Footprint or Inversion. Numerical transposes live beside the forward
@@ -52,4 +52,8 @@ floor. Forcing assembly adds entries in a fixed order; one work item owns
 one cell. The step-plan parity, kernel identities, gradient identities and
 finite-difference tests are the numerical gate.
 
-# shared: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence, CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective, CSColumnMeanObjective, CSLayerMeanObjective, CSLinearFunctional, CSPlacedPointObjective, CSRetrievalColumnObjective, CSSeedObjective, NoStepForcing, _CSLinRoodHorizRecord, _accumulate_surface_footprint!, _apply_cs_convection_adjoint!, _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _assemble_step_forcing, _cell_average_needs_4dvar, _copy_panel_tuple, _inject_step_forcing!, _linear_functional, _linrood_validate_tape_storage, _objective_mass_floor, _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met, _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing, TracerDependence, _zero_panel_tuple_like, _zero_surface_rates, evaluate_objective, require_adjoint_support, tape_dependence
+# shared: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence, CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective, CSColumnMeanObjective, CSLayerMeanObjective, CSLinearFunctional, CSPlacedPointObjective, CSRetrievalColumnObjective, CSSeedObjective, NoStepForcing, TracerDependence, _CSLinRoodHorizRecord, _accumulate_surface_footprint!, _apply_cs_convection_adjoint!, _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _assemble_step_forcing, _cell_average_needs_4dvar, _copy_panel_tuple, _inject_step_forcing!, _linear_functional, _linrood_validate_tape_storage, _objective_mass_floor, _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met, _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing, _zero_surface_rates, evaluate_objective, require_adjoint_support, tape_dependence
+
+Architectures.zeros_like owns non-fenced panel zero allocation, shared with
+Footprint and Inversion.Solver. PanelArrays.jl retains dimensioned surface
+allocation and panel copies. LinRoodTape.jl remains untouched.

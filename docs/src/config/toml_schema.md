@@ -9,6 +9,14 @@ The two config families (run vs. preprocessing) live in different
 directories and are consumed by different code paths; this page
 keeps them separate.
 
+Both families use ConfigChecks for scalar and choice validation. Migrated numeric
+settings reject Booleans; migrated integer settings require integers representable
+as `Int`. Preprocessing dates accept TOML dates or date strings. Vertical
+thickness settings retain their documented numeric-string and infinity
+spellings. Valid choices, defaults and numerical results are unchanged;
+invalid settings receive a setting-specific `ArgumentError` (the diagnostic
+inventory is in the Unreleased release notes).
+
 ## Run config (`config/runs/*.toml`)
 
 Editors with Taplo (Even Better TOML in VS Code) check run configs in

@@ -87,7 +87,7 @@ using LinearAlgebra: mul!, dot
 using SparseArrays: SparseMatrixCSC, sparse
 using NCDatasets
 
-using ..ConfigChecks: config_bool as _config_bool, check_known_keys, parse_float_type
+using ..ConfigChecks: config_bool as _config_bool, config_int, config_float, config_date, parse_choice, check_known_keys, parse_float_type
 using ..LogLevels: log_level, with_log_level
 using ..AtomicFiles: atomic_publish, open_atomic_staging,
                      commit_atomic_staging, abandon_atomic_staging

@@ -174,7 +174,7 @@ end
 _total_air_mass(m::Tuple, mesh::CubedSphereMesh) = sum(panel -> _interior_air_mass(panel, mesh), m)
 function _interior_air_mass(panel::AbstractArray{<:Real, 3}, mesh::CubedSphereMesh)
     h = (size(panel, 1) - mesh.Nc) ÷ 2
-    return sum(Float64, view(panel, h+1:h+mesh.Nc, h+1:h+mesh.Nc, :))
+    return sum(Float64, @view panel_interior(panel, h)[1:mesh.Nc, 1:mesh.Nc, :])
 end
 _total_air_mass(m::AbstractArray{<:Real}, mesh) = sum(Float64, m)
 

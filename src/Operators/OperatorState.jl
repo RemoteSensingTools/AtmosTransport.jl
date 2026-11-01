@@ -3,9 +3,7 @@ _copy_state(::Nothing) = nothing
 _copy_state(a::AbstractArray) = copy(a)
 _copy_state(t::Tuple) = map(_copy_state, t)
 
-_zero_state!(::Nothing) = nothing
-_zero_state!(a::AbstractArray) = (fill!(a, zero(eltype(a))); a)
-_zero_state!(t::Tuple) = (foreach(_zero_state!, t); t)
+const _zero_state! = fill_zero!
 
 _copy_state!(::Nothing, ::Nothing) = nothing
 _copy_state!(dst::AbstractArray, src::AbstractArray) = copyto!(dst, src)

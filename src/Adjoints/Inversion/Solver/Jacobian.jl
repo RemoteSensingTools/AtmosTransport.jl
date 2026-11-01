@@ -21,11 +21,7 @@ function _aggregate_surface_window(result::CSFootprintResult,
                                    window::CSSurfaceFluxWindow)
     nsteps = length(result.footprints)
     FT = eltype(result.footprints[1][1])
-    aggregate = ntuple(p -> begin
-        a = similar(result.footprints[1][p])
-        fill!(a, zero(FT))
-        a
-    end, 6)
+    aggregate = zeros_like(result.footprints[1])
     @inbounds for (idx, step) in enumerate(window.steps)
         if !(1 <= step <= nsteps)
             throw(ArgumentError(

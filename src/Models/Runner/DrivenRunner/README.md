@@ -185,3 +185,6 @@ names are documented here so the static checker resolves public aliases too:
 
 The parent Runner stepping and capture use the same plan, refresh functions
 and clock transition; resource cleanup drains prefetch before closing its input binary.
+
+Run-window and check intervals use ConfigChecks. LogLevels owns progress
+choice/interval parsing; `progress.jl` owns reporter types and rendering.

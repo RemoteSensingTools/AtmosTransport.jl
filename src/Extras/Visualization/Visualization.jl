@@ -10,6 +10,8 @@ plotting load cost unless a Makie backend is explicitly loaded.
 """
 module Visualization
 
+using ..ConfigChecks: parse_choice
+
 using ..Grids: parse_panel_convention, parse_coordinate_law, parse_center_law
 
 using Dates
@@ -26,7 +28,6 @@ using ..Grids: LatLonMesh, CubedSphereMesh,
 using ..Regridding: build_regridder, apply_regridder!
 using ..Parameters: IFS_EARTH_RADIUS
 using ..GriddedIO: decode_time, CFDecoder
-
 
 abstract type AbstractSnapshotTopology end
 
@@ -54,30 +55,15 @@ display_unit_label(::NativeUnit) = :native
 display_unit_label(::PPMUnit) = :ppm
 
 _parse_field_transform(transform::AbstractFieldTransform) = transform
-function _parse_field_transform(transform::Union{Symbol, AbstractString})
-    name = String(transform)
-    name == "column_mean" && return ColumnMean()
-    name == "column_sum" && return ColumnSum()
-    name == "level_slice" && return LevelSlice()
-    name == "surface_slice" && return SurfaceSlice()
-    throw(ArgumentError(
-        "visualization transform must be column_mean, column_sum, level_slice, or surface_slice; got $(repr(transform))"))
-end
-function _parse_field_transform(transform)
-    throw(ArgumentError(
-        "visualization transform must be column_mean, column_sum, level_slice, or surface_slice; got $(repr(transform))"))
-end
+_parse_field_transform(transform) =
+    parse_choice(transform, (column_mean = ColumnMean(), column_sum = ColumnSum(),
+                            level_slice = LevelSlice(), surface_slice = SurfaceSlice()),
+                 "visualization transform"; case_sensitive = true, allow_symbol = true)
 
 _parse_display_unit(unit::AbstractDisplayUnit) = unit
-function _parse_display_unit(unit::Union{Symbol, AbstractString})
-    name = String(unit)
-    name == "native" && return NativeUnit()
-    name == "ppm" && return PPMUnit()
-    throw(ArgumentError("visualization unit must be native or ppm; got $(repr(unit))"))
-end
-function _parse_display_unit(unit)
-    throw(ArgumentError("visualization unit must be native or ppm; got $(repr(unit))"))
-end
+_parse_display_unit(unit) =
+    parse_choice(unit, (native = NativeUnit(), ppm = PPMUnit()),
+                 "visualization unit"; case_sensitive = true, allow_symbol = true)
 
 _require_field_transform(transform::AbstractFieldTransform) = transform
 function _require_field_transform(transform)
@@ -516,7 +502,6 @@ function _target_lonlat_mesh(resolution::Tuple{Int, Int})
                       radius=IFS_EARTH_RADIUS)
     return mesh, Float64.(mesh.λᶜ), Float64.(mesh.φᶜ)
 end
-
 
 # The mesh definition recorded by the snapshot writer (`define_cs_horizontal_geometry!`);
 # files written before those attributes get the panel convention's default.

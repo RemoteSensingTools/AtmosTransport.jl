@@ -1,5 +1,6 @@
 """ERA5 meteorological input readers and transport-binary source workflows."""
 module ERA5
+using ...ConfigChecks: env_flag
 
 import Printf: @sprintf
 

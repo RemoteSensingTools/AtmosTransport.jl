@@ -22,6 +22,7 @@ transposes live in `adjoint_kernels.jl`.
 """
 module Diffusion
 
+using ...Architectures: host_array, zeros_like
 using Adapt
 using KernelAbstractions: @kernel, @index, @Const, @atomic, get_backend, synchronize
 using ...State: CellState, CubedSphereState,

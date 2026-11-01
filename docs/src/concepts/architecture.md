@@ -248,7 +248,7 @@ Modules are included in dependency order, and a module may use only the
 modules included before it:
 
 ```text
-Architectures → SectionTimer → ConfigChecks → LogLevels → AtomicFiles
+ConfigChecks → Architectures → SectionTimer → LogLevels → AtomicFiles
 → Quantities → Parameters → Grids → State → Output → Observations → MetDrivers → Operators
 → Tape → Adjoints → Regridding → GriddedIO → Preprocessing → Models → Diagnostics
 → Extras/Visualization → Extras/Analysis → Extras/Downloads
@@ -263,7 +263,7 @@ intended to become its own package. Core must never import Extras; Extras use
 public core names and helpers declared shared in the owning README. Julia's
 optional Makie extension remains in `ext/`.
 
-Three single-file modules depend on Base and the standard library only:
+Three single-file modules need only standard libraries and earlier foundation modules:
 `ConfigChecks.jl` checks TOML tables, `LogLevels.jl` applies the
 `[logging] level`, and `AtomicFiles.jl` publishes a file only when it is
 complete (a sibling staging file, renamed onto the target on success); the

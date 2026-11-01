@@ -108,7 +108,6 @@ which would otherwise return small scavenged amounts to the column.
     return qc, zero(qc)
 end
 
-
 # =========================================================================
 # Column mass ledger (see `_ledger_deposit` and the TM5 ledger in
 # tm5_column_solve.jl, whose helpers are shared). The flux-form update below
@@ -280,8 +279,6 @@ end
 # host `Array`s: the scans index from 1 under `@inbounds`, and `Array` rejects
 # non-one-based axes with a `DimensionMismatch`. Inputs that already are
 # `Array`s are not copied.
-_cmfmc_host_array(a::Array) = a
-_cmfmc_host_array(a) = Array(a)
 
 # An array type without a KernelAbstractions backend (a custom host array, for
 # which `get_backend` throws an `ArgumentError`) is scanned as a host `Array`.
@@ -300,7 +297,7 @@ function _cmfmc_cfl_scan_backend(arrays)
        (!(backend isa KernelAbstractions.CPU) || all(a -> a isa Array, arrays))
         return backend, arrays
     end
-    return KernelAbstractions.CPU(), map(_cmfmc_host_array, arrays)
+    return KernelAbstractions.CPU(), map(host_array, arrays)
 end
 
 """
@@ -379,7 +376,6 @@ function _cmfmc_max_cfl(cmfmc::NTuple{6, <:AbstractArray{FT, 3}},
     end
     return mapreduce(identity, _nan_max, worst; init = zero(FT))
 end
-
 
 # Safety ceiling for the CFL-derived sub-step count. If met data is
 # pathologically inconsistent (e.g. `cmfmc` in kg/m²/s but `air_mass`

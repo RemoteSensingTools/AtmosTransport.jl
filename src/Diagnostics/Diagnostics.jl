@@ -8,6 +8,8 @@ foundation setup. See `src/Diagnostics/README.md` for the file map.
 """
 module Diagnostics
 
+using ..State: panel_interior
+
 using Dates: Dates, DateTime, Millisecond
 using NCDatasets: NCDataset, nomissing, dimnames
 using Statistics: mean, std

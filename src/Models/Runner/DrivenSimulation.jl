@@ -101,7 +101,6 @@ mutable struct DrivenSimulation{ModelT, DriverT, WindowT, AT, QT, FT, CB, PT, HS
     host_staging                :: HS
 end
 
-
 _same_values(a, b) = a == b
 _same_horizontal_geometry(a::LatLonMesh, b::LatLonMesh) =
     a.Nx == b.Nx && a.Ny == b.Ny && a.radius == b.radius &&
@@ -168,9 +167,8 @@ function _driver_step_schedule(driver::AbstractMetDriver)
     return schedule
 end
 
-@inline _allocate_storage_like(reference) = Base.invokelatest(similar, reference)
-@inline _allocate_storage_like(reference::NTuple{6}) =
-    ntuple(p -> Base.invokelatest(similar, reference[p]), 6)
+@inline _allocate_storage_like(reference) =
+    similar_arrays(reference; allocator = a -> Base.invokelatest(similar, a))
 
 @inline _copy_storage!(dest, src) = copyto!(dest, src)
 @inline function _copy_storage!(dest::NTuple{6}, src::NTuple{6})
@@ -180,22 +178,14 @@ end
     return dest
 end
 
-@inline _scale_storage!(dest, scale) = (dest .*= scale; dest)
-@inline function _scale_storage!(dest::NTuple{6}, scale)
-    @inbounds for p in 1:6
-        dest[p] .*= scale
-    end
-    return dest
-end
-
 @inline function _scale_runtime_fluxes!(fluxes, _scale)
     throw(ArgumentError("flux_kind=:full_window_mass_amount is only implemented " *
                         "for CubedSphereFaceFluxState runtime fluxes; got $(typeof(fluxes))."))
 end
 @inline function _scale_runtime_fluxes!(fluxes::CubedSphereFaceFluxState, scale)
-    _scale_storage!(fluxes.am, scale)
-    _scale_storage!(fluxes.bm, scale)
-    _scale_storage!(fluxes.cm, scale)
+    scale_arrays!(fluxes.am, scale)
+    scale_arrays!(fluxes.bm, scale)
+    scale_arrays!(fluxes.cm, scale)
     return fluxes
 end
 

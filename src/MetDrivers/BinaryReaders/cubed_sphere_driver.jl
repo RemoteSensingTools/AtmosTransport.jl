@@ -24,9 +24,9 @@ function _validate_replay_consistency_cs(
         steps = reader.header.steps_per_window_by_window[k]
         if flux_kind(reader) === :full_window_mass_amount
             scale = flux_storage_substep_scale(FT, steps, flux_kind(reader))
-            _scale_cs_replay_panels!(cur.am, scale)
-            _scale_cs_replay_panels!(cur.bm, scale)
-            _scale_cs_replay_panels!(cur.cm, scale)
+            scale_arrays!(cur.am, scale)
+            scale_arrays!(cur.bm, scale)
+            scale_arrays!(cur.cm, scale)
         end
         m_target = if k < Nt
             load_window!(reader, k + 1).m
@@ -64,13 +64,6 @@ function _validate_replay_consistency_cs(
     @info "Replay continuity gate passed: $(basename(reader.path)) " *
           "topology=cubed_sphere worst_rel=$(worst_rel) worst_window=$(worst_win)"
     return (worst_window = worst_win, worst_rel = worst_rel, worst_abs = worst_abs)
-end
-
-@inline function _scale_cs_replay_panels!(panels::NTuple{6}, scale)
-    @inbounds for p in 1:6
-        panels[p] .*= scale
-    end
-    return panels
 end
 
 function _transport_driver_grid(

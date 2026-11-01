@@ -57,3 +57,6 @@ The reader decodes the version-5 flux-construction identity into
 Tests: reader round trips, binary inspector, format versions 4 and 5, CS
 staging and optional sections, replay consistency, validate-replay config, and
 cubed-sphere runtime.
+
+Replay panel scaling uses Architectures.scale_arrays!, retaining the existing
+per-panel broadcast order.

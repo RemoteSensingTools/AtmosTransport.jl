@@ -45,3 +45,6 @@ column-weight choice immediately.
 ## Forward<->adjoint mirrors
 
 None.
+
+ConfigChecks owns common scalar parsing and the spectral mass-basis choice.
+Deferred native flux-choice validation still occurs after keyword overrides.

@@ -101,7 +101,6 @@ function _palindrome_subcycle_count(max_ratio, cfl_limit, max_n_sub::Integer, to
     return n_sub
 end
 
-
 # CFL subcycle counts of the structured (lat-lon) and face-indexed (reduced-Gaussian)
 # palindromes: the shared palindrome outflow budget of cs_subcycling.jl evaluated on
 # each topology's flux layout.
@@ -161,9 +160,9 @@ function _face_indexed_palindrome_subcycle_count(horizontal_flux::AbstractArray{
                                                  cfl_limit::FT;
                                                  max_n_sub::Int = DEFAULT_MAX_SUBCYCLES) where FT
     isinf(cfl_limit) && return 1
-    hflux = _host_array(horizontal_flux)
-    cm_h = _host_array(cm)
-    m_h = _host_array(m)
+    hflux = host_array(horizontal_flux)
+    cm_h = host_array(cm)
+    m_h = host_array(m)
     nc, Nz = size(m_h)
     outgoing = zeros(FT, nc)
     net_in = zeros(FT, nc)
@@ -194,5 +193,3 @@ function _face_indexed_palindrome_subcycle_count(horizontal_flux::AbstractArray{
 end
 
 # Host view of an array for the connectivity loop: no copy for host arrays.
-_host_array(a::Array) = a
-_host_array(a::AbstractArray) = Array(a)

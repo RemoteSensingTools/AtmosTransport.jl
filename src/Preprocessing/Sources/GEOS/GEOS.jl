@@ -1,5 +1,6 @@
 """GEOS meteorological input readers and transport-binary source workflows."""
 module GEOS
+using ...ConfigChecks: env_flag
 
 import Printf: @sprintf
 

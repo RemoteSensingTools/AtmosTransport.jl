@@ -235,3 +235,9 @@ Targets/CubedSphere; shared dry convection conversion lives in PhysicsInputs.
 
 None; preprocessing runs offline on the CPU. Each source uses the same lower
 binary replay and positivity contracts.
+
+ConfigChecks owns entrypoint date/scalar/choice parsing; TOML dates and ISO
+strings both work. Numeric settings reject Booleans; integer settings require
+integers representable as Int. Vertical numeric-string and infinity spellings
+retain their separate existing policy. Native mass-basis tags remain case
+sensitive; spectral tags retain case-insensitive parsing.

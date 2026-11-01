@@ -30,6 +30,12 @@ Private = false
 
 ## Log levels
 
+`progress_settings` parses the runner's progress choice and line interval;
+the concrete reporters remain in the runner. ConfigChecks provides strict
+scalar/date parsing and `parse_choice`, whose explicit case and Symbol
+options preserve each interface's accepted inputs. `env_flag` reads at call
+time; callers with narrower historical truth spellings pass them explicitly.
+
 ```@autodocs
 Modules = [AtmosTransport.LogLevels]
 Order   = [:module, :constant, :type, :function, :macro]
