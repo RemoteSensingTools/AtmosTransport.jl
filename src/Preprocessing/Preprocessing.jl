@@ -258,8 +258,11 @@ import .Common: check_native_closure_config, AbstractChainPolicy, AbstractColumn
     supports_spectral_massflux_preprocessing, target_balance_geometry, target_definition_tag,
     target_header_metadata, target_spectral_truncation, target_summary, validate_tm5_pbl_target,
     validate_column_balance_weights, windows_per_day, with_column_weights_record, with_replay_record
+import .Common: AbstractSpectralFluxConstruction, PointSampledSpectralFluxes, TM5SpectralFluxes,
+    spectral_construction, spectral_read_truncation, validate_spectral_construction
+export PointSampledSpectralFluxes, TM5SpectralFluxes
 include("Vertical/Vertical.jl")
-import .Vertical: AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
+import .Vertical: InterfaceMassFluxField, AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
     ConvectionTendencyField, IdentityVertical, IntensiveCenterField, LevelSelection, MassField,
     MassFluxField, MergeAbovePressure, MergeLayersThinnerThan, VerticalPlan,
     ab_coefficients, apply_vertical!, build_vertical_setup, echlevs_preset,
@@ -775,7 +778,7 @@ export open_reader, close_reader!
 export AbstractVerticalTransform, VerticalPlan
 export IdentityVertical, MergeLayersThinnerThan,
        MergeAbovePressure, LevelSelection
-export AbstractFieldKind
+export AbstractFieldKind, InterfaceMassFluxField
 export MassField, MassFluxField,
        ConvectionInterfaceFlux, ConvectionTendencyField,
        IntensiveCenterField

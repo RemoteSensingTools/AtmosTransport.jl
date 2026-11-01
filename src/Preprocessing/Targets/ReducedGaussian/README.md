@@ -29,6 +29,19 @@ RG and ERA5 keep their distinct thread-pool sizing policies.
 
 No adjoint. RG checks each horizontal/vertical pass separately and skips polar stub faces; its scan must remain distinct from LL/CS. Stored cm is diagnosed after column balance; native/merged cm scratch is unnecessary.
 
+`tm5_spectral_day.jl` dispatches `TM5SpectralFluxes` through retained-spectrum
+integration, post-integration dry pin, moist layer balance, target-layer drying
+and window means, then the existing column repair, explicit-dm closure,
+replay/positivity and binary writer. Next-day 00 UTC is mandatory. Positivity
+retries rebuild amounts from pristine rates. The new construction writes v5;
+`PointSampledSpectralFluxes` retains the legacy v4 path.
+
+TM5 reads one hour at a time with per-hour caches, retains two moist endpoints
+and immediately closes/writes each window. Its geometry overloads of
+`tm5_horizontal_convergence`, `balance_tm5_layers!` and `dry_target_fluxes!`
+live in `tm5_spectral_day.jl`; only source-agnostic solver primitives come
+from MassClosure.
+
 `include_tm5_pbl=true` adds the optional v5 inputs through the existing streaming
 writer; surface cell-area means, thermo point sampling, shared-endpoint caching
 and vertical weighting reuse LatLonTarget's

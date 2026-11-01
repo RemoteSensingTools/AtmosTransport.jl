@@ -2,6 +2,9 @@ module Spectral
 
 export era5_thermo_path
 
+import KernelAbstractions
+using KernelAbstractions: @kernel, @index, @localmem, @synchronize, get_backend, synchronize
+using ..Common: AbstractSpectralSynthesis
 using Dates
 using Logging
 using Printf
@@ -19,7 +22,8 @@ using ..Common: check_column_weight_levels, spread_column_correction!, AbstractC
     LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY, MassWeightedColumn, ReducedGaussianTargetGeometry,
     nlat, nlon, target_spectral_truncation
 using LinearAlgebra: mul!
-using ..Vertical: sum_merged_layers!
+using ..Common: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, TM5SpectralFluxes, spectral_construction, validate_spectral_vertical
+using ..Vertical: sum_merged_layers!, plan_vertical, LevelSelection, apply_vertical!, MassField, MassFluxField, InterfaceMassFluxField
 
 export LLPoissonWorkspace, ReducedSpectralSynthesis, SPECTRAL_DAY_CACHE_VERSION,
     apply_dry_basis_native!, available_spectral_dates, balance_column_mass_fluxes!,
@@ -41,6 +45,13 @@ include("spectral_io.jl")
 include("spectral_synthesis.jl")
 include("mass_support.jl")
 include("reduced_spectral_synthesis.jl")
+include("synthesis_rings.jl")
+include("synthesis_kernels.jl")
+include("device_spectral_synthesis.jl")
+include("spectral_quadrature.jl")
+include("spectral_integral_fluxes.jl")
+include("tm5_endpoint.jl")
+include("spectral_hour_io.jl")
 include("discovery.jl")
 
 end

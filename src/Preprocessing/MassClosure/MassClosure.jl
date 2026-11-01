@@ -2,7 +2,7 @@ module MassClosure
 
 export balance_cs_level!, cs_level_scratches, cs_column_convergence
 
-using LinearAlgebra: mul!, dot
+using LinearAlgebra: mul!, dot, cholesky, Symmetric
 using SparseArrays: SparseMatrixCSC, sparse
 using ...Parameters: DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POISSON_PROJECT_EVERY, HYBRID_LAYER_MIN_DB, COLUMN_CLOSURE_TOL_KG
@@ -71,5 +71,6 @@ include("cs_wind_rotation.jl")
 include("cs_native_fluxes.jl")
 include("face_line_integrals.jl")
 include("flux_construction.jl")
+include("tm5_target_balance.jl")
 
 end

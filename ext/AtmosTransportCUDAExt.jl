@@ -94,7 +94,36 @@ function _unpin_host_chunk(registration::_CUDAHostRegistration)
     return nothing
 end
 
-
 AtmosTransport.Tape._is_reservation_failure(err::CUDA.OutOfGPUMemoryError) = true
+
+# TM5 spectral synthesis: core owns portable KA/GEMM/FFT and quadrature;
+# CUDA owns device selection and the strict precision policy.
+function AtmosTransport.Preprocessing.Common.validate_gpu_spectral_backend(::Val{:cuda})
+    CUDA.functional() || throw(ArgumentError("GPU spectral synthesis requires a functional CUDA backend"))
+    return nothing
+end
+AtmosTransport.Preprocessing.Spectral.spectral_gpu_adapter(::Val{:cuda}) = CuArray
+function AtmosTransport.Preprocessing.Spectral.spectral_gpu_precision(::Val{:cuda})
+    cap = CUDA.capability(CUDA.device())
+    return cap in (v"6.0",v"7.0",v"8.0",v"9.0",v"10.0") ? Float64 : Float32
+end
+AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(::CUDABackend) =
+    AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(Val(:cuda))
+function AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(::Val{:cuda})
+    CUDA.functional() || throw(ArgumentError("GPU spectral synthesis requires a functional CUDA backend"))
+    CUDA.math_mode() == CUDA.FAST_MATH && throw(ArgumentError("TF32/FAST_MATH is forbidden for spectral synthesis"))
+    return nothing
+end
+
+function AtmosTransport.Preprocessing.Spectral.with_spectral_math(f, ::CUDABackend)
+    AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(Val(:cuda))
+    previous = CUDA.math_mode()
+    try
+        CUDA.math_mode!(CUDA.PEDANTIC_MATH)
+        return f()
+    finally
+        CUDA.math_mode!(previous)
+    end
+end
 
 end # module AtmosTransportCUDAExt

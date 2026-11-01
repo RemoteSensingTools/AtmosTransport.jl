@@ -97,6 +97,22 @@ function _parse_cli(args::Vector{String})
     return cfg_path, day_override, start_date, end_date
 end
 
+# Backend loading belongs to the CLI, not the core spectral module. As in
+# run_transport.jl, this only recognizes the requested runtime; ConfigChecks
+# still parses and validates the construction in the library's planning pass.
+function _preload_tm5_spectral_runtime!(cfg)
+    haskey(get(cfg,"source",Dict()),"toml") && return false
+    table=get(cfg,"preprocessing",Dict())
+    table isa AbstractDict || return false
+    construction=get(table,"spectral_flux_construction","point_sampled_spectral")
+    synthesis=get(table,"spectral_synthesis","gpu")
+    construction isa AbstractString && lowercase(construction)=="tm5_spectral" || return false
+    synthesis isa AbstractString && lowercase(synthesis)=="gpu" || return false
+    @info "Loading CUDA for TM5 spectral synthesis"
+    AtmosTransport.Architectures.ensure_runtime!(AtmosTransport.GPU(:cuda))
+    return true
+end
+
 """
     main(args = ARGS)
 
@@ -113,8 +129,14 @@ function main(args::Vector{String} = ARGS)
     end
     cfg_path, day_override, start_date, end_date = parsed
     cfg = TOML.parsefile(cfg_path)
+    loaded_runtime = _preload_tm5_spectral_runtime!(cfg)
     base_logger = ConsoleLogger(stderr, Logging.Info; show_limited = false)
     return with_logger(AtmosTransport.Preprocessing.FlushingLogger(base_logger)) do
+        if loaded_runtime
+            # Loading CUDA may have installed extension methods in a newer world.
+            return Base.invokelatest(process_day,cfg; day_override=day_override,
+                start_date=start_date,end_date=end_date)
+        end
         process_day(cfg; day_override = day_override,
                          start_date   = start_date,
                          end_date     = end_date)

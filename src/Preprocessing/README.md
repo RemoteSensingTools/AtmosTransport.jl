@@ -233,8 +233,20 @@ Targets/CubedSphere; shared dry convection conversion lives in PhysicsInputs.
 
 ## Forward<->adjoint mirrors
 
-None; preprocessing runs offline on the CPU. Each source uses the same lower
-binary replay and positivity contracts.
+None; preprocessing runs offline. The retained-spectrum evaluator can use
+CUDA; each source uses the same lower binary replay and positivity contracts.
+
+The optional `[preprocessing] spectral_flux_construction = "tm5_spectral"`
+selects retained-spectrum PS and face integrals with independent vertical
+forcing, moist layer balance, endpoint drying and `window_mean` sampling on
+LL and RG. `spectral_synthesis = "cpu"` selects the CPU reference; the TM5
+default is `"gpu"`, which requires a loaded functional CUDA backend. It writes
+v5 identity keys. See the manual page `preprocessing/tm5_spectral_fluxes.md`.
+
+TM5 coefficient reads/caches are per hour, with two retained moist endpoints.
+LL retains one completed lookahead output window; RG writes immediately.
+Spectral owns direct quadrature and endpoint reduction; Targets owns the moist
+layer balance, dry conversion and mean. MassClosure stays source independent.
 
 ERA5 spectral LL/RG can opt into live Calc_Kzz inputs with
 `[preprocessing] include_tm5_pbl=true`. `entrypoint.jl` validates the topology,

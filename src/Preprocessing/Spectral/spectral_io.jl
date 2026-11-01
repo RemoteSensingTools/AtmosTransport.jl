@@ -235,7 +235,7 @@ function read_day_spectral(vo_d_path::String, lnsp_path::String;
 end
 
 """
-Streaming spectral reader: reads one day's GRIB data, grouped by hour.
+Whole-day spectral reader: decodes all hours into memory (legacy point sampling).
 Returns a NamedTuple with hours, lnsp_all, vo_by_hour, d_by_hour, T, n_times.
 """
 function read_day_spectral_streaming(vo_d_path::String, lnsp_path::String;
@@ -329,90 +329,7 @@ function read_hour0_spectral(spectral_dir::String, date::Date;
         "incomplete ERA5 spectral hour-0 input for $date: " *
         "vo_d=$vo_d_status, lnsp=$lnsp_status"))
 
-    if !isempty(cache_dir)
-        path = spectral_day_cache_path(cache_dir, vo_d_path, lnsp_path; T_target)
-        if isfile(path)
-            try
-                spec = load_spectral_day_cache(path)
-                0 in spec.hours || throw(ArgumentError("spectral cache has no hour 0"))
-                return (lnsp=spec.lnsp_all[0],
-                        vo=spec.vo_by_hour[0],
-                        d=spec.d_by_hour[0],
-                        T=spec.T)
-            catch err
-                @warn "  Spectral hour-0 cache unreadable; falling back to GRIB" path exception=(err, catch_backtrace())
-            end
-        end
+    return with_spectral_hours((vo_d=vo_d_path, lnsp=lnsp_path); T_target, cache_dir) do read_hour
+        read_hour(0)
     end
-
-    # Read T from first LNSP message
-    f = GribFile(lnsp_path)
-    local T_file::Int
-    try
-        msg1 = first(f)
-        T_file = msg1["J"]
-    finally
-        destroy(f)
-    end
-    T = T_target > 0 ? min(T_target, T_file) : T_file
-    Nlevels = ERA5_NATIVE_LEVEL_COUNT
-
-    # Read hour-0 LNSP
-    spec_buf = zeros(ComplexF64, T_file + 1, T_file + 1)
-    vals_buf = Float64[]
-    lnsp_h0 = nothing
-    f = GribFile(lnsp_path)
-    try
-        for msg in f
-            hour = div(msg["dataTime"], 100)
-            if hour == 0
-                read_spectral_coeffs!(spec_buf, msg, vals_buf)
-                lnsp_h0 = copy(@view spec_buf[1:T + 1, 1:T + 1])
-                break
-            end
-        end
-    finally
-        destroy(f)
-    end
-    lnsp_h0 === nothing && throw(ArgumentError(
-        "ERA5 spectral LNSP file for $date contains no hour-0 message: $lnsp_path"))
-
-    # Read hour-0 VO/D
-    vo_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
-    d_h0 = zeros(ComplexF64, T + 1, T + 1, Nlevels)
-    vo_seen = falses(Nlevels)
-    d_seen = falses(Nlevels)
-    f = GribFile(vo_d_path)
-    try
-        for msg in f
-            hour = div(msg["dataTime"], 100)
-            hour == 0 || continue
-            name = msg["shortName"]
-            level = msg["level"]
-            1 <= level <= Nlevels || throw(ArgumentError(
-                "ERA5 spectral $name hour-0 message has level=$level outside 1:$Nlevels"))
-            read_spectral_coeffs!(spec_buf, msg, vals_buf)
-            if name == "vo"
-                vo_seen[level] && throw(ArgumentError(
-                    "duplicate ERA5 spectral vo hour-0 level $level"))
-                vo_seen[level] = true
-                vo_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
-            elseif name == "d"
-                d_seen[level] && throw(ArgumentError(
-                    "duplicate ERA5 spectral d hour-0 level $level"))
-                d_seen[level] = true
-                d_h0[:, :, level] .= @view spec_buf[1:T + 1, 1:T + 1]
-            end
-        end
-    finally
-        destroy(f)
-    end
-
-    missing_vo = findall(!, vo_seen)
-    missing_d = findall(!, d_seen)
-    isempty(missing_vo) || throw(ArgumentError(
-        "ERA5 spectral hour 0 is missing vo levels $missing_vo"))
-    isempty(missing_d) || throw(ArgumentError(
-        "ERA5 spectral hour 0 is missing d levels $missing_d"))
-    return (lnsp=lnsp_h0, vo=vo_h0, d=d_h0, T=T)
 end

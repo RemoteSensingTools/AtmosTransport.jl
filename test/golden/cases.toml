@@ -231,6 +231,20 @@ tags   = ["run", "cubed_sphere", "gpu", "merra2"]
 add    = {"advection.limiter" = "cw84"}
 
 [[case]]
+name = "pre_ll72_tm5"
+kind = "preprocess"
+config = "configs/pre_ll72_tm5.toml"
+day = "2021-12-01"
+tags = ["preprocess", "latlon", "cpu", "tm5"]
+
+[[case]]
+name = "pre_o24_tm5"
+kind = "preprocess"
+config = "configs/pre_o24_tm5.toml"
+day = "2021-12-01"
+tags = ["preprocess", "reduced_gaussian", "cpu", "tm5"]
+
+[[case]]
 name   = "run_ll72_tm5pbl_cpu_f64"
 kind   = "run"
 config = "configs/run_tm5pbl.toml"

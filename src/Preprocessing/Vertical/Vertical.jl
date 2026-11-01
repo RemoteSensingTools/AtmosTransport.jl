@@ -7,7 +7,7 @@ using ...Grids: HybridSigmaPressure, n_levels, pressure_at_interface, level_thic
 import ...expand_data_path
 using ..Common: package_path
 
-export AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
+export InterfaceMassFluxField, AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,
     ConvectionTendencyField, IdentityVertical, IntensiveCenterField, LevelSelection, MassField,
     MassFluxField, MergeAbovePressure, MergeLayersThinnerThan, VerticalPlan,
     ab_coefficients, apply_vertical!, build_vertical_setup, echlevs_preset,

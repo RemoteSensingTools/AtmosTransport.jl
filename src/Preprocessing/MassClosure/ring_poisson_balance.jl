@@ -280,7 +280,8 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
                                            scratch;
                                            weights::AbstractColumnWeights = MassWeightedColumn(),
                                            tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
-                                           max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
+                                           max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                                           direct_solver = nothing)
     nc, Nz = size(m_cur)
     size(m_next) == size(m_cur) ||
         throw(DimensionMismatch("m_next $(size(m_next)) ≠ m_cur $(size(m_cur))"))
@@ -305,7 +306,13 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
                               max_face_delta = 0.0)
 
     # 2. Solve L ψ = rhs (the solver projects rhs to zero mean in place).
-    _, iter = solve_compressed_poisson_pcg!(psi, rhs, L, scratch; tol = tol, max_iter = max_iter)
+    iter = if direct_solver === nothing
+        _, niter = solve_compressed_poisson_pcg!(psi, rhs, L, scratch; tol = tol, max_iter = max_iter)
+        niter
+    else
+        solve_compressed_poisson_direct!(psi, rhs, direct_solver)
+        1
+    end
     Lpsi = scratch.Ap
     _compressed_laplacian_mul!(Lpsi, psi, L)
     post_proj = 0.0

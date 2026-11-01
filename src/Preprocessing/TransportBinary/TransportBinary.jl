@@ -1,6 +1,8 @@
 """Binary metadata, evidence, shared contracts, writers and day lifecycle."""
 module TransportBinary
 
+import ..Common: TM5SpectralFluxes, spectral_source_flux_sampling, spectral_construction
+
 import ..Spectral: era5_thermo_path
 
 import ...source_revision
@@ -29,6 +31,7 @@ import ...MetDrivers.BinaryFormat: TM5_PBL_PAYLOAD_SECTIONS, TM5_PBL_FIELD_NAMES
     NativePassthroughFidelity,
     NoFluxFidelityKind,
     StreamingTransportBinaryWriter,
+    TM5SpectralFluxesHeader,
     TRANSPORT_BINARY_FORMAT_VERSION,
     WindRederivedFidelity,
     abandon_streaming_transport_binary!,
@@ -218,6 +221,7 @@ export AbstractBinaryWriter,
 
 include("core.jl")
 include("flux_fidelity.jl")
+include("tm5_spectral_metadata.jl")
 include("window_contracts.jl")
 include("structured_positivity.jl")
 include("positivity_status.jl")

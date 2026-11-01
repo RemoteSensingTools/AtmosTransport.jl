@@ -305,7 +305,8 @@ function resolve_runtime_settings(cfg)
        resolve_surface_settings(cfg),
        resolve_preprocessing_cache_settings(cfg),
        resolve_balance_settings(cfg),
-       resolve_spectral_flux_settings(cfg))
+       resolve_spectral_flux_settings(cfg),
+       resolve_spectral_construction(cfg))
 end
 
 """

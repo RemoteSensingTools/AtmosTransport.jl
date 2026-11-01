@@ -27,6 +27,9 @@ struct MassFluxField           <: AbstractFieldKind end
 """Convective interface flux (e.g. `cmfmc`). Select the kept interfaces."""
 struct ConvectionInterfaceFlux <: AbstractFieldKind end
 
+"""Non-convective interface mass flux (kg/s); select retained interfaces."""
+struct InterfaceMassFluxField <: AbstractFieldKind end
+
 """Convective center tendency (e.g. `dtrain`). Extensive at the layer; sum within merged group."""
 struct ConvectionTendencyField <: AbstractFieldKind end
 
@@ -394,7 +397,7 @@ end
 function apply_vertical!(buf_out::AbstractArray{T, 3},
                           buf_in::AbstractArray{S, 3},
                           plan::VerticalPlan{FT, <:_MERGE_MAP_TRANSFORM},
-                          ::ConvectionInterfaceFlux
+                          ::Union{ConvectionInterfaceFlux,InterfaceMassFluxField}
                           ) where {T, S, FT}
     _check_interface_shapes(buf_out, buf_in, plan)
     # Interface indices kept: TOA (1), then the bottom half-level of each

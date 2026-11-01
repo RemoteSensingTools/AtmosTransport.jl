@@ -250,6 +250,8 @@ dry-mass pin and the source/target pair. Shared by `process_day(cfg)` and
 point accepts.
 """
 function _native_preprocessing_plan(cfg::AbstractDict)
+    check_known_keys(get(cfg,"preprocessing",Dict{String,Any}()), (),
+        "[preprocessing] in a native-source run (configure the met-source TOML instead)")
     # Native sources take their column weights from the met-source file.
     haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
         "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
@@ -548,12 +550,14 @@ setup, numerics and the source/target pair. Shared by `process_day(cfg)` and
 function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeometry)
     settings_nt = resolve_runtime_settings(cfg)
     settings = ERA5SpectralSettings(
-        merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
+        merge(settings_nt, (T_target = spectral_read_truncation(spectral_construction(settings_nt), grid),)))
+    validate_spectral_construction(spectral_construction(settings), grid, settings)
     check_spectral_column_weights(grid, settings)
     validate_flux_construction(settings, "ERA5 spectral")
     validate_tm5_pbl_target(grid,settings)
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
+    Common.validate_spectral_vertical(spectral_construction(settings), vertical)
     validate_tm5_pbl_target(grid,settings,vertical)
     spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
@@ -578,9 +582,15 @@ pair is supported. Returns the resolved plan; throws on the first problem.
 """
 function validate_preprocessing_config(cfg::AbstractDict)
     _is_native_source_cfg(cfg) && return _native_preprocessing_plan(cfg)
+    return _spectral_preprocessing_plan(cfg, _spectral_target_geometry(cfg))
+end
+
+# Config-only checks run first: native reduced-Gaussian geometry reads a GRIB file.
+function _spectral_target_geometry(cfg::AbstractDict)
+    Common.resolve_spectral_construction(cfg)
     grid = build_target_geometry(cfg["grid"], Float64)
     ensure_supported_target(grid)
-    return _spectral_preprocessing_plan(cfg, grid)
+    return grid
 end
 
 function _process_day_spectral(cfg::AbstractDict, grid::AbstractTargetGeometry;
@@ -664,9 +674,7 @@ function process_day(cfg::Dict{String, Any};
         else
             # Spectral path: keep the historical Float64 mesh build at the entry
             # (the spectral preprocessor casts to settings.output_float_type later).
-            grid = build_target_geometry(cfg["grid"], Float64)
-            ensure_supported_target(grid)
-            _process_day_spectral(cfg, grid; day_override, start_date, end_date)
+            _process_day_spectral(cfg, _spectral_target_geometry(cfg); day_override, start_date, end_date)
         end
     end
 end

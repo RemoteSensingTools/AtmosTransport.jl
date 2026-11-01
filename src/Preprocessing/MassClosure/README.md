@@ -114,29 +114,38 @@ GEOS also uses `balance_cs_level!`, `cs_level_scratches` and
 
 ## Forward<->adjoint mirrors
 
-None. These are offline CPU preprocessing routines.
+None. These are offline preprocessing routines; direct spectral quadrature
+uses portable CPU/CUDA kernels.
 
-## Numerical contract and future spectral construction
+## Numerical contract and spectral construction
 
 Flux construction (`face_flux_method`, `face_fluxes!`, `line_integral_face_fluxes!`),
 balance (`balance_cs_column_mass_fluxes!`, `balance_cs_global_mass_fluxes!`,
 `balance_compressed_column_fluxes!`, `solve_cs_poisson_pcg!`,
 `solve_compressed_poisson_pcg!`) and cm diagnosis (`diagnose_cs_cm!`,
 `diagnose_balanced_cs_cm!`) remain
-separately callable. The later TM5 spectral strategy can share the graph/face
-geometry, wind rotation, Laplacian/PCG primitives, correction mapping and seam
-synchronization here. Its direct spectral quadrature is separate from the
-existing source-grid line-integral method.
+separately callable. The TM5 spectral strategy shares the target geometry and balance primitives.
+Its direct spectral quadrature is separate from the existing source-grid
+line-integral method.
 
 The dry pressure mass fix stays separately callable in Spectral through
 `pin_global_mean_ps!`, `pin_global_mean_ps_using_qv!` and
 `recompute_native_mass_fields!`; LL balance remains there through
 `LLPoissonWorkspace`, `balance_mass_fluxes!`, `balance_column_mass_fluxes!`.
 Final dry repair can reuse `MetDrivers.recompute_cm_from_dm_target!`.
-This split implements no TM5 spectral strategy or new numerical policy.
+The optional TM5 strategy adds the independent W constraint before the shared
+dry repair; legacy numerical policies remain in their existing dispatch.
 
 Keep CS and RG solver projection/reduction policies distinct. Keep FT CS cm
 recurrence, Float64 LL/RG recurrence, thresholds, floors and weight booking
 unchanged. GEOS diagnostic pressure-fixer closures remain available. Duplicates
 whose other copies belong to Targets, TransportBinary or Sources are tracked in
 the PP2 handoff for their owning PRs.
+
+# shared: DirectRingPoisson, solve_compressed_poisson_direct!, balance_compressed_level!
+
+`tm5_target_balance.jl` contains only the reusable compressed direct solver.
+Spectral owns quadrature and endpoint construction; Targets owns layer
+orchestration, dry conversion and endpoint averaging. MassClosure imports
+neither Spectral nor Vertical. The direct solver is reused for RG layer and
+final dry column repair; the legacy PCG default keeps its arithmetic.

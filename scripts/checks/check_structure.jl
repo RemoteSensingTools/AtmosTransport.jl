@@ -634,8 +634,12 @@ function allowance_growth(before, after, file, subs = NO_MIGRATIONS)
         growth = String[]
         for (table, kind) in (("modules", :module), ("folders", :folder))
             budgets = migrated_budgets(get(before, table, Dict()), subs[kind])
+            order = get(after, kind == :module ? "order" : "folder_order", String[])
+            positions = Dict(id => i for (i, id) in enumerate(order))
+            # New declared edges may point strictly downward; extensions follow src.
             append!(growth, ["new $table allowance $mod -> $dep" for (mod, deps) in get(after, table, Dict())
-                    for dep in setdiff(deps, get(budgets, mod, String[]))])
+                    for dep in setdiff(deps, get(budgets, mod, String[]))
+                    if get(positions, dep, typemax(Int)) >= get(positions, mod, 0)])
         end
         origin = origins(get(before, "folder_order_allow", Dict()), subs, (:folder, :folder))
         return [growth; "new folder order allowance " .* unmatched(keys(get(after, "folder_order_allow", Dict())), origin)]
@@ -652,10 +656,11 @@ function allowance_growth(before, after, file, subs = NO_MIGRATIONS)
     return "raised folder budget " .* sort!(unique(raised))
 end
 
-# Allowances only shrink relative to the base, except for transfers declared by
-# migration rows. A row already in the base was applied there and is inert: a
-# warning asks to delete it, and a PR that edits migrations.toml must do so. A
-# row target that discharges no growth fails as unused or redundant.
+# Allowances only shrink relative to the base, except for new declared downward
+# edges and transfers declared by migration rows. A row already in the base
+# was applied there and is inert: a warning asks to delete it, and a PR that
+# edits migrations.toml must do so. A row target that discharges no growth
+# fails as unused or redundant.
 function ratchet_errors(snapshots, migrations, applied = Dict{String,Any}();
                         files = (base = Set{String}(), head = Set{String}()), warnings = String[])
     errors = String[]
