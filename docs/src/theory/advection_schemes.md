@@ -24,6 +24,22 @@ faces; the in-panel reconstruction is the same FV3 PPM either way. ORD=7 is
 not a globally seventh-order transport method. Spatial reconstruction order
 also does not establish the temporal order of the complete split update.
 
+## Forcing time within a met window
+
+For step ``s = 1,\ldots,N`` of a met window, `DrivenSimulation` with
+`use_midpoint_forcing = true` evaluates interpolated forcing at
+
+```math
+\lambda_s = \frac{s - 1/2}{N}, \qquad
+F_s = (1 - \lambda_s) F_{\mathrm{start}} + \lambda_s F_{\mathrm{end}}.
+```
+
+This also applies when the window has one step: ``\lambda_1 = 1/2``.
+The previous one-step rule used ``\lambda_1 = 0``. The change affects
+interpolated face fluxes and humidity in one-step windows. Window-constant
+fluxes retain their stored amounts. With `use_midpoint_forcing = false`,
+the fraction is ``(s - 1)/N``, including zero for a one-step window.
+
 ## Selecting a scheme
 
 The TOML runner defaults to `scheme = "upwind"` when the selector is omitted.

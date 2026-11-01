@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **GEOS `pfix_corrected` cm closure removed.** It wrote a nonzero vertical mass flux through the
+  bottom interface that no runtime vertical sweep transports, so surface mixing ratios drifted by
+  about `cm[Nz+1]/m` per sweep. The option and all its spellings now fail config validation; no
+  replacement alias. No golden case or audited transport binary used it.
+- **One-step windows use midpoint forcing.** With midpoint forcing enabled, a window with a single
+  substep now interpolates its forcing to the window midpoint (fraction 0.5) instead of the window
+  start, as windows with two or more substeps already did; interpolated fields, including humidity,
+  change by half the window's endpoint difference. Window-constant face fluxes and runs with
+  midpoint forcing disabled are unchanged, as is every multi-step window (bitwise). No golden case
+  or audited transport binary has one-step windows.
 - **F1 foundation consolidation.** Runtime, preprocessing, inversion and binary
   metadata parsers use ConfigChecks; progress settings use LogLevels. Array
   staging/allocation/zeroing/scaling use Architectures, and remaining snapshot
@@ -47,7 +57,7 @@ case formerly used by several parsers. All new diagnostics are `ArgumentError`.
 | [output].mass_basis (spectral preprocessing) | Invalid output.mass_basis=… (expected moist or dry) | dry, moist |
 | [output].mass_basis (native preprocessing) | Symbol conversion failures, or later writer/source rejection of unknown mass_basis | dry, moist |
 | [numerics].substep_schedule | Invalid `[numerics].substep_schedule = …`: expected `fixed` or `adaptive_cfl`. | fixed, adaptive_cfl (constant/adaptive/cfl aliases retained) |
-| [numerics].geos_cm_closure | [numerics].geos_cm_closure must be "endpoint_balanced", "pressure_fixer", "moisture_filtered", "pfix_corrected", "omega_regularized", or "omega_full_replacement"; got … | endpoint_balanced, pressure_fixer, moisture_filtered, pfix_corrected, omega_regularized, omega_full_replacement (all existing aliases retained) |
+| [numerics].geos_cm_closure | [numerics].geos_cm_closure must be "endpoint_balanced", "pressure_fixer", "moisture_filtered", "omega_regularized", or "omega_full_replacement"; got … | endpoint_balanced, pressure_fixer, moisture_filtered, omega_regularized, omega_full_replacement (their aliases retained; `pfix_corrected` removed, see above) |
 
 Additional changed scalar/date diagnostics (exhaustive):
 

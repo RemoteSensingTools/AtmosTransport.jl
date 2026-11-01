@@ -200,6 +200,12 @@ end
         Nz_native = merged_plan.Nz_native,
     )
 
+    @testset "Removed closure is rejected by the workspace constructor" begin
+        @test_throws r"GEOS-CS cm_closure must be .*got pfix_corrected" AtmosTransport.Preprocessing.GEOS.allocate_window_workspace(
+            grid, settings, vertical, FT_TEST;
+            dt_met_seconds=3600.0, cm_closure=:pfix_corrected)
+    end
+
     @testset "geos_native_to_face_flux! shape + values" begin
         # Use a SINGLE constant for both am_native and bm_native — that way,
         # regardless of which neighbour edge a panel's west/south halo comes

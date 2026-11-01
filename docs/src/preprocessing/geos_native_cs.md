@@ -78,8 +78,8 @@ those column totals, and distributes the face corrections back over levels
 using local air-mass weights in hybrid layers (`hybrid_mass`, the default;
 a layer is hybrid when `ΔB_k ≥ 10⁻⁶`, so the 150–177 hPa layer 41 of GEOS L72,
 `ΔB = 8.2 × 10⁻⁹`, counts as pure pressure). Pure-pressure layers therefore
-receive no correction. The `pressure_fixer` and `pfix_corrected` closures keep
-the native fluxes; the weights do not apply to them. This avoids an
+receive no correction. The `pressure_fixer` closure keeps
+the native fluxes; the weights do not apply to it. This avoids an
 independent correction at every level while retaining the column budget needed
 for closed top and bottom boundaries.
 
@@ -95,6 +95,12 @@ endpoint implied by an FV3-style pressure fixer. The pressure-fixer
 endpoint can go slightly negative in thin upper layers; the raw
 endpoint is robust and the header records
 `"geos_mass_endpoint" => "raw_dry_endpoint"` for traceability.
+
+The `pfix_corrected` closure was removed. Its column-drift correction produced
+a nonzero surface flux ``cm_{N_z+1}``, while the runtime vertical kernels
+transport no tracer through that boundary. The resulting surface VMR drift
+is approximately ``cm_{N_z+1}/m_{N_z}`` per sweep. Config validation and the
+GEOS workspace constructor reject this closure.
 
 ## Required input per day
 

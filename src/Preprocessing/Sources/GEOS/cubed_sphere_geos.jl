@@ -37,13 +37,13 @@
 #       write window, m_cur ← m_next_target when chaining
 # ===========================================================================
 
-# The balance a GEOS closure applies: the pressure-fixer closures keep the
+# The balance a GEOS closure applies: the pressure-fixer closure keeps the
 # native fluxes; every other closure balances the column.
 _geos_effective_balance(cm_closure::Symbol) =
-    cm_closure in (:pressure_fixer, :pfix_corrected) ? "none" : HORIZONTAL_BALANCE_TAG
+    cm_closure === :pressure_fixer ? "none" : HORIZONTAL_BALANCE_TAG
 
 # Column weights spread the correction of a column balance. The pressure-fixer
-# closures keep the native horizontal fluxes and balance nothing, so for them
+# closure keeps the native horizontal fluxes and balances nothing, so for it
 # the met source's weights (default `hybrid_mass`) do not apply: they are
 # validated and otherwise ignored, never an error.
 function _check_geos_column_weights(kind::Symbol, cm_closure::Symbol)
@@ -299,8 +299,6 @@ function _process_day_geos_cs_unified(date::Date,
                 "geos_vertical_flux" =>
                     workspace.cm_closure === :pressure_fixer ?
                         "fv3_pressure_fixer_native_horizontal_chained_mass" :
-                    workspace.cm_closure === :pfix_corrected ?
-                        "fv3_pressure_fixer_native_horizontal_plus_zerosum_spatial_lowpass_drift_correction" :
                     workspace.cm_closure === :moisture_filtered ?
                         "diagnosed_from_balanced_horizontal_and_filtered_endpoint_moisture_residual_smoothed" :
                     workspace.cm_closure === :omega_full_replacement ?
@@ -327,9 +325,9 @@ function _process_day_geos_cs_unified(date::Date,
                 "vertical_transform" => String(Symbol(get(vertical, :vertical_mapping_method, :identity))),
                 "vertical_Nz_native" => vertical.Nz_native,
                 "vertical_Nz_output" => vertical.Nz,
-                # Diagnostic-only key: emitted ONLY for the smoothing closures so
+                # Diagnostic-only key: emitted ONLY for the moisture-filtered closure so
                 # production `:endpoint_balanced` headers stay byte-for-byte identical.
-                (workspace.cm_closure in (:moisture_filtered, :pfix_corrected) ?
+                (workspace.cm_closure === :moisture_filtered ?
                     ("geos_moisture_filter_smooth_iters" => workspace.smooth_iters,) :
                     ())...,
                 (workspace.cm_closure === :omega_regularized ?
