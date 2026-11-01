@@ -231,7 +231,8 @@ Choose the source-specific guide next:
 
 | Message or symptom | Meaning and first action |
 |---|---|
-| `unsupported transport binary version` | Regenerate the forcing with the current version-4 preprocessor. |
+| `Obsolete transport binary format_version` | Regenerate the forcing with the current preprocessor (versions 4 and 5 are read). |
+| `Unsupported transport binary format_version` | The forcing was written by a newer preprocessor than this runtime; update AtmosTransport. |
 | `resolved path does not exist` | Check the active data root and run from the repository root. |
 | Missing convection/diffusion payload | The preprocessing config did not include the fields required by the selected operator. |
 | GPU backend unavailable | Set CPU in TOML, verify the run, then diagnose the optional backend separately. |

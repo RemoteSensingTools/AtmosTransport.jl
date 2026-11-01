@@ -1,4 +1,4 @@
-"""Version-4 transport metadata, payload layout, writers, windows, and inspection reports."""
+"""Transport-binary metadata (format versions 4 and 5), payload layout, writers, windows, reports."""
 module BinaryFormat
 using ...ConfigChecks: parse_choice
 using Adapt
@@ -63,4 +63,8 @@ export CS_OPTIONAL_2D_SECTIONS, GCHP_VDIFF_PAYLOAD_SECTIONS, PBL_SURFACE_PAYLOAD
        transport_surface_pressure_basis_label
 export parse_flux_fidelity_header, parse_omega_fidelity_header, parse_column_closure_header,
        parse_fidelity_status, parse_flux_fidelity_kind
+export FLUX_CONSTRUCTION_FORMAT_VERSION, TRANSPORT_BINARY_FORMAT_VERSIONS,
+       AbstractFluxConstructionHeader, NoFluxConstructionHeader,
+       PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader,
+       flux_construction_tag, parse_flux_construction_header
 end

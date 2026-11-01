@@ -58,7 +58,7 @@ The test-only ERA5 pressure-fixer closure has been removed.
 
 ## Tests
 
-`test_binary_inspector.jl`, `test_persistence_hardening.jl`,
+`test_binary_inspector.jl`, `test_binary_format_v5.jl`, `test_persistence_hardening.jl`,
 `test_cs_optional_2d_sections.jl`, `test_cs_window_staging.jl`,
 `test_replay_consistency.jl`, `test_validate_replay_config.jl`,
 `test_precomputed_dkg_binary_payload.jl`, and `test_transport_binary_reader.jl`.

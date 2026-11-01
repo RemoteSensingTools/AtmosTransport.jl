@@ -1,6 +1,7 @@
 # BinaryReaders
 
-Version-4 memory-mapped readers and geometry-dispatched LL/RG/CS drivers.
+Memory-mapped readers for format versions 4 and 5 and geometry-dispatched
+LL/RG/CS drivers.
 Included as `MetDrivers.BinaryReaders`, with application APIs re-exported by
 MetDrivers. No on-disk format definitions or writers are duplicated here.
 
@@ -50,8 +51,12 @@ panel tuples. Disk-to-load conversion remains elementwise `copyto!`.
 `binary_mass_basis` returns a Symbol and `surface_pressure_basis` a typed tag.
 Full-window fluxes use the parent's `flux_storage_substep_scale` at replay
 and runtime. The load-time replay gate is opt-in (`validate_replay=true`).
-Tests: reader round trips, binary inspector, CS staging and optional sections,
-replay consistency, validate-replay config, and cubed-sphere runtime.
+The reader decodes the version-5 flux-construction identity into
+`header.flux_construction`; `binary_capabilities` reports it with
+`format_version`, and `inspect_binary` prints both.
+Tests: reader round trips, binary inspector, format versions 4 and 5, CS
+staging and optional sections, replay consistency, validate-replay config, and
+cubed-sphere runtime.
 
 Replay panel scaling uses Architectures.scale_arrays!, retaining the existing
 per-panel broadcast order.

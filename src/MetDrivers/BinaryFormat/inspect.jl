@@ -28,6 +28,9 @@ requirements are selected through the reader's geometry type. Fields:
 - `surface_pressure_basis :: AbstractSurfacePressureBasis` — typed meaning of
   the stored `ps` payload.
 - `grid_type :: Symbol` — `:latlon` / `:reduced_gaussian` / `:cubed_sphere`.
+- `format_version :: Int` — header format version (4 or 5).
+- `flux_construction :: AbstractFluxConstructionHeader` — recorded
+  flux-construction identity; `NoFluxConstructionHeader()` for version 4.
 - `nlevel`, `steps_per_window` — header values.
 - `variable_step_schedule :: Bool` — per-window substep counts differ.
 - `flux_kind :: Symbol` — stored mass-flux normalization contract.
@@ -65,13 +68,13 @@ a capability-augmented report to `io`, and return the
 `binary_capabilities` NamedTuple for programmatic consumption (tests,
 CLI capability-intersection, folder-level validation).
 
-Obsolete `format_version < TRANSPORT_BINARY_FORMAT_VERSION` files are rejected
-here just like runtime drivers; inspect the raw JSON header with external tools
-if a stale file must be audited.
+Files whose `format_version` is not in `TRANSPORT_BINARY_FORMAT_VERSIONS` are
+rejected here just like runtime drivers; inspect the raw JSON header with
+external tools if a stale file must be audited.
 """
 function inspect_binary end
 
-# Read-only capability inspection for every version-4 geometry.
+# Read-only capability inspection for every version-4/5 geometry.
 #
 # `binary_capabilities(reader)` returns a NamedTuple describing what
 # operators this binary can drive, so the CLI + physics-recipe validator
@@ -137,6 +140,8 @@ function print_capability_rows(io::IO, caps)
         end
     end
     println(io, "  grid_type        = ", caps.grid_type)
+    println(io, "  format_version   = ", caps.format_version)
+    println(io, "  flux_construction = ", flux_construction_summary(caps.flux_construction))
     source_note = caps.dry_mass_target_source === :header ? "pinned header" :
                   caps.dry_mass_target_source === :unpinned_window1 ? "unpinned window-1 mass" :
                   "legacy window-1 fallback"

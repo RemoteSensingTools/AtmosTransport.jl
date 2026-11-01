@@ -319,7 +319,7 @@ None recorded.
 
 ## `src/MetDrivers`
 
-Size: **41017 bytes / 11719.1 tokens**. Public names: **29**.
+Size: **41222 bytes / 11777.7 tokens**. Public names: **29**.
 
 Depends on: `src`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/State`.
 
@@ -329,7 +329,7 @@ Files:
 
 - `AbstractMetDriver.jl` (6649 bytes)
 - `ConvectionForcing.jl` (10571 bytes)
-- `MetDrivers.jl` (3381 bytes)
+- `MetDrivers.jl` (3586 bytes)
 - `ReplayContinuity.jl` (18635 bytes)
 - `SurfaceForcing.jl` (1781 bytes)
 
@@ -339,7 +339,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryFormat`
 
-Size: **165566 bytes / 47304.6 tokens**. Public names: **81**.
+Size: **178294 bytes / 50941.1 tokens**. Public names: **89**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Parameters`, `src/State`.
 
@@ -347,15 +347,15 @@ Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/MetDrivers/BinaryReade
 
 Files:
 
-- `BinaryFormat.jl` (3415 bytes)
-- `contract.jl` (39153 bytes)
-- `cubed_sphere.jl` (16538 bytes)
-- `header.jl` (51274 bytes)
-- `inspect.jl` (8336 bytes)
-- `payload_sections.jl` (20945 bytes)
-- `streaming_writer.jl` (11211 bytes)
-- `window.jl` (3984 bytes)
-- `writer.jl` (10710 bytes)
+- `BinaryFormat.jl` (3690 bytes)
+- `contract.jl` (39393 bytes)
+- `cubed_sphere.jl` (16783 bytes)
+- `header.jl` (62191 bytes)
+- `inspect.jl` (8706 bytes)
+- `payload_sections.jl` (20947 bytes)
+- `streaming_writer.jl` (11475 bytes)
+- `window.jl` (4000 bytes)
+- `writer.jl` (11109 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -363,7 +363,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryReaders`
 
-Size: **96653 bytes / 27615.1 tokens**. Public names: **53**.
+Size: **96780 bytes / 27651.4 tokens**. Public names: **53**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/State`.
 
@@ -374,9 +374,9 @@ Files:
 - `BinaryReaders.jl` (4059 bytes)
 - `cubed_sphere_driver.jl` (24679 bytes)
 - `cubed_sphere_reader.jl` (9314 bytes)
-- `driver.jl` (26073 bytes)
-- `inspect.jl` (5319 bytes)
-- `reader.jl` (27209 bytes)
+- `driver.jl` (26100 bytes)
+- `inspect.jl` (5417 bytes)
+- `reader.jl` (27211 bytes)
 
 Forward ↔ adjoint mirrors:
 

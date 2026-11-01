@@ -48,7 +48,8 @@ flowchart TB
 The **transport binary** is the boundary between those programs. It is not a
 generic data dump: its header declares topology, vertical coordinate, time
 windows, mass basis, flux semantics, optional physics payloads, and the exact
-substep schedule. The current reader accepts version 4 only.
+substep schedule. The current reader accepts versions 4 and 5; version 5 adds
+only the flux-construction identity to the header.
 
 This split keeps runtime I/O predictable and makes preprocessing assumptions
 auditable. The cost is that a real-data run cannot start from raw wind files;
@@ -212,7 +213,7 @@ src/
 ├── Grids/           horizontal meshes and hybrid-pressure coordinates
 ├── State/           air mass, conservative tracer storage, forcing fields, and accessors
 ├── Operators/       advection, diffusion, convection, surface flux, chemistry
-├── MetDrivers/      version-4 binary reader, driver, and window carriers
+├── MetDrivers/      version-4/5 binary reader, driver, and window carriers
 ├── Models/          runtime composition; stable Models and child-module paths
 │   ├── Core/        model, fixed-step simulation, callbacks, step!/run! generics
 │   ├── Physics/     runtime specs, recipes and metadata

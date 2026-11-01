@@ -123,9 +123,10 @@ native per-area-per-second units; the operator handles the
 multiplication by `dt` at apply time.
 
 !!! note "Current format only"
-    Maintained writers emit transport-binary version 4 and maintained readers
-    reject earlier formats. Use `inspect_binary` to verify data rather than
-    inferring a format from a directory name.
+    Maintained writers emit transport-binary version 4, or version 5 when
+    they record a flux-construction identity; maintained readers accept
+    versions 4 and 5 and reject every other format. Use `inspect_binary` to
+    verify data rather than inferring a format from a directory name.
 
 ## Replay tolerances
 

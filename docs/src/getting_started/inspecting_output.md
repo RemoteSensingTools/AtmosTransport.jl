@@ -24,8 +24,10 @@ operator capabilities. For example, the synthetic quickstart has advection and
 replay fields but no convection or diffusion fields. Asking the runtime to use
 an unsupported operator therefore fails immediately with a useful error.
 
-All current inputs must have `format_version = 4`. Regenerate an older binary
-with the current preprocessor; the runtime does not guess old semantics.
+All current inputs must have `format_version = 4` or `5` (version 5 adds the
+flux-construction identity; see [Binary format](../concepts/binary_format.md)).
+Regenerate an older binary with the current preprocessor; the runtime does not
+guess old semantics.
 
 From Julia, the same check is:
 
@@ -111,7 +113,7 @@ physical kilograms of the tracer species.
 
 | Symptom | First check |
 |---|---|
-| Binary rejected before the run | Confirm `format_version = 4` and inspect its capabilities. |
+| Binary rejected before the run | Confirm `format_version` is 4 or 5 and inspect its capabilities. |
 | Requested convection or diffusion is unavailable | Reprocess forcing with the required fields enabled. |
 | A tracer variable is missing | Check `[output.fields]` and the tracer table name. |
 | Extreme CFL values or non-finite output | Check vertical ordering, flux time units, and whether the binary was produced by the current preprocessor. |
