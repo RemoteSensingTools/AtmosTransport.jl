@@ -147,8 +147,8 @@ The CS surface-emission footprint and 4D-Var stack are anchored by:
 | `test_cs_gradient_checks.jl`, `test_cs_lbfgs.jl`, `test_cs_optimizer_dispatch.jl` | Preconditioning, optimizer dispatch, and gradient identities. |
 | `test_cs_covariance.jl`, `test_cs_preconditioning.jl` | covariance square-root/adjoint identities and preconditioner finite differences. |
 | `test_cs_observations_io.jl`, `test_cs_observation_binding.jl`, `test_cs_departures_io.jl` | Observation IO + bind-to-mesh + departures-file round-trip. |
-| `test_cs_stride_checkpoint.jl`, `test_cs_tape_storage.jl` | Tape storage and checkpoint scheduler correctness: `StrideCheckpoint` parity, tape pools reused across tapes and released explicitly (stale slots refused), the pinned-host arena and the mmap tier's space reservation. |
-| `test_cs_adjoint_tape_bitwise.jl` | Every `AdjointTape` storage and checkpoint schedule reproduces the default tape's (device, `FullCheckpoint`) gradients bit for bit on rough fields that reach every limiter branch, also for a Jacobian and a 4D-Var optimization, and the recorded reference digests. |
+| `test_cs_stride_checkpoint.jl`, `test_cs_tape_storage.jl`, `test_cs_auto_tape.jl` | Tape selection, reservation and checkpoint correctness: constrained AutoTape picks, typed errors, size/count parity, resident tails, host snapshots, `StrideCheckpoint` parity, tape pools reused across tapes and released explicitly (stale slots refused), the pinned-host arena and the mmap tier's space reservation. |
+| `test_cs_adjoint_tape_bitwise.jl` | Every explicit tape and constrained AutoTape pick reproduces main's gradients bit for bit on rough fields that reach every limiter branch, also for a Jacobian and a 4D-Var optimization, and the recorded reference digests. |
 
 ## Test-pass status
 

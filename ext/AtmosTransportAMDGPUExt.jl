@@ -41,6 +41,14 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::AnyROCArray) =
     AtmosTransport.Architectures.foreach_host_array(_pin_host_array!, storage)
 
+# Cached but unused pool memory counts as available. Trimming the pool here
+# would force the following allocations to repopulate it; AMDGPU's allocator
+# reclaims by itself when an allocation does not fit.
+function AtmosTransport.Tape._device_tape_memory(::ROCBackend, _a)
+    free, capacity = AMDGPU.info()
+    return Int(free) + max(AMDGPU.cached_memory() - AMDGPU.used_memory(), 0), Int(capacity)
+end
+
 # Adjoint tape hooks (`src/Tape/`): explicit release of tape memory, and
 # synchronous device↔host tape copies (staging and every read wait).
 _free_tape_array!(a::ROCArray) = AMDGPU.unsafe_free!(a)
@@ -59,5 +67,9 @@ _pin_host_chunk(::ROCArray, ptr::Ptr, nbytes::Integer) =
 
 _unpin_host_chunk(registration::_ROCHostRegistration) =
     (AMDGPU.unsafe_free!(registration.wrapper); nothing)
+
+
+AtmosTransport.Tape._is_reservation_failure(err::AMDGPU.HIP.HIPError) =
+    err.code in (AMDGPU.HIP.hipErrorOutOfMemory, AMDGPU.HIP.hipErrorMemoryAllocation)
 
 end # module AtmosTransportAMDGPUExt

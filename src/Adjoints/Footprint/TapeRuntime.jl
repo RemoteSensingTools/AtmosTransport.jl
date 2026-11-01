@@ -22,23 +22,30 @@
 # it with `_with_tape_runtime`.
 # ---------------------------------------------------------------------------
 
-mutable struct _TapeRuntime{T <: AdjointTape}
-    const tape :: T
-    pool :: Any                             # `nothing` until the first tape
-    slot_bytes_through_step :: Vector{Int}  # counted bytes through each step (empty: not counted)
-    pending_slot_bytes :: Vector{Int}       # bytes a recording that ends after the step adds
-    held :: Any                             # `AirMassTape`: the recorded `_HeldAirMassTape`, or nothing
+mutable struct _TapeRuntime{T}
+    const request::T
+    tape::Any
+    pool::Any
+    pool_started::Bool
+    slot_bytes_through_step::Vector{Int}
+    pending_slot_bytes::Vector{Int}
+    held::Any
+    sizing::Any
+    tail_pool::Any
+    snapshot_pool::Any
+    snapshots::Vector{Any}
 end
 
-_TapeRuntime(tape::AdjointTape) = _TapeRuntime(tape, nothing, Int[], Int[], nothing)
+_TapeRuntime(tape::Union{AdjointTape, AutoTape}) =
+    _TapeRuntime(tape, tape isa AdjointTape ? tape : nothing, nothing, false, Int[], Int[], nothing,
+                  nothing, nothing, nothing, Any[])
 
 """
-    _with_tape_runtime(f, tape::AdjointTape)
+    _with_tape_runtime(f, tape)
 
-`f(runtime)` with a fresh runtime of `tape`, whose pool is released when `f`
-returns or throws.
+`f(runtime)` with a fresh, lazily resolved runtime, released on return or error.
 """
-function _with_tape_runtime(f, tape::AdjointTape)
+function _with_tape_runtime(f, tape::Union{AdjointTape, AutoTape})
     runtime = _TapeRuntime(tape)
     try
         return f(runtime)
@@ -50,27 +57,47 @@ end
 function _release_tape_runtime!(runtime::_TapeRuntime)
     held = runtime.held
     runtime.held = nothing
-    held === nothing || _release_records!(held.ops)
-    pool = runtime.pool
-    runtime.pool = nothing
-    pool === nothing || _release_tape_pool!(pool)
+    failure = nothing
+    try
+        held === nothing || _release_records!(held.ops)
+    catch err
+        failure = err
+    end
+    runtime.pool_started = false
+    for name in (:pool, :tail_pool, :snapshot_pool)
+        pool = getfield(runtime, name)
+        setfield!(runtime, name, nothing)
+        try
+            pool === nothing || _release_tape_pool!(pool)
+        catch err
+            failure === nothing && (failure = err)
+        end
+    end
+    for snapshot in runtime.snapshots
+        try
+            _release_snapshot_state!((snapshot.emissions, snapshot.convection, snapshot.diffusion))
+        catch err
+            failure === nothing && (failure = err)
+        end
+    end
+    empty!(runtime.snapshots)
+    failure === nothing || throw(failure)
     return nothing
 end
 
 """
     _tape_pool!(runtime, nbytes) -> pool
 
-The pool the next tape of `runtime` records into, rewound: the open pool when
-it holds `nbytes` (counted bytes; 0 unless the storage reserves them), else a
-new one. Device and host pools grow on demand, and a runtime's counted bytes
-are fixed by its first count, so in practice only an mmap file opened for a
-smaller tape than a later one is replaced (released first).
+The reserved pool the next tape records into, rewound after its first use.
+A request larger than its reservation throws `TapeReservationExceeded`.
 """
 function _tape_pool!(runtime::_TapeRuntime, nbytes::Integer)
     pool = runtime.pool
-    pool !== nothing && _holds_tape_bytes(pool, nbytes) && return _rewind_tape_pool!(pool)
-    _release_tape_runtime!(runtime)
-    return runtime.pool = _open_tape_pool(runtime.tape.storage, nbytes)
+    pool === nothing && throw(TapeReservationExceeded(0, Int(nbytes)))
+    _holds_tape_bytes(pool, nbytes) || throw(TapeReservationExceeded(0, Int(nbytes)))
+    runtime.pool_started && return _rewind_tape_pool!(pool)
+    runtime.pool_started = true
+    return pool
 end
 
 # The counted bytes of a recording of `steps`: the bytes the counting run
@@ -86,35 +113,16 @@ function _counted_slot_bytes(runtime::_TapeRuntime, steps::AbstractUnitRange)
     return through[last(steps)] - before + runtime.pending_slot_bytes[last(steps)]
 end
 
-# The recorder that counts the tape bytes during a forward run from step 1,
-# when the storage reserves them and the runtime has not counted them yet.
-_tape_size_counter(runtime::_TapeRuntime, replay::_CSReplay, taped_steps::Int) =
-    _needs_tape_size(runtime.tape.storage) && length(runtime.slot_bytes_through_step) < taped_steps ?
-        _CSCountingRecorder(runtime.tape.content, replay.advection) : NoStepRecorder()
-
-_store_tape_count!(::_TapeRuntime, ::NoStepRecorder) = nothing
 function _store_tape_count!(runtime::_TapeRuntime, counter::_CSCountingRecorder)
     runtime.slot_bytes_through_step = counter.slot_bytes_through_step
     runtime.pending_slot_bytes = counter.pending_slot_bytes
     return nothing
 end
 
-# The bytes of the tape of `steps` for `runtime`'s storage: 0 when it does not
-# reserve them; else the count, made now by a counting run of the replay from
-# step 1 (restored to its initial state afterwards, which reproduces the
-# recording run bit for bit) unless the runtime counted these steps before.
-function _counted_tape_bytes!(runtime::_TapeRuntime, replay::_CSReplay, steps::AbstractUnitRange)
-    _needs_tape_size(runtime.tape.storage) || return 0
-    counter = _tape_size_counter(runtime, replay, last(steps))
-    if counter isa _CSCountingRecorder
-        initial = _replay_snapshot(replay)
-        _replay_steps!(replay, 1:last(steps); recorder = counter)
-        _replay_restore!(replay, initial)
-        _release_snapshot!(initial)
-        _store_tape_count!(runtime, counter)
-    end
-    return _counted_slot_bytes(runtime, steps)
-end
+# All public runs have already sized and reserved at the dispatch barrier.
+_counted_tape_bytes!(runtime::_TapeRuntime, ::_CSReplay, steps::AbstractUnitRange) =
+    isempty(runtime.slot_bytes_through_step) ? _layout_total(_segment_layout(runtime.sizing, steps)) :
+        _counted_slot_bytes(runtime, steps)
 
 # ---------------------------------------------------------------------------
 # AirMassTape: one recording per runtime, reused after an identity check
@@ -386,3 +394,6 @@ function _release_record!(op::_CSLinRoodHorizRecord)
                                  op.panels_fy_in, op.panels_am, op.panels_bm))
     return nothing
 end
+
+# Lin-Rood horizontal records remain outside the pooled reservation; sizing
+# counts their copies toward the candidate's device peak.

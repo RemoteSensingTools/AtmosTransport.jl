@@ -33,3 +33,9 @@ Observation functionals supply the forcing of one reverse pass.
 Control-window rate assembly mirrors gradient accumulation.
 `apply_B_half!` pairs with `apply_B_half_adjoint!`;
 `apply_preconditioner!` is checked against its adjoint using finite differences.
+
+Reverse-pass entry points default to `AutoTape()`: supplied fields constrain
+one concrete tape, sized and reserved before recording. An explicit
+`AdjointTape` is reserved without replacement. A runtime (one per optimization)
+caches CFL counts and pool reservations across evaluations; resident-tail
+and pinned-host-snapshot Stride choices preserve the same reverse order.

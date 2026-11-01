@@ -24,6 +24,9 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `TapeRecording.jl`: recording a range of steps (`_record_cs_tape!`) and
   `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
+- `AutoTape.jl`: closed-form binary schedule sizes, cached CFL/Lin–Rood
+  counts, constrained candidate selection, memory budgets, reserve-before-run
+  setup and preallocated snapshot capture (including lazy convection carries).
 - `TapeRuntime.jl`: the runtime of an `AdjointTape` for one call or one
   optimization (`_TapeRuntime`, `_with_tape_runtime`): its pool, opened
   once, rewound for each further tape and released explicitly; the counted
@@ -81,17 +84,18 @@ patterns by cell position; device reductions feed one result vector, copied
 to the host once per evaluation (reset targets cover interiors only). Holding
 a tape also rejects tracer payloads in sweep or Lin–Rood horizontal records.
 Device code slots use air-mass shapes directly; only host staging needs code
-scratch, freed even if recording throws. With `flux_scale ≠ 1`, a held tape
+scratch in the reserved limiter read cache, released with the pool. With `flux_scale ≠ 1`, a held tape
 retains the first evaluation's scaled flux copies; later evaluations also
 allocate their own copies, so peak scaled-flux memory is twice one set.
 Every step ends with a
 forcing marker; one emission record per step stores the surface footprint.
 Full and Stride give the same gradients bit for bit on one CPU thread
-(`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape pool
-from its `AdjointTape`, rewinds it before each re-recorded window and
-releases it at the end (`cs_surface_flux_4dvar_optimize` keeps one pool for
-all its evaluations); a storage that reserves its extent (`MmapCSTapeStorage`)
-is sized by counting the largest tape on the replay first, once per runtime.
+(`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call defaults to `AutoTape()`, resolves a concrete `AdjointTape` and
+reserves its tape and checkpoint pools before recording. Explicit descriptors
+also reserve and are never overridden. The driver rewinds the tape pool
+before each re-recorded window and releases the pools at the end (`cs_surface_flux_4dvar_optimize` keeps one pool for
+all its evaluations). Binary schedules use the closed-form size; CFL
+schedules and Lin–Rood use one cached counting replay per runtime.
 A call runs one forward run of its replay, which records what the schedule's
 reverse pass needs (Full: the tape; Stride: the K-step checkpoints) through
 its taped steps; the reverse pass may stop earlier (the 4D-Var's last
@@ -99,7 +103,12 @@ assimilated step, `_tape_through`) and runs from the state the forward run
 ended in. Stride records each window once and walks it for every start. The
 4D-Var samples its observations in that forward run, so one run gives the
 simulated values and the tape. Lin–Rood accepts device tape storage only.
-Level Nz is the surface.
+Stride may record a resident tail during the forward run and recompute
+only the head. Its snapshots' tracer and air masses may use pinned host
+storage; operator state retains backend types. Full, plain Stride, resident
+tails and host snapshots are checked against recorded digests and the reference variant by the CPU bitwise harness.
+Lin–Rood's horizontal records are counted toward the device peak and remain
+outside the pools. Level Nz is the surface.
 
 # shared: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _replay_m, _replay_nsteps, _replay_rm, _require_tape_supported, _run_forward!, _validate_step_sequences, _with_tape_runtime
 
@@ -113,3 +122,6 @@ beside the forward sweeps and the fenced Lin–Rood tape code are unchanged.
 
 Non-fenced reverse-start and air-mass adjoint zero allocation uses
 Architectures.zeros_like, preserving allocation/fill order and element types.
+
+
+# shared: _auto_memory_budgets

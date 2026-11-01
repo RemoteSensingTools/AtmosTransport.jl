@@ -32,15 +32,16 @@ using ..Operators.StepPlans: AbstractStepStage, AirMassResetStage, ChemistryAfte
     plan_stages, restore_operator_state!
 using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractUnplacedPolicy,
     ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
-using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AirMassTape, CSTapeSlot,
+using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AutoTape,
+    TapeReservationError, TapeReservationExceeded, AirMassTape, CSTapeSlot,
     DeviceCSTapeStorage, FullCheckpoint, MmapCSTapeStorage, PinnedHostCSTapeStorage, StateTape,
-    StrideCheckpoint
+    StrideCheckpoint, StrideSearch
 
 export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
     CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
     CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
-    AdjointTape, AbstractTapeContent, StateTape, AirMassTape,
-    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+    AdjointTape, AutoTape, TapeReservationError, TapeReservationExceeded, AbstractTapeContent, StateTape, AirMassTape,
+    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, StrideSearch,
     evaluate_objective, require_adjoint_support, adjoint_support,
     AbstractTapeDependence, AirMassDependence, TracerDependence, tape_dependence
 

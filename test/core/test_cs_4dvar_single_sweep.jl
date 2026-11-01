@@ -266,6 +266,7 @@ struct _CountingSlot{P}
     storage::_CountingTapeStorage
     panels::P
 end
+AT.Adjoints.Footprint._tape_storage_tier(::_CountingTapeStorage) = :device
 TapeMod._open_tape_pool(s::_CountingTapeStorage, _nbytes::Integer) = (s.opens += 1; s)
 TapeMod._holds_tape_bytes(::_CountingTapeStorage, _nbytes::Integer) = true
 TapeMod._rewind_tape_pool!(s::_CountingTapeStorage) = (s.rewinds += 1; s.generation += 1; s)
@@ -348,15 +349,15 @@ end
     n, footprint = _replayed_steps(clock -> AT.cs_surface_emission_footprint(
         P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, AT.CSColumnMeanObjective(2, 2, 3);
         scheme, dt = DT, diffusion_meteo = clock))
-    @test n == P64.nsteps                       # a footprint records during its one forward run
+    @test n == 2 * P64.nsteps                   # one cached CFL size count, then recording
     n, full = _replayed_steps(evaluate)
-    @test n == 4                                # one forward run, recording steps 1-3 (was 4 + 3)
+    @test n == 3 + 4                            # cached CFL size count, then one recording forward
     storage = _CountingTapeStorage()
     _fourdvar(P64, observations, controls; scheme, tape = _counting_tape(storage))
     est = AT.cs_tape_byte_estimate(P64.m, P64.am[1:3], P64.bm[1:3], P64.cm[1:3], P64.mesh, scheme)
     @test storage.stages == est.state_records    # the co-sample's step is not taped
     n, stride = _replayed_steps(clock -> evaluate(clock; tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(2))))
-    @test n == 4 + 3                            # the forward run saves the checkpoints; windows re-record 3 steps
+    @test n == 3 + 4 + 3                        # size count, forward checkpoints, head re-recording
     mktempdir() do root
         mmap_tape(dir) = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir))
         n, mmap = _replayed_steps(clock -> evaluate(clock; tape = mmap_tape(joinpath(root, "full"))))
@@ -404,15 +405,15 @@ end
         scheme, dt = DT, diffusion_meteo = clock, optimizer, tape)
     storage = _CountingTapeStorage()
     n, counted = _replayed_steps(clock -> optimize(clock; tape = _counting_tape(storage)))
-    evaluations = n ÷ P64.nsteps                # one forward run of every step per evaluation
-    @test evaluations >= 3 && n == evaluations * P64.nsteps
+    evaluations = n ÷ P64.nsteps - 1            # one size count, then one forward run per evaluation
+    @test evaluations >= 3 && n == (evaluations + 1) * P64.nsteps
     # Opened once, rewound by every later evaluation, released at the end.
     @test (storage.opens, storage.rewinds, storage.releases) == (1, evaluations - 1, 1)
     mktempdir() do root
         dir = joinpath(root, "tape")
         n_mmap, mmap = _replayed_steps(clock -> optimize(clock; tape = AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir))))
         # One file for the optimization: its counting run (every step) comes once.
-        @test n_mmap == n + P64.nsteps
+        @test n_mmap == n                           # both tiers cache the same CFL size count
         @test isempty(readdir(dir))
         @test mmap.cost_history == counted.cost_history
         @test Threads.nthreads() == 1 ? mmap.last.gradients == counted.last.gradients :
@@ -470,7 +471,7 @@ end
     _, fresh = _replayed_steps(clock -> optimize(_counting_tape(fresh_storage), clock))
     n, reused = _replayed_steps(clock -> optimize(_counting_tape(air_storage; content = AT.AirMassTape()), clock))
     @test length(fresh.cost_history) == length(reused.cost_history) == 3
-    physics === :none && @test n == 3 * P64.nsteps                # one forward run per evaluation
+    physics === :none && @test n == 4 * P64.nsteps                # one forward run per evaluation
     # Recorded by the first evaluation only, never rewound; the later ones walk it.
     @test fresh_storage.stages == 3 * air_storage.stages
     @test (air_storage.opens, air_storage.rewinds, air_storage.releases) == (1, 0, 1)

@@ -27,13 +27,15 @@ using ...Operators: AbstractStepRecorder, NoStepRecorder
 import ...Operators: record_air_mass_reset!, record_center!, record_chemistry!, record_convection!,
     record_diffusion!, record_emission!, record_halo!, record_linrood_horizontal!, record_sweep!
 using ...Parameters: DEFAULT_CFL_LIMIT
-using ...Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AirMassRead,
+using ...Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AutoTape, TapeReservationError, TapeReservationExceeded,
+    DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage, AirMassRead,
     AirMassTape, FullCheckpoint, LimiterCodeRead, StateTape, StrideCheckpoint, TracerMassRead,
     _CSAirMassResetRecord, _CSConvectionRecord, _CSDiffusionRecord, _CSHaloRecord,
     _CSMidpointRecord, _CSStepEndRecord, _CSSweepRecord, _DeviceSlabPool, _bytes_per_panel_tuple,
-    _free_tape_array!, _free_tape_panels!, _holds_tape_bytes, _needs_tape_size, _open_tape_pool,
+    _free_tape_array!, _free_tape_panels!, _tape_synchronize, _holds_tape_bytes,
     _release_tape_pool!, _rewind_tape_pool!, _stage_computed, _stage_panels, _tape_panels,
-    _tape_slot_bytes, checkpoint_window_count, checkpoint_window_range
+    _allocate_tape_slot, _tape_slot_bytes, _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_pooled, _layout_bytes, _device_tape_memory,
+    _tape_device_margin, _is_reservation_failure, _host_tape_budget, _check_tape_schedule, StrideSearch, checkpoint_window_count, checkpoint_window_range
 import ..Adjoints: require_adjoint_support
 using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence,
     CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective,
@@ -58,6 +60,7 @@ include("TapeRecording.jl")
 include("ReverseLoop.jl")
 include("TapeRuntime.jl")
 include("StrideCheckpoint.jl")
+include("AutoTape.jl")
 include("FootprintAPI.jl")
 
 end # module Footprint

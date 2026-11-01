@@ -66,7 +66,7 @@ call returns.
 struct DeviceCSTapeStorage <: AbstractCSTapeStorage end
 
 """
-    PinnedHostCSTapeStorage()
+    PinnedHostCSTapeStorage(; max_bytes = nothing)
 
 Keep the staged states in host memory and read them back through device read
 caches, one per read role and panel shape. The pool of a call allocates its
@@ -74,9 +74,17 @@ host memory in large chunks, each registered with the GPU driver (page-locked)
 once when it is allocated (the CUDA and AMDGPU extensions), reuses them for
 every tape it records and frees them when the call returns; staging and
 reading are synchronous device↔host copies. With CPU panels it is plain host
-memory.
+memory. `max_bytes` caps the reservation; current host/cgroup headroom
+always applies as well.
 """
-struct PinnedHostCSTapeStorage <: AbstractHostCSTapeStorage end
+struct PinnedHostCSTapeStorage{B <: Union{Nothing, Int}} <: AbstractHostCSTapeStorage
+    max_bytes::B
+    function PinnedHostCSTapeStorage(; max_bytes::Union{Nothing, Integer} = nothing)
+        max_bytes === nothing || max_bytes >= 0 || throw(ArgumentError("max_bytes must be >= 0"))
+        cap = max_bytes === nothing ? nothing : Int(max_bytes)
+        new{typeof(cap)}(cap)
+    end
+end
 
 """
     AbstractTapeReadRole
@@ -155,26 +163,17 @@ end
     _open_tape_pool(storage, nbytes) -> pool
 
 The runtime pool a reverse-pass call records its tapes into, opened from the
-storage descriptor. `nbytes` is the largest tape the pool must hold (counted
-on the replay when `_needs_tape_size(storage)`, else 0): an mmap file reserves
-it up front; device and host pools grow on demand.
+storage descriptor. This low-level constructor reserves an mmap extent of
+`nbytes`. The reverse-pass resolver uses
+`_reserve_tape_pool` to allocate the typed slabs or host chunks before running.
 """
 function _open_tape_pool end
 
 """
-    _needs_tape_size(storage) -> Bool
-
-Whether opening `storage` needs the byte size of the largest tape (an mmap
-file reserves its extent before recording); the drivers count it on the
-replay only then.
-"""
-_needs_tape_size(::AbstractCSTapeStorage) = false
-
-"""
     _holds_tape_bytes(pool, nbytes) -> Bool
 
-Whether an open `pool` can record a tape of `nbytes` after a rewind. Device and
-host pools grow on demand; an mmap file holds at most its reservation.
+Whether an open `pool` can record a tape of `nbytes` after a rewind; reserved
+pools hold at most their reservation.
 """
 _holds_tape_bytes(pool, _nbytes::Integer) = !pool.released
 
@@ -252,20 +251,25 @@ end
 # The arrays of one device tape. A rewind keeps them: the next tape takes the
 # slabs in the same order and copies into them, so a stride window or a later
 # 4D-Var evaluation records into the memory of the previous one rather than
-# allocating its own (and waiting for a GC to free the old). A slab whose
-# shape or type does not fit the panels being staged is freed and replaced.
+# allocating its own (and waiting for a GC to free the old).
+mutable struct _ReservedSlabs
+    slabs::Vector{Any}
+    cursor::Int
+end
+
 mutable struct _DeviceSlabPool <: _AbstractTapePool
     slabs::Vector{Any}       # NTuple{6} panel arrays, in staging order
     cursor::Int              # slabs handed out since the last rewind
     generation::Int
     released::Bool
+    banks::Dict{Any, _ReservedSlabs}
 end
 
-_open_tape_pool(::DeviceCSTapeStorage, _nbytes::Integer) = _DeviceSlabPool(Any[], 0, 1, false)
 
 function _rewind_tape_pool!(pool::_DeviceSlabPool)
     _require_open(pool)
     pool.cursor = 0
+    foreach(bank -> (bank.cursor = 0), values(pool.banks))
     pool.generation += 1
     return pool
 end
@@ -280,31 +284,21 @@ function _release_tape_pool!(pool::_DeviceSlabPool)
     while !isempty(pool.slabs)
         _free_tape_panels!(pop!(pool.slabs))
     end
+    empty!(pool.banks)
     return nothing
 end
 
-_same_shapes(slab::NTuple{6}, panels::NTuple{6}) =
-    all(p -> size(slab[p]) == size(panels[p]), 1:6)
-
-# The next slab for `panels`: the one at the cursor when its type and shapes
-# match (or the requested element type for a computed slot), else a new one.
+# Every slab is allocated by reservation and indexed by type and shape.
 function _take_slab!(pool::_DeviceSlabPool, panels::NTuple{6, A},
                      ::Type{T} = eltype(first(panels))) where {A <: AbstractArray, T}
-    i = (pool.cursor += 1)
-    if i <= length(pool.slabs)
-        old = pool.slabs[i]
-        compatible = T === eltype(A) ? old isa NTuple{6, A} : old isa NTuple{6, <:AbstractArray{T}}
-        compatible && _same_shapes(old, panels) && return old
-        # Allocate before freeing: if the allocation fails, the pool still owns
-        # the old slab (and frees it once, on release).
-        fresh = ntuple(p -> similar(panels[p], T), 6)
-        pool.slabs[i] = fresh
-        _free_tape_panels!(old)
-        return fresh
+    bank = get(pool.banks, (T, map(size, panels)), nothing)
+    if bank === nothing || bank.cursor == length(bank.slabs)
+        capacity = sum(_bytes_per_panel_tuple, pool.slabs; init = 0)
+        throw(TapeReservationExceeded(capacity, capacity + _bytes_per_panel_tuple(T, panels)))
     end
-    fresh = ntuple(p -> similar(panels[p], T), 6)
-    push!(pool.slabs, fresh)
-    return fresh
+    pool.cursor += 1
+    bank.cursor += 1
+    return bank.slabs[bank.cursor]
 end
 
 function _allocate_tape_slot(pool::_DeviceSlabPool, panels::NTuple{6})
@@ -362,7 +356,7 @@ end
 # ---------------------------------------------------------------------------
 
 const CSPanelCache = NTuple{6, <:AbstractArray}
-const CSTapeReadCacheKey = Tuple{AbstractTapeReadRole, NTuple{6, NTuple{3, Int}}}
+const CSTapeReadCacheKey = Tuple{AbstractTapeReadRole, DataType, NTuple{6, NTuple{3, Int}}}
 
 # A pool whose slots live in host memory it owns: the pinned-host arena and
 # the mmap file. Besides `generation` and `released` it has the fields
@@ -447,7 +441,7 @@ end
 # twice (issue #57).
 function _tape_read_cache!(pool::_AbstractHostTapePool, role::AbstractTapeReadRole,
                            panels::NTuple{6})
-    key = (role, ntuple(p -> size(panels[p]), 6))
+    key = (role, eltype(first(panels)), ntuple(p -> size(panels[p]), 6))
     cached = get(pool.read_caches, key, nothing)
     _cache_matches(cached, panels) && return cached
     cached === nothing || _free_tape_panels!(cached)
