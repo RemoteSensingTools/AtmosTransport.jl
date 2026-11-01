@@ -34,6 +34,8 @@ include("streaming_writer.jl")
 include("cubed_sphere.jl")
 include("inspect.jl")
 
+export TM5_PBL_PAYLOAD_SECTIONS, TM5_PBL_FIELD_NAMES, validate_tm5_pbl_inputs
+
 export fidelity_tag, FLUX_FIDELITY_SAMPLE_SEED
 export poisson_balance_target, write_padded_header!
 export dry_mass_pin_enabled, is_certificate_key, FLUX_CERTIFICATE_KEY_PREFIXES, COLUMN_CLOSURE_RULE,

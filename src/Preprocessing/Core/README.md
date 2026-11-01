@@ -46,5 +46,13 @@ column-weight choice immediately.
 
 None.
 
+`configuration.jl` parses `[preprocessing] include_tm5_pbl` with ConfigChecks
+and requires `input.surface_dir` for the optional LL/RG live-Calc_Kzz inputs.
+`validate_tm5_pbl_target` rejects unsupported vertical mapping, truncated top
+levels, non-hourly windows and fewer than two output layers before synthesis.
+`target_surface_means` adapts target geometry to the existing conservative
+`Regridding` builder/application, with intensive cell-area-mean semantics;
+it returns the weights for reuse by day-local input ownership.
+
 ConfigChecks owns common scalar parsing and the spectral mass-basis choice.
 Deferred native flux-choice validation still occurs after keyword overrides.

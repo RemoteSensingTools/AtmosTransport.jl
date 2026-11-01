@@ -32,6 +32,8 @@ include("convection_mass_basis.jl")
 include("tm5_convection_conversion.jl")
 include("era5_surface_reader.jl")
 include("tm5_bldiff.jl")
+include("tm5_pbl_inputs.jl")
+export load_tm5_pbl_window, open_tm5_pbl_surface_reader
 
 export surface_flux_to_upward_wm2, TM5ConvectionColumnScratch, allocate_tm5_convection_column_scratch, moist_to_dry_cmfmc!, moist_to_dry_dtrain!
 

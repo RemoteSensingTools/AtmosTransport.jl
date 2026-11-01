@@ -19,6 +19,7 @@ import ...MetDrivers: ReplayScratch,
     surface_pressure_basis,
     verify_window_continuity_rg
 import ...MetDrivers.BinaryFormat: FLUX_FIDELITY_SAMPLE_SEED,
+    PointSampledSpectralFluxesHeader, NoFluxConstructionHeader,
     canonical_window_constant_contract,
     open_streaming_transport_binary,
     poisson_balance_target,
@@ -29,7 +30,7 @@ import ...Parameters: DEFAULT_POISSON_BALANCE_MAX_ITER,
     DEFAULT_POSITIVITY_CFL_LIMIT,
     HORIZONTAL_BALANCE_TAG,
     STANDARD_GRAVITY
-import ..Common: AbstractColumnWeights,
+import ..Common: validate_tm5_pbl_target, AbstractColumnWeights,
     ERA5SpectralSettings,
     MAX_SPECIFIC_HUMIDITY,
     MassWeightedColumn,
@@ -61,7 +62,7 @@ import Dates: Date,
     Day
 import FFTW: FFTW
 import GRIB: GRIB
-import ..LatLonTarget: log_mass_fix_configuration,
+import ..LatLonTarget: TM5PBLInputCache, load_tm5_pbl_target_window, tm5_pbl_sample, log_mass_fix_configuration,
     should_log_window
 import NCDatasets: NCDataset, dimnames
 import ..TransportBinary: AbstractWindowContract,

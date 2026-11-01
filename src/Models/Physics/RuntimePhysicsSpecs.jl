@@ -458,6 +458,9 @@ end
 struct HoltslagBovilleVdiffDiffusionSpec <: AbstractDiffusionSpec
     surface_flux_boundary :: Bool
 end
+struct TM5CalcKzzDiffusionSpec <: AbstractDiffusionSpec
+    surface_flux_boundary::Bool
+end
 struct TM5DkgDiffusionSpec <: AbstractDiffusionSpec
     surface_flux_boundary :: Bool
 end
@@ -469,7 +472,7 @@ const _DIFFUSION_KINDS = (none = :none, constant = :constant,
                           tm5_beljaars_viterbo_local_kz = :pbl,
                           geoschem_holtslag_boville_vdiff = :vdiff,
                           geoschem_nonlocal_vdiff = :nonlocal_vdiff,
-                          tm5_dkg = :tm5_dkg)
+                          tm5_dkg = :tm5_dkg, tm5_calc_kzz = :tm5_calc_kzz)
 const _DIFFUSION_KIND_LIST = join(("\"$(k)\"" for k in keys(_DIFFUSION_KINDS)), ", ")
 
 _parse_diffusion_kind(section) =
@@ -513,6 +516,7 @@ function diffusion_spec(section)
         return ConstantDiffusionSpec(config_float(get(section, "value", 1.0), "[diffusion].value"), sfb)
     kind === :pbl   && return WindowPBLKzDiffusionSpec(sfb)
     kind === :vdiff && return HoltslagBovilleVdiffDiffusionSpec(sfb)
+    kind === :tm5_calc_kzz && return TM5CalcKzzDiffusionSpec(sfb)
     return TM5DkgDiffusionSpec(sfb)
 end
 
@@ -629,3 +633,51 @@ export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
        GCHPNonlocalVdiffDiffusionSpec,
        TM5DkgDiffusionSpec
 export convection_spec, advection_spec, chemistry_spec, diffusion_spec, materialize
+
+function materialize(s::TM5CalcKzzDiffusionSpec,
+                     style::Union{LatLonRuntimeRecipeStyle,ReducedGaussianRuntimeRecipeStyle},
+                     ::Type{FT},context) where FT
+    reader = _tm5_pbl_reader(context)
+    all(s -> s in reader.header.payload_sections, TM5_PBL_PAYLOAD_SECTIONS) || throw(ArgumentError(
+        "[diffusion] kind=tm5_calc_kzz requires the complete v5 tm5_pbl group; regenerate with [preprocessing] include_tm5_pbl=true"))
+    grid = _tm5_pbl_grid(context,FT)
+    shape = section_shape(reader.header,:m)
+    field = TM5CalcKzzField(zeros(FT,shape),_tm5_metrics(grid.horizontal,FT),grid.vertical)
+    return ImplicitVerticalDiffusion(;kz_field=field,
+        surface_flux_coupling=_diffusion_surface_coupling(s.surface_flux_boundary,style))
+end
+materialize(::TM5CalcKzzDiffusionSpec,::CubedSphereRuntimeRecipeStyle,::Type{FT},context) where FT =
+    throw(ArgumentError("tm5_calc_kzz cubed-sphere support is deferred to TM5-PBL-2"))
+export TM5CalcKzzDiffusionSpec
+
+function _tm5_metrics(mesh::LatLonMesh, ::Type{FT}) where FT
+    nx, ny = mesh.Nx, mesh.Ny
+    area, dx, dy = zeros(FT,nx*ny), zeros(FT,nx*ny), zeros(FT,nx*ny)
+    for j in 1:ny, i in 1:nx
+        c = i + (j-1)*nx
+        area[c] = cell_area(mesh,i,j)
+        lx = mesh.radius * deg2rad(mesh.φᶠ[j+1]-mesh.φᶠ[j])
+        ly = mesh.radius * deg2rad(mesh.Δλ) * (cosd(mesh.φᶠ[j])+cosd(mesh.φᶠ[j+1])) / 2
+        dx[c], dy[c] = area[c]/lx, area[c]/ly
+    end
+    return TM5LLMetrics(area,dx,dy,nx)
+end
+function _tm5_metrics(mesh::ReducedGaussianMesh, ::Type{FT}) where FT
+    nc = ncells(mesh)
+    area, dx, dy = zeros(FT,nc),zeros(FT,nc),zeros(FT,nc)
+    offsets = Int[1]; faces = Int[]
+    for j in eachindex(mesh.nlon_per_ring), i in 1:mesh.nlon_per_ring[j]
+        c = mesh.ring_offsets[j] + i - 1
+        edge = cell_faces(mesh,c)
+        ns = mesh.boundary_counts[j] ÷ mesh.nlon_per_ring[j]
+        groups = (edge[1:1],edge[2:2],edge[3:2+ns],edge[3+ns:end])
+        for group in groups
+            append!(faces,group); push!(offsets,length(faces)+1)
+        end
+        area[c] = cell_area(mesh,c)
+        lx = face_length(mesh,edge[1])
+        ly = (sum(f->face_length(mesh,f),groups[3]) + sum(f->face_length(mesh,f),groups[4]))/2
+        dx[c],dy[c] = area[c]/lx,area[c]/ly
+    end
+    return TM5RGMetrics(area,dx,dy,offsets,faces)
+end

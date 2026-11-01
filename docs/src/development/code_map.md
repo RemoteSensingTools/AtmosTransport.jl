@@ -339,7 +339,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryFormat`
 
-Size: **178294 bytes / 50941.1 tokens**. Public names: **89**.
+Size: **181465 bytes / 51847.1 tokens**. Public names: **92**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Parameters`, `src/State`.
 
@@ -347,14 +347,14 @@ Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/MetDrivers/BinaryReade
 
 Files:
 
-- `BinaryFormat.jl` (3690 bytes)
-- `contract.jl` (39393 bytes)
+- `BinaryFormat.jl` (3769 bytes)
+- `contract.jl` (39766 bytes)
 - `cubed_sphere.jl` (16783 bytes)
-- `header.jl` (62191 bytes)
+- `header.jl` (62530 bytes)
 - `inspect.jl` (8706 bytes)
-- `payload_sections.jl` (20947 bytes)
+- `payload_sections.jl` (23126 bytes)
 - `streaming_writer.jl` (11475 bytes)
-- `window.jl` (4000 bytes)
+- `window.jl` (4201 bytes)
 - `writer.jl` (11109 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -363,7 +363,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryReaders`
 
-Size: **96780 bytes / 27651.4 tokens**. Public names: **53**.
+Size: **97571 bytes / 27877.4 tokens**. Public names: **53**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/State`.
 
@@ -371,11 +371,11 @@ Used by: `src`, `src/Diagnostics`, `src/MetDrivers`, `src/Models`, `src/Models/P
 
 Files:
 
-- `BinaryReaders.jl` (4059 bytes)
+- `BinaryReaders.jl` (4106 bytes)
 - `cubed_sphere_driver.jl` (24679 bytes)
 - `cubed_sphere_reader.jl` (9314 bytes)
-- `driver.jl` (26100 bytes)
-- `inspect.jl` (5417 bytes)
+- `driver.jl` (26779 bytes)
+- `inspect.jl` (5482 bytes)
 - `reader.jl` (27211 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -440,7 +440,7 @@ None recorded.
 
 ## `src/Models/Physics`
 
-Size: **61795 bytes / 17655.7 tokens**. Public names: **38**.
+Size: **65880 bytes / 18822.9 tokens**. Public names: **39**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -448,10 +448,10 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner/DrivenRunner`.
 
 Files:
 
-- `Physics.jl` (559 bytes)
-- `RuntimePhysicsMetadata.jl` (6938 bytes)
-- `RuntimePhysicsRecipe.jl` (20356 bytes)
-- `RuntimePhysicsSpecs.jl` (32959 bytes)
+- `Physics.jl` (707 bytes)
+- `RuntimePhysicsMetadata.jl` (7063 bytes)
+- `RuntimePhysicsRecipe.jl` (21616 bytes)
+- `RuntimePhysicsSpecs.jl` (35511 bytes)
 - `RuntimeRecipeStyles.jl` (983 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -460,7 +460,7 @@ None recorded.
 
 ## `src/Models/Runner`
 
-Size: **88185 bytes / 25195.7 tokens**. Public names: **10**.
+Size: **88914 bytes / 25404.0 tokens**. Public names: **10**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Runner/DrivenRunner`, `src/Operators`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -473,9 +473,9 @@ Files:
 - `InputStaging.jl` (12458 bytes)
 - `Runner.jl` (2108 bytes)
 - `adjoint_schedule.jl` (10670 bytes)
-- `driven_physics_refresh.jl` (15333 bytes)
+- `driven_physics_refresh.jl` (15871 bytes)
 - `driven_stepping.jl` (19328 bytes)
-- `driven_window_state.jl` (12555 bytes)
+- `driven_window_state.jl` (12746 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -483,7 +483,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Models/Runner/DrivenRunner`
 
-Size: **155425 bytes / 44407.1 tokens**. Public names: **18**.
+Size: **156074 bytes / 44592.6 tokens**. Public names: **18**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`, `src/State`.
 
@@ -491,11 +491,11 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner`.
 
 Files:
 
-- `DrivenRunner.jl` (64961 bytes)
+- `DrivenRunner.jl` (65008 bytes)
 - `config_keys.jl` (17895 bytes)
 - `configuration.jl` (18989 bytes)
 - `logging.jl` (2067 bytes)
-- `model_setup.jl` (9710 bytes)
+- `model_setup.jl` (10312 bytes)
 - `observations.jl` (13405 bytes)
 - `output.jl` (13699 bytes)
 - `progress.jl` (8396 bytes)
@@ -788,7 +788,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **135315 bytes / 38661.4 tokens**. Public names: **22**.
+Size: **150440 bytes / 42982.9 tokens**. Public names: **26**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -796,16 +796,18 @@ Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversio
 
 Files:
 
-- `Diffusion.jl` (3086 bytes)
+- `Diffusion.jl` (3384 bytes)
 - `LocalHoltslagBovilleKzField.jl` (7493 bytes)
+- `TM5CalcKzzField.jl` (5884 bytes)
 - `WindowPBLKzField.jl` (4536 bytes)
 - `adjoint_kernels.jl` (6249 bytes)
 - `conservative_dkg.jl` (11517 bytes)
-- `diffusion_kernels.jl` (17271 bytes)
+- `diffusion_kernels.jl` (17829 bytes)
 - `dz_helpers.jl` (20518 bytes)
-- `gchp_nonlocal_pbl.jl` (8981 bytes)
-- `operators.jl` (27172 bytes)
+- `gchp_nonlocal_pbl.jl` (8854 bytes)
+- `operators.jl` (27444 bytes)
 - `pbl_physics.jl` (10566 bytes)
+- `tm5_calc_kzz.jl` (8240 bytes)
 - `window_kz_cache.jl` (3689 bytes)
 - `workspace.jl` (5616 bytes)
 - `workspace_validation.jl` (8621 bytes)
@@ -883,7 +885,7 @@ None recorded.
 
 ## `src/Parameters`
 
-Size: **26460 bytes / 7560.0 tokens**. Public names: **77**.
+Size: **27504 bytes / 7858.3 tokens**. Public names: **77**.
 
 Depends on: none.
 
@@ -894,7 +896,7 @@ Files:
 - `MetSourceConstants.jl` (6412 bytes)
 - `NumericalDefaults.jl` (9928 bytes)
 - `Parameters.jl` (410 bytes)
-- `PhysicalConstants.jl` (8063 bytes)
+- `PhysicalConstants.jl` (9107 bytes)
 - `PlanetParameters.jl` (1647 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -903,7 +905,7 @@ None recorded.
 
 ## `src/Preprocessing`
 
-Size: **70827 bytes / 20236.3 tokens**. Public names: **0**.
+Size: **70947 bytes / 20270.6 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessing/Sources/GEOS`, `src/Preprocessing/Sources/MERRA2`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/Targets/ReducedGaussian`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -911,8 +913,8 @@ Used by: `src`.
 
 Files:
 
-- `Preprocessing.jl` (33634 bytes)
-- `entrypoint.jl` (37193 bytes)
+- `Preprocessing.jl` (33659 bytes)
+- `entrypoint.jl` (37288 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -920,7 +922,7 @@ None recorded.
 
 ## `src/Preprocessing/Core`
 
-Size: **57408 bytes / 16402.3 tokens**. Public names: **84**.
+Size: **60195 bytes / 17198.6 tokens**. Public names: **86**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Regridding`.
 
@@ -928,14 +930,14 @@ Used by: `src`, `src/Preprocessing`, `src/Preprocessing/MassClosure`, `src/Prepr
 
 Files:
 
-- `Core.jl` (3464 bytes)
+- `Core.jl` (3499 bytes)
 - `binary_pipeline.jl` (2172 bytes)
-- `configuration.jl` (17030 bytes)
+- `configuration.jl` (17348 bytes)
 - `logging.jl` (1134 bytes)
 - `met_readers.jl` (5960 bytes)
 - `met_sources.jl` (8642 bytes)
 - `source_factory.jl` (3809 bytes)
-- `target_geometry.jl` (15197 bytes)
+- `target_geometry.jl` (17631 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -969,7 +971,7 @@ None recorded.
 
 ## `src/Preprocessing/PhysicsInputs`
 
-Size: **89462 bytes / 25560.6 tokens**. Public names: **20**.
+Size: **94410 bytes / 26974.3 tokens**. Public names: **22**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Spectral`, `src/State`.
 
@@ -977,11 +979,12 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessi
 
 Files:
 
-- `PhysicsInputs.jl` (1260 bytes)
+- `PhysicsInputs.jl` (1345 bytes)
 - `convection_mass_basis.jl` (11596 bytes)
-- `era5_surface_reader.jl` (22534 bytes)
+- `era5_surface_reader.jl` (22826 bytes)
 - `tm5_bldiff.jl` (28154 bytes)
 - `tm5_convection_conversion.jl` (25918 bytes)
+- `tm5_pbl_inputs.jl` (4571 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1057,7 +1060,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **88661 bytes / 25331.7 tokens**. Public names: **51**.
+Size: **88696 bytes / 25341.7 tokens**. Public names: **51**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1067,7 +1070,7 @@ Files:
 
 - `Spectral.jl` (2227 bytes)
 - `discovery.jl` (1527 bytes)
-- `mass_support.jl` (37166 bytes)
+- `mass_support.jl` (37201 bytes)
 - `reduced_spectral_synthesis.jl` (6910 bytes)
 - `spectral_io.jl` (16656 bytes)
 - `spectral_synthesis.jl` (24175 bytes)
@@ -1100,7 +1103,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/LatLon`
 
-Size: **78513 bytes / 22432.3 tokens**. Public names: **41**.
+Size: **87010 bytes / 24860.0 tokens**. Public names: **45**.
 
 Depends on: `src`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/TransportBinary`, `src/State`.
 
@@ -1108,10 +1111,11 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Targets/CubedSphere`, `src/Prep
 
 Files:
 
-- `LatLon.jl` (4525 bytes)
+- `LatLon.jl` (5044 bytes)
 - `latlon_contracts.jl` (25557 bytes)
-- `latlon_spectral.jl` (19747 bytes)
-- `latlon_workspaces.jl` (28684 bytes)
+- `latlon_spectral.jl` (20876 bytes)
+- `latlon_workspaces.jl` (29366 bytes)
+- `tm5_pbl_writer.jl` (6167 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1119,7 +1123,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/ReducedGaussian`
 
-Size: **95596 bytes / 27313.1 tokens**. Public names: **40**.
+Size: **96792 bytes / 27654.9 tokens**. Public names: **40**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/State`.
 
@@ -1127,9 +1131,9 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Sources/ERA5`.
 
 Files:
 
-- `ReducedGaussian.jl` (4581 bytes)
+- `ReducedGaussian.jl` (4732 bytes)
 - `reduced_gaussian_contracts.jl` (26021 bytes)
-- `reduced_spectral_day.jl` (27964 bytes)
+- `reduced_spectral_day.jl` (29009 bytes)
 - `reduced_transport_helpers.jl` (25396 bytes)
 - `reduced_window_buffer.jl` (11634 bytes)
 
@@ -1139,7 +1143,7 @@ None recorded.
 
 ## `src/Preprocessing/TransportBinary`
 
-Size: **138094 bytes / 39455.4 tokens**. Public names: **122**.
+Size: **139138 bytes / 39753.7 tokens**. Public names: **122**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/State`.
 
@@ -1147,15 +1151,15 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessi
 
 Files:
 
-- `TransportBinary.jl` (6151 bytes)
-- `core.jl` (20994 bytes)
+- `TransportBinary.jl` (6295 bytes)
+- `core.jl` (21466 bytes)
 - `driver.jl` (6704 bytes)
 - `flux_fidelity.jl` (65296 bytes)
 - `positivity_status.jl` (3385 bytes)
 - `structured_positivity.jl` (5716 bytes)
 - `topology_dispatch.jl` (2392 bytes)
 - `window_contracts.jl` (19448 bytes)
-- `writer_adapters.jl` (8008 bytes)
+- `writer_adapters.jl` (8436 bytes)
 
 Forward ↔ adjoint mirrors:
 

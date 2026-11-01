@@ -34,3 +34,8 @@ No adjoint. Certificate writing mirrors MetDrivers/BinaryFormat header parsing; 
 ## Numerical contract
 
 Binary format remains v4. Shared helpers preserve conversion boundaries, native-layer order, sample salts, tolerances and the summary escape hatch before integer rescue arithmetic. Arithmetic variants stay separate.
+
+Opt-in LL live-Calc_Kzz inputs add a complete `tm5_pbl` group and a v5
+point-sampled flux identity; `writer_adapters.jl` appends its arrays after the
+unchanged v4 sections. Default writers still emit v4. RG uses BinaryFormat's
+existing optional-section stream packing.

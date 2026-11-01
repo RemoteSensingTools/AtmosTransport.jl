@@ -139,10 +139,7 @@ global-mean model pressure; here it is the hybrid coordinate at
 `prm.p_surface_ref`.
 """
 function gchp_pbl_layer_count(A, B, prm::GCHPVdiffParameters)
-    p_ref(k) = (A[k] + A[k + 1] + (B[k] + B[k + 1]) * prm.p_surface_ref) / 2
-    Nz = length(A) - 1
-    k = findlast(k -> p_ref(k) < prm.p_pbl_min, 1:Nz)
-    return max(1, Nz - something(k, 0))
+    return pbl_layer_count(A, B, prm.p_pbl_min, prm.p_surface_ref)
 end
 
 """

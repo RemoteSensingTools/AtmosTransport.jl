@@ -91,6 +91,12 @@ end
 
 Adapt.@adapt_structure KzExchange
 
+"Direct top-down interface exchange [kg/s], with no layer-thickness conversion."
+struct DkgExchange{D}
+    dkg::D
+end
+Adapt.@adapt_structure DkgExchange
+
 # What the solved array holds, and so how the solution is written back.
 # `_TracerMassFluxForm`: tracer mass in and out, rm′_k = (rm_k + F_{k−½}) − F_{k+½}.
 struct _TracerMassFluxForm end
@@ -176,6 +182,18 @@ value is loaded once.
 end
 
 
+
+@inline function _diffusion_factors!(exchange, factors, source::DkgExchange, m, dt, I, J, Nz)
+    FT = eltype(factors)
+    above = zero(FT)
+    previous = zero(FT)
+    @inbounds for k in 1:Nz
+        below = k < Nz ? source.dkg[J...,k] : zero(FT)
+        previous = _store_diffusion_factor!(exchange,factors,J,k,Nz,m[I...,k],above,below,previous,dt)
+        above = below
+    end
+    return nothing
+end
 
 # Forward elimination of tracer `t` on the departure from the column minimum c.
 # Keep eliminated values in `elimination`, because the flux-form update

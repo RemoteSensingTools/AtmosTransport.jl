@@ -170,3 +170,24 @@ export EARTH_RADIUS, IFS_EARTH_RADIUS, STANDARD_GRAVITY, STANDARD_PRESSURE, R_DR
        SECONDS_PER_DAY, SPECIES_CARBON_ATOMS, SPECIES_LABELS,
        SPECIES_MOLAR_MASS, GEOSCHEM_SPECIES_MOLAR_MASS, RN222_HALF_LIFE, CARBON_MOLAR_MASS,
        TM5_CONSTANTS, GEOSCHEM_CONSTANTS
+
+"""
+Live TM5 Calc_Kzz constants (diffusion_kernels.F90:486–509, 873).
+These retain the exact bldiff gas constant separately from TM5_CONSTANTS.
+"""
+const TM5_BLDIFF_CONSTANTS = (gravity = 9.80665, cp_air = 1004.0,
+    r_air = 8.3144e3 / 28.94, r_vap = 461.51, l_vap = 2.5e6,
+    karman = 0.4, p_ref = 1.0e5, ri_critical = 0.3, bulk_friction = 100.0,
+    wind2_min = 1.0e-9, shear2_min = 1.0e-10, signed_offset = 1.0e-10,
+    surface_fraction = 0.1, beta = 15.0, fak = 8.5, fakn = 7.2,
+    k_free_min = 1.0e-15, k_bl_min = 0.1, h_min = 100.0,
+    ustar_min = 0.01, sea_ustar_min = 0.001, sea_density = 1.2)
+
+"Hydrostatic geometry of TM5 meteo__pclim.F90:6006–6020 (SI units)."
+const TM5_GPH_CONSTANTS = (r_air = 287.05, virtual_factor = 0.608, top_height = 200000.0)
+
+"Reference surface pressure of TM5 binas.F90:133 [Pa]."
+const TM5_PBL_REFERENCE_PRESSURE = 98500.0
+
+"L137 half-level 57 at TM5's reference surface pressure, the tropo34a layer-26 top [Pa]."
+const TM5_PBL_CUTOFF_PRESSURE = 8608.525391 + 5.9e-5 * TM5_PBL_REFERENCE_PRESSURE

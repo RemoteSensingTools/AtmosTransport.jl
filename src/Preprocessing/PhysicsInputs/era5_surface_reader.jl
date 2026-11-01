@@ -6,6 +6,12 @@
 # latitude south-to-north.
 
 const ERA5_SURFACE_VAR_CANDIDATES = Dict(
+    :lsm => ("lsm", "land_sea_mask"),
+    :sr => ("sr", "surface_roughness"),
+    :fsr => ("fsr", "forecast_surface_roughness"),
+    :ewss => ("ewss", "eastward_turbulent_surface_stress"),
+    :nsss => ("nsss", "northward_turbulent_surface_stress"),
+    :oro => ("z", "oro", "geopotential"),
     :pblh   => ("pblh", "blh", "boundary_layer_height"),
     :ustar  => ("ustar", "zust", "friction_velocity"),
     :hflux  => ("hflux", "sshf", "surface_sensible_heat_flux"),

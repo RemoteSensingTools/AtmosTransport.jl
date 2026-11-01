@@ -236,6 +236,11 @@ Targets/CubedSphere; shared dry convection conversion lives in PhysicsInputs.
 None; preprocessing runs offline on the CPU. Each source uses the same lower
 binary replay and positivity contracts.
 
+ERA5 spectral LL/RG can opt into live Calc_Kzz inputs with
+`[preprocessing] include_tm5_pbl=true`. `entrypoint.jl` validates the topology,
+hourly cadence and thermo path before IO. The optional v5 group is described
+in PhysicsInputs and the target READMEs; native sources and CS are deferred.
+
 ConfigChecks owns entrypoint date/scalar/choice parsing; TOML dates and ISO
 strings both work. Numeric settings reject Booleans; integer settings require
 integers representable as Int. Vertical numeric-string and infinity spellings

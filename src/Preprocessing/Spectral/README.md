@@ -39,3 +39,6 @@ stay within this module.
 ## Forward<->adjoint mirrors
 
 None.
+
+`read_qv_from_thermo` accepts `variable="t"` for the opt-in live-Calc_Kzz
+input writer; the default `variable="q"` retains the original humidity path.

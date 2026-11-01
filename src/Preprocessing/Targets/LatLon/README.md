@@ -24,3 +24,14 @@ LL spectral preprocessing; CS spectral preprocessing reuses its LL staging adapt
 ## Forward<->adjoint mirrors
 
 No adjoint. LL positivity delegates to the shared rectangular-block palindrome scan in TransportBinary; its replay layout and target-scale conversion stay unchanged.
+
+- [`tm5_pbl_writer.jl`](tm5_pbl_writer.jl) — shared LL/RG opt-in T/q and surface
+  input assembly (`load_tm5_pbl_target_window`, `tm5_pbl_sample`,
+  `tm5_target_coordinates`). The v5 section group is appended by the existing
+  writer when `[preprocessing] include_tm5_pbl=true`. Thermo T/q use target
+  point interpolation and moist-mass-weighted vertical merging, through the
+  existing `LatLonBilinearWeights`/`interpolate_ll_qv!` sampler (Cartesian or
+  paired points). All surface primitives use `Common.target_surface_means`
+  and the shared conservative regridder on the actual LL/RG mesh.
+  `TM5PBLInputCache` owns day-local surface readers, remap weights and the shared
+  thermo endpoint; day drivers close it even on failure.

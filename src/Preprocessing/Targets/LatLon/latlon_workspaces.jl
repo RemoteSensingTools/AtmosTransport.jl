@@ -337,8 +337,7 @@ function interpolate_ll_qv!(dst::AbstractArray{<:Real, 3}, src::AbstractArray{<:
         j0, j1, wj = w.j0[j], w.j1[j], w.wj[j]
         for i in axes(dst, 1)
             i0, i1, wi = w.i0[i], w.i1[i], w.wi[i]
-            dst[i, j, k] = (1 - wj) * ((1 - wi) * src[i0, j0, k] + wi * src[i1, j0, k]) +
-                           wj       * ((1 - wi) * src[i0, j1, k] + wi * src[i1, j1, k])
+            dst[i, j, k] = _interpolate_ll_point(src, i0, i1, wi, j0, j1, wj, k)
         end
     end
     return dst
@@ -663,4 +662,19 @@ function _store_window_surface_fields!(storage::WindowStorage{FT},
     storage.all_ustar[win_idx] = surface.ustar
     storage.all_hflux[win_idx] = surface.hflux
     return nothing
+end
+
+# One arithmetic home for Cartesian LL targets and paired LL/RG target points.
+@inline function _interpolate_ll_point(src, i0, i1, wi, j0, j1, wj, k)
+    @inbounds return (1 - wj) * ((1 - wi) * src[i0, j0, k] + wi * src[i1, j0, k]) +
+                      wj * ((1 - wi) * src[i0, j1, k] + wi * src[i1, j1, k])
+end
+
+function interpolate_ll_qv!(dst::AbstractMatrix, src::AbstractArray{<:Real,3}, w::LatLonBilinearWeights)
+    size(dst,1) == length(w.i0) == length(w.j0) && size(dst,2) == size(src,3) ||
+        throw(DimensionMismatch("paired interpolation points/levels do not match the destination"))
+    @inbounds for k in axes(dst,2), c in axes(dst,1)
+        dst[c,k] = _interpolate_ll_point(src,w.i0[c],w.i1[c],w.wi[c],w.j0[c],w.j1[c],w.wj[c],k)
+    end
+    return dst
 end
