@@ -26,11 +26,11 @@ end
 """
     TransportWindow
 
-A decoded version-4 forcing interval. The concrete flux and delta types encode
-the horizontal topology, while optional fields describe physical capabilities:
-humidity endpoints, convection, PBL surface forcing, GCHP VDIFF state, and
-precomputed TM5 interface diffusion exchange `dkg` [kg s⁻¹]. A window owns no
-prognostic tracer state.
+A decoded forcing interval (format versions 4 and 5). The concrete flux and
+delta types encode the horizontal topology, while optional fields describe
+physical capabilities: humidity endpoints, convection, PBL surface forcing, GCHP
+VDIFF state, and precomputed TM5 interface diffusion exchange `dkg` [kg s⁻¹]. A
+window owns no prognostic tracer state.
 """
 struct TransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK}
     air_mass         :: M

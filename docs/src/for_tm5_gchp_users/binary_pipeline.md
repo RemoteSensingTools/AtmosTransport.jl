@@ -167,6 +167,13 @@ Three checkpoints in this pipeline are load-bearing for TM5 users:
   wrong dependency order because balance changes the horizontal divergence;
   post-balance closure is the required invariant.
 
+A TM5-style construction of these fluxes is planned beside this path:
+quadratures of the retained spectral fields along the target faces, TM5's
+independent vertical flux, and a per-layer balance against the hybrid mass
+tendency. [TM5-style spectral mass fluxes](../preprocessing/tm5_spectral_fluxes.md)
+gives its equations, the differences from TM5, and the binary version-5 keys
+that identify it.
+
 ### Path B — GEOS native CS
 
 GEOS-IT (and eventually GEOS-FP) write hourly native cubed-sphere

@@ -251,6 +251,12 @@ explicitly selected CUDA device (including V100 with CUDA runtime 12.6).
 Shared synthetic runtime inputs live in `test/fixtures/`. The window-prefetch
 and cubed-sphere file-handoff fixtures are used by both CPU core tests and
 explicitly enabled GPU diagnostics. They need no external meteorology files.
+TM5 parity reference values computed by pydyn on synthetic inputs (`Calc_Kzz`
+columns and per-layer mass-flux balance with the `dynam0` closure) are
+local-only fixtures kept outside the repository and are not committed.
+The parity loaders and tests are planned for B2 and S6a; they will load these
+fixtures from `ATMOSTR_TM5_FIXTURES_DIR` and skip with a clear message when
+the variable is unset or the required fixtures are absent.
 
 The time-varying surface-flux fixtures in
 `helpers/surface_flux_window_buffer.jl` (the former full-series operator as a
