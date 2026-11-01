@@ -410,7 +410,10 @@ end
 - Files: `src/Operators/Diffusion/TM5CalcKzzField.jl` (type, Adapt,
   `refresh_tm5_calc_kzz!`) and `src/Operators/Diffusion/tm5_calc_kzz.jl` (one
   pure `@inline` column function for CPU and GPU, generic in the float type,
-  with no Float64 promotion). The column function returns ``D`` and its
+  with no Float64 promotion; in Float32 it forms ``Δθ_v``, the bulk-Richardson
+  numerator and the log-pressure ratios with reduced cancellation, and compensates
+  the pressure sum,
+  §14). The column function returns ``D`` and its
   intermediates (``u_*``, ``G``, ``z``, ``θ_v``, Ri, both height passes,
   ``K_{vh}``, full and active guard counts); column tests call it directly.
 - **Solve.** `DkgExchange` reads interface exchange directly. Its factor
@@ -468,7 +471,11 @@ in format version 5, all-or-nothing, one record per window:
 
 Enable the input writer with `[preprocessing] include_tm5_pbl = true`,
 `input.thermo_dir` and `input.surface_dir`. This is an hourly ERA5 spectral
-LL/RG option. The thermo sidecar must contain `t` in K and `q` in kg/kg;
+LL/RG option and can be combined with
+`[preprocessing] spectral_flux_construction = "tm5_spectral"`. The resulting
+v5 binary carries both the TM5 flux construction identity and the complete
+`tm5_pbl` group; the same input assembly serves both flux constructions.
+The thermo sidecar must contain `t` in K and `q` in kg/kg;
 the surface archive must contain the ten primitives, including the next day's
 00 UTC endpoint. NetCDF, split ZIP and ARCO surface layouts are supported.
 Surface primitives (`lsm`, stresses, heat fluxes, `sr`/`fsr`, 10 m winds and
@@ -484,8 +491,11 @@ The shared regridder's spherical-polygon approximation and RG ring-boundary
 slivers also apply here (see [conservative regridding](../preprocessing/regridding.md)). T/q retain coordinate-aware
 bilinear sampling at target cell centres and are merged with native moist
 layer-pressure weights before the endpoint mean. The LL and RG thermo paths
-share the existing bilinear sampler. Day-local input ownership reuses the shared
-hourly thermo endpoint, surface readers (including split-ZIP extraction), and
+share the existing bilinear sampler. The merge weights use each construction's
+stored window-start total surface pressure. Since that pressure can differ
+between constructions, merged T/q can differ beyond rounding; each merge is
+consistent with its binary's hybrid layers. Day-local input ownership reuses
+the shared hourly thermo endpoint, surface readers (including split-ZIP extraction), and
 surface remap weights. `grid.target_vertical` pressure-overlap remapping and
 `grid.level_top != 1` are rejected before synthesis; at least two output layers
 are required. ERA5 reanalysis accumulations are hourly interval totals labelled
@@ -529,7 +539,7 @@ allocation. A smaller-scratch implementation remains future work.
 | Masked arithmetic | both branches evaluated | `ifelse` selection | same value where finite |
 | Cutoff | ``l_\mathrm{max} = 26`` on tropo34 | pressure equivalent on any level set (§8) | Q7; identical on tropo34a |
 | Solve | dense inverse of a matrix combined with convection (`conv:475–476`, `conv:521–529`), split `x y z v s c c s v z y x` (`base/trunk/src/dims.F90:93–94`) | separate backward-Euler diffusion solve at the palindrome centre | Q6: the combined matrix is deferred; the splitting difference remains |
-| Precision | Float64 on CPU | Float32 on GPU in production; parity target is Float64 on CPU | Q12; tests report Float32 crossing changes separately |
+| Precision | Float64 on CPU | Float32 on GPU in production; parity target is Float64 on CPU | Q12; Float64 keeps TM5's literal arithmetic; Float32 uses algebraically identical forms with reduced cancellation (§14); tests report Float32 crossing changes separately |
 | Data | production `dkg` cache | live `Calc_Kzz` | Q10 |
 | Runtime composition | diffusion inside convection, Check_CFL, slopes, polar clustering | runtime unchanged | bounds any "TM5-style" claim |
 
@@ -581,9 +591,9 @@ earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
 | ``K_{vh}``, entrainment | ``10^{-11}``–``10^{-10}`` scaled for finite, well-conditioned columns; non-finite TM5 cases against the §9 rule |
 | ``D`` and cutoff | inactive zeros exact; with injected ``K_{vh}``, ``M``, ``G``: ``10^{-12}`` scaled |
 | Solve | backward residual ``10^{-13}``–``10^{-12}`` (Float64); isolated layers bit-exact; constant mixing ratio and mass within solver rounding |
-| Float32 against Float64 CPU, synthetic fixture columns (well conditioned) | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``2 × 10^{-5}``; all K (including above cutoff): ``3 × 10^{-3}``; branch flips reported separately |
-| Float32 against Float64 CPU, real ERA5 windows | D per nonzero entry: median ``≤ 3 × 10^{-5}``, p99 ``≤ 5 × 10^{-4}``, maximum ``≤ 5 × 10^{-2}``; D column L1: p99 ``≤ 10^{-3}``, maximum ``≤ 3 × 10^{-2}``; branch flips reported |
-| CUDA Float32 against CPU Float32 | D per nonzero entry: p99 ``≤ 2 × 10^{-4}``, maximum ``≤ 5 × 10^{-3}`` |
+| Float32 against Float64 CPU, synthetic fixture columns (well conditioned) | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``3 × 10^{-5}``; all K (including above cutoff): ``4 × 10^{-3}``; against Float64 on the Float32-rounded inputs, D: ``2 × 10^{-5}`` per entry and ``10^{-5}`` column L1; interfaces with exactly equal Float64 ``θ_v`` counted, not scored; branch flips reported separately |
+| Float32 against Float64 CPU, real ERA5 windows | D per nonzero entry: median ``≤ 1.5 × 10^{-5}``, p99 ``≤ 2 × 10^{-4}``, maximum ``≤ 2 × 10^{-2}``; D column L1: p99 ``≤ 4 × 10^{-4}``, maximum ``≤ 1.5 × 10^{-2}``; branch flips reported |
+| CUDA Float32 against CPU Float32 | D per nonzero entry: p99 ``≤ 2 × 10^{-5}``, maximum ``≤ 5 × 10^{-4}`` |
 
 **Edge inventory (synthetic).** Neutral ``H_v = +0`` and ``−0``; small stable
 flux; strong convection; zero and weak shear; no Ri crossing; a crossing
@@ -605,42 +615,101 @@ full-model parity with TM5, and an absent or skipped fixture is never reported
 as passed.
 
 Float64 CPU comparison on the 16 local synthetic columns: maximum relative
-error in `K_vh` is `6.03e-14`, in D `6.03e-14`; maximum absolute errors are
+error in `K_vh` is `6.03e-14`, in D `6.02e-14`; maximum absolute errors are
 `7.06e-21 m²/s` and `7.47e-14 kg/s`, respectively. Heights, both PBL-height
 passes, friction velocity and Obukhov length match exactly on this fixture.
-All 32 Float32 PBL-height crossing indices agree with Float64, and all 16
-singular-expression counts agree. Measured Float32 D errors are `1.67734e-4`
-maximum per nonzero entry and `1.97981e-5` maximum column L1 relative error;
-active K has maximum relative error `1.63822e-4`. Across all K interfaces,
-including those above the mixing cutoff, the maximum is `2.68030e-3`.
+All 32 Float32 PBL-height crossing indices agree with Float64. Two interfaces
+are built with exactly equal Float64 ``θ_v``; there ``\mathrm{Ri} = 0`` selects the
+stable branch and the entrainment quotient is non-finite. Rounding the inputs
+to Float32 moves them off this point: Float64 arithmetic on the rounded inputs
+gives ``Δθ_v = 9.5 × 10^{-6}`` and ``−8.6 × 10^{-6}`` K. Float32 follows its
+inputs there, as Float64 on the rounded inputs does, and so changes 2 of the 16
+singular-expression counts; the two interfaces are counted, not scored. On the
+other interfaces, measured Float32 D errors are `1.388e-4` maximum per nonzero
+entry and `2.553e-5` maximum column L1 relative error; Float64 arithmetic on the
+Float32-rounded inputs alone gives `1.390e-4` and `2.562e-5`. Active K has
+maximum relative error `1.357e-4`. Across all K interfaces, including those
+above the mixing cutoff, the maximum is `3.408e-3`, at the top interface of one
+column (layer-mean pressures 211 and 54 Pa, ``Δθ_v = 0.01`` K), where D is zero.
+Against Float64 arithmetic on the same Float32 inputs, Float32 D differs by at
+most `4.54e-6` per entry and `1.52e-6` in column L1; literal Float32 differences
+of ``θ_v`` gave `1.5e-4` and `4.0e-5`.
 These measurements cover the finite TM5 values; non-finite entrainment checks
 use the documented guard. They are column parity, not full-model TM5 parity.
 
-**Float32 on real data.** The fixture bounds do not hold on real ERA5 columns.
-Measured on 2021-12-01 (O24, windows at 00, 01, 02 and 12 UTC, identical
-window-start inputs), the Float32 D error relative to Float64 per nonzero entry
-has median `1.2e-5`, p99 `1.3e-4`, p99.9 `4.5e-4` and maximum `1.0e-2`; the
-column L1 error has p99 `2.7e-4` and maximum `9.1e-3`. About 1.8 % of entries
-exceed `1e-4` and at most 0.033 % exceed `1e-3`. No PBL-height crossing index or
-stability sign changes. The error comes from the conditioning of the scheme,
-not from a Float32 defect. K is a function of the gradient Richardson number,
+**Float32 on real data.** K is a function of the gradient Richardson number,
 whose numerator ``Δθ_v = θ_{v,l+1} − θ_{v,l}`` is a difference of two values near
 300 K. At weak-shear, near-neutral interfaces (``|Δθ_v| ≈ 10^{-3}``–``10^{-2}`` K) the
-relative condition number of K with respect to T reaches ``4.7 × 10^5``. Rounding
-only the Float64 inputs to Float32 already gives `1.1e-3`–`5.8e-3`, and relative
-input noise of `1e-7` gives `3.3e-3`–`7.8e-2`. A Float32 column that forms every
-``Δθ_v`` exactly (in Float64, rounded once) still has maximum errors of
-`1.1e-3`–`4.0e-3`, the input-rounding level. In one 900 s diffusion solve, the Float32 D changes a surface
-plume's mixing ratio by at most `3.2e-4` of the column maximum.
+relative condition number of K with respect to T reaches ``4.7 × 10^5``. Each
+Float32 ``θ_v`` carries 1–2 ulp (``3``–``6 × 10^{-5}`` K), so the Float32 column never
+subtracts two of them. With ``a = T(1 + χq)`` and ``Π = (p_0/\bar p)^{κ_p}``,
 
-**CUDA.** On an NVIDIA L40S, CUDA Float32 D differs from CPU Float32 by p99
-`5e-5` and at most `7.7e-4` (O24) and `1.3e-3` (LL 72×37, 00 UTC). Pressures
-and winds agree bitwise; ``θ`` differs by up to 2 ulp, geopotential by up to 3 ulp
-and heights by up to 8 ulp (libdevice `powf`/`logf` and FMA contraction, not
-separated), and the same conditioning amplifies these differences. CUDA Float32 against CPU Float64 on LL 72×37 at
-00 UTC has a maximum of `3.1e-3` and column L1 maximum `1.9e-3`. Three-window
-Float32 CUDA runs with live Calc_Kzz change the total air mass by `-3.1e-9`
-(O24) and `-1.9e-9` (LL 72×37).
+```math
+θ_{v,j} − θ_{v,i} = (a_j − a_i)\, Π_j + θ_{v,i} \left(\frac{Π_j}{Π_i} − 1\right),\qquad
+\frac{Π_j}{Π_i} − 1 = \operatorname{expm1}\!\left(κ_p \operatorname{log1p}\frac{\bar p_i − \bar p_j}{\bar p_j}\right),
+```
+
+with ``a_j − a_i = (T_j − T_i)(1 + χ q_j) + T_i χ (q_j − q_i)`` and
+``\bar p_i − \bar p_j = [(p_i − p_j) + (p_{i+1} − p_{j+1})]/2``. T, q and p enter only
+through differences, which are exact (Sterbenz) where the operands are within a
+factor of two. This removes cancellation in those operand differences and greatly
+improves near-surface accuracy. Residual cancellation remains in the final sum:
+the synthetic model-top interface evaluates approximately
+`−144.27376 + 144.26372 = −0.010040283 K`, an amplification of about 28,738.
+This form supplies Ri, the interface ``θ_v``, the entrainment K and
+the bulk-Richardson numerator ``(θ_{v,l} − θ_{v,1}) − Δθ`` of both passes. On the
+ERA5 windows below, for adjacent interfaces it is more accurate than the direct
+difference in every pressure-ratio bin (median `1.1e-7` against `1.8e-5` K for
+``|Π_j/Π_i − 1| < 0.01``, `1.2e-4` against `1.5e-4` K for 0.3–0.5). The
+geopotential increment uses ``\operatorname{log1p}((p_l − p_{l+1})/p_{l+1})``
+instead of ``\ln(p_l/p_{l+1})``, the centre-height fraction (exactly 1/2) is formed
+from ``(p_l − p_{l+1})/2``, and the top-down pressure sum is Kahan-compensated.
+Only Float32 operations are used: Kahan's `expm1` formulation uses Float32 `exp`
+and `log`, avoiding Base's Float64 fallback on AMDGPU. CUDA (libdevice), AMDGPU
+and Metal.jl provide Float32 `log1p`. Kahan's pressure additions contain no
+multiply that FMA contraction could fuse. Each change is a helper with a Float64
+method that keeps TM5's literal expression, so Float64 results are bitwise unchanged.
+
+Before the Kahan `expm1` replacement, measured on 2021-12-01 (O24, windows
+at 00, 01, 02 and 12 UTC, identical window-start inputs), the Float32 D error
+relative to Float64 per nonzero entry has median `6.1e-6`–`6.3e-6`, p99 `5.3e-5`–`5.5e-5`, p99.9 `1.6e-4`–`1.8e-4` and
+maximum `1.1e-3`–`3.9e-3`. The column L1 error has p99 `8.9e-5`–`1.05e-4` and
+maximum `3.9e-4`–`3.4e-3`. 0.25–0.31 % of entries exceed `1e-4` and at most
+0.0051 % exceed `1e-3`. No PBL-height crossing index or stability sign changes,
+and no interface needs the entrainment guard, as in Float64. Rounding only the
+Float64 inputs to Float32 gives median `4.3e-6`–`4.5e-6`, p99 `4.8e-5`–`5.2e-5` and
+maximum `1.1e-3`–`5.8e-3`, with 0.22–0.27 % of entries above `1e-4`. The Float32
+column is up to approximately 10.2 % above this input-rounding floor in p99;
+the maximum is at most approximately 0.13 % above the floor. Replacing `expm1`
+with Kahan's formulation changes p99 by at most 0.46 % across these four windows
+(up to 10.31 % above the floor); the maximum changes by at most 1.49 %, and
+remains at most approximately 0.13 % above the floor. Literal Float32
+differences of ``θ_v`` gave median `1.2e-5`, p99 `1.3e-4`, maximum `1.0e-2` and
+1.7–1.9 % of entries above `1e-4`. The remaining
+Float32 arithmetic error (median `3.0e-6` against Float64 on the rounded inputs)
+comes mostly from the wind shear, because the recovered Float32 winds are
+differenced across interfaces (``S^2`` median `1.3e-6`). Relative input noise of
+`1e-7` gives `3.3e-3`–`7.8e-2`. In one 900 s diffusion solve, the Float32 D
+changes a surface plume's mixing ratio by at most `9.2e-5` of the column
+maximum (Float64 D from the rounded inputs: `8.8e-5`; literal Float32: `3.2e-4`).
+
+**CUDA.** On an NVIDIA L40S, CUDA Float32 D differs from CPU Float32 by median
+`2.2e-7`, p99 `4.6e-6`–`4.8e-6` and at most `4.7e-5`–`1.8e-4` (O24, the four
+windows above) and `6.3e-5` (LL 72×37, 00 UTC; median `2.1e-7`). With literal
+Float32 differences of ``θ_v`` these were p99 `5e-5` and maxima `7.7e-4` and
+`1.3e-3`. The remaining
+differences come from libdevice math and FMA contraction; the reformulation
+greatly reduces their amplification near the surface. Pressures agree
+bitwise on all these windows, so the compiled Kahan sum matches the CPU one,
+and the refresh kernel's PTX has no Float64 instruction. CUDA Float32 against
+CPU Float64 has a maximum of `3.9e-3` (O24). On LL 72×37 at 00 UTC it has a
+maximum of `1.3e-3` and a column L1 maximum of `5.4e-4` (literal Float32:
+`3.1e-3` and `1.9e-3`). The compensated forms made the refresh kernel 4 %
+slower: 0.326 to 0.339 ms for O24 (3168 columns) and 3.53 to 3.67 ms for
+422,400 columns of 34 layers (O24 columns tiled on a synthetic mesh).
+Three-window Float32 CUDA runs with live Calc_Kzz change the total air mass
+by `-3.1e-9` (O24) and `-1.9e-9` (LL 72×37); diffusion does not change air
+mass.
 
 ## 15. Owner decisions (2026-10-30)
 

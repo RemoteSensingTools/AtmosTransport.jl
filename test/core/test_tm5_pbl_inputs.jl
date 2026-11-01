@@ -4,7 +4,7 @@ const PI=AtmosTransport.Preprocessing.PhysicsInputs
 const LL=AtmosTransport.Preprocessing.LatLonTarget
 const Pre=AtmosTransport.Preprocessing
 
-function write_pbl_surface(path;heat_units="J m-2",stress_units="N m-2 s")
+function write_pbl_surface(path;heat_units="J m-2",stress_units="N m-2 s",time_offset=nothing)
     NCDataset(path,"c") do ds
         ds.dim["longitude"]=4;ds.dim["latitude"]=3;ds.dim["time"]=24
         defVar(ds,"longitude",[0.,90.,180.,270.],("longitude",))
@@ -16,17 +16,26 @@ function write_pbl_surface(path;heat_units="J m-2",stress_units="N m-2 s")
         for (name,value,units) in fields
             a=fill(value,4,3,24)
             name=="u10" && (a[:,:,2].=10)
+            if name=="u10" && time_offset !== nothing
+                for h in 1:24
+                    a[:,:,h] .= 6+time_offset+h-1
+                end
+            end
             defVar(ds,name,a,("longitude","latitude","time");attrib=Dict("units"=>units))
         end
     end
 end
-function write_pbl_thermo(path)
+function write_pbl_thermo(path;exact=false,
+        temperatures=exact ? [256.,256.] : [280.,300.],
+        humidities=exact ? [2.0^-9,2.0^-7] : [.002,.01])
+    nz=length(temperatures)
+    @assert length(humidities)==nz
     NCDataset(path,"c") do ds
-        ds.dim["longitude"]=4;ds.dim["latitude"]=3;ds.dim["level"]=2;ds.dim["time"]=24
+        ds.dim["longitude"]=4;ds.dim["latitude"]=3;ds.dim["level"]=nz;ds.dim["time"]=24
         defVar(ds,"longitude",[0.,90.,180.,270.],("longitude",))
         defVar(ds,"latitude",[90.,0.,-90.],("latitude",))
-        t=fill(280.,4,3,2,24);t[:,:,2,:].=300
-        q=fill(.002,4,3,2,24);q[:,:,2,:].=.01
+        t=[temperatures[k] for i in 1:4,j in 1:3,k in 1:nz,h in 1:24]
+        q=[humidities[k] for i in 1:4,j in 1:3,k in 1:nz,h in 1:24]
         defVar(ds,"t",t,("longitude","latitude","level","time");attrib=Dict("units"=>"K"))
         defVar(ds,"q",q,("longitude","latitude","level","time");attrib=Dict("units"=>"kg kg-1"))
     end
@@ -86,7 +95,7 @@ end
     end
 end
 
-@testset "TM5 optional LL/RG spectral writers" begin
+@testset "TM5 combined LL/RG PBL inputs: pressure_merge=$pressure_merge" for pressure_merge in (false,true)
     mktempdir() do dir
         date=Date(2021,12,1)
         spectral=joinpath(dir,"spectral");cache=joinpath(dir,"cache")
@@ -94,37 +103,104 @@ end
         vo=joinpath(spectral,"era5_spectral_20211201_vo_d.gb")
         ln=joinpath(spectral,"era5_spectral_20211201_lnsp.gb")
         touch(vo);touch(ln)
-        hours=collect(0:23);lnsp=fill(complex(log(1e5),0),1,1)
-        z=zeros(ComplexF64,1,1,137)
+        hours=collect(0:23);lnsp=zeros(ComplexF64,2,2);lnsp[1]=log(1e5)
+        # A zonal harmonic makes cell-mean and centre-sampled PS differ well
+        # beyond rounding, while remaining constant in time with zero winds.
+        pressure_merge && (lnsp[2,2]=.15)
+        z=zeros(ComplexF64,2,2,137)
         spec=(;hours,lnsp_all=Dict(h=>copy(lnsp) for h in hours),
-            vo_by_hour=Dict(h=>copy(z) for h in hours),d_by_hour=Dict(h=>copy(z) for h in hours),T=0,n_times=24)
+            vo_by_hour=Dict(h=>copy(z) for h in hours),d_by_hour=Dict(h=>copy(z) for h in hours),T=1,n_times=24)
         Pre.write_spectral_day_cache(Pre.spectral_day_cache_path(cache,vo,ln;T_target=0),spec)
-        for day in (1,2)
-            write_pbl_surface(joinpath(dir,"era5_surface_2021120$(day).nc"))
-            write_pbl_thermo(joinpath(dir,"era5_thermo_ml_2021120$(day).nc"))
+        next=(;lnsp,vo=z,d=z,T=1)
+        paths=Pre.Spectral.era5_spectral_paths(spectral,date)
+        for hour in hours
+            Pre.Spectral.JLD2.jldsave(Pre.Spectral.spectral_hour_cache_path(cache,paths,hour);endpoint=next)
         end
-        vc=HybridSigmaPressure([0.,0.,0.],[0.,.3,1.])
-        vertical=(;Nz_native=2,Nz=2,level_range=1:2,ab=(;dA=[0.,0.],dB=[.3,.7],b_ifc=vc.B),merge_map=[1,2],merged_vc=vc)
+        for day in (1,2)
+            write_pbl_surface(joinpath(dir,"era5_surface_2021120$(day).nc");time_offset=24(day-1))
+            if pressure_merge
+                write_pbl_thermo(joinpath(dir,"era5_thermo_ml_2021120$(day).nc");
+                    temperatures=[240.,260.,280.,310.],humidities=[.002,.006,.01,.02])
+            else
+                # Power-of-two primitives isolate serialization from pressure roundoff.
+                write_pbl_thermo(joinpath(dir,"era5_thermo_ml_2021120$(day).nc");exact=true)
+            end
+        end
+        vc=pressure_merge ? HybridSigmaPressure([0.,4000.,7000.,3000.,0.],[0.,.1,.3,.6,1.]) :
+            HybridSigmaPressure([0.,0.,0.],[0.,.3,1.])
+        retained=pressure_merge ? [1,3,5] : [1,2,3]
+        merged_vc=HybridSigmaPressure(vc.A[retained],vc.B[retained])
+        nz=length(vc.A)-1
+        vertical=(;Nz_native=nz,Nz=2,level_range=1:nz,ab=(;dA=diff(vc.A),dB=diff(vc.B),b_ifc=vc.B),
+            merge_map=pressure_merge ? [1,1,2,2] : [1,2],vc_native=vc,merged_vc)
         grids=(Pre.build_target_geometry(Dict("type"=>"latlon","nlon"=>4,"nlat"=>3),Float64),
             Pre.build_target_geometry(Dict("type"=>"synthetic_reduced_gaussian","gaussian_number"=>2,"nlon_mode"=>"octahedral"),Float64))
-        for (i,grid) in enumerate(grids)
-            out=joinpath(dir,"out$i");mkpath(out)
-            settings=Pre.ERA5SpectralSettings((;column_balance_weights=:mass,output_float_type=Float64,
-                spectral_dir=spectral,spectral_cache_dir=cache,T_target=0,min_dp=0.,include_qv=false,
-                mass_basis=:moist,mass_fix_enable=false,target_ps_dry_pa=98325.,qv_global_climatology=0.,
-                thermo_dir=dir,surface_dir=dir,half_dt=450.,met_interval=3600.,dt=900.,out_dir=out,
-                include_surface=false,include_tm5_pbl=true,qv_preload=false,qv_preload_max_bytes=0))
-            path=Pre.process_day(date,grid,settings,vertical;require_substep_positivity=true)
-            reader=AtmosTransport.MetDrivers.TransportBinaryReader(path)
-            @test reader.header.format_version==5
-            @test all(s->s in reader.header.payload_sections,AtmosTransport.MetDrivers.BinaryFormat.TM5_PBL_PAYLOAD_SECTIONS)
-            driver=AtmosTransport.MetDrivers.TransportBinaryDriver(path)
-            firstwindow=AtmosTransport.MetDrivers.load_transport_window(driver,1)
-            lastwindow=AtmosTransport.MetDrivers.load_transport_window(driver,24)
-            @test all(x->isapprox(x,280;rtol=1e-14),firstwindow.tm5_pbl.t[ntuple(_->Colon(),ndims(firstwindow.tm5_pbl.t)-1)...,1])
-            @test all(x->isapprox(x,-25;rtol=1e-14),firstwindow.tm5_pbl.sshf)
-            @test all(x->isapprox(x,6;rtol=1e-14),lastwindow.tm5_pbl.u10)
-            close(reader);close(driver.reader)
+        BF=AtmosTransport.MetDrivers.BinaryFormat
+        MD=AtmosTransport.MetDrivers
+        for (i,grid) in enumerate(grids), FT in (Float64,Float32)
+            drivers=[]
+            try
+                for construction in (Pre.PointSampledSpectralFluxes(),Pre.TM5SpectralFluxes())
+                    out=joinpath(dir,"out$(i)_$(FT)_$(typeof(construction))")
+                    settings=Pre.ERA5SpectralSettings((;column_balance_weights=:mass,output_float_type=FT,
+                        spectral_dir=spectral,spectral_cache_dir=cache,T_target=0,min_dp=0.,include_qv=false,
+                        mass_basis=:dry,mass_fix_enable=false,target_ps_dry_pa=98325.,qv_global_climatology=0.,
+                        thermo_dir=dir,surface_dir=dir,half_dt=450.,met_interval=3600.,dt=900.,out_dir=out,
+                        include_surface=false,include_tm5_pbl=true,qv_preload=false,qv_preload_max_bytes=0,
+                        spectral_flux_construction=construction,spectral_synthesis=Pre.Common.CPUSynthesis(),
+                        flux_time_sampling=:window_mean))
+                    path=Pre.process_day(date,grid,settings,vertical;next_day_hour0=next)
+                    driver=MD.TransportBinaryDriver(path;FT)
+                    push!(drivers,driver)
+                    @test driver.reader.header.format_version==5
+                    @test all(s->s in driver.reader.header.payload_sections,BF.TM5_PBL_PAYLOAD_SECTIONS)
+                    @test driver.reader.header.flux_construction isa
+                        (construction isa Pre.TM5SpectralFluxes ? BF.TM5SpectralFluxesHeader : BF.PointSampledSpectralFluxesHeader)
+                end
+                for win in 1:24
+                    windows=map(d->MD.load_transport_window(d,win),drivers)
+                    point,combined=map(w->w.tm5_pbl,windows)
+                    for name in BF.TM5_PBL_FIELD_NAMES
+                        pressure_merge && name in (:t,:q) && continue
+                        @test isequal(getproperty(combined,name),getproperty(point,name))
+                    end
+                    if pressure_merge
+                        for window in windows
+                            ps=vec(window.surface_pressure)
+                            @test maximum(ps)-minimum(ps)>1000
+                            # Independent reference: difference hybrid interface
+                            # pressures, then take moist-mass means over each pair.
+                            # Area/g cancels; humidity must not dry these weights.
+                            for (name,profile) in ((:t,[240.,260.,280.,310.]),(:q,[.002,.006,.01,.02]))
+                                expected=[begin
+                                    interfaces=vc.A .+ vc.B.*Float64(ps[c])
+                                    dp=diff(interfaces)[levels]
+                                    sum(profile[levels].*dp)/sum(dp)
+                                end for c in eachindex(ps),levels in (1:2,3:4)]
+                                actual=reshape(getproperty(window.tm5_pbl,name),:,2)
+                                @test actual ≈ FT.(expected) rtol=8eps(FT)
+                            end
+                        end
+                        changed=findall(abs.(vec(windows[1].surface_pressure).-vec(windows[2].surface_pressure)).>100)
+                        @test !isempty(changed)
+                        for name in (:t,:q)
+                            a=reshape(getproperty(point,name),:,2)
+                            b=reshape(getproperty(combined,name),:,2)
+                            @test all(abs.(a[changed,:].-b[changed,:]).>8eps(FT).*abs.(a[changed,:]))
+                        end
+                        if win==1
+                            @info "TM5 pressure-sensitive PBL merge" target=typeof(grid) FT ps_range=extrema(windows[2].surface_pressure) max_ps_difference=maximum(abs,windows[1].surface_pressure.-windows[2].surface_pressure) max_t_difference=maximum(abs,point.t.-combined.t) max_q_difference=maximum(abs,point.q.-combined.q)
+                        end
+                    else
+                        @test all(==(FT(256)),combined.t)
+                    end
+                    # Every surface hour differs, including next-day 00 UTC.
+                    @test all(x->isapprox(x,6+win-.5;rtol=1e-6),combined.u10)
+                    @test all(x->isapprox(x,-25;rtol=1e-6),combined.sshf)
+                end
+            finally
+                foreach(d->close(d.reader),drivers)
+            end
         end
     end
 end

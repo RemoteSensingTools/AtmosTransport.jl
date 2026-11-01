@@ -44,7 +44,57 @@ end
 @inline tm5_wind_from_faces(west,east,south,north,m,dx,dy,seconds) =
     (dx*(east+west)*typeof(m)(0.5)/m/seconds,dy*(north+south)*typeof(m)(0.5)/m/seconds)
 
-@inline function _tm5_pbl_pass(z, theta_v, u, v, theta_s, parcel, ustr, c, start)
+# Float32 cancellation control. The type-dispatched helpers keep TM5's literal
+# Float64 expressions (bitwise identical results); their generic methods use
+# algebraically identical forms with less cancellation near the surface. Operand
+# differences are exact within a factor of two; the final sum can still cancel.
+# Only working-precision operations are used, including on Metal (no Float64).
+
+# Kahan's expm1: Base's Float32 fallback promotes to Float64 on AMDGPU.
+# exp and log have working-precision implementations on all supported backends.
+@inline function _tm5_expm1(x)
+    u = exp(x)
+    d = u - one(x)
+    return u == one(x) ? x : (d == -one(x) ? -one(x) : d * x / log(u))
+end
+
+# log(a/b) for nearly equal a, b: the generic method keeps the exact difference a - b.
+@inline _tm5_log_ratio(::Type{Float64}, a, b) = log(a / b)
+@inline _tm5_log_ratio(::Type, a, b) = log1p((a - b) / b)
+
+# p_l - pbar_l, which equals (p_l - p_{l+1})/2 (the centre-height fraction is 1/2).
+@inline _tm5_upper_half(::Type{Float64}, p, pf, l) = @inbounds p[l] - pf[l]
+@inline _tm5_upper_half(::Type{FT}, p, pf, l) where FT = @inbounds (p[l] - p[l + 1]) * FT(0.5)
+
+"""
+    _tm5_dtheta_v(FT, th, c, i, j)
+
+θv_j − θv_i for the profile `th = (; t, q, p, pf, theta, theta_v, chi)`. Float64 takes
+TM5's difference of the stored θv. Otherwise, with a = T(1 + χq) and Π = (p₀/p̄)^κ,
+θv_j − θv_i = (a_j − a_i) Π_j + θv_i (Π_j/Π_i − 1), where Π_j/Π_i − 1 =
+expm1(κ log1p((p̄_i − p̄_j)/p̄_j)) and T, q and p enter only through differences,
+which are exact where the operands are within a factor of two. This removes
+cancellation in those operand differences and greatly improves near-surface
+accuracy. The final sum can still cancel: a synthetic model-top interface has
+terms approximately −144.27376 + 144.26372 = −0.010040283 K (amplification ≈28738).
+"""
+@inline _tm5_dtheta_v(::Type{Float64}, th, c, i, j) = @inbounds th.theta_v[j] - th.theta_v[i]
+@inline function _tm5_dtheta_v(::Type{FT}, th, c, i, j) where FT
+    t, q, p, pf, chi = th.t, th.q, th.p, th.pf, th.chi
+    @inbounds begin
+        dpf = ((p[i] - p[j]) + (p[i + 1] - p[j + 1])) * FT(0.5)
+        ratio = _tm5_expm1(c.r_air / c.cp_air * log1p(dpf / pf[j]))
+        da = (t[j] - t[i]) * (one(FT) + chi * q[j]) + t[i] * chi * (q[j] - q[i])
+        return da * (th.theta[j] / t[j]) + th.theta_v[i] * ratio
+    end
+end
+
+# Bulk-Richardson numerator θv_l − θ_parcel, with θ_parcel = θv_1 + excess.
+@inline _tm5_parcel_buoyancy(::Type{Float64}, th, c, l, parcel, excess) = @inbounds th.theta_v[l] - parcel
+@inline _tm5_parcel_buoyancy(::Type{FT}, th, c, l, parcel, excess) where FT =
+    _tm5_dtheta_v(FT, th, c, 1, l) - excess
+
+@inline function _tm5_pbl_pass(z, th, u, v, theta_s, parcel, excess, ustr, c, start)
     FT = typeof(theta_s)
     previous = zero(FT)
     h = z[length(z)]
@@ -52,7 +102,7 @@ end
     @inbounds for l in start:length(z)
         v2 = (u[l] - u[1])^2 + (v[l] - v[1])^2 + c.bulk_friction * ustr * ustr
         v2 = max(v2, c.wind2_min)
-        rib = c.gravity * (theta_v[l] - parcel) * (z[l] - z[1]) / (theta_s * v2)
+        rib = c.gravity * _tm5_parcel_buoyancy(FT, th, c, l, parcel, excess) * (z[l] - z[1]) / (theta_s * v2)
         rib += copysign(c.signed_offset, rib)
         if !tm5_jqif(c.ri_critical, rib)
             lower = l == 1 ? zero(FT) : z[l - 1]
@@ -83,6 +133,10 @@ Sources: diffusion_kernels.F90:595–988; meteo__pclim.F90:6006–6020.
 Unused singular branches are selected away. Non-finite entrainment keeps the
 BL/free-atmosphere K; finite negative entrainment is retained and clipped
 only when forming D. No threshold, ceiling or extra floor is applied.
+Float64 follows TM5's arithmetic literally; other precisions form θv
+differences, log-pressure ratios and the centre fraction with the
+helpers above (same algebra, working precision only). They greatly improve
+near-surface accuracy; residual cancellation can remain at the model top.
 """
 @inline function tm5_calc_kzz_column!(D, out, column, params::TM5BLDiffParameters{FT}) where FT
     c, geo = params.constants, params.geometry
@@ -95,7 +149,7 @@ only when forming D. No threshold, ceiling or extra floor is applied.
         g[1] = s.oro / c.gravity
         for l in 1:L-1
             tv = t[l] * (one(FT) + geo.virtual_factor * q[l])
-            g[l + 1] = g[l] + tv * geo.r_air * log(pg[l] / pg[l + 1]) / c.gravity
+            g[l + 1] = g[l] + tv * geo.r_air * _tm5_log_ratio(FT, pg[l], pg[l + 1]) / c.gravity
         end
         g[L + 1] = geo.top_height
         chi = one(FT) / (c.r_air / c.r_vap) - one(FT)
@@ -103,7 +157,7 @@ only when forming D. No threshold, ceiling or extra floor is applied.
             pf[l] = (p[l] + p[l + 1]) * FT(0.5)
             theta[l] = t[l] * (c.p_ref / pf[l])^(c.r_air / c.cp_air)
             thv[l] = theta[l] * (one(FT) + chi * q[l])
-            f = (p[l] - pf[l]) / (p[l] - p[l + 1])
+            f = _tm5_upper_half(FT, p, pf, l) / (p[l] - p[l + 1])
             z[l] = (g[l] - g[1]) * (one(FT) - f) + (g[l + 1] - g[1]) * f
         end
         ustar = tm5_ustar(s, c)
@@ -111,16 +165,18 @@ only when forming D. No threshold, ceiling or extra floor is applied.
         w_theta = -s.sshf * (g[2] - g[1]) * c.gravity / (p[1] - p[2]) / c.cp_air
         w_q = -s.slhf * (g[2] - g[1]) * c.gravity / (p[1] - p[2]) / c.l_vap
         theta_s = thv[1]
+        th = (; t, q, p, pf, theta, theta_v=thv, chi)
         hv = w_theta + chi * theta[1] * w_q
         l_obukhov = -theta_s * ustr^3 / (c.gravity * c.karman * (hv + copysign(c.signed_offset, hv)))
         unstable = tm5_jqif(hv, zero(FT))
-        h_pass1, crossing1 = _tm5_pbl_pass(z, thv, u, v, theta_s, theta_s, ustr, c, 1)
+        h_pass1, crossing1 = _tm5_pbl_pass(z, th, u, v, theta_s, theta_s, zero(FT), ustr, c, 1)
         third = one(FT) / FT(3)
         binh = c.surface_fraction * c.beta
         wsc = ustr * (unstable ? one(FT) - binh * h_pass1 / l_obukhov : one(FT))^third
         theta_excess = hv * c.fak / wsc
-        theta_parcel = theta_s + (unstable ? theta_excess : zero(FT))
-        h_pass2_raw, crossing2 = _tm5_pbl_pass(z, thv, u, v, theta_s, theta_parcel, ustr, c, 2)
+        parcel_excess = unstable ? theta_excess : zero(FT)
+        theta_parcel = theta_s + parcel_excess
+        h_pass2_raw, crossing2 = _tm5_pbl_pass(z, th, u, v, theta_s, theta_parcel, parcel_excess, ustr, c, 2)
         h = max(h_pass2_raw, c.h_min)
         w_star = (abs(hv) * c.gravity * h / theta_s)^third
         guarded = 0
@@ -131,7 +187,7 @@ only when forming D. No threshold, ceiling or extra floor is applied.
             length2 = (one(FT) / (one(FT) / lambda + one(FT) / (c.karman * zi)))^2
             dz = z[l + 1] - z[l]
             shear2[l] = max((u[l + 1] - u[l])^2 + (v[l + 1] - v[l])^2, c.shear2_min) / dz^2
-            dtheta = thv[l + 1] - thv[l]
+            dtheta = _tm5_dtheta_v(FT, th, c, l, l + 1)
             alpha = (log(p[l + 1]) - log(pf[l])) / (log(pf[l + 1]) - log(pf[l]))
             th_ifc = thv[l] + alpha * dtheta
             ri[l] = (c.gravity / th_ifc * dtheta / dz) / shear2[l]

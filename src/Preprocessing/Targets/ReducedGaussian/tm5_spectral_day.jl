@@ -13,6 +13,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::ReducedGaussianTarget
                          substep_cfl_target=positivity_cfl_limit),run_cache=nothing)
     validate_spectral_construction(c,grid,settings)
     validate_spectral_vertical(c,vertical)
+    validate_tm5_pbl_target(grid,settings,vertical)
     endpoint_plan = TM5EndpointPlan(vertical)
     next_day_hour0 === nothing && error("tm5_spectral requires next-day 00 UTC; no zero-tendency fallback")
     settings_include_surface(settings) && throw(ArgumentError("RG spectral preprocessing does not support surface payloads"))
@@ -69,6 +70,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::ReducedGaussianTarget
         a=endpoint(1)
         push!(offsets,a.offset)
         first_spec = nothing
+        pbl_cache = get(settings,:include_tm5_pbl,false) ? TM5PBLInputCache() : nothing
         try
             for i in 1:nt
                 b=endpoint(i+1)
@@ -112,6 +114,11 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::ReducedGaussianTarget
                 push!(schedule,steps)
                 base=(;m,hflux=flux,cm,ps=FT.(a.ps))
                 window=settings.include_qv ? merge(base,(qv_start=FT.(a.q),qv_end=FT.(b.q))) : base
+                if pbl_cache !== nothing
+                    pbl = load_tm5_pbl_target_window(date,i,settings,vertical,window.ps,
+                        grid,size(window.m);cache=pbl_cache)
+                    window = merge(window,(;tm5_pbl=pbl))
+                end
                 if writer === nothing
                     writer=open_streaming_transport_binary(path,transport_grid,nt,window;
                         FT,dt_met_seconds=settings.met_interval,half_dt_seconds=settings.half_dt,
@@ -132,6 +139,8 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::ReducedGaussianTarget
         catch
             writer === nothing || abandon_streaming_transport_binary!(writer)
             rethrow()
+        finally
+            pbl_cache === nothing || close(pbl_cache)
         end
         return path
     end # bounded hourly reader

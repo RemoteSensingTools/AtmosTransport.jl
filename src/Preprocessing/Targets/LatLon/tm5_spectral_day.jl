@@ -20,6 +20,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
                          substep_cfl_target=positivity_cfl_limit),run_cache=nothing)
     validate_spectral_construction(c,grid,settings)
     validate_spectral_vertical(c,vertical)
+    validate_tm5_pbl_target(grid,settings,vertical)
     endpoint_plan = TM5EndpointPlan(vertical)
     next_day_hour0 === nothing && error("tm5_spectral requires next-day 00 UTC; no zero-tendency fallback")
     paths=era5_spectral_paths(settings.spectral_dir,date)
@@ -55,6 +56,9 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
             require_substep_positivity=require_substep_positivity,steps_per_window=steps)
         counts = window_element_counts(grid,nz;
             include_qv=settings.include_qv,include_surface=settings.include_surface)
+        if get(settings,:include_tm5_pbl,false)
+            counts = merge(counts,(;elems_per_window=counts.elems_per_window+2*counts.n_m+10*counts.n_ps))
+        end
         bytes = window_byte_sizes(counts,FT,nt)
         counts = merge(counts,(;bytes_per_window=bytes.bytes_per_window))
         sizes = (;Nx=nx,Ny=ny,Nz=nz,Nz_native=vertical.Nz_native,Nt=nt,steps_per_met=steps)
@@ -66,6 +70,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
         path = output_binary_path(date,settings.out_dir,settings.min_dp,FT)
         surface_reader = settings.include_surface ?
             open_era5_surface_reader(settings.surface_dir,date,nx,ny) : nothing
+        pbl_cache = get(settings,:include_tm5_pbl,false) ? TM5PBLInputCache() : nothing
         writer = nothing
         pending = nothing
         schedule = Int[]
@@ -102,6 +107,9 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
                 push!(schedule,only(local_schedule))
                 fill_qv_endpoints!(storage,last)
                 surface_reader === nothing || _store_window_surface_fields!(storage,1,surface_reader,FT;source_window=i)
+                tm5_pbl = pbl_cache === nothing ? nothing :
+                    load_tm5_pbl_target_window(date,i,settings,vertical,storage.all_ps[1],
+                        grid,size(storage.all_m[1]);cache=pbl_cache)
                 @info "TM5 moist layer balance" window=i diagnostics=map(
                     x->(;x.pre,x.post,x.passes,x.max_layer_residual),window.diagnostics)
                 if writer === nothing
@@ -116,15 +124,15 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
                         qv=settings.include_qv ? storage.all_qv_start[1] : nothing)
                     evidence = tm5_flux_evidence(LatLonTargetGeometry,FT)
                     write_window!(writer,ReadyWindow{LatLonTargetGeometry,FT}(
-                        i-1,(;storage=pending,storage_index=1),evidence))
+                        i-1,pending,evidence))
                 end
-                pending = storage
+                pending = (;storage,storage_index=1,tm5_pbl)
                 writer.last_hour_next = last
                 a = b
             end
             evidence = tm5_flux_evidence(LatLonTargetGeometry,FT)
             write_window!(writer,ReadyWindow{LatLonTargetGeometry,FT}(
-                nt,(;storage=pending,storage_index=1),evidence))
+                nt,pending,evidence))
             writer.header["ps_offsets_pa_per_window"] = offsets[1:nt]
             writer.header["ps_offsets_next_day_hour0_pa"] = offsets[end]
             set_transport_header_steps_per_window_schedule!(writer.header,schedule)
@@ -137,6 +145,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
             writer === nothing || quarantine_streaming_binary!(writer)
             rethrow()
         finally
+            pbl_cache === nothing || close(pbl_cache)
             surface_reader === nothing || close_era5_surface_reader(surface_reader)
         end
         return path

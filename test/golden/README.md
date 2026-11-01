@@ -299,3 +299,10 @@ Live Calc_Kzz case definitions are `pre_ll72_tm5pbl`, `pre_o24_tm5pbl`,
 `run_ll72_tm5pbl_cpu_f64` and `run_o24_tm5pbl_cpu_f64`. Their preprocessing
 configs use tropo34a and read the frozen ERA5 single-level surface set
 (`era5_0.5x0.5/surface/`, see Inputs).
+
+Combined TM5 spectral fluxes and live Calc_Kzz inputs use
+`pre_ll72_tm5_tm5pbl`, `pre_o24_tm5_tm5pbl` and
+`run_ll72_tm5_tm5pbl_cpu_f64`. They use the same frozen thermo/surface inputs,
+CPU synthesis and tropo34a levels. Record these cases with
+`record <ref> --cases=pre_ll72_tm5_tm5pbl,pre_o24_tm5_tm5pbl,run_ll72_tm5_tm5pbl_cpu_f64 --threads=1`,
+then verify them with `check <ref> <new>` using the same case selection and thread count.

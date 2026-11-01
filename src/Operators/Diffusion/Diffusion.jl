@@ -32,7 +32,7 @@ using ...State: CellState, CubedSphereState,
 import ...State: field_value, update_field!, panel_field
 using ...MetDrivers: current_time
 using ...State: DryBasis, MoistBasis
-using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, _ledger_deposit,
+using ...Architectures: _two_sum, _neumaier_add, _kahan_add, _ledger_residual, _ledger_deposit,
                        _load_ledger_carry, _store_ledger_carry!, launch!, select_panel
 using ...Parameters: VIRTUAL_TEMPERATURE_FACTOR, R_DRY_AIR, STANDARD_GRAVITY,
                      HYDROSTATIC_REFERENCE_TEMPERATURE, CP_DRY_AIR, CP_OVER_R_DIATOMIC,

@@ -80,6 +80,8 @@ end
     L = size(data,2)
     @inbounds begin
         centres.p[c,L+1] = p_top
+        # Top-down pressure: TM5's plain sum in Float64, Kahan-compensated otherwise.
+        p_sum, p_comp = p_top, zero(FT)
         for k in 1:L
             l = L-k+1
             q = inputs.q[c,k]
@@ -87,7 +89,8 @@ end
             centres.t[c,l] = inputs.t[c,k]
             centres.q[c,l] = q
             centres.mass[c,l] = m
-            centres.p[c,l] = centres.p[c,l+1] + params.constants.gravity * _tm5_pressure_mass(basis,m,q) / metrics.area[c]
+            p_sum, p_comp = _kahan_add(p_sum, p_comp, params.constants.gravity * _tm5_pressure_mass(basis,m,q) / metrics.area[c])
+            centres.p[c,l] = p_sum
             u,v = _tm5_window_winds(metrics,fluxes,c,k,m,seconds)
             centres.u[c,l],centres.v[c,l] = u,v
         end
