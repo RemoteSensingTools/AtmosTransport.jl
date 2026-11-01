@@ -70,14 +70,58 @@ the runtime actually dispatches on:
 | `nwindow` | `Int` | windows per day (typically 24) |
 | `payload_sections` | `Vector{Symbol}` | which arrays this binary actually contains |
 
-`format_version` is currently `4`; all other transport binaries are intentionally
-rejected and must be regenerated. The v4 contract requires
+`format_version` is `4` or `5` (see [Format versions 4 and 5](#Format-versions-4-and-5));
+all other transport binaries are intentionally rejected: older ones must be
+regenerated, newer ones need a newer runtime. Both versions require
 `steps_per_window_by_window :: Vector{Int}` (per-window adaptive substep
 schedule) and `poisson_balance_target_scale_by_window :: Vector{Float64}` in
 the header. `header_bytes` and a few sampling-metadata fields
 (`source_flux_sampling`, `air_mass_sampling`, `humidity_sampling`,
 `delta_semantics`, optional `runtime_substep_contract`) round out the header.
 The full list lives in `src/MetDrivers/BinaryFormat/header.jl`.
+
+### Format versions 4 and 5
+
+Version 5 is version 4 plus the **flux-construction identity**: header keys
+that record how the preprocessor built the horizontal mass fluxes. The payload
+layout, the sections, the timing and the sampling semantics are identical; a
+version-5 file with the same windows has the same payload bytes as its
+version-4 twin.
+
+| Key (v5 only) | Type | Meaning |
+|---|---|---|
+| `flux_construction` | `String` | required in v5: `"point_sampled_spectral"` (the ERA5 spectral lat-lon and reduced-Gaussian construction: winds synthesized at the target truncation, sampled on faces and centres, times the face pressure thickness) or `"tm5_spectral"` (TM5-style face integrals of the retained spectrum, [TM5-style spectral mass fluxes](../preprocessing/tm5_spectral_fluxes.md)) |
+| `flux_construction_revision` | `Int ≥ 1` | `tm5_spectral` only: revision of the construction |
+| `spectral_truncation_used` | `Int ≥ 1` | `tm5_spectral` only: triangular truncation T of the spectrum the fluxes were integrated from |
+| `quadrature_refinement_steps` | `Int ≥ 1` | `tm5_spectral` only: `nstep` of TM5's `ShRefinement` quadrature refinement |
+| `vod2uv_radius_m` | `Float64 > 0` | `tm5_spectral` only: sphere radius [m] of the vorticity/divergence-to-wind conversion; the mesh radius stays in `planet_radius_m` |
+
+The reader decodes these keys into a typed record, `header.flux_construction`:
+`NoFluxConstructionHeader()` for version 4, `PointSampledSpectralFluxesHeader()`
+or `TM5SpectralFluxesHeader(revision, spectral_truncation_used,
+quadrature_refinement_steps, vod2uv_radius_m)` for version 5. Both the contract
+validator and the typed parser reject:
+
+- a version-5 key in a version-4 header;
+- a version-5 header without `flux_construction`, with an unknown value, with a
+  missing or invalid key of its construction, or with a key of another
+  construction;
+- every `format_version` other than 4 and 5.
+
+Writers emit version 4 unless they are given the typed `flux_construction`
+keyword (`write_transport_binary`, `open_streaming_transport_binary`,
+`open_streaming_cs_transport_binary`); with a record they write version 5 and
+its keys, without one the header is byte-identical to before. `extra_header`
+cannot set these keys. `inspect_binary` reports `format_version` and
+`flux_construction`, and `binary_capabilities` returns both.
+
+No maintained preprocessing route records a flux-construction identity yet,
+so every binary written today is version 4. The `tm5_spectral` construction is
+planned, and so is an optional, version-5-only `tm5_pbl` input section group for
+the planned [TM5 boundary-layer scheme](../theory/tm5_boundary_layer.md);
+neither exists in the code yet. Transformations that rewrite a binary
+(cubed-sphere coarsening, lat-lon to cubed-sphere regridding, TM5 convection
+attachment) write version 4 and do not carry an identity.
 
 Every current writer also emits a schema-2 flux-fidelity certificate. The
 reader decodes its status and construction kind into nominal types
@@ -196,6 +240,8 @@ returns a `NamedTuple`:
 | `humidity :: Bool` | `true` iff both `:qv_start` and `:qv_end` are present |
 | `mass_basis :: Symbol` | `:dry` or `:moist` (echoed from header) |
 | `grid_type :: Symbol` | `:latlon` / `:reduced_gaussian` / `:cubed_sphere` |
+| `format_version :: Int` | `4` or `5` |
+| `flux_construction :: AbstractFluxConstructionHeader` | the version-5 flux-construction identity; `NoFluxConstructionHeader()` for version 4 |
 | `flux_kind :: Symbol` | `:substep_mass_amount` or `:full_window_mass_amount` |
 | `nlevel :: Int` | vertical levels |
 | `nwindow :: Int` | met windows in the file |

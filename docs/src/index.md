@@ -96,8 +96,9 @@ for the objects and source directories behind this flow.
 - **Portable execution.** CPU is the simplest starting point; CUDA, Metal,
   and ROCm are optional backends. ROCm hardware validation is pending; see the
   [runbook](development/rocm.md). Metal uses `Float32` and remains a preview.
-- **Explicit provenance.** Only transport-binary format version 4 is accepted;
-  incompatible forcing fails at load time rather than being guessed.
+- **Explicit provenance.** Only transport-binary format versions 4 and 5 are
+  accepted (5 adds the flux-construction identity); incompatible forcing fails
+  at load time rather than being guessed.
 
 ## Where things live
 

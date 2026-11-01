@@ -1,4 +1,4 @@
-# Shared version-4 reader, accessors, and structured/face-indexed loaders.
+# Shared version-4/5 reader, accessors, and structured/face-indexed loaders.
 
 """
     TransportBinaryReader{FT, DiskFT, G}

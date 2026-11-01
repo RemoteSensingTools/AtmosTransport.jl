@@ -218,6 +218,12 @@ including the counter-gradient transport of fresh emissions.
 `LocalHoltslagBovilleKzField` uses the local Kz only, without the
 counter-gradient term.
 
+TM5's own live `Calc_Kzz` (friction velocity, two-pass boundary-layer height,
+non-local diffusivity with entrainment, and the `dkg` exchange rate) is
+planned as a `dkg` field for this operator; its equations, the differences
+from TM5 and the plan are on the page
+[TM5 boundary-layer diffusion](../theory/tm5_boundary_layer.md).
+
 ### [GEOS-Chem non-local VDIFF: emission profile and the `qmincg` fallback](@id gchp-vdiff-qmincg)
 
 GEOS-Chem's VDIFF moves fresh surface emissions up through the boundary layer

@@ -286,9 +286,10 @@ paths = [
 ]
 
 [topics.metdrivers_binary]
-description = "Transport binaries and met drivers: writers and readers, header contract, sections, inspector, replay continuity, path expansion, window loading, prefetch and input staging, atomic publication"
+description = "Transport binaries and met drivers: writers and readers, header contract, format versions 4 and 5, sections, inspector, replay continuity, path expansion, window loading, prefetch and input staging, atomic publication"
 files = [
     "core/test_binary_inspector.jl",
+    "core/test_binary_format_v5.jl",
     "core/test_binary_planet_radius.jl",
     "core/test_binary_path_expander.jl",
     "core/test_cs_optional_2d_sections.jl",
