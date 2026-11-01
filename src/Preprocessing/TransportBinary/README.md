@@ -45,3 +45,8 @@ uses the existing window-constant and explicit-dm runtime contracts.
 The LL writer adapter accepts a `storage_index` payload slot independent of the
 logical window index, allowing two-window streaming with the existing deltas.
 TM5 v5 provenance records the actual synthesis backend and float precision.
+
+Opt-in LL live-Calc_Kzz inputs add a complete `tm5_pbl` group and a v5
+point-sampled flux identity; `writer_adapters.jl` appends its arrays after the
+unchanged v4 sections. Default writers still emit v4. RG uses BinaryFormat's
+existing optional-section stream packing.

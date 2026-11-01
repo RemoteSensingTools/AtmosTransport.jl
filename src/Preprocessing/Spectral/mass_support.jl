@@ -543,9 +543,9 @@ returns the coordinates of the reordered array, and the lat-lon workspaces
 interpolate with them.
 """
 function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int;
-                             FT::Type{<:AbstractFloat}=Float32)
+                             FT::Type{<:AbstractFloat}=Float32, variable::AbstractString="q")
     NCDataset(thermo_path) do ds
-        q_var = ds["q"]
+        q_var = ds[variable]
         dims = dimnames(q_var)
         if dims[1] == "longitude"
             q = FT.(q_var[:, :, :, hour_idx])

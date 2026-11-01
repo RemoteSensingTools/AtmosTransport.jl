@@ -308,6 +308,11 @@ _exchange_source(op::ImplicitVerticalDiffusion, workspace) =
 _panel_exchange_sources(op::ImplicitVerticalDiffusion{FT, <:AbstractCubedSphereField}, workspace) where FT =
     ntuple(p -> KzExchange(panel_field(op.kz_field, p), workspace.layer_thickness[p]), 6)
 
+_column_workspace_arrays(workspace, ::DkgExchange) =
+    (factors=workspace.factors,exchange=workspace.exchange,elimination=workspace.elimination)
+_exchange_source(op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField},workspace) where FT =
+    DkgExchange(op.kz_field.dkg)
+
 # Structured lat-lon, packed tracers (Nx, Ny, Nz, Nt).
 function _diffuse_columns!(form, q_raw::AbstractArray{FT, 4}, air_mass::AbstractArray{FT, 3},
                            op::ImplicitVerticalDiffusion, workspace::DiffusionWorkspace,

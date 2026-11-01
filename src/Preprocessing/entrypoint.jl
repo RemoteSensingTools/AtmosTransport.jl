@@ -554,9 +554,11 @@ function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeo
     validate_spectral_construction(spectral_construction(settings), grid, settings)
     check_spectral_column_weights(grid, settings)
     validate_flux_construction(settings, "ERA5 spectral")
+    validate_tm5_pbl_target(grid,settings)
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
     Common.validate_spectral_vertical(spectral_construction(settings), vertical)
+    validate_tm5_pbl_target(grid,settings,vertical)
     spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)

@@ -365,3 +365,48 @@ function build_target_geometry(cfg_grid, ::Type{FT}=Float64) where FT <: Abstrac
     kind = Symbol(replace(raw_kind, '-' => '_', ' ' => '_'))
     return build_target_geometry(Val(kind), cfg_grid, FT)
 end
+
+"Validate the topology and hourly input contract of optional live-Calc_Kzz preprocessing."
+function validate_tm5_pbl_target(::AbstractTargetGeometry, settings, vertical=nothing)
+    get(settings,:include_tm5_pbl,false) && throw(ArgumentError(
+        "include_tm5_pbl is implemented only for lat-lon and reduced-Gaussian spectral targets"))
+    return nothing
+end
+function validate_tm5_pbl_target(::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry}, settings, vertical=nothing)
+    get(settings,:include_tm5_pbl,false) || return nothing
+    # The TM5 flux day drivers do not assemble the input group.
+    spectral_construction(settings) isa TM5SpectralFluxes && throw(ArgumentError(
+        "include_tm5_pbl is not supported with spectral_flux_construction=\"tm5_spectral\""))
+    first(get(settings,:level_range,1:137)) == 1 || throw(ArgumentError("include_tm5_pbl requires grid.level_top=1 (the complete native thermo column)"))
+    if vertical !== nothing
+        first(vertical.level_range) == 1 || throw(ArgumentError("include_tm5_pbl requires grid.level_top=1"))
+        length(vertical.merge_map) == vertical.Nz_native && !isempty(vertical.merge_map) ||
+            throw(ArgumentError("include_tm5_pbl does not support grid.target_vertical pressure-overlap remapping; use native layer merging"))
+        all(k->1<=k<=vertical.Nz,vertical.merge_map) || throw(ArgumentError("include_tm5_pbl requires a valid native layer merge map"))
+        vertical.Nz >= 2 || throw(ArgumentError("include_tm5_pbl requires at least two output layers"))
+    end
+    isempty(settings.thermo_dir) && throw(ArgumentError("include_tm5_pbl requires input.thermo_dir with hourly T/q"))
+    settings.met_interval == 3600 || throw(ArgumentError("include_tm5_pbl requires hourly analysis windows"))
+    return nothing
+end
+export validate_tm5_pbl_target
+
+"""
+    target_surface_means(source_mesh, grid, fields; regridder=nothing)
+
+Remap intensive surface primitives to LL/RG target cell-area means using the
+shared conservative Regridding API. Return `(fields, regridder)` so day drivers
+reuse the weights. The default three-argument application has IntensiveCellField
+semantics, including the shared spherical-polygon geometry on RG targets.
+"""
+function target_surface_means(source_mesh, grid::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry}, fields;
+                              regridder=nothing)
+    r = regridder === nothing ? build_regridder(source_mesh,grid.mesh) : regridder
+    values = map(fields) do a
+        dst = zeros(Float64,length(r.dst_areas))
+        apply_regridder!(dst,r,vec(a))
+        dst
+    end
+    return values,r
+end
+export target_surface_means

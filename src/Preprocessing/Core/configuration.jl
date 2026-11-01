@@ -103,11 +103,15 @@ function resolve_surface_settings(cfg)
     input_cfg = get(cfg, "input", Dict{String, Any}())
     surface_dir = expand_data_path(get(input_cfg, "surface_dir", ""))
     include_surface = _config_bool(surface_cfg, "enable", false, "[surface].enable")
-    if include_surface && isempty(surface_dir)
-        error("[surface] enable=true requires input.surface_dir with ERA5 single-level PBL fields")
+    include_tm5_pbl = _config_bool(get(cfg, "preprocessing", Dict{String,Any}()),
+        "include_tm5_pbl", false, "[preprocessing].include_tm5_pbl")
+    if (include_surface || include_tm5_pbl) && isempty(surface_dir)
+        trigger = include_tm5_pbl ? "[preprocessing] include_tm5_pbl=true" : "[surface] enable=true"
+        throw(ArgumentError("$trigger requires input.surface_dir with ERA5 single-level PBL fields"))
     end
     return (
         include_surface = include_surface,
+        include_tm5_pbl = include_tm5_pbl,
         surface_dir = surface_dir,
     )
 end

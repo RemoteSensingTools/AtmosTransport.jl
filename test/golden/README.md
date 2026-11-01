@@ -254,6 +254,10 @@ state). Three input sets are frozen copies in `/temp1/cfranken/goldens/inputs`:
   that folder lists their checksums; `check` does not fingerprint input
   directories, so verify them with
   `cd /temp1/cfranken/goldens/inputs/era5_0.5x0.5 && sha256sum -c SHA256SUMS`.
+  Its `surface/` subfolder holds the ERA5 single-level fields of the
+  `*_tm5pbl` cases (lsm, fsr, z, 10 m winds, stresses, heat fluxes, blh, t2m,
+  zust; 2021-12-01 and 02, CDS ZIP payloads), the download script and its
+  own `SHA256SUMS`.
 - The ERA5 C90 L66 binaries with TM5 convection attached (2022-01-15 and 16),
   because convection attachment is not part of the preprocessor. Since the
   v0.5 re-record (2026-10-13) they are byte-identical copies of two days of the
@@ -288,6 +292,10 @@ exist in the template, each `add` key must not), record it into the reference wi
 confirm it is reproducible.
 
 `pre_ll72_tm5` and `pre_o24_tm5` select `tm5_spectral`, pin synthesis to CPU
-and use NOAA `ml137_tropo34a` levels. Their definitions are separate from the
-unchanged legacy cases. Record their references only in the main session;
-GPU synthesis is compared by tolerance using the opt-in backend test.
+and use NOAA `ml137_tropo34a` levels. GPU synthesis is compared by tolerance
+in the opt-in backend test (`ATMOSTR_TEST_SPECTRAL_GPU=1`).
+
+Live Calc_Kzz case definitions are `pre_ll72_tm5pbl`, `pre_o24_tm5pbl`,
+`run_ll72_tm5pbl_cpu_f64` and `run_o24_tm5pbl_cpu_f64`. Their preprocessing
+configs use tropo34a and read the frozen ERA5 single-level surface set
+(`era5_0.5x0.5/surface/`, see Inputs).

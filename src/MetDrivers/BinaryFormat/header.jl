@@ -4,6 +4,11 @@ const PBL_SURFACE_PAYLOAD_SECTIONS = (:pblh, :ustar, :pbl_hflux, :t2m)
 const _PBL_SURFACE_FIELD_NAMES = (:pblh, :ustar, :hflux, :t2m)
 const GCHP_VDIFF_PAYLOAD_SECTIONS = (:vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
 const _GCHP_VDIFF_FIELD_NAMES = (:u, :v, :t, :qv)
+"Optional v5 live Calc_Kzz input group; fractional lsm and ECMWF downward-positive heat fluxes."
+const TM5_PBL_FIELD_NAMES = (:t, :q, :lsm, :sr, :fsr, :u10, :v10, :ewss, :nsss, :sshf, :slhf, :oro)
+"All-or-nothing v5 payload sections for live TM5 Calc_Kzz."
+const TM5_PBL_PAYLOAD_SECTIONS = map(n -> Symbol(:tm5_, n), TM5_PBL_FIELD_NAMES)
+
 # Optional 2-D cubed-sphere sections: surface latent heat flux for the GCHP
 # non-local PBL scheme, and the convective cloud-base layer (top-down index).
 const CS_OPTIONAL_2D_SECTIONS = (:pbl_eflux, :cmfmc_cloud_base)

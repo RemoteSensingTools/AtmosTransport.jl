@@ -190,9 +190,9 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["none", "constant", "tm5_beljaars_viterbo_local_kz", "geoschem_holtslag_boville_vdiff", "geoschem_nonlocal_vdiff", "tm5_dkg"],
+          "enum": ["none", "constant", "tm5_beljaars_viterbo_local_kz", "geoschem_holtslag_boville_vdiff", "geoschem_nonlocal_vdiff", "tm5_dkg", "tm5_calc_kzz"],
           "default": "none",
-          "description": "none; constant (uniform Kz from value); tm5_beljaars_viterbo_local_kz (TM5 local Kz from the binary's pblh, ustar, pbl_hflux, t2m); geoschem_holtslag_boville_vdiff (GEOS-Chem local Kz, also needs the VDIFF sections); geoschem_nonlocal_vdiff (GEOS-Chem non-local PBL mixing with counter-gradient transport, also needs pbl_eflux); tm5_dkg (TM5 interface exchange stored as :dkg). All kinds except none and constant are cubed-sphere only and need those binary sections."
+          "description": "none; constant (uniform Kz from value); tm5_beljaars_viterbo_local_kz (TM5 local Kz from the binary's pblh, ustar, pbl_hflux, t2m); geoschem_holtslag_boville_vdiff (GEOS-Chem local Kz, also needs the VDIFF sections); geoschem_nonlocal_vdiff (GEOS-Chem non-local PBL mixing with counter-gradient transport, also needs pbl_eflux); tm5_dkg (TM5 interface exchange stored as :dkg). tm5_calc_kzz (live Calc_Kzz on lat-lon and reduced Gaussian, needs the v5 tm5_pbl input group). The other non-constant closures are cubed-sphere only and need the corresponding binary sections."
         },
         "value": {
           "type": "number",

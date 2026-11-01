@@ -105,6 +105,7 @@ function expected_payload_sections(settings)
     settings.include_qv && append!(sections, ["qv_start", "qv_end"])
     append!(sections, ["dam", "dbm", "dcm", "dm"])
     settings_include_surface(settings) && append!(sections, ["pblh", "t2m", "ustar", "pbl_hflux"])
+    get(settings, :include_tm5_pbl, false) && append!(sections, String.(TM5_PBL_PAYLOAD_SECTIONS))
     return sections
 end
 
@@ -240,6 +241,15 @@ function build_v4_header(date::Date,
         (header["mass_fix_target_ps_dry_pa"] = settings.target_ps_dry_pa)
     with_column_weights_record(header, check_spectral_column_weights(grid, settings))
     merge!(header, target_header_metadata(grid))
+    if get(settings, :include_tm5_pbl, false)
+        header["format_version"] = 5
+        for (key,value) in flux_construction_header_entries(PointSampledSpectralFluxesHeader())
+            header[key] = value
+        end
+        for name in TM5_PBL_PAYLOAD_SECTIONS
+            header["n_$(name)"] = name in (:tm5_t,:tm5_q) ? counts.n_m : counts.n_ps
+        end
+    end
     validate_transport_contract!(header)
     return header
 end

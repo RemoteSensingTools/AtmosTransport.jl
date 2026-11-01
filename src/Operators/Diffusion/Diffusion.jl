@@ -31,12 +31,14 @@ using ...State: CellState, CubedSphereState,
                 ConstantField, PreComputedKzField, ntracers
 import ...State: field_value, update_field!, panel_field
 using ...MetDrivers: current_time
+using ...State: DryBasis, MoistBasis
 using ...Architectures: _two_sum, _neumaier_add, _ledger_residual, _ledger_deposit,
                        _load_ledger_carry, _store_ledger_carry!, launch!, select_panel
 using ...Parameters: VIRTUAL_TEMPERATURE_FACTOR, R_DRY_AIR, STANDARD_GRAVITY,
                      HYDROSTATIC_REFERENCE_TEMPERATURE, CP_DRY_AIR, CP_OVER_R_DIATOMIC,
                      THETA_REFERENCE_PRESSURE, GEOSCHEM_CONSTANTS, VON_KARMAN,
-                     STANDARD_SEA_LEVEL_AIR_DENSITY
+                     STANDARD_SEA_LEVEL_AIR_DENSITY, TM5_BLDIFF_CONSTANTS, TM5_GPH_CONSTANTS,
+                     TM5_PBL_REFERENCE_PRESSURE, TM5_PBL_CUTOFF_PRESSURE
 import ..apply!
 import ..AbstractDiffusion                # global root from src/Operators/AbstractOperators.jl
 
@@ -50,6 +52,7 @@ export fill_dz_hydrostatic_constT_staged!, fill_dz_hydrostatic_virtualT_staged!
 export recover_total_surface_pressure_staged!
 export check_diffusion_workspace, preflight_diffusion
 
+export TM5CalcKzzField, TM5BLDiffParameters, refresh_tm5_calc_kzz!, tm5_calc_kzz_column!
 export refresh_gchp_nonlocal_pbl!
 export WindowPBLKzField, LocalHoltslagBovilleKzField, PBLPhysicsParameters
 export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!
@@ -58,6 +61,8 @@ include("pbl_physics.jl")
 include("WindowPBLKzField.jl")
 include("LocalHoltslagBovilleKzField.jl")
 include("window_kz_cache.jl")
+include("tm5_calc_kzz.jl")
+include("TM5CalcKzzField.jl")
 include("gchp_nonlocal_pbl.jl")
 
 include("diffusion_kernels.jl")

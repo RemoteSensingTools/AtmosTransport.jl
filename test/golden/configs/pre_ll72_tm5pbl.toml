@@ -1,0 +1,33 @@
+# ERA5 spectral (December 2021) → 5° lat-lon 72 × 37, ml137_tropo34a levels, Float64.
+# From config/preprocessing/era5_ll72x37_advresln_dec2021.toml.
+
+[input]
+spectral_dir = "/temp1/cfranken/goldens/inputs/era5_0.5x0.5/spectral_hourly"
+thermo_dir   = "/temp1/cfranken/goldens/inputs/era5_0.5x0.5/physics"
+surface_dir = "/temp1/cfranken/goldens/inputs/era5_0.5x0.5/surface"
+coefficients = "config/era5_L137_coefficients.toml"
+
+[output]
+directory  = "@OUTPUT@"
+mass_basis = "dry"
+
+[grid]
+type = "latlon"
+nlon = 72
+nlat = 37
+level_top = 1
+level_bot = 137
+echlevs = "ml137_tropo34a"
+merge_min_thickness_Pa = 1000.0
+
+[numerics]
+float_type   = "Float64"
+dt           = 900.0
+met_interval = 3600.0
+
+[mass_fix]
+enable                = true
+qv_global_climatology = 0.00247
+
+[preprocessing]
+include_tm5_pbl = true

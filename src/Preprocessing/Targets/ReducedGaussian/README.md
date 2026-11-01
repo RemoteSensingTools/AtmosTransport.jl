@@ -41,3 +41,8 @@ and immediately closes/writes each window. Its geometry overloads of
 `tm5_horizontal_convergence`, `balance_tm5_layers!` and `dry_target_fluxes!`
 live in `tm5_spectral_day.jl`; only source-agnostic solver primitives come
 from MassClosure.
+
+`include_tm5_pbl=true` adds the optional v5 inputs through the existing streaming
+writer; surface cell-area means, thermo point sampling, shared-endpoint caching
+and vertical weighting reuse LatLonTarget's
+`load_tm5_pbl_target_window`. Default windows retain their v4 layout.

@@ -234,3 +234,8 @@ Forward and adjoint callers import the same constants.
 
 `SURFACE_PRESSURE_BASIS_TOLERANCE` in `NumericalDefaults.jl` names the legacy
 binary column-pressure classification threshold (2e-5).
+
+Live Calc_Kzz constants are separate from the legacy preprocessing values:
+`TM5_BLDIFF_CONSTANTS` retains `8.3144e3/28.94`; `TM5_GPH_CONSTANTS` retains
+287.05 and 0.608. `TM5_PBL_REFERENCE_PRESSURE` is TM5's 98500 Pa, and
+`TM5_PBL_CUTOFF_PRESSURE` is L137 half-level 57 at that pressure (8614.336891 Pa).

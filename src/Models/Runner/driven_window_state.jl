@@ -49,9 +49,11 @@ end
 @inline _copy_optional_vdiff!(dest, src) =
     _copy_optional!(_copy_vdiff!, dest, src, "VDIFF")
 
-@inline function _copy_vdiff!(dest, src)
+@inline _copy_vdiff!(dest, src) = _copy_window_fields!(dest, src, "VDIFF")
+
+@inline function _copy_window_fields!(dest, src, label)
     propertynames(dest) == propertynames(src) ||
-        throw(ArgumentError("transport window VDIFF fields changed between windows"))
+        throw(ArgumentError("transport window $label fields changed between windows"))
     for name in propertynames(dest)
         _copy_storage!(getproperty(dest, name), getproperty(src, name))
     end
@@ -110,6 +112,7 @@ function _copy_window_payload!(dest::TransportWindow{B},
     _copy_optional_surface!(dest.surface, src.surface)
     _copy_optional_vdiff!(dest.vdiff, src.vdiff)
     _copy_optional_storage!(dest.dkg, src.dkg, :dkg)
+    _copy_optional!((d,s)->_copy_window_fields!(d,s,"tm5_pbl"),dest.tm5_pbl,src.tm5_pbl,"tm5_pbl")
     return dest
 end
 

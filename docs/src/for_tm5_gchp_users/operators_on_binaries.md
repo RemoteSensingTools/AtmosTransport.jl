@@ -211,7 +211,7 @@ diffusivity profile is supplied by an `AbstractTimeVaryingField` or panel-native
 | `LocalHoltslagBovilleKzField` | GEOS/VDIFF local Holtslag–Boville Kz | Supported when the v4 binary carries all VDIFF fields |
 | `GCHPNonlocalPBLField` | GEOS-Chem VDIFF: Holtslag–Boville Kz with the non-local counter-gradient term (`kind = "geoschem_nonlocal_vdiff"`) | Cubed sphere; needs the VDIFF fields and `:pbl_eflux` |
 
-For TM5 users: `WindowPBLKzField` is the closest analogue to the
+For cubed-sphere TM5 users: `WindowPBLKzField` is a local analogue to the
 Holtslag–Boville-with-Beljaars-correction profile TM5 ships with.
 For GCHP users: `GCHPNonlocalPBLField` ports GEOS-Chem's `vdiff_mod.F90`,
 including the counter-gradient transport of fresh emissions.
@@ -220,8 +220,10 @@ counter-gradient term.
 
 TM5's own live `Calc_Kzz` (friction velocity, two-pass boundary-layer height,
 non-local diffusivity with entrainment, and the `dkg` exchange rate) is
-planned as a `dkg` field for this operator; its equations, the differences
-from TM5 and the plan are on the page
+implemented for LL/RG as `TM5CalcKzzField`, selected with
+`[diffusion] kind="tm5_calc_kzz"` and the optional v5 `tm5_pbl` inputs.
+Cubed-sphere and adjoint support remain deferred. Its equations and differences
+from TM5 are on the page
 [TM5 boundary-layer diffusion](../theory/tm5_boundary_layer.md).
 
 ### [GEOS-Chem non-local VDIFF: emission profile and the `qmincg` fallback](@id gchp-vdiff-qmincg)

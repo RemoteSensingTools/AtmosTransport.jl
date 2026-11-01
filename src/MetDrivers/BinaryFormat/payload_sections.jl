@@ -1,6 +1,9 @@
 # One section -> shape-kind table shared by writers, readers, and allocation.
 # Topology allow-lists remain separate: equal shapes do not imply equal contracts.
 const _TRANSPORT_SECTION_SHAPES = (
+    tm5_t=:cell, tm5_q=:cell, tm5_lsm=:surface, tm5_sr=:surface, tm5_fsr=:surface,
+    tm5_u10=:surface, tm5_v10=:surface, tm5_ewss=:surface, tm5_nsss=:surface,
+    tm5_sshf=:surface, tm5_slhf=:surface, tm5_oro=:surface,
     m=:cell, dm=:cell, qv_start=:cell, qv_end=:cell,
     am=:xface, dam=:xface, bm=:yface, dbm=:yface,
     hflux=:hface, dhflux=:hface, cm=:interface, dcm=:interface,
@@ -10,10 +13,10 @@ const _TRANSPORT_SECTION_SHAPES = (
     vdiff_u=:cell, vdiff_v=:cell, vdiff_t=:cell, vdiff_qv=:cell,
     dkg=:cell, dtrain=:cell, cmfmc=:interface,
 )
-const _STRUCTURED_SECTIONS = (:m, :dm, :qv_start, :qv_end, :am, :dam,
+const _STRUCTURED_SECTIONS = (TM5_PBL_PAYLOAD_SECTIONS...,:m, :dm, :qv_start, :qv_end, :am, :dam,
     :bm, :dbm, :cm, :dcm, :ps, :pblh, :ustar, :pbl_hflux, :t2m,
     :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
-const _FACEINDEXED_SECTIONS = (:m, :dm, :qv_start, :qv_end, :hflux,
+const _FACEINDEXED_SECTIONS = (TM5_PBL_PAYLOAD_SECTIONS...,:m, :dm, :qv_start, :qv_end, :hflux,
     :dhflux, :cm, :dcm, :ps, :pblh, :ustar, :pbl_hflux, :t2m,
     :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
 const _CS_SECTIONS = (:m, :dm, :am, :dam, :bm, :dbm, :cm, :dcm, :ps,
@@ -212,7 +215,9 @@ end
 end
 
 function _transport_window_field(window, section::Symbol)
-    if section === :m
+    if section in TM5_PBL_PAYLOAD_SECTIONS
+        return getproperty(window.tm5_pbl, TM5_PBL_FIELD_NAMES[findfirst(==(section), TM5_PBL_PAYLOAD_SECTIONS)])
+    elseif section === :m
         return _transport_window_mass(window)
     elseif section === :am
         return _transport_window_am(window)
@@ -295,6 +300,9 @@ function _transport_push_optional_sections!(sections::Vector{Symbol}, window)
     end
     if _transport_window_has_vdiff_fields(window)
         append!(sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
+    end
+    if haskey(window, :tm5_pbl) && window.tm5_pbl !== nothing
+        append!(sections, TM5_PBL_PAYLOAD_SECTIONS)
     end
     return sections
 end
@@ -411,6 +419,7 @@ function _transport_validate_structured_window(window,
     _transport_validate_optional_structured_deltas(window, Nx, Ny, nlevel)
     _transport_validate_optional_surface(window, (Nx, Ny))
     _transport_validate_optional_vdiff(window, (Nx, Ny, nlevel))
+    _transport_validate_tm5_pbl(window, size(m), size(ps))
     _transport_validate_basis(window, basis_sym)
     return nothing
 end
@@ -436,6 +445,35 @@ function _transport_validate_reduced_window(window,
     _transport_validate_optional_faceindexed_deltas(window, ncell, nface_h, nlevel)
     _transport_validate_optional_surface(window, (ncell,))
     _transport_validate_optional_vdiff(window, (ncell, nlevel))
+    _transport_validate_tm5_pbl(window, size(m), size(ps))
     _transport_validate_basis(window, basis_sym)
+    return nothing
+end
+
+function _transport_validate_tm5_pbl(window, cell_shape, surface_shape)
+    (!haskey(window, :tm5_pbl) || window.tm5_pbl === nothing) && return nothing
+    return validate_tm5_pbl_inputs(window.tm5_pbl,cell_shape,surface_shape)
+end
+
+"Validate complete live-Calc_Kzz input shapes, finite values, humidity, land fraction and land roughness."
+function validate_tm5_pbl_inputs(pbl,cell_shape,surface_shape)
+    length(propertynames(pbl)) == length(TM5_PBL_FIELD_NAMES) &&
+        all(name -> hasproperty(pbl,name),TM5_PBL_FIELD_NAMES) || throw(ArgumentError(
+        "tm5_pbl must supply the complete field group $(TM5_PBL_FIELD_NAMES)"))
+    for name in TM5_PBL_FIELD_NAMES
+        a = getproperty(pbl, name)
+        expected = name in (:t, :q) ? cell_shape : surface_shape
+        size(a) == expected || throw(DimensionMismatch("tm5_pbl.$name expected $expected, got $(size(a))"))
+        all(isfinite, a) || throw(ArgumentError("tm5_pbl.$name contains non-finite values"))
+    end
+    all(>(0), pbl.t) || throw(ArgumentError("tm5_pbl.t must be positive Kelvin"))
+    all(x -> 0 <= x < 1, pbl.q) || throw(ArgumentError("tm5_pbl.q must be in [0,1)"))
+    all(x -> 0 <= x <= 1, pbl.lsm) || throw(ArgumentError("tm5_pbl.lsm must be a fraction in [0,1]"))
+    for i in eachindex(pbl.lsm)
+        if pbl.lsm[i] > 0
+            pbl.sr[i] > 0 && 0 <= pbl.fsr[i] < 10 || throw(ArgumentError(
+                "TM5 land roughness requires sr > 0 and 0 <= fsr < 10 m"))
+        end
+    end
     return nothing
 end

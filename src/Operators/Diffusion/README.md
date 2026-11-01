@@ -217,5 +217,23 @@ mixing-ratio floors and LocalHB's shear-dependent background floor. Diffusion
 retains its absorbing `m <= 0` convention; Advection and diagnostics keep
 their respective policies.
 
+Live TM5 Calc_Kzz uses `TM5CalcKzzField` inside `ImplicitVerticalDiffusion`
+on LL and RG. `tm5_calc_kzz.jl` owns the pure bottom-up column physics,
+`TM5CalcKzzField.jl` the cached D, scratch, Adapt and KA refresh. `DkgExchange`
+supplies D directly to the existing column solver without reading dz.
+Models.Physics constructs the metric containers from mesh geometry.
+
+# shared: TM5LLMetrics, TM5RGMetrics
+
+Live Calc_Kzz keeps only active entrainment guards in its runtime warning count
+and warns once per field/run; unused singular branches remain counted in the
+column result. Its guard retains the finite BL/free K. The refresh stores no
+PBL-height diagnostic and `update_field!` returns the field, as required by the
+field interface. Scratch is approximately 16 floating values per cell/layer,
+plus D and one integer guard count per cell; large RG meshes can require about
+1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds for
+synthetic and real ERA5 columns; on the sampled ERA5 windows the conditioning
+of the Richardson-number numerator gave a maximum Float32 D error of 1e-2.
+
 Host fallback staging uses Architectures.host_array. Zeroed workspace scratch
 uses Architectures.zeros_like, retaining one allocation and fill per array.

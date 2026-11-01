@@ -510,6 +510,9 @@ end
   sources reject all four spectral-only keys. Planning rejects cubed sphere, moist basis and sampling other than
   `window_mean`. The day driver requires next-day 00 UTC. The new route
   requires retained native interfaces, rather than pressure-overlap remapping.
+- The TM5 day drivers do not assemble the live Calc_Kzz input group, so
+  `[preprocessing] include_tm5_pbl = true` is rejected with this construction
+  (see [TM5 boundary layer](../theory/tm5_boundary_layer.md)).
 - The default path stays bitwise unchanged; every flux pull request gates the
   `pre_ll72`, `pre_o24` and `pre_c24` goldens.
 

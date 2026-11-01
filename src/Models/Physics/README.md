@@ -42,5 +42,10 @@ only public names; tests reach private helpers as `Models.Physics._name`.
 Runner's `cs_adjoint_inputs` invokes its production forcing refresh. Physics
 contains no separate adjoint arithmetic; forcing is captured for replay.
 
+`TM5CalcKzzDiffusionSpec` selects `[diffusion] kind="tm5_calc_kzz"` on LL/RG,
+requires the complete v5 input group in every file, constructs native face
+metrics, and materializes `TM5CalcKzzField` inside `ImplicitVerticalDiffusion`.
+CS support and its adjoint remain deferred. RG retains split surface coupling.
+
 Scalar and choice parsing delegates to ConfigChecks, including the existing
 forward/inversion limiter tables. No private numeric-parser interface remains.

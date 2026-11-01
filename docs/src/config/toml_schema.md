@@ -546,6 +546,8 @@ kind  = "constant"              # "none" | "constant" |
                                 #   :pbl_eflux, e.g. the MERRA-2 GEOS-Chem archive
                                 #   or GEOS-IT with include_vdiff_fields;
                                 #   always S(dt)->V(dt)) |
+                                # "tm5_calc_kzz" (LL/RG; live Calc_Kzz,
+                                #   requires v5 tm5_pbl from include_tm5_pbl=true) |
                                 # "tm5_dkg" (CS-only; exact TM5 dry-air
                                 #   interface exchange — requires a
                                 #   binary built with include_tm5_diffusion=true)
@@ -1402,3 +1404,8 @@ path implements it, and the other sources reject it.
   local layout.
 - [Run with real meteorology](@ref) — move from the synthetic tutorial to
   preprocessed forcing.
+
+For ERA5 spectral LL/RG preprocessing, `[preprocessing] include_tm5_pbl=true`
+adds the optional v5 live-Calc_Kzz input group. It requires `input.surface_dir`
+and `input.thermo_dir`, complete hourly T/q and surface inputs, including the
+next-day endpoint. See [TM5 boundary-layer diffusion](../theory/tm5_boundary_layer.md).

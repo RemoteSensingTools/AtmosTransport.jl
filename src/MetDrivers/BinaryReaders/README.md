@@ -58,5 +58,8 @@ Tests: reader round trips, binary inspector, format versions 4 and 5, CS
 staging and optional sections, replay consistency, validate-replay config, and
 cubed-sphere runtime.
 
+LL/RG window loading decodes the complete v5 `tm5_pbl` group as topology-native
+arrays in `TransportWindow.tm5_pbl`, preserving on-disk precision conversion.
+
 Replay panel scaling uses Architectures.scale_arrays!, retaining the existing
 per-panel broadcast order.

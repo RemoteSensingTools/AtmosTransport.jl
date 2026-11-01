@@ -187,7 +187,7 @@ function ingest_window!(workspace::LatLonSpectralWindowWorkspace,
     return nothing
 end
 
-struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, SR}
+struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, SR, PC}
     grid            :: G
     settings        :: S
     vertical        :: V
@@ -196,6 +196,7 @@ struct LLSpectralUnifiedDriverContext{G, S, V, SP, N, SR}
     date            :: Date
     substep_policy  :: SubstepSchedulePolicy
     surface_reader  :: SR
+    pbl_cache       :: PC
 end
 
 driver_windows_per_day(::Nothing, ctx::LLSpectralUnifiedDriverContext) =
@@ -223,7 +224,7 @@ function driver_flush_final_windows!(workspace::LatLonSpectralWindowWorkspace,
                                      ctx::LLSpectralUnifiedDriverContext)
     ready_windows = flush_final_windows!(workspace, ctx.next_day_hour0,
                                          ctx.date, ctx.grid, ctx.vertical,
-                                     ctx.settings, contract, ctx.substep_policy)
+                                     ctx.settings, contract, ctx.substep_policy; pbl_cache=ctx.pbl_cache)
     # `flush_final_windows!` calls `apply_poisson_balance!`, which already
     # runs the typed LL contract over every stored window and updates the
     # contract accumulator. Return preverified events so the generic driver
@@ -246,7 +247,7 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                               vertical,
                               settings,
                               contract::LatLonContract{FT},
-                              substep_policy::SubstepSchedulePolicy) where FT
+                              substep_policy::SubstepSchedulePolicy; pbl_cache=nothing) where FT
     workspace.last_hour_next = next_day_merged_fields(
         next_day_hour0, date, grid, vertical, settings,
         workspace.transform, workspace.merged, workspace.qv,
@@ -275,6 +276,10 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
                  bm = workspace.storage.all_bm[win_idx],
                  cm = workspace.storage.all_cm[win_idx],
                  storage = workspace.storage,
+                 tm5_pbl = get(settings,:include_tm5_pbl,false) ?
+                    load_tm5_pbl_target_window(date,win_idx,settings,vertical,
+                        workspace.storage.all_ps[win_idx],grid,
+                        size(workspace.storage.all_m[win_idx]);cache=pbl_cache) : nothing,
                  m_next = win_idx < length(workspace.storage.all_m) ?
                     workspace.storage.all_m[win_idx + 1] :
                     workspace.last_hour_next === nothing ?
@@ -309,6 +314,7 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     check_spectral_column_weights(grid, settings)
+    validate_tm5_pbl_target(grid,settings,vertical)
     FT = settings.output_float_type
     Nz_native = vertical.Nz_native
     Nz = vertical.Nz
@@ -337,6 +343,9 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
     counts = window_element_counts(grid, Nz;
                                     include_qv=settings.include_qv,
                                     include_surface=settings.include_surface)
+    if get(settings,:include_tm5_pbl,false)
+        counts = merge(counts,(;elems_per_window=counts.elems_per_window+2*counts.n_m+10*counts.n_ps))
+    end
     byte_sizes = window_byte_sizes(counts, FT, Nt)
     counts = merge(counts, (bytes_per_window = byte_sizes.bytes_per_window,))
 
@@ -348,13 +357,20 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
              steps_per_met = steps_per_met)
     header = build_v4_header(date, grid, vertical, settings, FT, counts, sizes, provenance)
     source_paths = String[vo_d_path, lnsp_path]
-    if settings.include_qv || settings.mass_basis == :dry
+    if settings.include_qv || settings.mass_basis == :dry || get(settings,:include_tm5_pbl,false)
         push!(source_paths, era5_thermo_path(settings.thermo_dir, date_str))
         next_date_str = Dates.format(date + Day(1), "yyyymmdd")
         push!(source_paths, era5_thermo_path(settings.thermo_dir, next_date_str))
     end
     settings.include_surface && push!(
         source_paths, resolve_era5_surface_path(settings.surface_dir, date))
+    if get(settings,:include_tm5_pbl,false)
+        for source_date in (date,date+Day(1))
+            arco = joinpath(settings.surface_dir,"arco",Dates.format(source_date,"yyyymmdd"))
+            append!(source_paths,isdir(arco) ? sort!(readdir(arco;join=true)) :
+                [resolve_era5_surface_path(settings.surface_dir,source_date)])
+        end
+    end
     header["generation_fingerprint"] = generation_fingerprint(
         settings=settings,
         spectral_resolution=spec.T,
@@ -402,6 +418,7 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
     log_mass_fix_configuration(settings)
     @info "  Computing spectral -> gridpoint -> merged for $Nt windows..."
 
+    pbl_cache = get(settings,:include_tm5_pbl,false) ? TM5PBLInputCache() : nothing
     try
         tmp_path = open_preprocessing_staging(bin_path)
         writer = LatLonDeferredBinaryWriter(
@@ -410,7 +427,7 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
             final_path = bin_path)
         ctx = LLSpectralUnifiedDriverContext(
             grid, settings, vertical, spec, next_day_hour0, date,
-            substep_policy, surface_reader)
+            substep_policy, surface_reader, pbl_cache)
 
         driver_result = run_unified_preprocessor_day!(
             UnifiedPreprocessorDay(nothing, workspace, window_contract,
@@ -434,6 +451,7 @@ function process_day(::PointSampledSpectralFluxes, date::Date,
 
         return driver_result.out_path
     finally
+        pbl_cache === nothing || close(pbl_cache)
         surface_reader === nothing || close_era5_surface_reader(surface_reader)
     end
 end

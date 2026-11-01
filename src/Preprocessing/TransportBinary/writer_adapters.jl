@@ -61,12 +61,20 @@ function write_window!(writer::LatLonBinaryWriter{FT},
     writer.closed && throw(ArgumentError("cannot write to a closed LatLonBinaryWriter"))
     verify_flux_fidelity!(writer.fidelity, ready.fidelity, ready.index)
     storage = ready.payload.storage
+    if hasproperty(ready.payload,:tm5_pbl) && ready.payload.tm5_pbl !== nothing
+        validate_tm5_pbl_inputs(ready.payload.tm5_pbl,size(storage.all_m[ready.index]),size(storage.all_ps[ready.index]))
+    end
     bytes = write_window!(writer.io,
                           get(ready.payload,:storage_index,ready.index),
                           storage,
                           writer.settings,
                           writer.merged,
                           writer.last_hour_next)
+    if hasproperty(ready.payload,:tm5_pbl) && ready.payload.tm5_pbl !== nothing
+        for name in TM5_PBL_FIELD_NAMES
+            bytes += write(writer.io,getproperty(ready.payload.tm5_pbl,name))
+        end
+    end
     writer.bytes_written += bytes
     return bytes
 end

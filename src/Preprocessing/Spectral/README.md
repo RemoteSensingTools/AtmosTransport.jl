@@ -60,3 +60,6 @@ policy applies only to offline spectral preprocessing.
   endpoints discard native C after constructing retained W.
 
 # shared: SpectralIntegralWorkspace, integrate_surface_pressure!, integrate_face_fluxes!, integrate_vertical_flux!, TM5EndpointPlan, construct_tm5_endpoint, with_spectral_hours, spectral_hour_cache_path, spectral_synthesis_metadata
+
+`read_qv_from_thermo` accepts `variable="t"` for the opt-in live-Calc_Kzz
+input writer; the default `variable="q"` retains the original humidity path.

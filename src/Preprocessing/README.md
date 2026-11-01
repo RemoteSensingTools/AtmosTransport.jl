@@ -248,6 +248,11 @@ LL retains one completed lookahead output window; RG writes immediately.
 Spectral owns direct quadrature and endpoint reduction; Targets owns the moist
 layer balance, dry conversion and mean. MassClosure stays source independent.
 
+ERA5 spectral LL/RG can opt into live Calc_Kzz inputs with
+`[preprocessing] include_tm5_pbl=true`. `entrypoint.jl` validates the topology,
+hourly cadence and thermo path before IO. The optional v5 group is described
+in PhysicsInputs and the target READMEs; native sources and CS are deferred.
+
 ConfigChecks owns entrypoint date/scalar/choice parsing; TOML dates and ISO
 strings both work. Numeric settings reject Booleans; integer settings require
 integers representable as Int. Vertical numeric-string and infinity spellings
