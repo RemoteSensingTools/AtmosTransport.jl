@@ -44,7 +44,9 @@ The adjoint supports the following advection schemes (full union in
 - `UpwindScheme()`
 - `SlopesScheme(NoLimiter())`
 - `PPMScheme(NoLimiter())`
-- `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via a stored tracer-branch tape around the base trajectory
+- `PPMScheme(MonotoneLimiter())` and `PPMScheme(CW84Limiter())` — via the
+  limiter branches of the base trajectory, recorded on the tape (one byte per
+  cell and sweep; [what the tape stages](@ref adjoint-tape-compaction))
 - `LinRoodPPMScheme(5)` and `LinRoodPPMScheme(7)`, with either vertical
   sweep: FV3's `kord = 8` profile (`vertical = "fv3_kord8"`, the configured
   default, or `"fv3_kord8_signed"`) or upwind (`vertical = "upwind"`). The FV3
@@ -160,13 +162,133 @@ value composed of three typed axes (`src/Tape/AdjointTape.jl`):
 
 | Axis | Choices | Default |
 | --- | --- | --- |
-| content: what each record stages | `FullStateTape()` (the full state each operator's reverse reads) | `FullStateTape()` |
+| content: what each record stages, how long a recording serves | `StateTape()` (what each operator's reverse reads of this forward run; recorded by every forward run), `AirMassTape()` (the air mass only; recorded once per call or optimization) | `StateTape()` |
 | storage: where the staged states live | `DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)` | `DeviceCSTapeStorage()` |
 | checkpoint: how much of the run is taped at once | `FullCheckpoint()`, `StrideCheckpoint(K)` | `FullCheckpoint()` |
 
-Every combination is valid for the split-sweep schemes; the Lin–Rood tape
-supports device storage only. The 4D-Var driver reads the same choices from
-`[adjoint.tape]` (`scripts/inversions/cs_4dvar.jl`).
+Every storage and schedule is valid for the split-sweep schemes; the Lin–Rood
+tape supports device storage only; `AirMassTape()` takes `FullCheckpoint()` and
+a scheme whose reverse reads the air mass only (below). The 4D-Var driver reads
+the same choices from `[adjoint.tape]` (`scripts/inversions/cs_4dvar.jl`).
+
+### [What the tape stages](@id adjoint-tape-compaction)
+
+The reverse of a split-sweep step reads, per operator, the air mass that
+entered it in the forward run (the sweeps rebuild each face coefficient from
+the donor air mass, the diffusion and convection solves and the air-mass
+reset read it too) and, for a monotone or CW84 PPM sweep, the limiter branches
+the forward took. A record stages each of these once (`StateTape`, the
+recorders in `src/Adjoints/Footprint/TapeRecorder.jl`):
+
+| Record | Stages | Shares |
+| --- | --- | --- |
+| sweep (X, Y, Z) | the air mass entering it; limited PPM: one byte of limiter branches per cell | — |
+| palindrome center (diffusion) | the air mass at the center | the reverse half's first Z sweep reads the same slot |
+| convection | — | the next step's first X sweep's slot, or the old air mass of a following `:preserve_vmr` reset; its own slot only before a `:preserve_tracer_mass` reset or at the end of a recording |
+| `:preserve_vmr` reset | the old and the target air mass | — |
+| Lin–Rood records | every state they read (unchanged; device copies outside the pool for the horizontal operator) | nothing |
+
+The sharing is exact, not an approximation:
+
+- The center's air mass is the buffer the first reverse-half Z sweep enters
+  with: the midpoint writes only the tracer (surface fluxes, the diffusion of
+  the mixing ratio), and no halo fill runs in between.
+- Convection leaves the air mass unchanged, and its reverse
+  (`_apply_cs_convection_adjoint!`: CMFMC, TM5 and the CMFMC matrix, which
+  delegates to TM5) reads interior columns only. Until the next sweep, only the
+  step-start halo fill writes the air mass, and only its halos; an air-mass
+  reset is recorded before it runs, so its old air mass equals the convection's,
+  halos included.
+- For fixed limiter branches the limited PPM face flux is linear in the tracer
+  mass, and its derivative depends on the tracer mass only through those
+  branches. With ``c_i = r_i / \max(m_i, m_\text{floor})``, the face flux
+  for ``F \ge 0`` is
+  ```math
+  f = \alpha\, r_1 + \alpha (1 - \alpha)\, s_1, \qquad
+  s_1 = m_1 \left[(q_R - c_1) - \kappa_1\right], \qquad \alpha = \operatorname{clamp}(F / m_1, 0, 1),
+  ```
+  where the edges ``q_L, q_R`` of cell 1 are the fourth-order edge (monotone)
+  or CW84 eq. 1.7 with minmod slopes, reset by the monotonicity constraints
+  (CW84 eqs. 1.10), and ``\kappa_1 = \alpha b_0`` the CW84 curvature term
+  (zero for the monotone limiter). Every piece is linear in ``c`` once the
+  minmod branch of each slope (zero, centred, forward, backward) and the profile
+  branch of each cell (extremum, left edge reset, right edge reset, unchanged)
+  are fixed; ``m`` and ``F`` give the rest. So the tape keeps one byte per cell
+  and sweep (`PPMLimiterCodes`, bits 0–1 the profile branch, bits 2–3 the
+  CW84 minmod branch), computed when the record is made from the staged state
+  with the predicates and values the reverse used to evaluate on the tracer
+  mass, each cell's stencil clamped to its axis as the reverse clamps it (y at
+  the padded panel edges, z at the column ends; the minmod is zero whenever two
+  of its cells are equal, so the clamped stencil of a cell gives the code of
+  every face that reads it). The reverse kernels (`_ppm_face_coeffs`) apply the
+  derivative of the recorded branch in the operation order of the previous
+  tracer-mass reverse; on one CPU thread the gradients are bit for bit those of
+  the tracer-mass tape (the bitwise gate below; 0 of 1.6 million random faces
+  differed in a direct comparison, all branches taken). One fused launch
+  computes the codes of a sweep's six panels.
+
+Tape per palindrome pass, with ``S`` the bytes of one air-mass state
+(``6 (N_c + 2H_p)^2 N_z`` floats) and ``f`` the float size: ``6S`` for the
+linear schemes and ``6S(1 + 1/f)`` for limited PPM, plus ``2S`` per
+`:preserve_vmr` reset and ``S`` per convection record with no later air mass
+to share (the last one of a recording, one before a `:preserve_tracer_mass`
+reset). `cs_tape_byte_estimate` counts it, and the mmap tier reserves it, with
+the recorder's own hooks (`_CSCountingRecorder`). On the C90 MERRA-2 day of the
+benchmarks (Float32, 48 steps, ``S`` = 15.93 MB, CPU size accounting of the
+recorded tape):
+
+| scheme, physics | before: states, MB per step (GB per day) | now: states, MB per step (GB per day) |
+| --- | --- | --- |
+| upwind, slopes, PPM; no physics | 6, 95.6 (21.5) | 6, 95.6 (21.5) |
+| upwind, slopes, PPM; convection + diffusion | 8, 127.4 (28.7) | 6.02, 95.9 (21.6): −25 % |
+| monotone, CW84 PPM; no physics | 12, 191.1 (43.0) | 7.5, 119.4 (26.9): −38 % |
+| monotone, CW84 PPM; convection + diffusion | 14, 223.0 (50.2) | 7.52, 119.8 (27.0): −46 % |
+
+States are air-mass-state equivalents (a code panel counts 1/4); a day is
+225.14 steps. CMFMC convection and diffusion every step, CFL subcycles of the
+replay (one pass per step on this day). The counted bytes equal the bytes of a
+recorded device tape (first 4 steps), and `cs_tape_byte_estimate` equals the
+count.
+
+The record of a limited PPM sweep makes one code launch in place of six
+tracer-mass copies, and the center and convection records make none in place
+of six copies each: per step with convection and diffusion, 84 staging
+launches become 42 for limited PPM and 48 become 36 for the linear schemes.
+The reverse pass launches the same kernels as before, reading one byte per cell
+instead of the tracer mass.
+
+`AirMassTape()` is for the schemes whose reverse reads the air mass only,
+`tape_dependence(scheme) isa AirMassDependence`: `UpwindScheme()`,
+`SlopesScheme(NoLimiter())` and `PPMScheme(NoLimiter())`, whose sweeps are
+linear in the tracer mass; the reverse of every other operator with an
+adjoint (convection, diffusion, surface fluxes, resets) reads only the air
+mass, the met forcing and the clock. Its tape does not depend on the tracer or
+the emissions, so the first forward run of a call records it and every later
+forward run of the call (the later evaluations of
+`cs_surface_flux_4dvar_optimize`) runs without a recorder and walks it. Before
+a reuse the call recomputes the forward run's identity and compares it with
+the recording's: the grid, the number of taped steps, the met windows (window,
+step length and clock of every step), the scheme, step plan and operators, and
+content checksums of the met inputs (initial air mass, face fluxes, convection
+forcing, diffusion layer thickness, and the interiors of the reset targets,
+whose halos a reset refreshes in place; a position-weighted wrapping sum of
+bit patterns, the same on any backend); and the tape pool's generation.
+Device reductions collect all checksums into one result vector with one
+host transfer per evaluation. The checksums detect permutations but remain a
+within-runtime guard, not a collision-free fingerprint. Holding the tape
+also rejects records with tracer payloads. A
+difference is an `ArgumentError` naming it. Limited PPM and Lin–Rood
+(`TracerDependence`) with `AirMassTape()` are an `ArgumentError` before any
+forward run, as is `AirMassTape()` with `StrideCheckpoint` (its windows are
+re-recorded from tracer-dependent checkpoints in every reverse pass). On one
+CPU thread (C32 L20 Float64, 8 steps, upwind with TM5 convection and diffusion,
+a three-evaluation optimization, before the position-weighted checksum change)
+there was no measurable difference with a CPU device-array tape (min-of-three
+−0.4 %, within run-to-run spread), and an mmap evaluation took 1.5 % less time;
+the costs were the same bit for bit. GPU timings remain pending. With
+`flux_scale ≠ 1`, the held tape retains the first evaluation's scaled flux
+copies throughout the optimization; later evaluations allocate another set,
+so peak scaled-flux memory is twice one set.
 
 ### Checkpoint schedules
 
@@ -231,24 +353,29 @@ system. A file system that cannot reserve blocks for in-place writes (no
 
 ### Bitwise gate of the tape
 
-`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of nine
+`test/core/test_cs_adjoint_tape_bitwise.jl` runs a pairwise set of ten
 configurations in a single-threaded subprocess
 (`test/helpers/cs_adjoint_tape_harness.jl`): upwind, unlimited slopes and
-PPM, monotone and CW84 PPM, Float64 and Float32, TM5, CMFMC and CMFMC-matrix
-convection at substep and window cadence, both diffusion couplings, every
-air-mass reset mode and CFL subcycles. The fields are rough (random values,
-spikes, exact zeros and ties, sign changes; fluxes from a random
-streamfunction per panel plus noise; nonzero emission rates), and the test
-requires every branch of the monotone profile limiter and of the CW84 minmod
-slopes to occur on the recorded tape, per axis and next to the panel seams.
-Footprints, initial adjoints, seeded and multi-objective footprints (the
-Jacobian also under `StrideCheckpoint`, whose windows serve both objectives),
-the 4D-Var cost, simulated values and gradient (with a co-sample after the
-last assimilated step) and a two-iteration gradient-descent optimization
-(whose evaluations share one tape pool) of every storage × schedule variant
-must equal the default tape's reference bit for bit, and the reference must equal the
+PPM, monotone and CW84 PPM, Lin–Rood, Float64 and Float32, TM5, CMFMC and
+CMFMC-matrix convection at substep and window cadence, both diffusion
+couplings, every air-mass reset mode and CFL subcycles. The fields are rough
+(random values, spikes, exact zeros and ties, sign changes; fluxes from a
+random streamfunction per panel plus noise; nonzero emission rates), and the
+test requires every branch of the monotone profile limiter and of the CW84
+minmod slopes to occur in the limiter codes of the recorded tape, per axis and
+next to the panel seams. Footprints, initial adjoints, seeded and
+multi-objective footprints (the Jacobian also under `StrideCheckpoint`, whose
+windows serve both objectives), the 4D-Var cost, simulated values and gradient
+(with a co-sample after the last assimilated step) and a two-iteration
+gradient-descent optimization (whose evaluations share one tape pool) of every
+storage × schedule variant, and for the linear schemes of `AirMassTape()`
+(the optimization's later evaluations reuse the first one's tape), must equal
+the default tape's reference bit for bit, and the reference must equal the
 SHA-1 digests recorded from main on the reference host
-(`test/fixtures/cs_adjoint_tape_digests.toml`). Two of the configurations
+(`test/fixtures/cs_adjoint_tape_digests.toml`). Main recorded the tracer mass
+of every limited sweep, so the gate holds the limiter codes, the shared center
+and convection slots and the reused air-mass tape to the gradients of the
+uncompacted tape. Two of the configurations
 also evaluate every observation operator of the 4D-Var (a time window, placed
 points by height and by pressure, averaging-kernel columns with the rebin and
 the hat projection, a cell average, a column the surface-pressure screen
@@ -259,8 +386,11 @@ Two others take their inputs from `cs_adjoint_inputs` of a production
 capture: each met window's shared fluxes under CFL subcycles, full-window flux
 storage scaled per window, CMFMC sub-steps and per-window diffusion layer
 thickness, and under the binary window contract with a window-end reset. The
-full matrix (50 configurations and the two captured ones) is the opt-in
-`test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
+full matrix (50 configurations, two Lin–Rood ones and the two captured ones)
+is the opt-in `test/diagnostic/test_cs_adjoint_tape_bitwise_full.jl`.
+`test/core/test_cs_tape_compaction.jl` checks which records share a slot, that
+the counting recorder and `cs_tape_byte_estimate` count the recorded tape
+exactly, and the bytes per step.
 
 ### Inversion scaffold
 

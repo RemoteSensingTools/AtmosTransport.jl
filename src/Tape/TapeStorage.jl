@@ -23,8 +23,8 @@
 # `_release_tape_pool!` frees the memory now, not at a later GC.
 #
 # Host pools (`_AbstractHostTapePool`) copy every read into a device read
-# cache per read role (`AirMassRead`, `TracerMassRead`) and panel shape; their
-# slot views never leave the pool.
+# cache per read role (`AirMassRead`, `TracerMassRead`, `LimiterCodeRead`) and
+# panel shape; their slot views never leave the pool.
 # ---------------------------------------------------------------------------
 
 """
@@ -100,11 +100,20 @@ struct AirMassRead <: AbstractTapeReadRole end
 """
     TracerMassRead()
 
-Read role of the staged tracer-mass state of a limited-PPM or FV3-profile
-sweep record, which the reverse sweep reads together with the record's air
-mass.
+Read role of the staged tracer-mass state of an FV3-profile sweep record,
+which the reverse sweep reads together with the record's air mass, and of the
+target air mass of a `:preserve_vmr` reset record.
 """
 struct TracerMassRead <: AbstractTapeReadRole end
+
+"""
+    LimiterCodeRead()
+
+Read role of the limiter branch codes of a limited-PPM sweep record (six
+`UInt8` panels), which the reverse sweep reads together with the record's air
+mass.
+"""
+struct LimiterCodeRead <: AbstractTapeReadRole end
 
 """
     StaleTapeSlotError(msg)
@@ -277,21 +286,23 @@ end
 _same_shapes(slab::NTuple{6}, panels::NTuple{6}) =
     all(p -> size(slab[p]) == size(panels[p]), 1:6)
 
-# The next slab for `panels`: the one at the cursor when it has their type and
-# shapes, else a new one (`similar`) in its place.
-function _take_slab!(pool::_DeviceSlabPool, panels::NTuple{6, A}) where {A <: AbstractArray}
+# The next slab for `panels`: the one at the cursor when its type and shapes
+# match (or the requested element type for a computed slot), else a new one.
+function _take_slab!(pool::_DeviceSlabPool, panels::NTuple{6, A},
+                     ::Type{T} = eltype(first(panels))) where {A <: AbstractArray, T}
     i = (pool.cursor += 1)
     if i <= length(pool.slabs)
         old = pool.slabs[i]
-        old isa NTuple{6, A} && _same_shapes(old, panels) && return old
+        compatible = T === eltype(A) ? old isa NTuple{6, A} : old isa NTuple{6, <:AbstractArray{T}}
+        compatible && _same_shapes(old, panels) && return old
         # Allocate before freeing: if the allocation fails, the pool still owns
         # the old slab (and frees it once, on release).
-        fresh = ntuple(p -> similar(panels[p]), 6)
+        fresh = ntuple(p -> similar(panels[p], T), 6)
         pool.slabs[i] = fresh
         _free_tape_panels!(old)
         return fresh
     end
-    fresh = ntuple(p -> similar(panels[p]), 6)
+    fresh = ntuple(p -> similar(panels[p], T), 6)
     push!(pool.slabs, fresh)
     return fresh
 end
@@ -326,6 +337,24 @@ Allocate a slot in `pool` and copy `panels` into it.
 function _stage_panels(pool, panels::NTuple{6})
     slot = _allocate_tape_slot(pool, panels)
     return stage_panels!(slot, panels)
+end
+
+"""
+    _stage_computed(fill_panels!, pool, template[, T]) -> slot
+
+Allocate a slot shaped like `template` (six panels on the source backend) and
+fill it with `fill_panels!(dest)`, which writes six panels of that shape (a
+kernel queued on the backend). Device pools accept an element type `T`, so
+the source panels can template a code slot without a scratch allocation.
+A device slot is filled in place; any other pool's slot (host memory) is
+filled through `template` as scratch, which is then staged.
+"""
+function _stage_computed(fill_panels!, pool::_DeviceSlabPool, template::NTuple{6},
+                         ::Type{T} = eltype(first(template))) where {T}
+    _require_open(pool)
+    slot = CSTapeSlot(pool, _take_slab!(pool, template, T), pool.generation)
+    fill_panels!(slot.panels)
+    return slot
 end
 
 # ---------------------------------------------------------------------------
@@ -370,6 +399,9 @@ reservation.
 """
 _tape_slot_bytes(panels::NTuple{6}) =
     sum(p -> _align_tape_bytes(sizeof(eltype(panels[p])) * length(panels[p])), 1:6)
+# ... of six panels of element type `T` shaped like `like`.
+_tape_slot_bytes(::Type{T}, like::NTuple{6}) where T =
+    sum(p -> _align_tape_bytes(sizeof(T) * length(like[p])), 1:6)
 
 # The six panel views of a slot whose memory starts at `base` (64-byte aligned).
 function _host_views(base::Ptr{UInt8}, panels::NTuple{6})
@@ -444,6 +476,11 @@ function stage_panels!(slot::HostCSTapeSlot, src::NTuple{6})
     return slot
 end
 
+function _stage_computed(fill_panels!, pool, scratch::NTuple{6})
+    fill_panels!(scratch)
+    return _stage_panels(pool, scratch)
+end
+
 function _tape_panels(slot::HostCSTapeSlot, role::AbstractTapeReadRole)
     pool = slot.pool
     _require_current(pool, slot.generation)
@@ -461,3 +498,5 @@ end
 
 _bytes_per_panel_tuple(panels::NTuple{6}) =
     sum(sizeof(eltype(panels[p])) * length(panels[p]) for p in 1:6)
+_bytes_per_panel_tuple(::Type{T}, like::NTuple{6}) where T =
+    sum(sizeof(T) * length(like[p]) for p in 1:6)

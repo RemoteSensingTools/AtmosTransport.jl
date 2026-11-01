@@ -3,8 +3,10 @@
 # Bitwise gate of the cubed-sphere adjoint tape (core set).
 #
 # Every `AdjointTape` storage (device, pinned host, mmap) and checkpoint
-# schedule (Full, Stride with K not dividing the met windows) must give the
-# gradients of the default tape (device, FullCheckpoint) bit for bit:
+# schedule (Full, Stride with K not dividing the met windows), and for the
+# linear schemes `AirMassTape` (one recording reused by the optimization's
+# later evaluations), must give the gradients of the default tape (`StateTape`,
+# device, FullCheckpoint) bit for bit, also for Lin–Rood (device tape):
 # footprints and initial adjoints of the objective, seeded and multi-objective
 # entry points (the Jacobian also under Stride, whose windows serve both
 # objectives), the 4D-Var cost, simulated values and gradient (on two cases
@@ -15,12 +17,13 @@
 # captures from a production simulation, with each met window's fluxes shared
 # by its steps. The fields are rough, so the limited PPM reverse runs through
 # every limiter branch on every axis and at the seams, which the test
-# requires. On the host that recorded
-# `fixtures/cs_adjoint_tape_digests.toml` the reference digests must also equal
-# the recorded ones, so a change of the tape internals has to reproduce the
-# recorded gradients bit for bit. Every array the tape frees explicitly is
-# filled with NaN when it is freed, so a free placed before the last read of
-# an array (a use-after-free on a GPU, a no-op on the CPU) changes the digests.
+# requires (counted in the limiter codes the tape records). On the host that
+# recorded `fixtures/cs_adjoint_tape_digests.toml` the reference digests must
+# also equal the recorded ones, so a change of the tape internals has to
+# reproduce the recorded gradients bit for bit. Every array the tape frees
+# explicitly is filled with NaN (limiter codes: 0xff) when it is freed, so a
+# free placed before the last read of an array (a use-after-free on a GPU, a
+# no-op on the CPU) changes the digests.
 #
 # The cases run in a single-threaded subprocess (`helpers/cs_adjoint_tape_harness.jl`,
 # whose header documents its command line): CPU atomics are reproducible only on

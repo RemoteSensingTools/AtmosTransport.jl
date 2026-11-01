@@ -1,5 +1,5 @@
 # Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
-# recorded from main (809a15942) on the [host] below; see test/README.md.
+# recorded from main (cbc2e18a2) on the [host] below; see test/README.md.
 
 [cases.captured_cw84_tm5win_boundary_vmr.footprint]
 footprints = "2409503a14d9f1b2495e43cb7cf607d87bc04886"
@@ -145,6 +145,29 @@ gradients = "e60f3d6e525c00c6598988ec0da27722bed6b59b"
 [cases.f64_cw84_tm5win_boundary_vmr.seeded]
 footprints = "63c64f034e9ab1ea9ac8c16e9219b34e3ab378cd"
 initial_adjoint = "7e41a3a68f4f3c7aba8d2cdc190c2d947b4c427b"
+
+[cases.f64_linrood5_tm5win_boundary_vmr.footprint]
+footprints = "9860d731bfdf9ef325ce6772e8eb9f285b12e903"
+initial_adjoint = "0e6c23ec25b2d7a057dcc5d347ccbd6ca113230c"
+
+[cases.f64_linrood5_tm5win_boundary_vmr.fourdvar]
+cost = "a2f5dd343c8de33730d4e69d04087e8b5c98c525"
+gradients = "61d3b6aa25bed3d84aece7409f24e8ec3e0cc3b5"
+simulated = "a8e3e142a1e348adf0d6f628e27040119a94f596"
+
+[cases.f64_linrood5_tm5win_boundary_vmr.jacobian]
+footprints = "39a52999f92830c7c9182639e640870ce0527a74"
+initial_adjoint = "8737eb13ebf18f904da53d600ecfb2da780e2962"
+windows = "b5f65a4c0e4daa1b66409a8eab18c200f260a0b5"
+
+[cases.f64_linrood5_tm5win_boundary_vmr.optimize]
+controls = "c37ca65d15ec78372004895b79f80141d7fcfe49"
+cost_history = "ae22fc4ef8051d68536fbf93dc01c24e6cab4e6b"
+gradients = "609c2156ec130ff7b8ace2ccf2f829357295564d"
+
+[cases.f64_linrood5_tm5win_boundary_vmr.seeded]
+footprints = "de171bb1b27fd98e0bc352d6844421634cf00d7b"
+initial_adjoint = "657e4f3c8ab66299ba63091ed73d0991406abf05"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.footprint]
 footprints = "976380b00132cfeec852396c14dc927adf235fcd"
