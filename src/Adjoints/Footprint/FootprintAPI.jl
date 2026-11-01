@@ -11,10 +11,11 @@
 #   * `_cs_surface_footprints` — the one checkpoint dispatch behind both
 #     entry points and `cs_surface_flux_jacobian` (several objectives on one
 #     recording). It builds the replay of the production step plan
-#     (`_cs_replay_for_call`, which runs the setup guard) and hands it to the
-#     Full, Stride or Revolve driver (`_collect_footprints`). The 4D-Var
-#     gradient records during its observation forward run instead and calls
-#     the drivers' phases itself (`StrideCheckpoint.jl`).
+#     (`_cs_replay_for_call`, which runs the setup guard) and the runtime of
+#     the `tape` (`TapeRuntime.jl`), and hands both to the Full or Stride
+#     driver (`_collect_footprints`). The 4D-Var gradient records during its
+#     observation forward run instead and calls the drivers' phases itself
+#     (`StrideCheckpoint.jl`).
 # ---------------------------------------------------------------------------
 
 """
@@ -106,14 +107,15 @@ starts) and the diffusion workspaces' `factors` as scratch; do not pass a live
 production model's workspaces. `cs_adjoint_inputs(sim)` captures every input
 of a `DrivenSimulation` configuration, with fresh workspaces.
 
-`tape_storage` selects where the tape's staged states live: `:device` (the
-default), `:pinned_host`, a pre-constructed `DeviceCSTapeStorage()` or
-`PinnedHostCSTapeStorage()` (the caller's: neither sized nor released by the
-call), or `MmapCSTapeStorage(dir)`, a scratch file in `dir` (required) that
-is sized and reserved before the tape is recorded and unmapped and closed
-when the call returns. `checkpoint` (`FullCheckpoint()`,
-`StrideCheckpoint(K)` or `RevolveCheckpoint()`) trades recomputation for tape
-size; every storage works with every schedule. The Lin–Rood tape is device-only.
+`tape` is an [`AdjointTape`](@ref): where the staged states live
+(`storage`: `DeviceCSTapeStorage()`, the default; `PinnedHostCSTapeStorage()`;
+or `MmapCSTapeStorage(dir)`, a scratch file in `dir`, sized and reserved
+before the tape is recorded) and how much of the run is taped at once
+(`checkpoint`: `FullCheckpoint()`, the default, or `StrideCheckpoint(K)`,
+which trades one extra forward run for a tape of `K` steps). Every storage
+works with every schedule. The call opens the tape's memory, reuses it for
+every stride window and frees it (unmaps and closes an mmap file) when it
+returns. The Lin–Rood tape is device-only.
 """
 function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        panels_am_steps,
@@ -133,20 +135,19 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        convection_op = NoConvection(),
                                        convection_forcing = nothing,
                                        convection_workspace = nothing,
-                                       tape_storage = :device,
-                                       checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
+                                       tape::AdjointTape = AdjointTape())
     return only(_cs_objective_footprints(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, (objective,);
         scheme, dt, schedule, flux_scale, cfl_limit, base_emission_rates,
         diffusion_op, diffusion_workspace, diffusion_meteo,
-        convection_op, convection_forcing, convection_workspace,
-        tape_storage, checkpoint))
+        convection_op, convection_forcing, convection_workspace, tape))
 end
 
 # The footprints of several final-time objectives on one trajectory, with the
 # keywords (and defaults) of `cs_surface_emission_footprint`. Every checkpoint
-# schedule records (and recomputes) once for all objectives.
+# schedule records (and re-records each stride window) once for all
+# objectives.
 # `cs_surface_flux_jacobian` calls it with all of its objectives.
 function _cs_objective_footprints(panels_rm0, panels_m0,
                                   panels_am_steps,
@@ -166,19 +167,17 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   convection_op = NoConvection(),
                                   convection_forcing = nothing,
                                   convection_workspace = nothing,
-                                  tape_storage = :device,
-                                  checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
+                                  tape::AdjointTape = AdjointTape())
     Nz = size(panels_rm0[1], 3)
     starts = [_ObjectiveStart(objective) for objective in objectives]
     foreach(start -> _validate_start(start, mesh, Nz), starts)
     return _cs_surface_footprints(panels_rm0, panels_m0,
                                   panels_am_steps, panels_bm_steps, panels_cm_steps,
                                   mesh, starts;
-                                  scheme, checkpoint, dt, schedule, flux_scale, cfl_limit,
+                                  scheme, tape, dt, schedule, flux_scale, cfl_limit,
                                   base_emission_rates,
                                   diffusion_op, diffusion_workspace, diffusion_meteo,
-                                  convection_op, convection_forcing, convection_workspace,
-                                  tape_storage)
+                                  convection_op, convection_forcing, convection_workspace)
 end
 
 """
@@ -198,6 +197,7 @@ operator and the result holds the emission footprints. `surface_flux = false`
 replays a configuration without surface sources (palindrome center `V(dt)`):
 the result's `footprints` are empty and `initial_adjoint` is the
 initial-condition sensitivity `dJ/drm_0`, which every result also carries.
+`tape` is an [`AdjointTape`](@ref), as for `cs_surface_emission_footprint`.
 """
 function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  panels_m0,
@@ -219,8 +219,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  convection_op = NoConvection(),
                                                  convection_forcing = nothing,
                                                  convection_workspace = nothing,
-                                                 tape_storage = :device,
-                                                 checkpoint::AbstractCheckpointSchedule = FullCheckpoint())
+                                                 tape::AdjointTape = AdjointTape())
     # The tape is recorded around `base_panels_rm0`, zero when unspecified; it
     # matters only for the limited schemes, whose reverse replays branches of
     # the base trajectory.
@@ -230,11 +229,10 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
     return only(_cs_surface_footprints(
         tape_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, [_SeedStart(final_adjoint_rm)];
-        scheme, checkpoint, dt, schedule, surface_flux, flux_scale, cfl_limit,
+        scheme, tape, dt, schedule, surface_flux, flux_scale, cfl_limit,
         base_emission_rates,
         diffusion_op, diffusion_workspace, diffusion_meteo,
-        convection_op, convection_forcing, convection_workspace,
-        tape_storage))
+        convection_op, convection_forcing, convection_workspace))
 end
 
 # ---------------------------------------------------------------------------
@@ -243,19 +241,20 @@ end
 
 """
     _cs_surface_footprints(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                           panels_cm_steps, mesh, starts; scheme, checkpoint, dt,
+                           panels_cm_steps, mesh, starts; scheme, tape, dt,
                            schedule, surface_flux, flux_scale, cfl_limit,
                            base_emission_rates, diffusion_op, diffusion_workspace,
                            diffusion_meteo, convection_op, convection_forcing,
-                           convection_workspace, tape_storage)
+                           convection_workspace)
         -> Vector{CSFootprintResult}
 
 One `CSFootprintResult` per adjoint start in `starts` (`_ObjectiveStart`,
 `_SeedStart`), on the replay of every step of the step plan recorded around
-`tape_rm0` and `base_emission_rates`. Validates the inputs and the plan's
-adjoint support once, then dispatches on `checkpoint` to the Full, Stride or
-Revolve driver. The public footprint entry points and
-`cs_surface_flux_jacobian` come through here.
+`tape_rm0` and `base_emission_rates`. Validates the inputs, the tape and the
+plan's adjoint support once, then runs the Full or Stride driver of
+`tape.checkpoint` with a runtime of `tape` that is released when it returns.
+The public footprint entry points and `cs_surface_flux_jacobian` come
+through here.
 """
 function _cs_surface_footprints(tape_rm0, panels_m0,
                                 panels_am_steps,
@@ -264,7 +263,7 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 mesh::CubedSphereMesh,
                                 starts::AbstractVector;
                                 scheme::CSAdjointSupportedScheme,
-                                checkpoint::AbstractCheckpointSchedule,
+                                tape::AdjointTape,
                                 dt = nothing,
                                 schedule = nothing,
                                 surface_flux::Bool = true,
@@ -276,14 +275,13 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 diffusion_meteo,
                                 convection_op,
                                 convection_forcing,
-                                convection_workspace,
-                                tape_storage)
-    _require_tape_storage_supported(scheme, tape_storage)
+                                convection_workspace)
+    _require_tape_supported(scheme, tape)
     replay, step_dt = _cs_replay_for_call(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                                           panels_cm_steps, mesh; scheme, dt, schedule,
                                           surface_flux, base_emission_rates, flux_scale,
                                           cfl_limit, diffusion_op, diffusion_workspace,
                                           diffusion_meteo, convection_op, convection_forcing,
                                           convection_workspace)
-    return _collect_footprints(checkpoint, replay, starts, step_dt; tape_storage)
+    return _with_tape_runtime(runtime -> _collect_footprints(replay, starts, step_dt, runtime), tape)
 end

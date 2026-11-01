@@ -2,12 +2,13 @@
 # Tape recorders: the step recorders (`Operators.AbstractStepRecorder`) the
 # adjoint passes to the production step.
 #
-#   * `_CSTapeRecorder` stages each hook's input in tape storage and pushes one
-#     tape record per hook, so the tape holds exactly the operators production
-#     ran, in production order.
+#   * `_CSTapeRecorder` stages each hook's input in the call's tape pool (what
+#     it stages is the tape's content, `FullStateTape`) and pushes one tape
+#     record per hook, so the tape holds exactly the operators production ran,
+#     in production order.
 #   * `_CSCountingRecorder` counts the records and staged bytes a tape
-#     recorder would write (`cs_tape_byte_estimate`, and the extent an mmap
-#     tape reserves before recording).
+#     recorder of the same content would write (`cs_tape_byte_estimate`, and
+#     the extent an mmap tape reserves before recording).
 #
 # Both implement every hook the cubed-sphere step reaches; a hook they do not
 # implement is a `MethodError`, never a skipped record. The reverse walk
@@ -15,15 +16,16 @@
 # ---------------------------------------------------------------------------
 
 # Hooks may observe arrays whose producing kernels are only queued (the
-# palindrome's halo exchanges run with `sync = false`). Device tape storage
+# palindrome's halo exchanges run with `sync = false`). The device pool
 # stages with device copies queued behind those kernels, so it needs no host
-# barrier; host-side storage copies into host memory and finishes them first.
-_sync_panels(::DeviceCSTapeStorage, _panels) = nothing
-_sync_panels(_storage, panels) = synchronize(get_backend(first(panels)))
+# barrier; host pools copy into host memory and finish them first.
+_sync_panels(::_DeviceSlabPool, _panels) = nothing
+_sync_panels(_pool, panels) = synchronize(get_backend(first(panels)))
 
-mutable struct _CSTapeRecorder{S} <: AbstractStepRecorder
+mutable struct _CSTapeRecorder{C <: AbstractTapeContent, S} <: AbstractStepRecorder
     ops                 :: Vector{Any}
-    storage             :: S
+    const content       :: C
+    const storage       :: S        # the tape pool the call opened
     step                :: Int
     time                :: Float64  # clock of the current step (`current_time` of the replay)
     center_m            :: Any      # staged air mass of the current palindrome center
@@ -31,8 +33,8 @@ mutable struct _CSTapeRecorder{S} <: AbstractStepRecorder
     linrood             :: Dict{Symbol, Any}   # phases of the Lin-Rood operator being recorded
 end
 
-_CSTapeRecorder(storage) = _CSTapeRecorder(Any[], storage, 0, 0.0, nothing, nothing,
-                                           Dict{Symbol, Any}())
+_CSTapeRecorder(content::AbstractTapeContent, pool) =
+    _CSTapeRecorder(Any[], content, pool, 0, 0.0, nothing, nothing, Dict{Symbol, Any}())
 
 function _begin_recorded_step!(r::_CSTapeRecorder, s::Int, diffusion_workspace, time)
     r.step = s
@@ -51,7 +53,7 @@ record_halo!(r::_CSTapeRecorder, dir) = (push!(r.ops, _CSHaloRecord(dir)); nothi
 function record_sweep!(r::_CSTapeRecorder, direction::Symbol, scheme, panels_m, panels_rm,
                        panels_flux, flux_scale)
     _sync_panels(r.storage, panels_m)
-    _record_sweep!(r.ops, direction, scheme, panels_m, _single_tracer(panels_rm),
+    _record_sweep!(r.ops, r.content, direction, scheme, panels_m, _single_tracer(panels_rm),
                    panels_flux, flux_scale, r.storage)
     return nothing
 end
@@ -152,7 +154,8 @@ end
 # Counting recorder (tape byte estimate)
 # ---------------------------------------------------------------------------
 
-mutable struct _CSCountingRecorder <: AbstractStepRecorder
+mutable struct _CSCountingRecorder{C <: AbstractTapeContent} <: AbstractStepRecorder
+    const content :: C
     sweep        :: Int
     halo         :: Int
     midpoint     :: Int
@@ -168,7 +171,8 @@ mutable struct _CSCountingRecorder <: AbstractStepRecorder
     slot_bytes_through_step :: Vector{Int}    # `slot_bytes` at the end of each counted step
 end
 
-_CSCountingRecorder() = _CSCountingRecorder(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Int[])
+_CSCountingRecorder(content::AbstractTapeContent) =
+    _CSCountingRecorder(content, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Int[])
 
 _bytes_of(panels) = sum(p -> sizeof(eltype(p)) * length(p), panels)
 
@@ -190,7 +194,7 @@ end
 record_halo!(r::_CSCountingRecorder, _dir) = (r.halo += 1; nothing)
 function record_sweep!(r::_CSCountingRecorder, _direction, scheme, panels_m, _rm, _flux, _scale)
     r.sweep += 1
-    for _ in 1:_staged_tuples_per_sweep(scheme)
+    for _ in 1:_staged_tuples_per_sweep(r.content, scheme)
         _count_state!(r, panels_m)
     end
     return nothing
@@ -216,7 +220,8 @@ function record_air_mass_reset!(r::_CSCountingRecorder, mode, state, target)
     return nothing
 end
 record_chemistry!(::_CSCountingRecorder, ::NoChemistry, _dt) = nothing
-record_chemistry!(r::_CSCountingRecorder, op, dt) = record_chemistry!(_CSTapeRecorder(nothing), op, dt)
+record_chemistry!(r::_CSCountingRecorder, op, dt) =
+    record_chemistry!(_CSTapeRecorder(r.content, nothing), op, dt)
 # A Lin-Rood horizontal record stages four full-panel states (rm, m and the
 # two predictor-buffer phases) and five face-panel tuples (fx_in, fx_out,
 # fy_in and the interior face fluxes am, bm).

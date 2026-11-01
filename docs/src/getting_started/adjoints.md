@@ -177,15 +177,18 @@ and merged convection branches do not yet have a supported footprint reverse
 pass. Nonlinear limiters require derivatives around a specified base trajectory;
 finite differences that switch limiter branches need careful interpretation.
 
-Recording every step is simplest for this tiny example. Long runs trade memory
-for recomputation using `StrideCheckpoint(k)` or the bisection-based
-`RevolveCheckpoint()`. Lin–Rood currently requires device tape storage. These
-choices and the exact supported combinations belong in [Adjoint status](@ref).
+Recording every step on the device is simplest for this tiny example. Long
+runs pass a `tape = AdjointTape(; storage, checkpoint)`: host or on-disk
+storage when the tape does not fit on the device, and `StrideCheckpoint(k)`
+to trade one extra forward run for a tape of `k` steps. Lin–Rood currently
+requires device tape storage. These choices and the exact supported
+combinations belong in [Adjoint status](@ref).
 
 The forward and inversion TOML files are **different interfaces**. Adding
-`[adjoint]` to a forward run does not create an inversion, and the inversion
-driver rejects forward-run tables such as `[diffusion]` or `[convection]`
-that it does not read. The shipped inversion
+`[adjoint]` to a forward run does not create an inversion (in the inversion
+driver, `[adjoint.tape]` chooses the tape), and the inversion driver rejects
+forward-run tables such as `[diffusion]` or `[convection]` that it does not
+read. The shipped inversion
 CLI assembles synthetic meteorology (constant, or a hydrostatic column) with
 inline observations or an observation file; real transport binaries require
 programmatic assembly (`bind_to_mesh` with a `CSObservationColumnMet` for

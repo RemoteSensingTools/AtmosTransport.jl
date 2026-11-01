@@ -18,7 +18,7 @@ using AtmosTransport: AtmosGrid, CubedSphereMesh, CubedSphereState,
     ConvectionForcing, TransportModel, step!, fill_panel_halos!
 using AtmosTransport.Architectures: CPU, GPU, architecture_label,
     device_name, ensure_runtime!, array_adapter, synchronize_architecture!
-using AtmosTransport.Adjoints: CSColumnMeanObjective, cs_surface_emission_footprint
+using AtmosTransport.Adjoints: AdjointTape, CSColumnMeanObjective, cs_surface_emission_footprint
 using AtmosTransport.Grids: GEOSNativePanelConvention
 using AtmosTransport.Operators.Advection: NoLimiter
 using AtmosTransport.State: CubedSphereFaceFluxState, DryBasis
@@ -452,7 +452,7 @@ function _time_adjoint_case(case::BenchmarkCase)
         cs_surface_emission_footprint(panels_rm, payload.panels_m,
                                       panels_am_steps, panels_bm_steps,
                                       panels_cm_steps, payload.mesh, objective;
-                                      scheme = scheme, dt = dt, tape_storage = :device)
+                                      scheme = scheme, dt = dt, tape = AdjointTape())
     end
 
     times = Float64[]
@@ -463,7 +463,7 @@ function _time_adjoint_case(case::BenchmarkCase)
                                                panels_am_steps, panels_bm_steps,
                                                panels_cm_steps, payload.mesh, objective;
                                                scheme = scheme, dt = dt,
-                                               tape_storage = :device)
+                                               tape = AdjointTape())
         _sync(case.backend)
         push!(times, (time_ns() - t0) / 1e9)
         result === nothing && error("adjoint benchmark returned no result")

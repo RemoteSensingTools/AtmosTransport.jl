@@ -6,13 +6,14 @@ using ....Grids: CubedSphereMesh
 using ....Operators.Diffusion: NoDiffusion
 using ....Operators.Convection: NoConvection
 using ....Parameters: DEFAULT_CFL_LIMIT
-using ....Tape: AbstractCheckpointSchedule, FullCheckpoint
+using ....Tape: AdjointTape
 using ...Adjoints: AbstractCSFootprintObjective, CSAdjointSupportedScheme, _assemble_step_forcing, _require_cs_convection_workspace, _validate_cs_diffusion_inputs, _zero_surface_rates
 using ..ObservationBinding: CSObservation, CSObservationSet, CSObservationStencil, _observation_replay,
     _observe_cs_forward!
 import ..ObservationBinding: build_departure_set
-using ...Footprint: CSFootprintResult, _UntapedRun, _begin_taped_run, _cs_objective_footprints,
-    _end_taped_run!, _forced_reverse, _require_tape_storage_supported, _validate_step_sequences
+using ...Footprint: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run,
+    _cs_objective_footprints, _end_taped_run!, _forced_reverse, _require_tape_supported,
+    _validate_step_sequences, _with_tape_runtime
 
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult, CSSurfaceFluxControl, CS4DVarResult,
     CS4DVarSolveResult, AbstractCSSurfaceFluxCovariance, DiagonalCSCovariance,

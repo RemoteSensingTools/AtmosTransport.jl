@@ -131,8 +131,9 @@ _label(c::Case) = "$(nameof(typeof(c.scheme))) $(something(c.cadence, :window)) 
     "reset=$(c.reset)" * (c.vary_ps ? " per-window ps" : "") *
     (c.flux_kind === :substep_mass_amount ? "" : " $(c.flux_kind)")
 
-# The production simulation of a case (not yet run) and its initial state.
-function _simulation(c::Case; rate_scale = 1.0, rm_perturbation = nothing)
+# The production simulation of a case (not yet run) and its initial state;
+# `kw` goes to `DrivenSimulation`.
+function _simulation(c::Case; rate_scale = 1.0, rm_perturbation = nothing, kw...)
     driver = _driver(; conv = c.conv, contract = c.contract, steps = c.steps,
                      vary_ps = c.vary_ps, flux_kind = c.flux_kind)
     air = ntuple(p -> copy(driver.windows[1].air_mass[p]), 6)
@@ -144,7 +145,7 @@ function _simulation(c::Case; rate_scale = 1.0, rm_perturbation = nothing)
                               convection = _convection_op(c.conv))
     sources = c.emissions ? (AT.SurfaceFluxSource(:CO2, ntuple(p -> rate_scale .* RATES[p], 6)),) : ()
     return AT.DrivenSimulation(model, driver; surface_sources = sources,
-                               physics_cadence = c.cadence, air_mass_reset_mode = c.reset)
+                               physics_cadence = c.cadence, air_mass_reset_mode = c.reset, kw...)
 end
 
 _rm(sim) = AT.get_tracer(sim.model.state, :CO2)

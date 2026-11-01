@@ -22,7 +22,7 @@
 #     zero). The base field is smooth, so a linearity witness shows J affine in
 #     the emissions over the stencil, and the identity must hold to 1e-9.
 #  5. Production transport, the tape replay and the FD forward agree bit for
-#     bit; Full, Stride and Revolve checkpointing agree to rounding; the tape and its byte
+#     bit; Full and Stride checkpointing agree to rounding; the tape and its byte
 #     estimate stage the tracer mass entering each FV3 sweep.
 # ---------------------------------------------------------------------------
 
@@ -264,7 +264,8 @@ end
     replay(recorded) = begin
         r, _ = AT.Adjoints.Footprint._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
                                                scheme, dt = 1.0, surface_flux = false)
-        recorded ? AT.Adjoints.Footprint._record_cs_tape!(r, 1:P.nsteps, AT.DeviceCSTapeStorage()) :
+        recorded ? AT.Adjoints.Footprint._record_cs_tape!(r, 1:P.nsteps, AT.FullStateTape(),
+                                                         AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0)) :
                    AT.Adjoints.Footprint._replay_steps!(r, 1:P.nsteps)
         (AT.Adjoints.Footprint._replay_rm(r), AT.Adjoints.Footprint._replay_m(r))
     end
@@ -274,14 +275,14 @@ end
     end
 end
 
-@testset "Lin–Rood FV3 vertical: Full, Stride and Revolve agree" begin
+@testset "Lin–Rood FV3 vertical: Full and Stride agree" begin
     P = _fv3_linrood_problem(; direction = -1, nsteps = 4)
     objective = AT.CSColumnMeanObjective(1, 1, 1)
     for ord in (5, 7), vertical in (FV3_PPM, FV3_PPM_SIGNED)
         scheme = AT.LinRoodPPMScheme(ord; vertical)
         full = _footprints(P, scheme, objective)
-        for checkpoint in (AT.StrideCheckpoint(1), AT.StrideCheckpoint(3), AT.RevolveCheckpoint())
-            replay = _footprints(P, scheme, objective; checkpoint)
+        for checkpoint in (AT.StrideCheckpoint(1), AT.StrideCheckpoint(2), AT.StrideCheckpoint(3))
+            replay = _footprints(P, scheme, objective; tape = AT.AdjointTape(; checkpoint))
             # Each window re-records from a checkpointed (rm, m) with the same
             # recorder, so it replays the same branches. The footprints agree to
             # the checkpoint contract's rounding tolerance (segment-boundary halo

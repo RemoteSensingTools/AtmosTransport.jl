@@ -96,9 +96,10 @@ end
 # The six panels in one queued launch (`copy_arrays!`).
 
 # All 18 flux panels in one launch on every device backend (CUDA, ROCm,
-# Metal): the stepping loop refreshes the model's fluxes every step; one launch
-# replaces 18 copies everywhere, and on Metal also the queue synchronization
-# that Metal.jl performs around every `copyto!`.
+# Metal): the stepping loop refreshes the model's fluxes at a window's first
+# step (every step when interpolated); one launch replaces 18 copies
+# everywhere, and on Metal also the queue synchronization that Metal.jl
+# performs around every `copyto!`.
 @inline function copy_fluxes!(dest::CubedSphereFaceFluxState, src::CubedSphereFaceFluxState)
     copy_arrays!((dest.am..., dest.bm..., dest.cm...), (src.am..., src.bm..., src.cm...))
     return dest

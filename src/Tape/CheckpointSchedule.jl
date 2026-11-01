@@ -2,21 +2,20 @@
 # Checkpoint schedules for tape reduction.
 #
 # `AbstractCheckpointSchedule` lets the user trade compute for tape storage
-# during the reverse pass. Two concrete schedules:
+# during the reverse pass (the `checkpoint` of an `AdjointTape`). Two concrete
+# schedules:
 #
 #   * `FullCheckpoint()` (default) — every step lives on the tape; zero
-#     recomputation, peak tape disk ~ nsteps × per-step panel bytes.
+#     recomputation, peak tape ~ nsteps × per-step panel bytes.
 #
-#   * `StrideCheckpoint(K)` — save full `panels_m` snapshots every K steps;
-#     during the reverse pass, replay each K-step window from its left-edge
-#     checkpoint into a throwaway window tape, walk that window in reverse,
-#     drop it, move to the previous window. Peak in-memory ops × K instead
-#     of × nsteps; peak window-tape disk ~ K × per-step panel bytes.
+#   * `StrideCheckpoint(K)` — save the replay state every K steps; during the
+#     reverse pass, re-record each K-step window from its left-edge checkpoint
+#     into the call's tape pool, walk that window in reverse for every adjoint
+#     start, rewind the pool, move to the previous window. Peak tape ~ K ×
+#     per-step panel bytes plus the checkpoints; one extra forward run.
 #
-#   * `RevolveCheckpoint()` — recursively bisect the step range. Peak snapshot
-#     storage is logarithmic in the number of steps; replay work is
-#     O(nsteps log nsteps). This is a bisection schedule, not optimal binomial
-#     Revolve.
+# An optimal binomial (Griewank–Walther) schedule is not implemented: no case
+# needs logarithmic snapshot memory yet.
 # ---------------------------------------------------------------------------
 
 abstract type AbstractCheckpointSchedule end
@@ -33,15 +32,22 @@ struct FullCheckpoint <: AbstractCheckpointSchedule end
 """
     StrideCheckpoint(K)
 
-Save a full `panels_m` checkpoint every `K` forward steps and recompute
-the in-window tape lazily during the reverse pass. `K` must be a positive
-integer; `K = 1` is degenerate (every step is a checkpoint and the
-recompute factor matches `FullCheckpoint`); `K >= nsteps` collapses to a
-single window (also degenerate but cheap on tape).
+Save the replay state (tracer and air mass with halos, and the persistent
+operator state) every `K` forward steps and re-record each `K`-step window
+from its checkpoint during the reverse pass. `K` must be a positive integer;
+`K = 1` checkpoints every step; `K >= nsteps` is a single window.
 
-Peak in-memory ops count and per-window tape disk are both ~`K` times
-the per-step cost; peak checkpoint memory is `cld(nsteps, K)` full
-`panels_m` copies.
+The tape holds one window at a time (~`K` times the per-step cost; the call's
+tape pool is rewound and reused for every window), plus `cld(nsteps, K)`
+checkpoints. Each window is recorded once and walked for every adjoint start
+(the objectives of a Jacobian), so the extra cost is one forward run.
+
+**Parity.** Every recorded step starts with production's step-start halo
+refresh (`fill_cs_step_start_halos!`), so the halos a step reads are a
+function of its interior state and a window that restarts at a checkpoint
+records the same states as `FullCheckpoint`: the footprints agree bit for bit
+on one CPU thread for every supported scheme and storage (issue #60 was the
+missing refresh).
 """
 struct StrideCheckpoint <: AbstractCheckpointSchedule
     K::Int
@@ -51,47 +57,6 @@ struct StrideCheckpoint <: AbstractCheckpointSchedule
         return new(Int(K))
     end
 end
-
-"""
-    RevolveCheckpoint()
-
-Logarithmic-memory checkpoint schedule. The driver bisects the step
-range recursively: at each level it propagates forward from a saved
-state to the midpoint, reverses the upper half, restores the saved
-state, then reverses the lower half. Peak snapshot memory is the
-recursion depth ~ `ceil(log2(nsteps))` state-pair copies; total
-recomputation work is ~`O(nsteps × log nsteps)` because each step is
-re-propagated once per recursion level on the path from root to
-leaf.
-
-This is a tractable bisection variant of Griewank-Walther Revolve —
-it does NOT compute optimal binomial splits. For `nsteps = 2880`
-(C180 / 14-day campaign) memory caps at ~12 simultaneous snapshots,
-which is the production target. A future commit can promote this to
-the optimal Revolve schedule (`RevolveCheckpoint(snapshots)` with a
-user-supplied snapshot cap) without changing the public API for
-single-call inversions.
-
-Trade-off vs `StrideCheckpoint(K)`:
-
-| Scheme                         | Memory          | Forward work  |
-|--------------------------------|-----------------|---------------|
-| `FullCheckpoint`               | O(nsteps)       | O(nsteps)     |
-| `StrideCheckpoint(K)`          | O(nsteps/K)     | ~2 × nsteps   |
-| `RevolveCheckpoint()` (bisect) | O(log nsteps)   | O(nsteps × log nsteps) |
-
-**Parity.** Every recorded step starts with production's step-start halo
-refresh (`fill_cs_step_start_halos!`), so the halos a step reads are a
-function of its interior state and a window that restarts at a bisection
-point records the same states as `FullCheckpoint`. Footprints agree with
-`FullCheckpoint` to rounding (tested at `atol = 1e-12`) for every supported
-scheme, including monotone PPM with `ImplicitVerticalDiffusion` and
-`CMFMCConvection` or `TM5Convection`. An earlier O(1e-7) Revolve drift in
-that configuration came from the recorders omitting that refresh (the
-first X sweep after convection read stale tracer halos in the full tape but
-fresh ones in a restarted window; issue #60), not from limiter flips.
-"""
-struct RevolveCheckpoint <: AbstractCheckpointSchedule end
 
 """
     checkpoint_window_count(schedule, nsteps) -> Int

@@ -1,9 +1,10 @@
 """
     Tape
 
-Tape storage policies (device, pinned-host, mmap on disk), tape record types,
-and checkpoint schedules for the AtmosTransport.jl cubed-sphere adjoint
-pipeline.
+The adjoint tape of the AtmosTransport.jl cubed-sphere reverse pass:
+`AdjointTape` (content × storage × checkpointing), the storage descriptors
+(device, pinned host, mmap on disk) and the runtime pools a call records into,
+tape record types, and checkpoint schedules.
 
 `Tape` imports nothing from other AtmosTransport modules.
 `src/AtmosTransport.jl` loads it before `Adjoints`, which imports these names
@@ -15,34 +16,35 @@ Module dependency order:
 """
 module Tape
 
-export AbstractCSTapeStorage,
+export AbstractTapeContent, FullStateTape, AdjointTape,
+       AbstractCSTapeStorage,
        AbstractHostCSTapeStorage,
        DeviceCSTapeStorage,
        PinnedHostCSTapeStorage,
        MmapCSTapeStorage,
        CSTapeSlot,
-       PinnedHostCSTapeSlot,
-       MmapCSTapeSlot,
-       _MmapTapeFile,
-       _tape_panels,
-       _validate_tape_storage, _needs_tape_size, _open_tape_storage,
-       _rewind_tape_storage!, _release_tape_storage!, _release_opened_tape_storage!,
-       _tape_slot_bytes,
+       HostCSTapeSlot,
+       StaleTapeSlotError,
+       _DeviceSlabPool, _PinnedHostArena, _MmapTapeFile,
+       _open_tape_pool, _needs_tape_size, _holds_tape_bytes,
+       _rewind_tape_pool!, _release_tape_pool!,
+       _tape_panels, _tape_slot_bytes,
        _allocate_tape_slot, stage_panels!, _stage_panels,
-       _after_tape_stage!, _after_tape_read!,
-       _mmap_prepare_for_panels!,
+       _free_tape_array!, _free_tape_panels!, _tape_synchronize,
+       _pin_host_chunk, _unpin_host_chunk,
        _register_tape_read_backend!, _tape_read_cache!,
        AbstractTapeReadRole, AirMassRead, TracerMassRead,
        _bytes_per_panel_tuple,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
        _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord,
        AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
-       RevolveCheckpoint,
        checkpoint_window_count, checkpoint_window_range
 
 include("TapeStorage.jl")
+include("HostTapeArena.jl")
 include("TapeRecords.jl")
 include("MmapTapeStorage.jl")
 include("CheckpointSchedule.jl")
+include("AdjointTape.jl")
 
 end # module Tape

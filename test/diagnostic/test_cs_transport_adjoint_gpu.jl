@@ -40,7 +40,7 @@ else
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-            tape_storage=:pinned_host)
+            tape=AT.AdjointTape(; storage=AT.PinnedHostCSTapeStorage()))
         @test pinned_result.footprints[1][1] isa CUDA.CuArray
         @test Array(pinned_result.footprints[1][1]) ≈ fp rtol=1f-6
 
@@ -52,7 +52,7 @@ else
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 3);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-            tape_storage=AT.MmapCSTapeStorage(mktempdir()))
+            tape=AT.AdjointTape(; storage=AT.MmapCSTapeStorage(mktempdir())))
         @test mmap_result.footprints[1][1] isa CUDA.CuArray
         @test Array(mmap_result.footprints[1][1]) ==
               Array(pinned_result.footprints[1][1])
@@ -73,7 +73,7 @@ else
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
             diffusion_workspace=diffusion_ws,
-            tape_storage=:pinned_host)
+            tape=AT.AdjointTape(; storage=AT.PinnedHostCSTapeStorage()))
         @test pinned_diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(pinned_diff_result.footprints[1][1]) ≈
               Array(diff_result.footprints[1][1]) rtol=1f-6
@@ -84,7 +84,7 @@ else
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
             diffusion_workspace=diffusion_ws,
-            tape_storage=AT.MmapCSTapeStorage(mktempdir()))
+            tape=AT.AdjointTape(; storage=AT.MmapCSTapeStorage(mktempdir())))
         @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(mmap_diff_result.footprints[1][1]) ==
               Array(pinned_diff_result.footprints[1][1])
@@ -137,9 +137,29 @@ else
         @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
     end
 
+    @testset "pinned-host tape arena: one registration per chunk, reused, released" begin
+        T = AT.Tape
+        ext = Base.get_extension(AT, :AtmosTransportCUDAExt)
+        panels = ntuple(p -> CUDA.CuArray(fill(Float32(p), 12, 12, 4)), 6)
+        arena = T._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+        slots = [T._stage_panels(arena, panels) for _ in 1:4]
+        @test length(arena.chunks) == 1
+        @test arena.chunks[1].registration isa ext._CUDAHostRegistration
+        @test CUDA.is_pinned(pointer(slots[1].panels[1]))
+        read = T._tape_panels(slots[4], T.TracerMassRead())
+        @test read[2] isa CUDA.CuArray && Array(read[2]) == Array(panels[2])
+        T._rewind_tape_pool!(arena)
+        again = T._stage_panels(arena, panels)
+        @test length(arena.chunks) == 1 && pointer(again.panels[1]) == pointer(slots[1].panels[1])
+        @test_throws T.StaleTapeSlotError T._tape_panels(slots[1], T.AirMassRead())
+        base = arena.chunks[1].base
+        T._release_tape_pool!(arena)
+        @test isempty(arena.chunks) && !CUDA.is_pinned(Ptr{Cvoid}(base))
+    end
+
     @testset "GPU host tape storage keeps limited-PPM m and rm reads apart (#57)" begin
-        # `:pinned_host` and `MmapCSTapeStorage` read staged states back through
-        # device caches; a limited-PPM sweep record reads its air mass and
+        # `PinnedHostCSTapeStorage` and `MmapCSTapeStorage` read staged states
+        # back through device caches; a limited-PPM sweep record reads its air mass and
         # tracer mass together, so one shared cache handed the reverse
         # kernel `m === rm` (footprint error ~0.8). NoLimiter tapes no rm
         # and could not see it.
@@ -184,10 +204,10 @@ else
             footprint(storage) = AT.cs_surface_emission_footprint(
                 rm_g, m_g, am, bm, cm, mesh, objective;
                 scheme = AT.PPMScheme(limiter), dt = FT(30),
-                tape_storage = storage, checkpoint)
-            reference = footprint(:device)
+                tape = AT.AdjointTape(; storage, checkpoint))
+            reference = footprint(AT.DeviceCSTapeStorage())
             @test reference.footprints[1][1] isa CUDA.CuArray
-            @test maxrel(footprint(:pinned_host), reference) <= 1e-12
+            @test maxrel(footprint(AT.PinnedHostCSTapeStorage()), reference) <= 1e-12
             @test maxrel(footprint(AT.MmapCSTapeStorage(mktempdir())), reference) <= 1e-12
         end
     end
@@ -238,9 +258,10 @@ else
                     # 1e-8 leaves room for GPU rounding.
                     @test isapprox(predicted, fd; rtol=1e-8)
                 end
-                for checkpoint in (AT.StrideCheckpoint(2), AT.RevolveCheckpoint())
+                for K in (1, 2)
                     replay = AT.cs_surface_emission_footprint(grm, gm, gam, gbm, gcm, mesh, obj;
-                                                             scheme, dt, checkpoint)
+                                                             scheme, dt,
+                                                             tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)))
                     for s in 1:3, p in 1:6
                         @test isapprox(Array(replay.footprints[s][p]), Array(gpu.footprints[s][p]);
                                        rtol=tolerance, atol=tolerance * 1e-3)
