@@ -107,7 +107,7 @@ _relerr(g, ref) = maximum(maximum(abs.(g[c][p] .- ref[c][p])) for c in eachindex
     # What the reverse pass receives: the step forcing of the assimilated
     # observations and the length of the reverse pass.
     function reverse_input(observations, scheme)
-        Obs = ADJ.Inversion.Observations
+        Obs = ADJ.Inversion.ObservationBinding
         replay, _ = Obs._observation_replay(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, observations; scheme, dt = DT,
                                             emission_rates = rates, column_met = column_met(P))
         f = Obs._observe_cs_forward!(ADJ.Footprint._UntapedRun(), replay, P.mesh, observations;

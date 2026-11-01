@@ -18,10 +18,12 @@ using AtmosTransport.Parameters: IFS_EARTH_RADIUS
     @test hours == [6.0, 0.0, 3.0]
     @test snapshot_hours(ExplicitSnapshotSchedule([6, 0, 3])) == [0.0, 3.0, 6.0]
     @test snapshot_hours(ExplicitSnapshotSchedule(Any[6.0, 0, 3])) == [0.0, 3.0, 6.0]
-    for invalid in (NaN, Inf, -Inf)
-        @test_throws ArgumentError ExplicitSnapshotSchedule([0.0, invalid])
-        @test_throws ArgumentError runtime_output_spec(
-            Dict("path" => "out.nc", "hours" => [0.0, invalid]), Float64)
+    for invalid in (NaN, Inf, -Inf, true, false)
+        @test_throws ArgumentError ExplicitSnapshotSchedule(Any[0.0, invalid])
+        for key in ("hours", "snapshot_hours")
+            @test_throws ArgumentError runtime_output_spec(
+                Dict("path" => "out.nc", key => Any[0.0, invalid]), Float64)
+        end
     end
 end
 

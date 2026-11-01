@@ -1,4 +1,4 @@
-module Observations
+module ObservationBinding
 using ....ConfigChecks: parse_choice
 using ....Operators.Advection: NoLimiter
 using ....Operators.Advection: PPMScheme
@@ -33,4 +33,4 @@ include("DeparturesIO.jl")
 include("OCO2MIPObservations.jl")
 include("ForwardSampling.jl")
 
-end # module Observations
+end # module ObservationBinding

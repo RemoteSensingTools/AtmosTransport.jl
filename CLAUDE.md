@@ -59,7 +59,7 @@ mass basis, supported operators, and load-time consistency gates.
     Chemistry -> StepPlans`. `StepPlans` composes a step and owns the
     emission/diffusion midpoint of the advection Strang palindrome; Advection
     only calls the abstract `apply_midpoint!` hook (`NoMidpoint` by default).
-  - `Adjoints`: core -> `Footprint` -> `Inversion` (`Observations`, `Solver`).
+  - `Adjoints`: core -> `Footprint` -> `Inversion` (`ObservationBinding`, `Solver`).
   - `Preprocessing`, in pipeline order: `Common` (folder `Core/`) -> `Vertical`
     -> `Spectral` -> `MassClosure` -> `PhysicsInputs` -> `TransportBinary` ->
     `LatLonTarget` / `ReducedGaussianTarget` / `CubedSphereTarget` (folder

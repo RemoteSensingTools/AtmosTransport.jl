@@ -10,7 +10,7 @@
 #
 # `_run_cs_footprint_forward` replays the production step plan without a tape
 # to evaluate a final-time objective. Observation sampling lives in
-# Inversion.Observations/ForwardSampling.jl.
+# Inversion.ObservationBinding/ForwardSampling.jl.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------

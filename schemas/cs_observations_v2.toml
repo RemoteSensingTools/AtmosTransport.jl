@@ -29,13 +29,14 @@
 # [optional_dimensions] and [optional_variables] below.
 #
 # This file documents the schema; the loader/writer live in
-# `src/Inversion/ObservationsIO.jl`. Any version bump must update both.
+# `src/Adjoints/Inversion/ObservationBinding/ObservationsIO.jl`. Any version bump
+# must update both.
 # ---------------------------------------------------------------------------
 
 [meta]
 version = "v2"
 shipped_in = "issue #20 (part 3)"
-intended_for = "src/Inversion/ObservationsIO.jl read_observations / write_observations"
+intended_for = "src/Adjoints/Inversion/ObservationBinding/ObservationsIO.jl read_observations / write_observations"
 
 [dimensions]
 obs            = "unlimited"

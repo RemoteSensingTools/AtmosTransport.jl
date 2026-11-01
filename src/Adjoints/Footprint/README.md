@@ -26,11 +26,11 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 
 Architectures, Adjoints core, Tape, Grids, State, MetDrivers, Parameters and Operators,
 including StepPlans. External: KernelAbstractions. There is no dependency on
-Inversion; observation-specific replay sampling belongs to Inversion.Observations.
+Inversion; observation-specific replay sampling belongs to Inversion.ObservationBinding.
 
 ## Used by
 
-Inversion.Observations (sampled forward replay), Inversion.Solver
+Inversion.ObservationBinding (sampled forward replay), Inversion.Solver
 (objective footprints and forced reverse pass), Models (`CSStepSchedule`),
 scripts and tests.
 

@@ -1,8 +1,16 @@
 # Storage helpers shared by the two convection families.
-@inline _cmfmc_metric_buffer(metric, ::Type{FT}) where FT =
-    copyto!(similar(metric, FT), metric)
-@inline function _cmfmc_metric_buffer(metrics::NTuple{N}, ::Type{FT}) where {N, FT}
-    return ntuple(i -> _cmfmc_metric_buffer(metrics[i], FT), N)
+# Cell-area metrics come from the mesh, which stays on the host. Copy them in
+# the workspace float type into storage allocated like `reference` (the air
+# mass the workspace serves), so a workspace built for device state carries
+# device metrics without a later `Adapt.adapt` of the whole workspace.
+@inline function _cmfmc_metric_buffer(metric::AbstractArray, reference::AbstractArray,
+                                      ::Type{FT}) where FT
+    source = eltype(metric) === FT ? metric : FT.(metric)
+    return copyto!(similar(reference, FT, size(metric)), source)
+end
+@inline function _cmfmc_metric_buffer(metrics::NTuple{N}, reference::AbstractArray,
+                                      ::Type{FT}) where {N, FT}
+    return ntuple(i -> _cmfmc_metric_buffer(metrics[i], reference, FT), N)
 end
 
 # Column ledger carry (see `_ledger_deposit`): one value per column and

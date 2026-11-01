@@ -7,9 +7,7 @@ struct ExplicitSnapshotSchedule <: AbstractOutputSchedule
     hours::Vector{Float64}
 
     function ExplicitSnapshotSchedule(hours::AbstractVector)
-        all(h -> h isa Real, hours) ||
-            throw(ArgumentError("output snapshot hours must be numbers"))
-        out = sort!(Float64.(hours))
+        out = sort!([config_float(h, "output snapshot hours") for h in hours])
         any(!isfinite, out) &&
             throw(ArgumentError("output snapshot hours must be finite"))
         return new(out)
@@ -87,12 +85,12 @@ const SNAPSHOT_SCHEDULE_KEYS = (_SNAPSHOT_HOURS_KEYS..., SNAPSHOT_INTERVAL_KEYS.
 const OUTPUT_KEYS = (OUTPUT_PATH_KEYS..., SNAPSHOT_SCHEDULE_KEYS..., "start_hour",
                       "stop_hour", "split", "format", "deflate_level", "shuffle", "enabled",
                       "fields", "observations")
-const _COLUMN_MASS_KEYS = ("column_mass_per_area", "column_mass")
-const _PER_TRACER_KEYS = ("per_tracer", "tracer_fields")
-const OUTPUT_FIELDS_KEYS = ("tracers", "layers", "levels", "column_mean", _COLUMN_MASS_KEYS...,
+const OUTPUT_COLUMN_MASS_KEYS = ("column_mass_per_area", "column_mass")
+const OUTPUT_PER_TRACER_KEYS = ("per_tracer", "tracer_fields")
+const OUTPUT_FIELDS_KEYS = ("tracers", "layers", "levels", "column_mean", OUTPUT_COLUMN_MASS_KEYS...,
                              "air_mass_layers", "air_mass", "air_mass_per_area",
-                             "column_air_mass_per_area", _PER_TRACER_KEYS...)
-const TRACER_OUTPUT_FIELDS_KEYS = ("layers", "column_mean", _COLUMN_MASS_KEYS...)
+                             "column_air_mass_per_area", OUTPUT_PER_TRACER_KEYS...)
+const TRACER_OUTPUT_FIELDS_KEYS = ("layers", "column_mean", OUTPUT_COLUMN_MASS_KEYS...)
 
 # Choice tables for `parse_choice`: the canonical spelling first, then aliases.
 const _LAYER_SELECTIONS = (full = FullLayerSelection(), all = FullLayerSelection(),
@@ -106,7 +104,7 @@ const _OUTPUT_PARTITIONS = (single = SingleOutputFile(), one_file = SingleOutput
                             var"one-file" = SingleOutputFile(),
                             daily = DailyOutputFiles(), per_day = DailyOutputFiles(),
                             var"per-day" = DailyOutputFiles(), day = DailyOutputFiles())
-const _OUTPUT_FORMATS = (netcdf = NetCDFOutput(), nc = NetCDFOutput(),
+const OUTPUT_FORMATS = (netcdf = NetCDFOutput(), nc = NetCDFOutput(),
                          binary_mmap = BinaryMmapOutput(), binary = BinaryMmapOutput(),
                          mmap = BinaryMmapOutput(), atmsnap = BinaryMmapOutput())
 const _DEFAULT_TRACER_FIELDS = TracerOutputFields(FullLayerSelection(), true, true)
@@ -184,14 +182,14 @@ function _tracer_fields_from_cfg(cfg::AbstractDict, fallback::TracerOutputFields
              fallback.layers
     column_mean = config_bool(get(cfg, "column_mean", fallback.column_mean),
                               "$(key_prefix).column_mean")
-    column_mass = config_bool(_first_present(cfg, _COLUMN_MASS_KEYS, fallback.column_mass_per_area),
+    column_mass = config_bool(_first_present(cfg, OUTPUT_COLUMN_MASS_KEYS, fallback.column_mass_per_area),
                               "$(key_prefix).column_mass_per_area")
     return TracerOutputFields(layers, column_mean, column_mass)
 end
 
 function _parse_tracer_overrides(fields_cfg::AbstractDict,
                                  fallback::TracerOutputFields)
-    raw = _first_present(fields_cfg, _PER_TRACER_KEYS, Dict{String, Any}())
+    raw = _first_present(fields_cfg, OUTPUT_PER_TRACER_KEYS, Dict{String, Any}())
     raw isa AbstractDict ||
         throw(ArgumentError("[output.fields].per_tracer must be a table keyed by tracer name"))
     out = Dict{Symbol, TracerOutputFields}()
@@ -297,7 +295,7 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
                                 default_cap_hours = default_cap_hours,
                                 fallback_hours = fallback_hours)
     partition = _output_partition(output_cfg)
-    format = parse_choice(get(output_cfg, "format", "netcdf"), _OUTPUT_FORMATS, "[output].format")
+    format = parse_choice(get(output_cfg, "format", "netcdf"), OUTPUT_FORMATS, "[output].format")
     options = _output_options(output_cfg, FT, format)
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = config_bool(get(output_cfg, "enabled", true), "[output].enabled")

@@ -1,7 +1,7 @@
 module Inversion
 
-include("Observations/ObservationsModule.jl")
-using .Observations
+include("ObservationBinding/ObservationBindingModule.jl")
+using .ObservationBinding
 include("Solver/Solver.jl")
 using .Solver
 
