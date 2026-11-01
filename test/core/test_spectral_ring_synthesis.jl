@@ -161,5 +161,28 @@ end
         end
     end
 
+    @testset "level packing and buffer reuse are bitwise stable" begin
+        # An uneven level count exercises independent pack/scatter iterations
+        # with multiple threads; reversing a view also checks strided input.
+        nf = 19
+        synthesis = P.ReducedSpectralSynthesis(grid, T, nf)
+        spec = zeros(ComplexF64, T + 1, T + 1, nf)
+        for k in 1:nf, m in 0:T, n in m:T
+            spec[n + 1, m + 1, k] = complex(sin(n + k), cos(m + k))
+        end
+        original = copy(spec)
+        expected = zeros(nc, nf)
+        P.synthesize_reduced!(expected, spec, synthesis)
+        actual = fill(NaN, nc, nf)
+        for _ in 1:3
+            P.synthesize_reduced!(actual, view(spec, :, :, nf:-1:1), synthesis)
+            @test reinterpret(UInt64, vec(actual)) ==
+                  reinterpret(UInt64, vec(expected[:, nf:-1:1]))
+            P.synthesize_reduced!(actual, spec, synthesis)
+            @test reinterpret(UInt64, vec(actual)) == reinterpret(UInt64, vec(expected))
+        end
+        @test reinterpret(UInt64, vec(spec)) == reinterpret(UInt64, vec(original))
+    end
+
     @test_throws DimensionMismatch P.synthesize_reduced!(zeros(nc, Nf + 1), zeros(ComplexF64, T + 1, T + 1, Nf + 1), s)
 end
