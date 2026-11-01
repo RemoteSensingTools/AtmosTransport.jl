@@ -384,9 +384,11 @@ end
                 path = joinpath(root, "src", "LAYERS.toml")
                 after = TOML.parsefile(path)
                 after["order"] = inv.order
-                after["modules"] = Dict(m => [b for (a, b) in found.edges if a == m] for m in inv.order)
+                after["modules"] = Dict(m => String[b for (a, b) in found.edges if a == m] for m in inv.order)
                 push!(after["folder_order"], "ext")
-                after["folders"]["ext"] = [b for (a, b) in found.folder_edges if a == "ext"]
+                # Julia 1.10's TOML parses empty arrays as Union{}[]; keep the lists pushable.
+                after["folders"] = Dict{String,Any}(k => String[v...] for (k, v) in after["folders"])
+                after["folders"]["ext"] = String[b for (a, b) in found.folder_edges if a == "ext"]
                 before = deepcopy(after)
                 if mode == :exception
                     after["folder_order"] = ["src/Upper", "src/Lower", "src", "ext"]
