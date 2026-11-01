@@ -461,7 +461,7 @@ None recorded.
 
 ## `src/Models/Runner`
 
-Size: **88914 bytes / 25404.0 tokens**. Public names: **10**.
+Size: **88857 bytes / 25387.7 tokens**. Public names: **10**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Runner/DrivenRunner`, `src/Operators`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -470,7 +470,7 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner/DrivenRunner`.
 Files:
 
 - `BinaryPathExpander.jl` (6537 bytes)
-- `DrivenSimulation.jl` (9196 bytes)
+- `DrivenSimulation.jl` (9139 bytes)
 - `InputStaging.jl` (12458 bytes)
 - `Runner.jl` (2108 bytes)
 - `adjoint_schedule.jl` (10670 bytes)
@@ -886,7 +886,7 @@ None recorded.
 
 ## `src/Parameters`
 
-Size: **27504 bytes / 7858.3 tokens**. Public names: **77**.
+Size: **27440 bytes / 7840.0 tokens**. Public names: **77**.
 
 Depends on: none.
 
@@ -895,7 +895,7 @@ Used by: `ext`, `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observa
 Files:
 
 - `MetSourceConstants.jl` (6412 bytes)
-- `NumericalDefaults.jl` (9928 bytes)
+- `NumericalDefaults.jl` (9864 bytes)
 - `Parameters.jl` (410 bytes)
 - `PhysicalConstants.jl` (9107 bytes)
 - `PlanetParameters.jl` (1647 bytes)
@@ -906,7 +906,7 @@ None recorded.
 
 ## `src/Preprocessing`
 
-Size: **71740 bytes / 20497.1 tokens**. Public names: **0**.
+Size: **71268 bytes / 20362.3 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessing/Sources/GEOS`, `src/Preprocessing/Sources/MERRA2`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/Targets/ReducedGaussian`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -915,7 +915,7 @@ Used by: `ext`, `src`.
 Files:
 
 - `Preprocessing.jl` (33941 bytes)
-- `entrypoint.jl` (37799 bytes)
+- `entrypoint.jl` (37327 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -923,7 +923,7 @@ None recorded.
 
 ## `src/Preprocessing/Core`
 
-Size: **67035 bytes / 19152.9 tokens**. Public names: **88**.
+Size: **66996 bytes / 19141.7 tokens**. Public names: **88**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Regridding`.
 
@@ -933,7 +933,7 @@ Files:
 
 - `Core.jl` (3580 bytes)
 - `binary_pipeline.jl` (2172 bytes)
-- `configuration.jl` (17391 bytes)
+- `configuration.jl` (17352 bytes)
 - `logging.jl` (1134 bytes)
 - `met_readers.jl` (5960 bytes)
 - `met_sources.jl` (8642 bytes)
@@ -1018,7 +1018,7 @@ None recorded.
 
 ## `src/Preprocessing/Sources/GEOS`
 
-Size: **196890 bytes / 56254.3 tokens**. Public names: **16**.
+Size: **191801 bytes / 54800.3 tokens**. Public names: **16**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Regridding`, `src/State`.
 
@@ -1028,12 +1028,12 @@ Files:
 
 - `GEOS.jl` (4981 bytes)
 - `configuration.jl` (3542 bytes)
-- `cubed_sphere_geos.jl` (27024 bytes)
+- `cubed_sphere_geos.jl` (26820 bytes)
 - `geos.jl` (24721 bytes)
-- `geos_cs_mass_helpers.jl` (5644 bytes)
+- `geos_cs_mass_helpers.jl` (4019 bytes)
 - `geos_cs_omega.jl` (31158 bytes)
 - `geos_cs_resolution.jl` (12839 bytes)
-- `geos_cs_window.jl` (39707 bytes)
+- `geos_cs_window.jl` (36447 bytes)
 - `geos_panels.jl` (19152 bytes)
 - `geos_read_window.jl` (23786 bytes)
 - `reader.jl` (4336 bytes)

@@ -42,8 +42,7 @@ const DEFAULT_MET_INTERVAL_SECONDS = 3600.0
 const DEFAULT_BACKGROUND_VMR = 4.0e-4
 
 """
-Smoothing sweeps of the GEOS preprocessing moisture filter and column-drift
-correction.
+Smoothing sweeps of the GEOS preprocessing moisture filter.
 """
 const DEFAULT_GEOS_SMOOTHING_SWEEPS = 8
 
@@ -83,8 +82,8 @@ Every path that applies a Poisson balance closes a window's horizontal fluxes
 against its endpoint mass tendency with one solve for the column-integrated
 divergence and spreads each face's correction over the layers, so the layer
 winds keep their vertical structure and the vertical mass flux diagnosed from
-the explicit tendency carries the vertical motion. GEOS `pressure_fixer` and
-`pfix_corrected` keep their native horizontal fluxes and record `"none"`. A
+the explicit tendency carries the vertical motion. GEOS `pressure_fixer`
+keeps its native horizontal fluxes and records `"none"`. A
 per-layer balance would leave almost nothing for the vertical flux because
 preprocessing has no independent vertical-flux input (issue #11).
 """
@@ -181,7 +180,7 @@ from ERA5, MERRA-2 and GEOS-IT alike (2026-10 goldens and production samples).
 """
 const REPLAY_TOLERANCE_FLOAT32 = 1.0e-5
 
-"Weight of one GEOS moisture-filter / column-drift smoothing sweep (see `DEFAULT_GEOS_SMOOTHING_SWEEPS`)."
+"Weight of one GEOS moisture-filter smoothing sweep (see `DEFAULT_GEOS_SMOOTHING_SWEEPS`)."
 const DEFAULT_GEOS_SMOOTHING_WEIGHT = 0.5
 
 "Lin–Rood PPM edge-value family when the config sets none: 5 (Colella–Woodward fourth-order edges) or 7."

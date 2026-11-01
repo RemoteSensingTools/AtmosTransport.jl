@@ -327,8 +327,6 @@ function _native_preprocessing_plan(cfg::AbstractDict)
          fv3 = :pressure_fixer, native = :pressure_fixer,
          moisture_filtered = :moisture_filtered, moisturefiltered = :moisture_filtered,
          filtered = :moisture_filtered, filtered_endpoint = :moisture_filtered,
-         pfix_corrected = :pfix_corrected, pfixcorrected = :pfix_corrected,
-         pfix = :pfix_corrected, pressure_fixer_corrected = :pfix_corrected,
          omega_regularized = :omega_regularized, omegaregularized = :omega_regularized,
          omega_reg = :omega_regularized, regularized_omega = :omega_regularized,
          omega_consistent = :omega_regularized, omegaconsistent = :omega_regularized,
@@ -337,14 +335,11 @@ function _native_preprocessing_plan(cfg::AbstractDict)
          omega_full = :omega_full_replacement, full_omega = :omega_full_replacement),
         "[numerics].geos_cm_closure"; allow_symbol = true)
     # cm-closure status (2026-06-03): `:endpoint_balanced` is the ONLY validated
-    # production default. ALL of `:pressure_fixer`, `:moisture_filtered`, and
-    # `:pfix_corrected` are DIAGNOSTIC-ONLY — they explore the SH-UTLS fingering
+    # production default. Both `:pressure_fixer` and `:moisture_filtered`
+    # are DIAGNOSTIC-ONLY — they explore the SH-UTLS fingering
     # but each fails at the tracer level (see docs/src/preprocessing/geos_native_cs.md):
     #   :pressure_fixer    → smooth cm but unbounded ps drift / negative mass.
     #   :moisture_filtered → VERIFIED NO-OP (balancing re-injects the noise).
-    #   :pfix_corrected    → reduces upper-UTLS noise but makes ~164-280 hPa WORSE
-    #                        (the drift correction emits a spurious surface cm flux),
-    #                        and chain_mass=true accumulates negative UTLS mass.
     #   :omega_full_replacement → replaces all resolved convergence with OMEGA
     #                        (vdiv=+vdiv_om, smooth); continuity exact by
     #                        construction, but changes bottom-layer horizontal
@@ -355,8 +350,8 @@ function _native_preprocessing_plan(cfg::AbstractDict)
     # The fingering is the intrinsic MFXC↔DELP residual; the validated cure is
     # input-side (wind-derived / ERA5). `:omega_regularized` is the conservative
     # native-cube candidate that avoids the full OMEGA pathway's oversmoothing.
-    # Spatial low-pass sweeps: the `:moisture_filtered` residual smoother and the
-    # `:pfix_corrected` column-drift smoother (ignored by the other closures).
+    # Spatial low-pass sweeps for the `:moisture_filtered` residual smoother
+    # (ignored by the other closures).
     smooth_iters = config_int(get(numerics_cfg, "geos_moisture_filter_smooth_iters", DEFAULT_GEOS_SMOOTHING_SWEEPS), "[numerics].geos_moisture_filter_smooth_iters")
     smooth_iters >= 0 ||
         error("[numerics].geos_moisture_filter_smooth_iters must be ≥ 0; got $(smooth_iters)")
