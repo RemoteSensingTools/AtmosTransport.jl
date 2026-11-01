@@ -789,7 +789,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **153169 bytes / 43762.6 tokens**. Public names: **26**.
+Size: **153804 bytes / 43944.0 tokens**. Public names: **26**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -808,7 +808,7 @@ Files:
 - `gchp_nonlocal_pbl.jl` (8854 bytes)
 - `operators.jl` (27444 bytes)
 - `pbl_physics.jl` (10566 bytes)
-- `tm5_calc_kzz.jl` (10789 bytes)
+- `tm5_calc_kzz.jl` (11424 bytes)
 - `window_kz_cache.jl` (3689 bytes)
 - `workspace.jl` (5616 bytes)
 - `workspace_validation.jl` (8621 bytes)
