@@ -259,7 +259,7 @@ function _verify_rg_balanced_window!(window_contract,
     return diag
 end
 
-mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P, N}
+mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P, N, PC}
     grid              :: G
     settings          :: S
     vertical          :: V
@@ -267,6 +267,7 @@ mutable struct RGSpectralUnifiedDriverContext{G, S, V, SP, P, N}
     substep_policy    :: P
     date              :: Date
     next_day_hour0    :: N          # next day's 00 UTC spectral state, or nothing
+    pbl_cache         :: PC
     steps_per_window  :: Int
     write_replay_on   :: Bool
     worst_pre_raw     :: Float64
@@ -334,7 +335,7 @@ function driver_drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWor
                        written_win, ctx.spec.n_times, t_bal,
                        diag.max_pre_raw_residual, diag.max_post_projected,
                        diag.max_cg_iter)
-    return (PreverifiedWindow(ready_diag.ready, ready_diag.contract;
+    return (PreverifiedWindow(_rg_tm5_pbl_ready(ready_diag.ready,ctx), ready_diag.contract;
                               accumulated = true),)
 end
 
@@ -365,7 +366,7 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
     @info @sprintf("    Window %2d/%d (last): bal %.2fs  pre_raw=%.2e post_proj=%.2e iter=%d",
                    Nt, Nt, t_bal, diag.max_pre_raw_residual,
                    diag.max_post_projected, diag.max_cg_iter)
-    return (PreverifiedWindow(ready_diag.ready, ready_diag.contract;
+    return (PreverifiedWindow(_rg_tm5_pbl_ready(ready_diag.ready,ctx), ready_diag.contract;
                               accumulated = true),)
 end
 
@@ -411,6 +412,7 @@ function process_day(date::Date,
                              substep_cfl_target = positivity_cfl_limit),
                      run_cache = nothing)
     FT = settings.output_float_type
+    validate_tm5_pbl_target(grid,settings,vertical)
     check_spectral_column_weights(grid, settings)
     settings.include_qv && throw(ArgumentError(
         "reduced-Gaussian preprocessing does not support output.include_qv=true; " *
@@ -464,6 +466,9 @@ function process_day(date::Date,
     transport_grid = AtmosGrid(mesh, vc_merged, CPU(); FT=FT, radius=mesh.radius)
     sample_window = (m = buf.m[1], hflux = buf.hflux[1],
                      cm = buf.cm[1], ps = buf.ps[1])
+    if get(settings,:include_tm5_pbl,false)
+        sample_window = merge(sample_window,(;tm5_pbl=tm5_pbl_sample(FT,size(buf.m[1]))))
+    end
 
     # Declare the canonical window_constant contract
     # explicitly. The sliding-window payload stores already balanced,
@@ -512,6 +517,7 @@ function process_day(date::Date,
         delta_semantics      = rg_contract.delta_semantics,
         mass_basis           = Symbol(settings.mass_basis),
         surface_pressure_basis = TotalSurfacePressure(),
+        flux_construction = get(settings,:include_tm5_pbl,false) ? PointSampledSpectralFluxesHeader() : NoFluxConstructionHeader(),
         extra_header = with_replay_record(
             with_column_weights_record(metadata,
                 check_spectral_column_weights(grid, settings)),
@@ -529,14 +535,19 @@ function process_day(date::Date,
         writer,
         State.mass_basis(Symbol(settings.mass_basis));
         final_path = bin_path)
+    pbl_cache = get(settings,:include_tm5_pbl,false) ? TM5PBLInputCache() : nothing
     ctx = RGSpectralUnifiedDriverContext(
-        grid, settings, vertical, spec, substep_policy, date, next_day_hour0,
+        grid, settings, vertical, spec, substep_policy, date, next_day_hour0, pbl_cache,
         steps_per_met, write_replay_on,
         0.0, 0.0, 0.0, 0, 0.0, 0.0, 0, (0, 0))
-    run_unified_preprocessor_day!(
-        UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;
-                               context = ctx);
-        close_reader = false)
+    try
+        run_unified_preprocessor_day!(
+            UnifiedPreprocessorDay(nothing, workspace, window_contract, window_writer;
+                                   context = ctx);
+            close_reader = false)
+    finally
+        pbl_cache === nothing || close(pbl_cache)
+    end
 
     if settings.mass_fix_enable
         day_offsets = @view ps_offsets[1:Nt]
@@ -561,4 +572,12 @@ function process_day(date::Date,
         @warn @sprintf("File size mismatch: expected %d bytes, got %d", expected_total, actual)
 
     return bin_path
+end
+
+function _rg_tm5_pbl_ready(ready::ReadyWindow{ReducedGaussianTargetGeometry,FT},ctx) where FT
+    get(ctx.settings,:include_tm5_pbl,false) || return ready
+    pbl = load_tm5_pbl_target_window(ctx.date,ready.index,ctx.settings,ctx.vertical,
+        ready.payload.ps,ctx.grid,size(ready.payload.m);cache=ctx.pbl_cache)
+    return ReadyWindow{ReducedGaussianTargetGeometry,FT}(ready.index,
+        merge(ready.payload,(;tm5_pbl=pbl)),ready.fidelity)
 end

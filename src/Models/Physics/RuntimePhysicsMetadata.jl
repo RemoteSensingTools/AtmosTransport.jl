@@ -145,3 +145,6 @@ function runtime_physics_attributes(cfg, driver, surface_sources, mass_basis::Sy
         get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)))
     return attributes
 end
+
+_diffusion_attributes(spec::TM5CalcKzzDiffusionSpec) =
+    _diffusion_attributes("tm5_calc_kzz",spec.surface_flux_boundary)

@@ -1,6 +1,6 @@
 # TM5 boundary-layer diffusion (`Calc_Kzz`)
 
-This page specifies `TM5CalcKzzField`, a planned interface-exchange (`dkg`)
+This page specifies `TM5CalcKzzField`, an implemented interface-exchange (`dkg`)
 field for the existing `ImplicitVerticalDiffusion` operator. It transcribes
 TM5's live `Calc_Kzz`: the friction velocity, the hydrostatic interface
 heights, the Holtslag–Boville boundary-layer scheme `bldiff`, and the
@@ -8,15 +8,10 @@ conversion of the heat diffusivity into an exchange rate in kg s⁻¹ across eac
 level interface. It is a new field type; the existing diffusion schemes and the
 preprocessing port `tm5_bldiff.jl` stay unchanged.
 
-!!! warning "Planned, not implemented"
-    No part of this scheme is implemented yet. Bundle TM5-0 adds this page
-    and the binary version-5 format gate (see
-    [Binary format](../concepts/binary_format.md)). Synthetic pydyn fixtures
-    for the column computation are local-only and not committed; their loader
-    and parity tests are planned for B2, using `ATMOSTR_TM5_FIXTURES_DIR`
-    with a clear skip when unset or fixtures are absent (§14). The scheme is
-    planned for TM5-PBL-1 (lat-lon and reduced Gaussian) and TM5-PBL-2
-    (cubed sphere and adjoint). The last section lists the status.
+Lat-lon and reduced-Gaussian column physics, v5 inputs and runtime integration
+are implemented in TM5-PBL-1. Cubed-sphere and adjoint support remain planned
+for TM5-PBL-2. Local pydyn fixtures are read only through
+`ATMOSTR_TM5_FIXTURES_DIR`; they are never committed (§14).
 
 The page follows the design of 2026-10-30, with the owner answers of that
 day. Statements marked *estimate* are design estimates, not measurements.
@@ -115,8 +110,7 @@ ECMWF surface roughness `sr`, listed among the analysis surface fields
 (`rc:119`), and ``z_{0,\mathrm{Olsson}}`` is the monthly Olsson/Ganzeveld
 database `srols` (`rc:120`, `rc:323–324`). Q8 replaces only `srols`: its role
 (``z_l``, floored at 0.01 m) is taken by the ERA5 forecast surface roughness
-`fsr`. `sr` keeps its role (``z_h``, clipped at 0.03 m); which ERA5 field
-feeds it is settled in B3 (planned). If ERA5 provides the roughness only as
+`fsr`. `sr` keeps its role (``z_h``, clipped at 0.03 m); the input writer accepts `sr` when present and otherwise uses `fsr` for both roles. If ERA5 provides the roughness only as
 `fsr`, both roles use the same field ``z_0``, and the land formula has three
 regimes:
 
@@ -178,7 +172,7 @@ literal 287.05 (`PC:6014`) with the virtual-temperature factor 0.608. `bldiff`
 uses ``R_a = R/M_a`` with TM5's molar mass 28.94 g mol⁻¹ (`binas:98`), which
 gives 287.2979. The existing preprocessing port uses
 `TM5_CONSTANTS.r_air = 287.307` (`src/Parameters/PhysicalConstants.jl`),
-``3.2 × 10^{-5}`` above 287.2979; it stays untouched, and the planned
+``3.2 × 10^{-5}`` above 287.2979; it stays untouched, and the live
 `Calc_Kzz` constants are separate named values.
 
 With ``\bar p_l`` from §3 (`K:595–597`, `K:624–630`, `K:752–754`):
@@ -329,7 +323,7 @@ without a centre-``K_z`` detour. pydyn: `dkg` (`pydyn/diffusion.py:256–263`).
 layer 26, ECMWF half-level 57, near 86 hPa). In top-down indexing, layers
 ``k = 9 … 34`` are mixed. A compact array ``D[k]`` (exchange between ``k`` and
 ``k+1``) has ``D[1:8] = 0`` and ``D[34] = 0``; a full interface array is active
-at slots 10 … 34. Both storage adapters will be tested in B2.
+at slots 10 … 34. The runtime stores the compact form; the adapter tests check its full-interface placement.
 
 **Other level sets (owner decision Q7).** The cutoff is the pressure equivalent
 of tropo34a level 26: mix only the layers whose reference mid-layer pressure
@@ -339,14 +333,16 @@ exceeds the pressure of ECMWF L137 half-level 57. From
 pressure 98500 Pa of the existing GEOS-Chem layer-count rule (8614.43 Pa at
 ``10^5`` Pa; the dependence on the reference is below 0.2 Pa). On tropo34a this
 gives exactly 26 layers, because half-level 57 is an interface of that set; on
-other sets it keeps the same physical depth. The planned implementation shares
-the rule of `gchp_pbl_layer_count` (`src/Operators/Diffusion/gchp_nonlocal_pbl.jl`)
-through a neutral refactor that leaves the GEOS-Chem results bitwise unchanged.
+other sets it keeps the same physical depth. The implementation shares
+the rule of `gchp_pbl_layer_count` (`src/Operators/Diffusion/gchp_nonlocal_pbl.jl`),
+leaving the GEOS-Chem results bitwise unchanged. The cutoff is stored as the exact
+`8614.336891` Pa literal in `Parameters`, rather than reading the coefficient
+file at runtime. A coefficient-file test verifies the literal and the tropo34a count.
 Free-atmosphere ``K`` and the boundary-layer height still use the full column.
 
 ## 9. Guards and the entrainment NaN
 
-| Item | TM5 | Planned here |
+| Item | TM5 | Implemented here |
 |---|---|---|
 | ``u_*`` floors | sea ``u_* ≥ 0.001``; ``z_l ≥ 0.01``; ``z_h ≤ 0.03``; ``u_s ≥ 0.01`` | same |
 | Shear and bulk ``V^2`` | floor ``10^{-10}`` before ``Δz^2``; ``\max(… + 100 u_s^2, 10^{-9})`` | same |
@@ -365,17 +361,19 @@ infinite ``D`` makes the solve singular. pydyn reproduces the NaN
 (`pydyn/diffusion.py:20–25`, `:250–252`); its readable version
 `simple_diffusion.py` selects the used branch instead (`:19–21`).
 
-The planned guard keeps a finite ``K_\mathrm{entr}``, also a negative one, which
+The guard keeps a finite ``K_\mathrm{entr}``, also a negative one, which
 ``\max(0, ·)`` then clips as in TM5, and otherwise keeps the boundary-layer
 value. It selects the same value as TM5's mask arithmetic wherever TM5 is
-finite and differs only where TM5 is non-finite or compiler-defined. The planned
-column function will return the number of guarded interfaces, and the refresh
-will warn once per window when it is nonzero. The scheme will not fail fast:
-that would abort long runs on rare columns, more often in Float32. The planned
-parity path will use no `@fastmath`, no reassociation, and integer powers such
+finite and differs only where TM5 is non-finite or compiler-defined. The
+column function returns the number of guarded interfaces, and the refresh
+warns once per run when the guard changes an entrainment value below the mixing
+cutoff. Unused singular branches and interfaces above the cutoff do not enter
+the warning count; the column also returns the full singular-expression count. The scheme does not fail fast:
+that would abort long runs on rare columns, more often in Float32. The
+parity path uses no `@fastmath`, no reassociation, and integer powers such
 as `u_s^3`, the form
 pydyn uses. Julia's `exp`, `log` and power functions are not the C library's,
-so parity will be tested against the tolerances of §14, not bit for bit.
+so parity is tested against the tolerances of §14, not bit for bit.
 
 **Two other unused-branch paths.** TM5's masks also evaluate two expressions
 that are non-finite only in the branch that is not used:
@@ -392,38 +390,34 @@ that are non-finite only in the branch that is not used:
   is ``0/(1 − 1) = 0/0`` (`K:921`), and the NaN reaches ``K_\mathrm{base}``
   through ``\max(\mathrm{NaN}, 0.1)``, which is processor-dependent.
 
-The planned `ifelse` selection takes the used branch in both cases (the
-previous ``h``; ``f = 1``), as it does for entrainment. Like the rest of the
-scheme, this is planned for B2.
+Branch selection takes the used branch in both cases (the
+previous ``h``; ``f = 1``), as it does for entrainment. These selections are implemented with the column physics.
 
-## 10. Integration in AtmosTransport (planned)
+## 10. Integration in AtmosTransport (implemented for LL/RG)
 
 **One field type inside the existing operator.**
 
 ```julia
-struct TM5CalcKzzField{FT, N, D, S, P} <: AbstractTimeVaryingField{FT, N}  # N = 3 (LL), 2 (RG)
-    dkg     :: D   # interface exchange [kg s⁻¹], topology-native storage
-    scratch :: S   # column scratch and metrics
-    params  :: P   # TM5 bldiff constants (§4) and l_max
+struct TM5CalcKzzField{FT,N,D<:AbstractArray{FT,N},S,P,M} <: AbstractTimeVaryingField{FT,N}
+    dkg::D       # topology-native compact interface exchange [kg/s]
+    scratch::S   # bottom-up column inputs and intermediates
+    params::P    # precision-specific TM5 constants and mixing cutoff
+    metrics::M   # mesh metrics built by Models.Physics, adapted with the field
+    guard_warned::Base.RefValue{Bool} # host-side once-per-run warning state
 end
-# Cubed sphere: CubedSphereField{FT, <:TM5CalcKzzField{FT, 3}}, the existing six-panel wrapper.
 ```
 
-- Planned files: `src/Operators/Diffusion/TM5CalcKzzField.jl` (type, Adapt,
+- Files: `src/Operators/Diffusion/TM5CalcKzzField.jl` (type, Adapt,
   `refresh_tm5_calc_kzz!`) and `src/Operators/Diffusion/tm5_calc_kzz.jl` (one
   pure `@inline` column function for CPU and GPU, generic in the float type,
   with no Float64 promotion). The column function returns ``D`` and its
   intermediates (``u_*``, ``G``, ``z``, ``θ_v``, Ri, both height passes,
-  ``K_{vh}``, the guard count); B2 tests will call it directly, with no diagnostic mode.
-- **Solve.** Lat-lon and reduced-Gaussian runs have no runtime `dkg` path today:
-  the conservative `dkg` kernels are cubed-sphere only
-  (`src/Operators/Diffusion/conservative_dkg.jl`), and the runtime recipes
-  accept `[diffusion] kind = "tm5_dkg"` only for cubed-sphere binaries with a
-  `:dkg` section (`src/Models/Physics/RuntimePhysicsSpecs.jl`). A new exchange
-  source `DkgExchange` with one `_diffusion_factors!` method that reads ``D``
-  directly (where the `KzExchange` method builds ``D`` from ``K_z`` and ``Δz``)
-  lets the existing structured, face-indexed and six-panel solves (backward
-  Euler on ``D/m``, flux-form update, column ledger) run unchanged.
+  ``K_{vh}``, full and active guard counts); column tests call it directly.
+- **Solve.** `DkgExchange` reads interface exchange directly. Its factor
+  method feeds the existing structured and face-indexed backward-Euler solves,
+  including their flux-form tracer-mass update and column ledger. No second
+  diffusion operator or new solve kernel is introduced. The new field's
+  cubed-sphere route remains deferred.
 - **Refresh.** A new `_refresh_pbl_kz_for_window!` method
   (`src/Models/Runner/driven_physics_refresh.jl`) runs once per met window,
   after the window-advance air-mass reset; `_refresh_dz_for_window!` gets a
@@ -440,13 +434,13 @@ runtime state; the binary adds only ``T``, ``q`` and the surface fields, so the
 scheme works with either flux construction and on existing binaries plus the
 new section group.
 
-| `Calc_Kzz` input | TM5 | Planned |
+| `Calc_Kzz` input | TM5 | Implemented |
 |---|---|---|
 | Pressure (for ``G``, ``\bar p``, density) | ``G`` from the advected `sp`; `phlb` and ``M`` from the midpoint `spm` | one profile from the window-start carrier mass: ``p_{k+1} = p_k + g\, m_k/(S (1 - q_k))`` from ``p_1 = A_1``, top-down; the ``(1 − q)`` factor only on a dry basis |
 | ``M`` in the winds and in ``D`` | midpoint moist mass | runtime carrier mass ``m`` (dry by default); the solve uses the same ``m``, so TM5's ``D/m`` structure is kept |
 | ``u``, ``v`` | balanced midpoint `pu`, `pv` over the midpoint ``M`` | stored window amounts: ``u = d_x (\mathrm{am}_w + \mathrm{am}_e)/(2 m s)`` with ``s`` = `flux_application_seconds(window_dt, steps, flux_kind)` and ``d_x = A/L_\mathrm{face}``; reduced Gaussian sums the face segments per cell edge; the cubed sphere rotates panel components with `panel_cell_local_tangent_basis` |
 | ``T``, ``q`` | 3-hourly, interpolated to the step midpoint | `tm5_t`, `tm5_q`: mean of the two hourly analysis endpoints on target levels, merged with mass weights |
-| ``u_{10}``, ``v_{10}``, `sr` | hourly, interpolated | mean of the two hourly endpoints; the ERA5 field for `sr` is settled in B3 |
+| ``u_{10}``, ``v_{10}``, `sr` | hourly, interpolated | mean of the two hourly endpoints; `sr` if available, otherwise `fsr` |
 | `sshf`, `slhf`, `ewss`, `nsss` | hourly forecast interval means | ERA5 reanalysis hourly accumulations over the window divided by its length |
 | `lsm`, `oro` | constant | constant; `lsm` stored as a fraction |
 | `srols` | monthly Olsson/Ganzeveld | ERA5 forecast surface roughness `fsr` (Q8) |
@@ -457,7 +451,7 @@ analysis and forecast inputs. `tm5_q` is used instead of the `qv_start` and
 `qv_end` sections because cubed-sphere binaries do not carry humidity
 endpoints.
 
-**Binary section group `tm5_pbl` (planned, TM5-PBL-1).** Optional, valid only
+**Binary section group `tm5_pbl` (implemented, TM5-PBL-1).** Optional, valid only
 in format version 5, all-or-nothing, one record per window:
 
 | Sections | Shape | Units and sign |
@@ -472,21 +466,67 @@ in format version 5, all-or-nothing, one record per window:
 
 *Estimate:* about 40 % of a C90 L34 window payload.
 
+Enable the input writer with `[preprocessing] include_tm5_pbl = true`,
+`input.thermo_dir` and `input.surface_dir`. This is an hourly ERA5 spectral
+LL/RG option. The thermo sidecar must contain `t` in K and `q` in kg/kg;
+the surface archive must contain the ten primitives, including the next day's
+00 UTC endpoint. NetCDF, split ZIP and ARCO surface layouts are supported.
+Surface primitives (`lsm`, stresses, heat fluxes, `sr`/`fsr`, 10 m winds and
+orography) are **cell-area means** on the actual LL or RG mesh, using the package's
+shared conservative regridder with intensive-field semantics. In particular,
+`lsm` is the coastal cell's land fraction, rather than the value at its centre.
+This follows TM5's two-dimensional `area-aver` input convention
+(`base/trunk/src/tmm.F90:1062–1065`). Roughness uses an arithmetic area mean.
+The shared regridder's spherical-polygon approximation and RG ring-boundary
+slivers also apply here (see [conservative regridding](../preprocessing/regridding.md)). T/q retain coordinate-aware
+bilinear sampling at target cell centres and are merged with native moist
+layer-pressure weights before the endpoint mean. The LL and RG thermo paths
+share the existing bilinear sampler. Day-local input ownership reuses the shared
+hourly thermo endpoint, surface readers (including split-ZIP extraction), and
+surface remap weights. `grid.target_vertical` pressure-overlap remapping and
+`grid.level_top != 1` are rejected before synthesis; at least two output layers
+are required. ERA5 reanalysis accumulations are hourly interval totals labelled
+by their ending time, not cumulative forecast-since-initialisation values.
+The reader validates units and divides by the supplied interval; already
+exported rates keep their values and ECMWF heat-flux signs.
+
+Select the runtime with:
+
+```toml
+[diffusion]
+kind = "tm5_calc_kzz"
+surface_flux_boundary = false
+```
+
+The `(1-q)` pressure correction dispatches on **carrier-mass basis**, rather
+than `surface_pressure_basis`: these are independent contracts. In particular,
+the normal dry-mass binary records total surface pressure but still needs the
+dry-to-total layer-mass correction. Archived `ps` does not set the runtime
+pressure profile.
+
+Runtime column scratch holds approximately `16 × ncells × nlevels` floating-point
+values, plus one integer guard count per cell; the D cache adds one field of
+`ncells × nlevels`. PBL height is a local scalar, with no extra stored diagnostic.
+For 34 layers and about 542,000 cells this is approximately 1.18 GB of Float32
+scratch before D, metrics and solver workspaces. LL72/O24 sizes and CPU timing
+are measured in the implementation handoff; large RG runs must budget this
+allocation. A smaller-scratch implementation remains future work.
+
 ## 11. Differences from TM5
 
-| Topic | TM5 | Planned here | Note |
+| Topic | TM5 | Implemented here | Note |
 |---|---|---|---|
 | Refresh cadence | every dynamic step | once per hourly met window | follows the analysis-window decision |
 | Pressure | two: advected `sp` for ``G``, midpoint `spm` for `phlb` and ``M`` | one, from the window-start runtime state | refreshed once per window, so the difference spans up to the surface-pressure change over the window |
-| Inputs | forecast fields, midpoint interpolation | analysis window means; accumulations over the window | owner decision |
+| Inputs | forecast fields, midpoint interpolation | analysis window means; accumulations over the window | surface primitives are area means on both LL and RG; T/q use point interpolation (§10), whereas TM5 supports area/mass averaging for 3-D inputs |
 | Mass basis of ``D`` | moist `spm` mass | runtime carrier mass (dry) | ``D/m`` structure kept; cancels for constant ``q`` |
 | Roughness | Olsson/Ganzeveld `srols` for ``z_l`` | ERA5 forecast roughness `fsr` for ``z_l``; `sr` keeps its role (§2) | Q8; size not yet measured |
-| Wind recovery length | ``d_x = a_e Δλ \cos φ_j`` | ``d_x = A/L_\mathrm{face}`` | *estimate:* relative ``Δφ^2/24 ≈ 1.3 × 10^{-5}`` at 1° |
+| Wind recovery length | ``d_x = a_e Δλ \cos φ_j`` | ``d_x = A/L_x``, ``d_y = 2A/(L_s+L_n)`` | effective face-metric lengths; on uniform LL, the relative differences are approximately ``−Δφ^2/24`` zonally and ``+Δφ^2/12`` meridionally |
 | Entrainment NaN | propagates or compiler-defined | guarded (§9) | differs only where TM5 is non-finite |
 | Masked arithmetic | both branches evaluated | `ifelse` selection | same value where finite |
 | Cutoff | ``l_\mathrm{max} = 26`` on tropo34 | pressure equivalent on any level set (§8) | Q7; identical on tropo34a |
 | Solve | dense inverse of a matrix combined with convection (`conv:475–476`, `conv:521–529`), split `x y z v s c c s v z y x` (`base/trunk/src/dims.F90:93–94`) | separate backward-Euler diffusion solve at the palindrome centre | Q6: the combined matrix is deferred; the splitting difference remains |
-| Precision | Float64 on CPU | Float32 on GPU in production; parity target is Float64 on CPU | Q12; planned tests will report Float32 branch flips separately |
+| Precision | Float64 on CPU | Float32 on GPU in production; parity target is Float64 on CPU | Q12; tests report Float32 crossing changes separately |
 | Data | production `dkg` cache | live `Calc_Kzz` | Q10 |
 | Runtime composition | diffusion inside convection, Check_CFL, slopes, polar clustering | runtime unchanged | bounds any "TM5-style" claim |
 
@@ -497,7 +537,7 @@ TM5's combined matrix also divides by the prognostic mass `m_dat`
 
 All existing schemes stay bitwise unchanged.
 
-| Aspect | `tm5_bldiff.jl` (preprocessing) | `WindowPBLKzField`, `LocalHoltslagBovilleKzField` | `TM5CalcKzzField` (planned) |
+| Aspect | `tm5_bldiff.jl` (preprocessing) | `WindowPBLKzField`, `LocalHoltslagBovilleKzField` | `TM5CalcKzzField` |
 |---|---|---|---|
 | Where it runs | preprocessing; writes `:dkg` for cubed-sphere binaries (runtime `kind = "tm5_dkg"`) | runtime, layer-centre ``K_z`` | runtime, interface ``D``, once per window |
 | Entrainment | TM5 form only for ``Δθ_v/Δz > 10^{-4}`` K m⁻¹ (strict) and a finite ``K ≤ 1000`` m² s⁻¹, then floored at 0.1 m² s⁻¹; else the mixed-layer value | none | TM5 form, guarded only where non-finite |
@@ -528,7 +568,7 @@ earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
   respect to the state.
 - Adjoint coverage is cubed sphere only, as for the 4D-Var path.
 
-## 14. Tests and tolerances (planned targets)
+## 14. Tests and tolerances
 
 | Stage | Criterion |
 |---|---|
@@ -538,7 +578,7 @@ earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
 | ``K_{vh}``, entrainment | ``10^{-11}``–``10^{-10}`` scaled for finite, well-conditioned columns; non-finite TM5 cases against the §9 rule |
 | ``D`` and cutoff | inactive zeros exact; with injected ``K_{vh}``, ``M``, ``G``: ``10^{-12}`` scaled |
 | Solve | backward residual ``10^{-13}``–``10^{-12}`` (Float64); isolated layers bit-exact; constant mixing ratio and mass within solver rounding |
-| Float32 | ``10^{-6}``–``10^{-5}`` scaled per stage; branch flips reported, not hidden |
+| Float32 against Float64 CPU | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``2 × 10^{-5}``; all K (including above cutoff): ``3 × 10^{-3}``; branch flips reported separately |
 
 **Edge inventory (synthetic).** Neutral ``H_v = +0`` and ``−0``; small stable
 flux; strong convection; zero and weak shear; no Ri crossing; a crossing
@@ -553,12 +593,28 @@ full 34-layer scan with 26 mixed layers.
 pydyn's pure functions (`ustar`, `geopotential`, `_winds`, `bldiff`, `dkg`,
 `calc_kzz`; owner decision Q9). They are generated and kept outside the
 repository, are not committed, and reproduce TM5's unguarded arithmetic,
-including the entrainment NaN. The parity loader and tests are planned for B2
-(TM5-PBL-1): they will load fixtures from `ATMOSTR_TM5_FIXTURES_DIR` and skip
+including the entrainment NaN. The parity loader and tests in `test/core/test_tm5_calc_kzz.jl` load fixtures from `ATMOSTR_TM5_FIXTURES_DIR` and skip
 with a clear message when the variable is unset or the required fixtures are
 absent. Matching the `Calc_Kzz` equations does not establish CFL, advection-moment or
 full-model parity with TM5, and an absent or skipped fixture is never reported
 as passed.
+
+Float64 CPU comparison on the 16 local synthetic columns: maximum relative
+error in `K_vh` is `6.03e-14`, in D `6.03e-14`; maximum absolute errors are
+`7.06e-21 m²/s` and `7.47e-14 kg/s`, respectively. Heights, both PBL-height
+passes, friction velocity and Obukhov length match exactly on this fixture.
+All 32 Float32 PBL-height crossing indices agree with Float64, and all 16
+singular-expression counts agree. Measured Float32 D errors are `1.67734e-4`
+maximum per nonzero entry and `1.97981e-5` maximum column L1 relative error;
+active K has maximum relative error `1.63822e-4`. Across all K interfaces,
+including those above the mixing cutoff, the maximum is `2.68030e-3`.
+The earlier blanket `1e-6`–`1e-5` per-stage goal is not met by these columns;
+the table states the tested acceptance bounds, not a GPU result. The prepared
+CUDA check compares against both Float64 CPU and Float32 CPU (the latter to
+`1e-5` scaled), with scalar indexing disabled. GPU execution remains a
+main-session check. These
+measurements cover the finite TM5 values; non-finite entrainment checks use
+the documented guard. They are column parity, not full-model TM5 parity.
 
 ## 15. Owner decisions (2026-10-30)
 
@@ -574,8 +630,8 @@ as passed.
 - **Q9** Local generation of pydyn fixtures from synthetic inputs is approved;
   the fixtures are not committed. A request for a live-`Calc_Kzz` dump waits.
 - **Q10** The parity target is TM5's live `Calc_Kzz`, not the NOAA `dkg` cache.
-- **Q12** Float32 on the GPU is acceptable for production; the planned parity
-  tests will use Float64 on the CPU.
+- **Q12** Float32 on the GPU is acceptable for production; parity
+  tests use Float64 on the CPU.
 
 On 2026-10-31 the owner bundled the pull requests: TM5-0 (local-only fixtures, this page
 and the page
@@ -590,10 +646,10 @@ combined convection and diffusion matrix, stays deferred.
 | Item | Status |
 |---|---|
 | This page; binary version-5 format gate | Implemented (TM5-0) |
-| pydyn `Calc_Kzz` column fixtures | Generated locally outside the repository; not committed; loader and parity tests planned for B2 using `ATMOSTR_TM5_FIXTURES_DIR`, with a clear skip when unset or fixtures are absent |
-| B2: bldiff constants, column function, shared layer-count rule | Planned (TM5-PBL-1) |
-| B3: `tm5_pbl` section group, ERA5 surface readers, lat-lon and reduced-Gaussian writers | Planned (TM5-PBL-1) |
-| B4: `TM5CalcKzzField`, `DkgExchange`, lat-lon and reduced-Gaussian runtime, new goldens | Planned (TM5-PBL-1) |
+| pydyn `Calc_Kzz` column fixtures | Generated locally outside the repository; not committed; loader and parity tests implemented using `ATMOSTR_TM5_FIXTURES_DIR`, with a clear skip when unset or fixtures are absent |
+| B2: bldiff constants, column function, shared layer-count rule | Implemented (TM5-PBL-1) |
+| B3: `tm5_pbl` section group, ERA5 surface readers, lat-lon and reduced-Gaussian writers | Implemented (TM5-PBL-1) |
+| B4: `TM5CalcKzzField`, `DkgExchange`, lat-lon and reduced-Gaussian runtime, new golden case definitions | Implemented; references generated by the main session |
 | B5: cubed sphere, adjoint | Planned (TM5-PBL-2) |
 | B6: combined convection and diffusion matrix | Deferred (Q6) |
 

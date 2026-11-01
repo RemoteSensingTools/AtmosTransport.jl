@@ -286,3 +286,10 @@ Add a `[[case]]` to `cases.toml` with a config template in `configs/`
 exist in the template, each `add` key must not), record it into the reference with
 `record <ref> --cases=<name>`, and run `check <ref> <new> --cases=<name>` to
 confirm it is reproducible.
+
+Live Calc_Kzz case definitions are `pre_ll72_tm5pbl`, `pre_o24_tm5pbl`,
+`run_ll72_tm5pbl_cpu_f64` and `run_o24_tm5pbl_cpu_f64`. Their preprocessing
+configs use tropo34a and require the ERA5 surface archive under the configured
+`input.surface_dir` (including fsr, stresses and both hourly endpoints).
+Reference generation is owned by the main session; these definitions alone
+are not recorded or checked references.

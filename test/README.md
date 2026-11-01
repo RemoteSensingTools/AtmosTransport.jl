@@ -254,7 +254,8 @@ explicitly enabled GPU diagnostics. They need no external meteorology files.
 TM5 parity reference values computed by pydyn on synthetic inputs (`Calc_Kzz`
 columns and per-layer mass-flux balance with the `dynam0` closure) are
 local-only fixtures kept outside the repository and are not committed.
-The parity loaders and tests are planned for B2 and S6a; they will load these
+The Calc_Kzz parity loader and tests are implemented in `core/test_tm5_calc_kzz.jl`;
+the balance loader remains planned for S6a. They load these
 fixtures from `ATMOSTR_TM5_FIXTURES_DIR` and skip with a clear message when
 the variable is unset or the required fixtures are absent.
 
@@ -359,3 +360,8 @@ unit conversion in `core/test_flux_units.jl`, native storage/time encoding in
 `core/test_native_cs_surface_flux.jl`, and CS packing in
 `core/test_cs_initial_state_packing.jl`. The C90 CATRINE near-surface remap
 invariant is opt-in at `real_data/test_catrine_initial_condition.jl`.
+
+TM5-PBL input tests include coastal area means on LL/RG, varying N→S/0–360
+thermo fields and shared-endpoint ownership. Column parity reports measured
+Float32 K/D error separately from crossing/guard changes and checks the finite
+BL/free K retained at singular entrainment interfaces.

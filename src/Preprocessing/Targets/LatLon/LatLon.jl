@@ -13,7 +13,7 @@ import ...MetDrivers: ReplayScratch,
 import ...MetDrivers.BinaryFormat: poisson_balance_target,
     set_transport_header_steps_per_window_schedule!
 import ...Parameters: DEFAULT_POSITIVITY_CFL_LIMIT
-import ..Common: AbstractColumnWeights,
+import ..Common: validate_tm5_pbl_target, AbstractColumnWeights,
     ERA5SpectralSettings,
     LatLonTargetGeometry,
     MassWeightedColumn,
@@ -57,6 +57,12 @@ import Dates: Date,
 import FFTW: FFTW
 import GRIB: GRIB
 import JSON3: JSON3
+import ..Common: ReducedGaussianTargetGeometry, target_surface_means
+import ..PhysicsInputs: era5_surface_source_mesh
+import NCDatasets: NCDataset
+import ..PhysicsInputs: load_tm5_pbl_window, open_tm5_pbl_surface_reader
+import ...MetDrivers.BinaryFormat: TM5_PBL_PAYLOAD_SECTIONS, TM5_PBL_FIELD_NAMES,
+    PointSampledSpectralFluxesHeader, flux_construction_header_entries
 import ..TransportBinary: AbstractBinaryWriter,
     AbstractWindowContract,
     AbstractWindowWorkspace,
@@ -160,6 +166,8 @@ export AbstractQVWorkspace,
 
 include("latlon_workspaces.jl")
 include("latlon_contracts.jl")
+include("tm5_pbl_writer.jl")
 include("latlon_spectral.jl")
+export TM5PBLInputCache, load_tm5_pbl_target_window, tm5_pbl_sample, tm5_target_coordinates
 
 end # module LatLonTarget

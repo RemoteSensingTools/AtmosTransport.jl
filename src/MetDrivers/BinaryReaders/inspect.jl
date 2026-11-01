@@ -1,4 +1,5 @@
-_supports_pbl_diffusion(::TransportBinaryReader) = false
+_supports_pbl_diffusion(r::TransportBinaryReader) =
+    all(s -> s in r.header.payload_sections,TM5_PBL_PAYLOAD_SECTIONS)
 _supports_pbl_diffusion(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
 ) = has_surface(reader)

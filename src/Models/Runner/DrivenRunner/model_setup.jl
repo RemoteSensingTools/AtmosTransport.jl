@@ -111,12 +111,21 @@ function _make_structured_model(driver::TransportBinaryDriver;
     state = CellState(basis_type, air_mass; tracer_tuple...)
     fluxes = _allocate_structured_runner_fluxes(
         mesh, nlevels(grid), FT, basis_type)
-    model = TransportModel(state, fluxes, grid, recipe.advection;
-                           diffusion = recipe.diffusion,
-                           convection = recipe.convection)
+    model = _structured_recipe_model(state,fluxes,grid,recipe)
     adaptor = array_adapter(arch)
     return adaptor === Array ? model : Base.invokelatest(Adapt.adapt, adaptor, model)
 end
+
+# Keep topology and packed-state rank correlated at the recipe boundary. This
+# also excludes the impossible LL/RG intersection from generic inference.
+_structured_recipe_model(state,fluxes::StructuredFaceFluxState,grid,recipe) =
+    TransportModel(state::CellState{<:Any,<:Any,<:AbstractArray{<:Any,4}},fluxes,
+        grid::AtmosGrid{<:LatLonMesh},recipe.advection;
+        diffusion=recipe.diffusion,convection=recipe.convection)
+_structured_recipe_model(state,fluxes::FaceIndexedFluxState,grid,recipe) =
+    TransportModel(state::CellState{<:Any,<:Any,<:AbstractArray{<:Any,3}},fluxes,
+        grid::AtmosGrid{<:ReducedGaussianMesh},recipe.advection;
+        diffusion=recipe.diffusion,convection=recipe.convection)
 
 # Structured transport closes the zonal boundary periodically. Regional
 # LatLonMesh values remain useful for source/regridding grids, but they cannot

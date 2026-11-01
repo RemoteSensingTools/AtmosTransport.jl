@@ -427,3 +427,26 @@ export build_runtime_advection, build_runtime_diffusion, build_runtime_convectio
 export build_runtime_chemistry
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export configured_halo_width
+
+_tm5_pbl_reader(context) = throw(ArgumentError("tm5_calc_kzz needs a transport binary reader or driver context"))
+_tm5_pbl_reader(reader::TransportBinaryReader) = reader
+_tm5_pbl_reader(driver::TransportBinaryDriver) = driver.reader
+_tm5_pbl_grid(driver::TransportBinaryDriver,::Type{FT}) where FT = driver_grid(driver)
+_tm5_pbl_grid(reader::TransportBinaryReader,::Type{FT}) where FT = load_grid(reader;FT)
+function validate_runtime_diffusion(style::AbstractRuntimeRecipeStyle,
+                                    op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField},context) where FT
+    _require_tm5_pbl(context)
+    return nothing
+end
+function validate_runtime_diffusion(style::ReducedGaussianRuntimeRecipeStyle,
+                                    op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField},context) where FT
+    uses_diffusive_surface_flux_boundary(op) && throw(ArgumentError("RG tm5_calc_kzz requires split surface coupling"))
+    _require_tm5_pbl(context)
+    return nothing
+end
+function _require_tm5_pbl(context)
+    reader = _tm5_pbl_reader(context)
+    all(s -> s in reader.header.payload_sections, TM5_PBL_PAYLOAD_SECTIONS) || throw(ArgumentError(
+        "tm5_calc_kzz requires tm5_pbl in every transport binary"))
+    return nothing
+end

@@ -39,7 +39,7 @@ flux-construction identity: the typed records `NoFluxConstructionHeader` (v4),
 header untouched; `extra_header` cannot set these keys. `_flux_construction_keys`
 is the one per-construction key list (field order) for writing, decoding and
 rejection. A version-5 header always records an identity, so a writer that adds
-a later version-5-only item (the planned `tm5_pbl` group) must also record the
+a later version-5-only item (the optional `tm5_pbl` group) must also record the
 construction.
 `fidelity_tag` and `FLUX_FIDELITY_SAMPLE_SEED` keep writer/reader certificate
 spellings and deterministic sampling identical. Public `parse_*_fidelity_header`
@@ -84,3 +84,9 @@ every default output stays version 4 with unchanged bytes.
 Tests: binary inspector, format versions 4 and 5 (`test_binary_format_v5.jl`),
 persistence hardening, atomic files, binary planet radius, optional CS sections,
 and preprocessing writer/driver contracts.
+
+The optional v5 `tm5_pbl` group is implemented for LL/RG. The exported
+`TM5_PBL_FIELD_NAMES` and `TM5_PBL_PAYLOAD_SECTIONS` define its ordered
+T/q and ten surface primitives. `validate_tm5_pbl_inputs` checks values and shapes
+for generic writers and the spectral LL writer. The contract rejects partial groups and v4
+use; `TransportWindow.tm5_pbl` and its Adapt rule carry the group to runtime.

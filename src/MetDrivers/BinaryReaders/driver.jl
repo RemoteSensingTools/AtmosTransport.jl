@@ -406,7 +406,8 @@ supports_convection(driver::TransportBinaryDriver) =
     has_tm5_convection(driver.reader) || has_cmfmc(driver.reader)
 supports_diffusion(driver::TransportBinaryDriver) =
     _supports_runtime_diffusion(driver.reader)
-_supports_runtime_diffusion(::TransportBinaryReader) = false
+_supports_runtime_diffusion(r::TransportBinaryReader) =
+    all(s -> s in r.header.payload_sections,TM5_PBL_PAYLOAD_SECTIONS)
 driver_grid(driver::TransportBinaryDriver) = driver.grid
 flux_interpolation_mode(driver::TransportBinaryDriver) =
     has_flux_delta(driver.reader) && driver.reader.header.flux_sampling !== :window_constant ? :interpolate : :constant
@@ -477,7 +478,7 @@ end
 
 function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState;
                                 qv_pair = nothing, deltas = nothing,
-                                convection = nothing)
+                                convection = nothing, tm5_pbl = nothing)
     delta_obj = if deltas === nothing
         nothing
     else
@@ -491,12 +492,12 @@ function _make_transport_window(m, ps, fluxes::StructuredFaceFluxState;
                            qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
                            qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
                            deltas = delta_obj,
-                           convection = convection)
+                           convection = convection, tm5_pbl = tm5_pbl)
 end
 
 function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
                                 qv_pair = nothing, deltas = nothing,
-                                convection = nothing)
+                                convection = nothing, tm5_pbl = nothing)
     delta_obj = if deltas === nothing
         nothing
     else
@@ -509,7 +510,7 @@ function _make_transport_window(m, ps, fluxes::FaceIndexedFluxState;
                            qv_start = qv_pair === nothing ? nothing : qv_pair.qv_start,
                            qv_end = qv_pair === nothing ? nothing : qv_pair.qv_end,
                            deltas = delta_obj,
-                           convection = convection)
+                           convection = convection, tm5_pbl = tm5_pbl)
 end
 
 function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{H}}, win::Int) where {FT, ReaderT, H <: AbstractStructuredMesh}
@@ -519,7 +520,8 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
     deltas = load_flux_delta_window!(driver.reader, win)
     convection = _load_transport_binary_convection_forcing(driver.reader, win)
     return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas,
-                                    convection=convection)
+                                    convection=convection,
+                                    tm5_pbl=_load_tm5_pbl_window(driver.reader, win))
 end
 
 function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:AtmosGrid{<:ReducedGaussianMesh}}, win::Int) where {FT, ReaderT}
@@ -529,7 +531,8 @@ function load_transport_window(driver::TransportBinaryDriver{FT, ReaderT, <:Atmo
     deltas = load_flux_delta_window!(driver.reader, win)
     convection = _load_transport_binary_convection_forcing(driver.reader, win)
     return _make_transport_window(m, ps, fluxes; qv_pair=qv_pair, deltas=deltas,
-                                    convection=convection)
+                                    convection=convection,
+                                    tm5_pbl=_load_tm5_pbl_window(driver.reader, win))
 end
 
 # Returns a ConvectionForcing with populated
@@ -548,3 +551,10 @@ export StructuredFluxDeltas, FaceIndexedFluxDeltas, CubedSphereFluxDeltas
 export TransportWindow
 export TransportBinaryDriver, driver_grid, air_mass_basis, load_transport_window, load_transport_window!
 export has_humidity_endpoints, interpolate_fluxes!, expected_air_mass!, interpolate_qv!, copy_fluxes!
+
+function _load_tm5_pbl_window(reader::TransportBinaryReader{FT}, win::Int) where FT
+    sections = TM5_PBL_PAYLOAD_SECTIONS
+    all(s -> s in reader.header.payload_sections, sections) || return nothing
+    values = map(s -> reshape(FT.(section_view(reader, win, s)), section_shape(reader.header,s)), sections)
+    return NamedTuple{TM5_PBL_FIELD_NAMES}(values)
+end

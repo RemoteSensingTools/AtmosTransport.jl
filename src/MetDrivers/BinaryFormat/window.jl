@@ -29,10 +29,11 @@ end
 A decoded forcing interval (format versions 4 and 5). The concrete flux and
 delta types encode the horizontal topology, while optional fields describe
 physical capabilities: humidity endpoints, convection, PBL surface forcing, GCHP
-VDIFF state, and precomputed TM5 interface diffusion exchange `dkg` [kg s⁻¹]. A
+VDIFF state, precomputed TM5 interface diffusion exchange `dkg` [kg s⁻¹], and
+the optional v5 live-Calc_Kzz input group `tm5_pbl`. A
 window owns no prognostic tracer state.
 """
-struct TransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK}
+struct TransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK, PB}
     air_mass         :: M
     surface_pressure :: PS
     fluxes           :: F
@@ -43,6 +44,7 @@ struct TransportWindow{Basis <: AbstractMassBasis, M, PS, F, Q, D, C, S, V, DK}
     surface          :: S
     vdiff            :: V
     dkg              :: DK
+    tm5_pbl          :: PB
 end
 
 function Adapt.adapt_structure(to, deltas::StructuredFluxDeltas)
@@ -75,12 +77,13 @@ function Adapt.adapt_structure(to, window::TransportWindow{B}) where {B <: Abstr
     surface = Adapt.adapt(to, window.surface)
     vdiff = Adapt.adapt(to, window.vdiff)
     dkg = Adapt.adapt(to, window.dkg)
+    tm5_pbl = Adapt.adapt(to, window.tm5_pbl)
     return TransportWindow{B, typeof(air_mass), typeof(surface_pressure),
                            typeof(fluxes), typeof(qv_start), typeof(deltas),
                            typeof(convection), typeof(surface), typeof(vdiff),
-                           typeof(dkg)}(
+                           typeof(dkg), typeof(tm5_pbl)}(
         air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas,
-        convection, surface, vdiff, dkg)
+        convection, surface, vdiff, dkg, tm5_pbl)
 end
 
 mass_basis(::TransportWindow{B}) where {B} = B()
@@ -93,11 +96,11 @@ function TransportWindow(air_mass, surface_pressure,
                          qv_start = nothing, qv_end = nothing,
                          deltas = nothing, convection = nothing,
                          surface = nothing, vdiff = nothing,
-                         dkg = nothing) where {B <: AbstractMassBasis}
+                         dkg = nothing, tm5_pbl = nothing) where {B <: AbstractMassBasis}
     return TransportWindow{B, typeof(air_mass), typeof(surface_pressure),
                            typeof(fluxes), typeof(qv_start), typeof(deltas),
                            typeof(convection), typeof(surface), typeof(vdiff),
-                           typeof(dkg)}(
+                           typeof(dkg), typeof(tm5_pbl)}(
         air_mass, surface_pressure, fluxes, qv_start, qv_end, deltas,
-        convection, surface, vdiff, dkg)
+        convection, surface, vdiff, dkg, tm5_pbl)
 end

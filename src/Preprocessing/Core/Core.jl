@@ -16,7 +16,7 @@ using ...Grids: cell_area_matrix, CSGlobalFaceTable, build_cs_global_face_table,
 using ...Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nrings, ring_longitudes,
     panel_convention, panel_cell_local_tangent_basis, cs_definition, coordinate_law, center_law,
     longitude_offset_deg, cs_definition_tag, coordinate_law_tag, center_law_tag
-using ...Regridding: default_regrid_cache_dir
+using ...Regridding: default_regrid_cache_dir, build_regridder, apply_regridder!
 import ...expand_data_path
 import ...MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using FastGaussQuadrature: gausslegendre

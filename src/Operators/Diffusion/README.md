@@ -216,3 +216,19 @@ Deferred numerical changes: GCHP's Float64 `cbrt` (BF6), cross-operator
 mixing-ratio floors and LocalHB's shear-dependent background floor. Diffusion
 retains its absorbing `m <= 0` convention; Advection and diagnostics keep
 their respective policies.
+
+Live TM5 Calc_Kzz uses `TM5CalcKzzField` inside `ImplicitVerticalDiffusion`
+on LL and RG. `tm5_calc_kzz.jl` owns the pure bottom-up column physics,
+`TM5CalcKzzField.jl` the cached D, scratch, Adapt and KA refresh. `DkgExchange`
+supplies D directly to the existing column solver without reading dz.
+Models.Physics constructs the metric containers from mesh geometry.
+
+# shared: TM5LLMetrics, TM5RGMetrics
+
+Live Calc_Kzz keeps only active entrainment guards in its runtime warning count
+and warns once per field/run; unused singular branches remain counted in the
+column result. Its guard retains the finite BL/free K. The refresh stores no
+PBL-height diagnostic and `update_field!` returns the field, as required by the
+field interface. Scratch is approximately 16 floating values per cell/layer,
+plus D and one integer guard count per cell; large RG meshes can require about
+1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds.

@@ -1,7 +1,7 @@
 # DrivenSimulation: per-window physics refresh (diffusion dz and Kz, convection forcing) and midpoint forcing.
 # Split from DrivenSimulation.jl (refactor phase 4); included by Runner.jl in this order.
 
-using ...Operators.Diffusion: NoDiffusion, ImplicitVerticalDiffusion,
+using ...Operators.Diffusion: TM5CalcKzzField, refresh_tm5_calc_kzz!, NoDiffusion, ImplicitVerticalDiffusion,
                               stage_hybrid_coefficients!,
                               recover_total_surface_pressure_staged!,
                               fill_dz_hydrostatic_constT_staged!,
@@ -308,4 +308,13 @@ function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     end
     substep == 1 && _refresh_convection_forcing!(sim.model.convection, sim.model, sim.window)
     return λ
+end
+
+@inline _refresh_dz_for_window!(_sim::DrivenSimulation,
+    ::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField}) where FT = nothing
+function _refresh_pbl_kz_for_window!(field::TM5CalcKzzField,sim::DrivenSimulation)
+    seconds = flux_application_seconds(sim.window_dt,sim.steps_per_window,flux_kind(sim.driver))
+    refresh_tm5_calc_kzz!(field,sim.window.tm5_pbl,sim.model.state.air_mass,
+        sim.window.fluxes,sim.model.grid.vertical,seconds,mass_basis(sim.model.state))
+    return nothing
 end

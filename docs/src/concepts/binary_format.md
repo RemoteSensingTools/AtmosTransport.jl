@@ -83,10 +83,10 @@ The full list lives in `src/MetDrivers/BinaryFormat/header.jl`.
 ### Format versions 4 and 5
 
 Version 5 is version 4 plus the **flux-construction identity**: header keys
-that record how the preprocessor built the horizontal mass fluxes. The payload
-layout, the sections, the timing and the sampling semantics are identical; a
-version-5 file with the same windows has the same payload bytes as its
-version-4 twin.
+that record how the preprocessor built the horizontal mass fluxes. The timing and sampling contracts are shared. A version-5 file that adds only
+the identity has identical payload bytes to its version-4 twin. Version 5 also
+supports the optional all-or-nothing `tm5_pbl` input group for LL/RG; this group
+is rejected in v4.
 
 | Key (v5 only) | Type | Meaning |
 |---|---|---|
@@ -115,13 +115,15 @@ its keys, without one the header is byte-identical to before. `extra_header`
 cannot set these keys. `inspect_binary` reports `format_version` and
 `flux_construction`, and `binary_capabilities` returns both.
 
-No maintained preprocessing route records a flux-construction identity yet,
-so every binary written today is version 4. The `tm5_spectral` construction is
-planned, and so is an optional, version-5-only `tm5_pbl` input section group for
-the planned [TM5 boundary-layer scheme](../theory/tm5_boundary_layer.md);
-neither exists in the code yet. Transformations that rewrite a binary
-(cubed-sphere coarsening, lat-lon to cubed-sphere regridding, TM5 convection
-attachment) write version 4 and do not carry an identity.
+ERA5 spectral LL/RG preprocessing with `[preprocessing] include_tm5_pbl=true`
+records the point-sampled construction identity and the complete live-Calc_Kzz
+input group. Default routes still emit v4. `tm5_t` and `tm5_q` have cell shape;
+`tm5_lsm`, `tm5_sr`, `tm5_fsr`, `tm5_u10`, `tm5_v10`, `tm5_ewss`, `tm5_nsss`,
+`tm5_sshf`, `tm5_slhf`, `tm5_oro` have surface shape. Heat fluxes are
+ECMWF downward-positive W/m², stresses N/m², roughness metres, orography m²/s²,
+T Kelvin and q kg/kg of total air. `TransportWindow.tm5_pbl` carries the group.
+See [TM5 boundary-layer diffusion](../theory/tm5_boundary_layer.md).
+Cubed-sphere transformations and input writers remain outside this scope.
 
 Every current writer also emits a schema-2 flux-fidelity certificate. The
 reader decodes its status and construction kind into nominal types

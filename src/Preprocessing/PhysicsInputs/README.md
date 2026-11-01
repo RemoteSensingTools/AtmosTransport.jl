@@ -58,3 +58,8 @@ and `allocate_tm5_convection_column_scratch`. These preserve the source arithmet
 ## Forward<->adjoint mirrors
 
 None. These are offline CPU preprocessing routines.
+
+- [`tm5_pbl_inputs.jl`](tm5_pbl_inputs.jl) — `load_tm5_pbl_window` and
+  `open_tm5_pbl_surface_reader`: validated native ERA5 surface inputs for live
+  Calc_Kzz, hourly endpoint means and interval-total conversion. Heat remains
+  downward-positive; forecast roughness fsr replaces Olsson roughness.

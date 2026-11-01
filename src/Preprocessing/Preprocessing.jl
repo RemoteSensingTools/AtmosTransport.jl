@@ -256,7 +256,7 @@ import .Common: check_native_closure_config, AbstractChainPolicy, AbstractColumn
     resolve_surface_settings, spectral_column_weights, spread_column_correction!,
     supports_day_threading, supports_initial_endpoint_mass_pin,
     supports_spectral_massflux_preprocessing, target_balance_geometry, target_definition_tag,
-    target_header_metadata, target_spectral_truncation, target_summary,
+    target_header_metadata, target_spectral_truncation, target_summary, validate_tm5_pbl_target,
     validate_column_balance_weights, windows_per_day, with_column_weights_record, with_replay_record
 include("Vertical/Vertical.jl")
 import .Vertical: AbstractFieldKind, AbstractVerticalTransform, ConvectionInterfaceFlux,

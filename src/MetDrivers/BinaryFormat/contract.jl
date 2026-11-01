@@ -360,6 +360,11 @@ function _validate_transport_layout!(header::AbstractDict)
     vdiff = map(s -> s in sections, GCHP_VDIFF_PAYLOAD_SECTIONS)
     all(vdiff) || !any(vdiff) || throw(ArgumentError(
         "Transport-binary contract violation — GCHP VDIFF payload sections must be complete"))
+    tm5_pbl = map(s -> s in sections, TM5_PBL_PAYLOAD_SECTIONS)
+    all(tm5_pbl) || !any(tm5_pbl) || throw(ArgumentError(
+        "Transport-binary contract violation — tm5_pbl sections must be complete"))
+    any(tm5_pbl) && Int(header["format_version"]) != 5 && throw(ArgumentError(
+        "Transport-binary contract violation — tm5_pbl requires format_version=5"))
     :kz in sections && throw(ArgumentError(
         "Transport-binary contract violation — :kz is not part of transport-binary format " *
         "v$(join(TRANSPORT_BINARY_FORMAT_VERSIONS, "/")); " *

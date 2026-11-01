@@ -28,3 +28,8 @@ RG and ERA5 keep their distinct thread-pool sizing policies.
 ## Forward<->adjoint mirrors
 
 No adjoint. RG checks each horizontal/vertical pass separately and skips polar stub faces; its scan must remain distinct from LL/CS. Stored cm is diagnosed after column balance; native/merged cm scratch is unnecessary.
+
+`include_tm5_pbl=true` adds the optional v5 inputs through the existing streaming
+writer; surface cell-area means, thermo point sampling, shared-endpoint caching
+and vertical weighting reuse LatLonTarget's
+`load_tm5_pbl_target_window`. Default windows retain their v4 layout.

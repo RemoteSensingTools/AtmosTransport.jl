@@ -58,3 +58,8 @@ configured runner (DrivenRunner closes inputs after draining it):
 refresh functions and clock transition; the capture copies the fluxes exactly
 when `_refreshes_fluxes` says production rewrote them. Operators.StepPlans owns clock/dt
 arithmetic. Resource cleanup drains prefetch before closing the input binary.
+
+The live `TM5CalcKzzField` refresh reads runtime carrier mass and stored-window
+face amounts after the per-window mass reset. Its direct exchange path skips
+dz reconstruction; `driven_window_state.jl` copies the new input group on device
+handoffs, through the existing optional NamedTuple storage copier.
