@@ -788,7 +788,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **150440 bytes / 42982.9 tokens**. Public names: **26**.
+Size: **153169 bytes / 43762.6 tokens**. Public names: **26**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -796,9 +796,9 @@ Used by: `ext`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversio
 
 Files:
 
-- `Diffusion.jl` (3384 bytes)
+- `Diffusion.jl` (3396 bytes)
 - `LocalHoltslagBovilleKzField.jl` (7493 bytes)
-- `TM5CalcKzzField.jl` (5884 bytes)
+- `TM5CalcKzzField.jl` (6052 bytes)
 - `WindowPBLKzField.jl` (4536 bytes)
 - `adjoint_kernels.jl` (6249 bytes)
 - `conservative_dkg.jl` (11517 bytes)
@@ -807,7 +807,7 @@ Files:
 - `gchp_nonlocal_pbl.jl` (8854 bytes)
 - `operators.jl` (27444 bytes)
 - `pbl_physics.jl` (10566 bytes)
-- `tm5_calc_kzz.jl` (8240 bytes)
+- `tm5_calc_kzz.jl` (10789 bytes)
 - `window_kz_cache.jl` (3689 bytes)
 - `workspace.jl` (5616 bytes)
 - `workspace_validation.jl` (8621 bytes)

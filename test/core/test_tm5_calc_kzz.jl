@@ -107,6 +107,7 @@ end
         flips=0
         guard_changes=0
         d32_error=0.; d32_l1=0.; k32_error=0.; k32_active_error=0.
+        d32_floor_error=0.; d32_floor_l1=0.; singular_interfaces=0
         pu=reshape(data["grid"]["pu"]["data"],Tuple(data["grid"]["pu"]["shape"]))
         pv=reshape(data["grid"]["pv"]["data"],Tuple(data["grid"]["pv"]["shape"]))
         grid=data["grid"]
@@ -163,17 +164,30 @@ end
             D32=zeros(Float32,34)
             r32=TD.tm5_calc_kzz_column!(D32,tm5_scratch(Float32,34),input32,TD.TM5BLDiffParameters(Float32;lmax=26))
             @test all(isfinite,r32.kvh)
-            for (a,b) in zip(D32,D)
-                b != 0 && (d32_error=max(d32_error,abs(Float64(a)-b)/abs(b)))
+            # Float64 arithmetic on the Float32-rounded inputs: the floor for any Float32 column.
+            Dr=zeros(34)
+            TD.tm5_calc_kzz_column!(Dr,tm5_scratch(Float64,34),map(v->v isa NamedTuple ? map(Float64,v) : Float64.(v),input32),prm)
+            # Interfaces built with exactly equal Float64 θv are singular: Ri = 0 picks the
+            # stable branch and the entrainment quotient is non-finite. Input rounding moves
+            # them off that point (also in Float64 on the rounded inputs), so they are
+            # counted, not scored.
+            regular=[l<34 && r.theta_v[l+1]!=r.theta_v[l] for l in 1:34]
+            singular_interfaces += count(l->!regular[l],1:33)
+            for (a,b,ok) in zip(D32,D,regular)
+                ok && b != 0 && (d32_error=max(d32_error,abs(Float64(a)-b)/abs(b)))
+            end
+            for (a,b,ok) in zip(D32,Dr,regular)
+                ok && b != 0 && (d32_floor_error=max(d32_floor_error,abs(Float64(a)-b)/abs(b)))
             end
             for (l,(a,b)) in enumerate(zip(r32.kvh,r.kvh))
-                if b != 0
+                if b != 0 && regular[l]
                     e=abs(Float64(a)-b)/abs(b)
                     k32_error=max(k32_error,e)
                     l < prm.lmax && (k32_active_error=max(k32_active_error,e))
                 end
             end
-            d32_l1=max(d32_l1,sum(abs.(Float64.(D32).-D))/sum(abs,D))
+            d32_l1=max(d32_l1,sum(abs.(Float64.(D32[regular]).-D[regular]))/sum(abs,D[regular]))
+            d32_floor_l1=max(d32_floor_l1,sum(abs.(Float64.(D32[regular]).-Dr[regular]))/sum(abs,Dr[regular]))
             flips += (r.crossing1 != r32.crossing1) + (r.crossing2 != r32.crossing2)
             guard_changes += r.guarded != r32.guarded
         end
@@ -182,11 +196,15 @@ end
         end
         println("TM5 parity winds max_abs=",wind_error[1]," max_rel=",wind_error[2])
         @test d32_error <= 2e-4
-        @test d32_l1 <= 2e-5
-        @test k32_error <= 3e-3
+        @test d32_l1 <= 3e-5          # Float64 on the rounded inputs alone: 2.6e-5
+        @test k32_error <= 4e-3       # set by the top interface, above the cutoff
         @test k32_active_error <= 2e-4
+        # Float32 arithmetic itself (literal Float32 differences gave 1.5e-4 and 4.0e-5).
+        @test d32_floor_error <= 2e-5
+        @test d32_floor_l1 <= 1e-5
         println("TM5 Float32 D max_entry_rel=",d32_error," max_column_L1_rel=",d32_l1," K max_entry_rel=",k32_error," active_K max_entry_rel=",k32_active_error)
+        println("TM5 Float32 D against Float64 on Float32 inputs: max_entry_rel=",d32_floor_error," max_column_L1_rel=",d32_floor_l1)
         println("TM5 Float32 PBL crossing changes: ",flips," / 32 passes")
-        println("TM5 Float32 guarded-interface count changes: ",guard_changes," / 16 columns")
+        println("TM5 Float32 guarded-interface count changes: ",guard_changes," / 16 columns (",singular_interfaces," singular interfaces)")
     end
 end
