@@ -17,6 +17,14 @@ using .AtmosTransport.Grids: face_cells
 using .AtmosTransport.Parameters: GLOBAL_MEAN_DRY_SURFACE_PRESSURE, STANDARD_GRAVITY,
                                    IFS_EARTH_RADIUS
 
+# Measure the concrete call inside a function: Julia 1.10 also counts keyword
+# call overhead when @allocated runs directly in the testset scope.
+function _humidity_pin_allocations(ps, area, dA, dB, qv, target)
+    pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv; target_ps_dry_pa=target)
+    return @allocated pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv;
+                                                 target_ps_dry_pa=target)
+end
+
 @testset "global ps pins" begin
     Nx, Ny, Nz = 6, 4, 3
     dA, dB = [1000.0, 3000.0, 500.0], [0.1, 0.3, 0.6]
@@ -133,9 +141,6 @@ end
         naive_error = abs(dry_total_big(naive, area, dA, dB, qv) / expected - 1)
         @test error < eps(Float64)
         @test naive_error > 20eps(Float64)
-        # Warm the same concrete call before checking the allocation contract.
-        pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv; target_ps_dry_pa=target)
-        @test (@allocated pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv;
-                                                     target_ps_dry_pa=target)) == 0
+        @test _humidity_pin_allocations(ps, area, dA, dB, qv, target) == 0
     end
 end
