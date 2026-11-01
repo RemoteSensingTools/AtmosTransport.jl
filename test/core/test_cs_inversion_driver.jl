@@ -237,8 +237,9 @@ end
     tape_of(block) = _adjoint_tape(TOML.parse(block))
     @test tape_of("") === AT.AdjointTape()
     @test tape_of("[adjoint.tape]\n") === AT.AdjointTape()
-    @test tape_of("[adjoint.tape]\ncontent = \"full_state\"\nstorage = \"pinned_host\"\n") ===
+    @test tape_of("[adjoint.tape]\ncontent = \"state\"\nstorage = \"pinned_host\"\n") ===
           AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage())
+    @test tape_of("[adjoint.tape]\ncontent = \"Air_Mass\"\n") === AT.AdjointTape(; content = AT.AirMassTape())
     @test tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = 4\n") ===
           AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(4))
     # Choices in any letter case, as in the other config tables (`parse_choice`).
@@ -247,6 +248,8 @@ end
     mmap = tape_of("[adjoint.tape]\nstorage = \"mmap\"\nscratch_dir = \"/scratch/tape\"\ncheckpointing = \"full\"\n")
     @test mmap.storage == AT.MmapCSTapeStorage("/scratch/tape") && mmap.checkpoint === AT.FullCheckpoint()
     for bad in ("storage = \"disk\"", "checkpointing = \"revolve\"", "content = \"compact\"",
+                "content = \"full_state\"",                            # the uncompacted tape is gone
+                "content = \"air_mass\"\ncheckpointing = \"stride\"\nstride = 2",   # Full only
                 "storage = \"mmap\"",                                   # needs scratch_dir
                 "scratch_dir = \"/scratch/tape\"",                       # only with mmap
                 "checkpointing = \"stride\"",                           # needs stride

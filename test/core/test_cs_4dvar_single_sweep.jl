@@ -250,23 +250,26 @@ end
 # ---------------------------------------------------------------------------
 
 # A tape storage that is its own pool and counts staged states, reads of
-# staged states, and the opens, rewinds and releases of its pool.
+# staged states, and the opens, rewinds and releases of its pool (with the
+# `generation` and `released` fields of a pool).
 mutable struct _CountingTapeStorage <: TapeMod.AbstractCSTapeStorage
     stages::Int
     reads::Int
     opens::Int
     rewinds::Int
     releases::Int
+    generation::Int
+    released::Bool
 end
-_CountingTapeStorage() = _CountingTapeStorage(0, 0, 0, 0, 0)
+_CountingTapeStorage() = _CountingTapeStorage(0, 0, 0, 0, 0, 1, false)
 struct _CountingSlot{P}
     storage::_CountingTapeStorage
     panels::P
 end
 TapeMod._open_tape_pool(s::_CountingTapeStorage, _nbytes::Integer) = (s.opens += 1; s)
 TapeMod._holds_tape_bytes(::_CountingTapeStorage, _nbytes::Integer) = true
-TapeMod._rewind_tape_pool!(s::_CountingTapeStorage) = (s.rewinds += 1; s)
-TapeMod._release_tape_pool!(s::_CountingTapeStorage) = (s.releases += 1; nothing)
+TapeMod._rewind_tape_pool!(s::_CountingTapeStorage) = (s.rewinds += 1; s.generation += 1; s)
+TapeMod._release_tape_pool!(s::_CountingTapeStorage) = (s.releases += 1; s.released = true; nothing)
 TapeMod._allocate_tape_slot(s::_CountingTapeStorage, panels::NTuple{6}) =
     _CountingSlot(s, ntuple(p -> similar(panels[p]), 6))
 function TapeMod.stage_panels!(slot::_CountingSlot, src::NTuple{6})
@@ -418,6 +421,110 @@ end
     stride = optimize(nothing; tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(3)))
     @test Threads.nthreads() == 1 ? stride.cost_history == counted.cost_history :
                                     isapprox(stride.cost_history, counted.cost_history; rtol = 1e-13)
+end
+
+# ---------------------------------------------------------------------------
+# AirMassTape: one recording per call or optimization, reused after an
+# identity check
+# ---------------------------------------------------------------------------
+
+@testset "AirMassTape needs a scheme whose reverse reads the air mass only" begin
+    air = AT.AdjointTape(; content = AT.AirMassTape())
+    @test_throws ArgumentError AT.AdjointTape(; content = AT.AirMassTape(), checkpoint = AT.StrideCheckpoint(2))
+    for scheme in (AT.UpwindScheme(), AT.SlopesScheme(AT.NoLimiter()), AT.PPMScheme(AT.NoLimiter()))
+        @test ADJ.tape_dependence(scheme) === ADJ.AirMassDependence()
+    end
+    observations, controls = _observations(P64), _controls(P64)
+    for scheme in (AT.PPMScheme(AT.MonotoneLimiter()), AT.PPMScheme(AT.CW84Limiter()), AT.LinRoodPPMScheme())
+        @test ADJ.tape_dependence(scheme) === ADJ.TracerDependence()
+        # Rejected before the forward run.
+        n, err = _replayed_steps(clock -> try
+            _fourdvar(P64, observations, controls; scheme, tape = air, diffusion_meteo = clock)
+        catch e
+            e
+        end)
+        @test err isa ArgumentError && occursin("AirMassTape", err.msg) && n == 0
+        @test_throws ArgumentError AT.cs_surface_emission_footprint(
+            P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, AT.CSColumnMeanObjective(2, 2, 3);
+            scheme, dt = DT, tape = air)
+    end
+end
+
+@testset "AirMassTape: the first evaluation's tape serves the optimization ($physics)" for
+        physics in (:none, :tm5, :split)
+    scheme = AT.UpwindScheme()
+    observations, controls = _observations(P64), _controls(P64)
+    kw = _physics(physics, P64)
+    # Fixed-step gradient descent: two steps, three evaluations, each moving
+    # the controls by about a tenth of their size.
+    probe = _fourdvar(P64, observations, controls; scheme, physics)
+    norm2(tuples) = sqrt(sum(sum(abs2, a) for t in tuples for a in t))
+    step = norm2([c.value for c in controls]) / (10 * norm2(probe.gradients))
+    optimizer = AT.CSGradientDescent(; iterations = 2, initial_step = step, min_step = step, line_search = false)
+    # Without diffusion only the replay reads the clock, once per step.
+    clocked(clock) = physics === :none ? (; diffusion_meteo = clock) : (;)
+    optimize(tape, clock) = AT.cs_surface_flux_4dvar_optimize(
+        P64.rm, P64.m, P64.am, P64.bm, P64.cm, P64.mesh, observations, controls;
+        scheme, dt = DT, optimizer, tape, kw..., clocked(clock)...)
+    fresh_storage, air_storage = _CountingTapeStorage(), _CountingTapeStorage()
+    _, fresh = _replayed_steps(clock -> optimize(_counting_tape(fresh_storage), clock))
+    n, reused = _replayed_steps(clock -> optimize(_counting_tape(air_storage; content = AT.AirMassTape()), clock))
+    @test length(fresh.cost_history) == length(reused.cost_history) == 3
+    physics === :none && @test n == 3 * P64.nsteps                # one forward run per evaluation
+    # Recorded by the first evaluation only, never rewound; the later ones walk it.
+    @test fresh_storage.stages == 3 * air_storage.stages
+    @test (air_storage.opens, air_storage.rewinds, air_storage.releases) == (1, 0, 1)
+    @test air_storage.reads == fresh_storage.reads
+    # The same gradients and costs, bit for bit on one thread.
+    if Threads.nthreads() == 1
+        @test reused.cost_history == fresh.cost_history
+        @test reused.last.gradients == fresh.last.gradients
+        @test [c.value for c in reused.controls] == [c.value for c in fresh.controls]
+    else
+        @test reused.cost_history ≈ fresh.cost_history rtol = 1e-13
+    end
+end
+
+@testset "AirMassTape: a forward run that does not fit the recording is an error" begin
+    Footprint, Solver = ADJ.Footprint, ADJ.Inversion.Solver
+    scheme = AT.UpwindScheme()
+    observations, controls = _observations(P64), _controls(P64)
+    # Met arrays of this test only (one of them is changed in place below).
+    P = (; P64..., am = [map(copy, a) for a in P64.am])
+    evaluate(runtime; Q = P, obs = observations, kw...) = Solver._cs_surface_flux_4dvar(
+        runtime, Q.rm, Q.m, Q.am, Q.bm, Q.cm, Q.mesh, obs, controls; scheme = get(kw, :scheme, scheme),
+        dt = get(kw, :dt, DT))
+    message(f) = try f(); "" catch e; e isa ArgumentError ? e.msg : rethrow() end
+    Footprint._with_tape_runtime(AT.AdjointTape(; content = AT.AirMassTape())) do runtime
+        first = evaluate(runtime)
+        held = runtime.held
+        @test held isa Footprint._HeldAirMassTape && held.identity.steps == P.nsteps
+        again = evaluate(runtime)                     # reused: the same tape
+        @test runtime.held === held
+        @test Threads.nthreads() == 1 ? again.gradients == first.gradients :
+                                        _relerr(again.gradients, first.gradients) <= 1e-13
+        # Each part of the identity, checked before the forward run.
+        @test occursin("number of taped steps", message(() -> evaluate(runtime; obs = _observations(P; last = 3))))
+        @test occursin("time windows", message(() -> evaluate(runtime; dt = 2DT)))
+        @test occursin("scheme", message(() -> evaluate(runtime; scheme = AT.SlopesScheme(AT.NoLimiter()))))
+        P.am[2][3][5, 5, 2] += 1e-3                    # the met changed in place
+        @test occursin("met inputs", message(() -> evaluate(runtime)))
+        P.am[2][3][5, 5, 2] -= 1e-3
+        id = held.identity
+        changed(; grid = id.grid, steps = id.steps, window = id.window, scheme = id.scheme, met = id.met) =
+            Footprint._TapeIdentity(met, window, scheme, grid, steps)
+        @test Footprint._held_air_mass_tape(runtime, changed()) === held.ops
+        for (what, identity) in (("grid", changed(; grid = (id.grid[1] + 1, Base.tail(id.grid)...))),
+                                 ("number of taped steps", changed(; steps = id.steps - 1)),
+                                 ("time windows", changed(; window = (id.window[1:end-1]..., 2id.window[end]))),
+                                 ("scheme", changed(; scheme = (AT.PPMScheme(AT.NoLimiter()), Base.tail(id.scheme)...))),
+                                 ("met inputs", changed(; met = [id.met; zero(UInt64)])))
+            @test occursin(what, message(() -> Footprint._held_air_mass_tape(runtime, identity)))
+        end
+        # A rewound pool makes the held tape stale.
+        TapeMod._rewind_tape_pool!(runtime.pool)
+        @test occursin("stale", message(() -> evaluate(runtime)))
+    end
 end
 
 @testset "the reverse pass stops at the last assimilated step" begin

@@ -7,8 +7,8 @@
   (`cs_surface_emission_footprint`, `cs_surface_emission_footprint_from_seed`,
   `cs_surface_flux_jacobian`, `cs_surface_flux_4dvar`,
   `cs_surface_flux_4dvar_optimize`) takes `tape = AdjointTape(; content,
-  storage, checkpoint)`: `content = FullStateTape()` (what each record
-  stages; the only content today), `storage = DeviceCSTapeStorage()` (the
+  storage, checkpoint)`: `content = StateTape()` (what each record
+  stages), `storage = DeviceCSTapeStorage()` (the
   default), `PinnedHostCSTapeStorage()` or `MmapCSTapeStorage(dir)`, and
   `checkpoint = FullCheckpoint()` (the default) or `StrideCheckpoint(K)`.
   Migration: `tape_storage = :device` → omit it; `tape_storage =
@@ -23,6 +23,47 @@
   The inversion driver `scripts/inversions/cs_4dvar.jl` reads the same
   choices from an optional `[adjoint.tape]` table (`content`, `storage`,
   `scratch_dir`, `checkpointing`, `stride`).
+- **Adjoint tapes stage each state once (tape compaction).** A split-sweep
+  tape no longer stages the palindrome center's air mass twice (its diffusion
+  records share the slot of the reverse half's first Z sweep) nor a convection
+  call's (its record shares the next step's first sweep's slot, or the old air
+  mass of a following `:preserve_vmr` reset; the convection reverse reads
+  interior cells only), and a monotone or CW84 PPM sweep stages its limiter
+  branches, one byte per cell (`PPMLimiterCodes`, one fused launch for six
+  panels), instead of the tracer mass; the reverse kernels read the branches.
+  Gradients are bit for bit those of the uncompacted tape on one CPU thread
+  (the bitwise gate against main's digests). Tape bytes per step, C90 MERRA-2
+  Float32 (CPU size accounting of the recorded tape, 48 steps): linear schemes with
+  convection and diffusion 8 → 6.02 air-mass states (127.4 → 95.9 MB, −25 %),
+  monotone and CW84 PPM 14 → 7.52 (223.0 → 119.8 MB, −46 %) with convection
+  and diffusion and 12 → 7.5 (−38 %) without; linear schemes without physics
+  unchanged (6). The counted bytes equal the recorded tape's, and
+  `cs_tape_byte_estimate` counts the compacted tape.
+  Per step with convection and diffusion, a device tape makes 42 instead of 84
+  staging launches (limited PPM) and 36 instead of 48 (linear schemes).
+- **`AirMassTape()`: one air-mass tape per call or optimization.** The
+  `content` of an `AdjointTape` is `StateTape()` (the default; recorded by
+  every forward run) or `AirMassTape()`, which records the air mass once and
+  reuses it for every later forward run (the later evaluations of
+  `cs_surface_flux_4dvar_optimize` run without recording), for the schemes
+  whose reverse reads no tracer (`tape_dependence(scheme) isa
+  AirMassDependence`: upwind, unlimited slopes and PPM). Each reuse compares
+  the forward run's grid, taped steps, met windows, scheme and operators and
+  met-input checksums, and the tape pool's generation, with the recording's
+  and throws an `ArgumentError` naming a difference; limited PPM, Lin–Rood
+  and `StrideCheckpoint` with `AirMassTape()` are an `ArgumentError` before
+  any forward run. `[adjoint.tape] content` in `scripts/inversions/cs_4dvar.jl`
+  takes `"state"` (default) or `"air_mass"`. Measured on one CPU thread (C32
+  L20 Float64, 8 steps, upwind with TM5 convection and diffusion, three
+  evaluations, before position-weighted checksums): no measurable difference
+  with the CPU device-array tape (min-of-three −0.4 %, within run-to-run spread);
+  1.5 % less time with mmap, with the same costs bit for bit. Identity checks
+  now use position-weighted device reductions and one host transfer per
+  evaluation; holding a tape rejects tracer payloads. Device limiter-code
+  slots need no scratch state. GPU timings remain pending. The adjoint tape's bitwise gate
+  gains a Lin–Rood case (both tiers) and `AirMassTape` variants of the linear
+  cases; its fixture adds the Lin–Rood digests from main, every earlier digest
+  unchanged.
 - **Adjoint tape memory is reused and released explicitly.** Each call opens
   one pool from its tape's storage, records every stride window into the same
   memory (before, each window allocated new arrays and left the previous

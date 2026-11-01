@@ -31,19 +31,18 @@ using ..Operators.StepPlans: AbstractStepStage, AirMassResetStage, ChemistryAfte
     plan_stages, restore_operator_state!
 using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractUnplacedPolicy,
     ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
-using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, CSTapeSlot,
-    DeviceCSTapeStorage, FullCheckpoint, FullStateTape, MmapCSTapeStorage,
-    PinnedHostCSTapeStorage, StrideCheckpoint
+using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AirMassTape, CSTapeSlot,
+    DeviceCSTapeStorage, FullCheckpoint, MmapCSTapeStorage, PinnedHostCSTapeStorage, StateTape,
+    StrideCheckpoint
 
 export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
     CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
     CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
-    AdjointTape, AbstractTapeContent, FullStateTape,
+    AdjointTape, AbstractTapeContent, StateTape, AirMassTape,
     AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
-    evaluate_objective, require_adjoint_support, adjoint_support
+    evaluate_objective, require_adjoint_support, adjoint_support,
+    AbstractTapeDependence, AirMassDependence, TracerDependence, tape_dependence
 
-# Sweeps whose record stages the tracer mass as well as the air mass.
-const _RmTapedSweepScheme = Union{CSAdjointNonlinearScheme, CSAdjointFV3Vertical}
 # LinRoodPPMScheme (ORD 5 and 7) is supported via its own horizontal
 # tape record (`_CSLinRoodHorizRecord`, LinRoodTape.jl) and the kernel
 # adjoints in `src/Operators/Advection/linrood_adjoint_*.jl`; its vertical
