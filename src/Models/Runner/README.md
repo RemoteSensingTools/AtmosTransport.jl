@@ -13,7 +13,8 @@ No lower sibling imports Runner.
   storage adaptation helpers.
 - `driven_window_state.jl`: window storage, copies, staging and prefetch.
 - `driven_physics_refresh.jl`: per-window dz/Kz, convection forcing and midpoint
-  refresh; expressions and the one-step-window rule are unchanged.
+  refresh. With midpoint forcing enabled, interpolated fluxes and humidity
+  use `(substep - 0.5) / steps_per_window`, including `0.5` for one-step windows.
   `_refreshes_fluxes` says at which steps `_refresh_forcing!` rewrites the face
   fluxes (a window's first step, or every step when interpolated).
 - `driven_stepping.jl`: driven constructor, plan phases, window advance,

@@ -176,7 +176,7 @@ slice (issue #59). Recover them with `git show 740ee1f9:scripts/<name>`.
 | `compare_spectral_native_vs_cds_ll.jl` | ERA5 spectral vs CDS vs LL-binary winds (C180 wind error) |
 | `compare_to_geoschem_dec1-5.py` | SH-UTLS RMS and noise of ours minus GEOS-Chem, Dec 2-6 |
 | `diagnose_south_africa_wind_profiles.jl` | ERA5 vs GEOS C180 wind profiles in the South Africa plume |
-| `finger_pfix_vs_endpoint.py` | SH-UTLS tracer roughness, pfix_corrected vs endpoint closure |
+| `finger_pfix_vs_endpoint.py` | SH-UTLS tracer roughness, pfix_corrected vs endpoint closure (historical outputs; the `pfix_corrected` closure has been removed) |
 | `finger_route1_dec11.py` | Route-1 SH-UTLS roughness: GEOS MFXC vs MERRA-2 vs ERA5 |
 | `fingerfix_proto_anisotropic-divergence-damping.jl` | Fingering fix prototype: roughness-gated biharmonic div_h damping |
 | `fingerfix_proto_two-window-time-averaged-flux.jl` | Fingering fix prototype: two-window time-averaged MFXC |

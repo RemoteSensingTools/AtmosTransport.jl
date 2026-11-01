@@ -12,7 +12,7 @@ Dependencies include static imports, qualified references, shared-module name us
 
 ## `ext`
 
-Size: **65324 bytes / 18664.0 tokens**. Public names: **0**.
+Size: **66506 bytes / 19001.7 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/Extras/Visualization`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/Spectral`, `src/Tape`.
 
@@ -20,8 +20,8 @@ Used by: none.
 
 Files:
 
-- `AtmosTransportAMDGPUExt.jl` (2431 bytes)
-- `AtmosTransportCUDAExt.jl` (5318 bytes)
+- `AtmosTransportAMDGPUExt.jl` (2997 bytes)
+- `AtmosTransportCUDAExt.jl` (5934 bytes)
 - `AtmosTransportMakieExt.jl` (52491 bytes)
 - `AtmosTransportMetalExt.jl` (4094 bytes)
 - `AtmosTransportNVTXExt.jl` (990 bytes)
@@ -53,7 +53,7 @@ None recorded.
 
 ## `src/Adjoints`
 
-Size: **72420 bytes / 20691.4 tokens**. Public names: **14**.
+Size: **72566 bytes / 20733.1 tokens**. Public names: **14**.
 
 Depends on: `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion`, `src/Grids`, `src/MetDrivers`, `src/Observations`, `src/Observations/Retrievals`, `src/Observations/Sampling`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`, `src/Tape`.
 
@@ -62,7 +62,7 @@ Used by: `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/ObservationBin
 Files:
 
 - `AdjointSupport.jl` (7003 bytes)
-- `Adjoints.jl` (7875 bytes)
+- `Adjoints.jl` (8021 bytes)
 - `ConvectionAdjoint.jl` (9972 bytes)
 - `DiffusionAdjoint.jl` (5216 bytes)
 - `LinRoodTape.jl` (9985 bytes)
@@ -78,7 +78,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Adjoints/Footprint`
 
-Size: **126772 bytes / 36220.6 tokens**. Public names: **7**.
+Size: **148622 bytes / 42463.4 tokens**. Public names: **7**.
 
 Depends on: `src`, `src/Adjoints`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/State`, `src/Tape`.
 
@@ -86,16 +86,17 @@ Used by: `src/Adjoints`, `src/Adjoints/Inversion/ObservationBinding`, `src/Adjoi
 
 Files:
 
-- `Footprint.jl` (3826 bytes)
-- `FootprintAPI.jl` (17234 bytes)
+- `AutoTape.jl` (19935 bytes)
+- `Footprint.jl` (4213 bytes)
+- `FootprintAPI.jl` (17353 bytes)
 - `FootprintResult.jl` (3406 bytes)
 - `ReplaySupport.jl` (664 bytes)
 - `ReverseLoop.jl` (14705 bytes)
-- `StepReplay.jl` (24406 bytes)
-- `StrideCheckpoint.jl` (16033 bytes)
-- `TapeRecorder.jl` (19188 bytes)
+- `StepReplay.jl` (24917 bytes)
+- `StrideCheckpoint.jl` (16454 bytes)
+- `TapeRecorder.jl` (20157 bytes)
 - `TapeRecording.jl` (9695 bytes)
-- `TapeRuntime.jl` (17615 bytes)
+- `TapeRuntime.jl` (17123 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -142,7 +143,7 @@ None recorded.
 
 ## `src/Adjoints/Inversion/Solver`
 
-Size: **93165 bytes / 26618.6 tokens**. Public names: **28**.
+Size: **93303 bytes / 26658.0 tokens**. Public names: **28**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/ObservationBinding`, `src/Grids`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Parameters`, `src/Tape`.
 
@@ -150,13 +151,13 @@ Used by: `src/Adjoints/Inversion`.
 
 Files:
 
-- `CostGradient.jl` (31721 bytes)
+- `CostGradient.jl` (31806 bytes)
 - `Covariance.jl` (16063 bytes)
 - `Departures.jl` (399 bytes)
 - `Jacobian.jl` (4794 bytes)
-- `Optimizer.jl` (21606 bytes)
+- `Optimizer.jl` (21649 bytes)
 - `Preconditioning.jl` (8042 bytes)
-- `Solver.jl` (1757 bytes)
+- `Solver.jl` (1767 bytes)
 - `Types.jl` (8783 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -460,7 +461,7 @@ None recorded.
 
 ## `src/Models/Runner`
 
-Size: **88914 bytes / 25404.0 tokens**. Public names: **10**.
+Size: **88857 bytes / 25387.7 tokens**. Public names: **10**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Runner/DrivenRunner`, `src/Operators`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -469,7 +470,7 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner/DrivenRunner`.
 Files:
 
 - `BinaryPathExpander.jl` (6537 bytes)
-- `DrivenSimulation.jl` (9196 bytes)
+- `DrivenSimulation.jl` (9139 bytes)
 - `InputStaging.jl` (12458 bytes)
 - `Runner.jl` (2108 bytes)
 - `adjoint_schedule.jl` (10670 bytes)
@@ -885,7 +886,7 @@ None recorded.
 
 ## `src/Parameters`
 
-Size: **27504 bytes / 7858.3 tokens**. Public names: **77**.
+Size: **27440 bytes / 7840.0 tokens**. Public names: **77**.
 
 Depends on: none.
 
@@ -894,7 +895,7 @@ Used by: `ext`, `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observa
 Files:
 
 - `MetSourceConstants.jl` (6412 bytes)
-- `NumericalDefaults.jl` (9928 bytes)
+- `NumericalDefaults.jl` (9864 bytes)
 - `Parameters.jl` (410 bytes)
 - `PhysicalConstants.jl` (9107 bytes)
 - `PlanetParameters.jl` (1647 bytes)
@@ -905,7 +906,7 @@ None recorded.
 
 ## `src/Preprocessing`
 
-Size: **71740 bytes / 20497.1 tokens**. Public names: **0**.
+Size: **71268 bytes / 20362.3 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessing/Sources/GEOS`, `src/Preprocessing/Sources/MERRA2`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/Targets/ReducedGaussian`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -914,7 +915,7 @@ Used by: `ext`, `src`.
 Files:
 
 - `Preprocessing.jl` (33941 bytes)
-- `entrypoint.jl` (37799 bytes)
+- `entrypoint.jl` (37327 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -922,7 +923,7 @@ None recorded.
 
 ## `src/Preprocessing/Core`
 
-Size: **67606 bytes / 19316.0 tokens**. Public names: **88**.
+Size: **67567 bytes / 19304.9 tokens**. Public names: **88**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Regridding`.
 
@@ -932,7 +933,7 @@ Files:
 
 - `Core.jl` (3580 bytes)
 - `binary_pipeline.jl` (2172 bytes)
-- `configuration.jl` (17391 bytes)
+- `configuration.jl` (17352 bytes)
 - `logging.jl` (1134 bytes)
 - `met_readers.jl` (5960 bytes)
 - `met_sources.jl` (8642 bytes)
@@ -1017,7 +1018,7 @@ None recorded.
 
 ## `src/Preprocessing/Sources/GEOS`
 
-Size: **196890 bytes / 56254.3 tokens**. Public names: **16**.
+Size: **191801 bytes / 54800.3 tokens**. Public names: **16**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Regridding`, `src/State`.
 
@@ -1027,12 +1028,12 @@ Files:
 
 - `GEOS.jl` (4981 bytes)
 - `configuration.jl` (3542 bytes)
-- `cubed_sphere_geos.jl` (27024 bytes)
+- `cubed_sphere_geos.jl` (26820 bytes)
 - `geos.jl` (24721 bytes)
-- `geos_cs_mass_helpers.jl` (5644 bytes)
+- `geos_cs_mass_helpers.jl` (4019 bytes)
 - `geos_cs_omega.jl` (31158 bytes)
 - `geos_cs_resolution.jl` (12839 bytes)
-- `geos_cs_window.jl` (39707 bytes)
+- `geos_cs_window.jl` (36447 bytes)
 - `geos_panels.jl` (19152 bytes)
 - `geos_read_window.jl` (23786 bytes)
 - `reader.jl` (4336 bytes)
@@ -1278,7 +1279,7 @@ None recorded.
 
 ## `src/Tape`
 
-Size: **55727 bytes / 15922.0 tokens**. Public names: **50**.
+Size: **66266 bytes / 18933.1 tokens**. Public names: **53**.
 
 Depends on: none.
 
@@ -1286,13 +1287,14 @@ Used by: `ext`, `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/I
 
 Files:
 
-- `AdjointTape.jl` (6060 bytes)
-- `CheckpointSchedule.jl` (3531 bytes)
-- `HostTapeArena.jl` (6009 bytes)
-- `MmapTapeStorage.jl` (13733 bytes)
-- `Tape.jl` (2008 bytes)
+- `AdjointTape.jl` (9237 bytes)
+- `CheckpointSchedule.jl` (5321 bytes)
+- `HostTapeArena.jl` (4802 bytes)
+- `MmapTapeStorage.jl` (13774 bytes)
+- `Tape.jl` (2255 bytes)
 - `TapeRecords.jl` (4819 bytes)
-- `TapeStorage.jl` (19567 bytes)
+- `TapeReservation.jl` (6765 bytes)
+- `TapeStorage.jl` (19293 bytes)
 
 Forward ↔ adjoint mirrors:
 

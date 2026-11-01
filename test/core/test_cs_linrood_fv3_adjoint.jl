@@ -265,7 +265,11 @@ end
         r, _ = AT.Adjoints.Footprint._cs_replay_for_call(P.rm, P.m, P.am, P.bm, P.cm, P.mesh;
                                                scheme, dt = 1.0, surface_flux = false)
         recorded ? AT.Adjoints.Footprint._record_cs_tape!(r, 1:P.nsteps, AT.StateTape(),
-                                                         AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0)) :
+                                                         begin
+                                                             runtime = AT.Adjoints.Footprint._TapeRuntime(AT.AdjointTape())
+                                                             AT.Adjoints.Footprint._prepare_tape!(runtime, r, P.nsteps)
+                                                             runtime.pool
+                                                         end) :
                    AT.Adjoints.Footprint._replay_steps!(r, 1:P.nsteps)
         (AT.Adjoints.Footprint._replay_rm(r), AT.Adjoints.Footprint._replay_m(r))
     end

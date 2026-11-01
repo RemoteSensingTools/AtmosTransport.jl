@@ -128,11 +128,14 @@
 #     content = "state"           # state (default): every evaluation records its tape |
 #                                 # air_mass: recorded once and reused by every evaluation
 #                                 # (upwind, slopes and unlimited PPM only; full checkpointing)
-#     storage = "device"          # device (default) | pinned_host | mmap (any letter case)
-#     scratch_dir = "/scratch/tape"   # mmap only, and required there: a directory on a
+#     storage = "auto"           # auto (default) | device | pinned_host | mmap
+#     scratch_dir = "/scratch/tape"   # auto/mmap only; required for mmap: a directory on a
 #                                     # local file system (ext4, XFS) with room for the tape
-#     checkpointing = "full"      # full (default) | stride
-#     stride = 8                  # stride only, and required there: steps per re-recorded window
+#     checkpointing = "auto"      # auto (default) | full | stride
+#     stride = "auto"             # stride only: auto (default) or steps per window
+#     resident_tail = "auto"      # stride only: auto (default) or retained final steps
+#     snapshots = "pinned_host"  # stride only: device | pinned_host (automatic if omitted)
+#     budget_gb = 10              # optional device tape/snapshot budget override, decimal GB
 #
 # Any other table or key is an error, so nothing in the file is silently
 # ignored; diffusion and convection are not wired into this driver yet.
@@ -167,18 +170,17 @@ const _OBSERVATION_PLACEMENT_KEYS = (AT.Observations.VERTICAL_PLACEMENT_KEYS...,
                                      "max_surface_pressure_mismatch_pa")
 # `[adjoint.tape]`: one table of choices per axis of `AdjointTape` (read with
 # `ConfigChecks.parse_choice`, so in any letter case), each choice the
-# constructor of its value given the table; and the keys a choice reads beyond
-# its axis key (required with that choice, rejected with any other).
+# constructor of its value given the table. Choice-specific keys are checked
+# by the builder and by `_adjoint_tape` before a request is returned.
 const _TAPE_LABEL = "[adjoint.tape]"
 const _TAPE_CONTENTS = (state = _ -> AT.StateTape(), air_mass = _ -> AT.AirMassTape())
-const _TAPE_STORAGES = (device = _ -> AT.DeviceCSTapeStorage(),
+const _TAPE_STORAGES = (auto = _ -> nothing, device = _ -> AT.DeviceCSTapeStorage(),
                         pinned_host = _ -> AT.PinnedHostCSTapeStorage(),
                         mmap = t -> AT.MmapCSTapeStorage(AT.expand_data_path(_tape_scratch_dir(t))))
-const _TAPE_CHECKPOINTS = (full = _ -> AT.FullCheckpoint(),
-                           stride = t -> AT.StrideCheckpoint(
-                               AT.ConfigChecks.config_int(t["stride"], "$(_TAPE_LABEL).stride"; min = 1)))
-const _TAPE_CHOICE_KEYS = (mmap = ("scratch_dir",), stride = ("stride",))
-const _ADJOINT_TAPE_KEYS = ("content", "storage", "scratch_dir", "checkpointing", "stride")
+const _TAPE_CHECKPOINTS = (auto = _ -> nothing, full = _ -> AT.FullCheckpoint(),
+                           stride = t -> _stride_tape_constraint(t))
+const _ADJOINT_TAPE_KEYS = ("content", "storage", "scratch_dir", "checkpointing", "stride",
+                             "resident_tail", "snapshots", "budget_gb")
 
 const _INVERSION_TABLE_KEYS = Dict(
     "mesh"           => ("Nc", "Hp", "float_type"),
@@ -345,19 +347,11 @@ function _tape_choice(tape, key, choices, default)
     path = "$(_TAPE_LABEL).$(key)"
     value = get(tape, key, default)
     build = AT.ConfigChecks.parse_choice(value, choices, path)
-    name = Symbol(lowercase(value))
-    for (choice, needs) in pairs(_TAPE_CHOICE_KEYS), k in needs
-        haskey(choices, choice) || continue
-        if name === choice
-            haskey(tape, k) || throw(ArgumentError("$(path) = $(repr(value)) requires `$(k)`"))
-        elseif haskey(tape, k)
-            throw(ArgumentError("$(_TAPE_LABEL).$(k) applies to $(key) = \"$(choice)\", not $(repr(value))"))
-        end
-    end
     return build(tape)
 end
 
 function _tape_scratch_dir(tape)
+    haskey(tape, "scratch_dir") || throw(ArgumentError("$(_TAPE_LABEL).storage = \"mmap\" requires scratch_dir"))
     dir = tape["scratch_dir"]
     dir isa AbstractString && !isempty(strip(dir)) || throw(ArgumentError(
         "$(_TAPE_LABEL).scratch_dir must be a non-empty path; got $(repr(dir))"))
@@ -369,9 +363,42 @@ function _adjoint_tape(cfg)
     tape = get(get(cfg, "adjoint", Dict{String, Any}()), "tape", Dict{String, Any}())
     tape isa AbstractDict || throw(ArgumentError("$(_TAPE_LABEL) must be a TOML table"))
     AT.ConfigChecks.check_known_keys(tape, _ADJOINT_TAPE_KEYS, _TAPE_LABEL)
-    return AT.AdjointTape(; content = _tape_choice(tape, "content", _TAPE_CONTENTS, "state"),
-                          storage = _tape_choice(tape, "storage", _TAPE_STORAGES, "device"),
-                          checkpoint = _tape_choice(tape, "checkpointing", _TAPE_CHECKPOINTS, "full"))
+    content = haskey(tape, "content") ? _tape_choice(tape, "content", _TAPE_CONTENTS, "state") : nothing
+    storage = _tape_choice(tape, "storage", _TAPE_STORAGES, "auto")
+    checkpoint = _tape_choice(tape, "checkpointing", _TAPE_CHECKPOINTS, "auto")
+    for key in ("stride", "resident_tail", "snapshots")
+        checkpoint isa Union{AT.StrideCheckpoint, AT.StrideSearch} ||
+            !haskey(tape, key) || throw(ArgumentError(
+                "$(_TAPE_LABEL).$(key) requires checkpointing = \"stride\""))
+    end
+    scratch = haskey(tape, "scratch_dir") ? AT.expand_data_path(_tape_scratch_dir(tape)) : nothing
+    budget = nothing
+    if haskey(tape, "budget_gb")
+        value = tape["budget_gb"]
+        value isa Real && !(value isa Bool) && isfinite(value) && 0 <= value <= typemax(Int) / 1e9 ||
+            throw(ArgumentError("$(_TAPE_LABEL).budget_gb must be finite and nonnegative"))
+        budget = floor(Int, value * 1e9)
+    end
+    request = AT.AutoTape(; storage, checkpoint, content, scratch_dir = scratch, budget_bytes = budget)
+    return request
+end
+
+function _stride_tape_constraint(tape)
+    stride = _tape_auto_int(tape, "stride", 1)
+    tail = _tape_auto_int(tape, "resident_tail", 0)
+    snapshots = haskey(tape, "snapshots") ? AT.ConfigChecks.parse_choice(tape["snapshots"],
+        (device = AT.DeviceCSTapeStorage(), pinned_host = AT.PinnedHostCSTapeStorage()),
+        "$(_TAPE_LABEL).snapshots") : nothing
+    if stride !== nothing && tail !== nothing && snapshots !== nothing
+        return AT.StrideCheckpoint(stride; resident_tail = tail, snapshots)
+    end
+    return AT.StrideSearch(stride, tail, snapshots)
+end
+
+function _tape_auto_int(tape, key, minimum)
+    value = get(tape, key, "auto")
+    value isa AbstractString && lowercase(value) == "auto" && return nothing
+    return AT.ConfigChecks.config_int(value, "$(_TAPE_LABEL).$(key)"; min = minimum)
 end
 
 const _PLACEMENT_LABEL = "[observations.placement]"

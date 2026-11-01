@@ -1291,8 +1291,8 @@ the layers by `column_balance_weights` (`"hybrid_mass"` by default on every
 target;
 [Data sources](data_sources.md) lists where each path sets it), so layer winds
 keep their vertical structure and `cm` carries the vertical motion. GEOS
-`pressure_fixer` and `pfix_corrected` keep the native horizontal fluxes and
-record `horizontal_balance = "none"`. ERA5 spectral configs set the weights
+`pressure_fixer` keeps the native horizontal fluxes and
+records `horizontal_balance = "none"`. ERA5 spectral configs set the weights
 here, for lat-lon, reduced-Gaussian and cubed-sphere targets alike:
 
 ```toml
@@ -1302,7 +1302,7 @@ column_balance_weights = "hybrid_mass"    # or "hybrid_b", "mass"
 
 Binary headers record the balance as `horizontal_balance = "column"` (GEOS:
 the balance its `geos_cm_closure` applies, `"none"` for the pressure-fixer
-closures). The per-layer balance and its key `balance_mode` were removed: with
+closure). The per-layer balance and its key `balance_mode` were removed: with
 no independent vertical flux, balancing each layer to its own mass change left
 almost no vertical mass flux ([Vertical transport](../theory/vertical_transport.md)
 section 2). A config that sets `balance_mode` is an error. Older binaries
@@ -1334,8 +1334,13 @@ geos_cm_closure = "endpoint"   # default; "omega_regularized" is experimental
   physically resolved local XCO2 enhancements; do not use it for production.
   The historical `"omega"` and `"omega_consistent"` aliases now resolve to the
   safe regularized mode.
-- `:pressure_fixer`, `:moisture_filtered`, `:pfix_corrected` are diagnostic-only
+- `:pressure_fixer` and `:moisture_filtered` are diagnostic-only
   (they fail the replay gate or drift `ps`) and are warned at use.
+
+`pfix_corrected` and its aliases `pfixcorrected`, `pfix`, and
+`pressure_fixer_corrected` were removed and are rejected during config validation.
+That closure produced a nonzero surface `cm` that runtime vertical transport
+does not carry, causing surface tracer VMR drift.
 
 The regularized controls are explicit and recorded in the binary header:
 

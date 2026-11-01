@@ -235,29 +235,28 @@ end
 @testset "cs_4dvar.jl driver — [adjoint.tape] selects the AdjointTape" begin
     base = read(CONFIG, String)
     tape_of(block) = _adjoint_tape(TOML.parse(block))
-    @test tape_of("") === AT.AdjointTape()
-    @test tape_of("[adjoint.tape]\n") === AT.AdjointTape()
-    @test tape_of("[adjoint.tape]\ncontent = \"state\"\nstorage = \"pinned_host\"\n") ===
-          AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage())
-    @test tape_of("[adjoint.tape]\ncontent = \"Air_Mass\"\n") === AT.AdjointTape(; content = AT.AirMassTape())
-    @test tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = 4\n") ===
-          AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(4))
-    # Choices in any letter case, as in the other config tables (`parse_choice`).
-    @test tape_of("[adjoint.tape]\nstorage = \"Pinned_Host\"\ncheckpointing = \"STRIDE\"\nstride = 2\n") ===
-          AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))
+    @test tape_of("") isa AT.AutoTape
+    @test tape_of("[adjoint.tape]\n") isa AT.AutoTape
+    @test tape_of("[adjoint.tape]\ncontent = \"state\"\nstorage = \"pinned_host\"\n").storage ===
+          AT.PinnedHostCSTapeStorage()
+    @test tape_of("[adjoint.tape]\ncontent = \"Air_Mass\"\n").content === AT.AirMassTape()
+    @test tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = 4\n").checkpoint.K == 4
+    @test tape_of("[adjoint.tape]\nstorage = \"Pinned_Host\"\ncheckpointing = \"STRIDE\"\nstride = 2\n").storage ===
+          AT.PinnedHostCSTapeStorage()
+    @test tape_of("[adjoint.tape]\nscratch_dir = \"/scratch/tape\"\nbudget_gb = 10\n").budget_bytes == 10_000_000_000
+    @test tape_of("[adjoint.tape]\ncheckpointing = \"stride\"\nstride = \"auto\"\nresident_tail = 2\nsnapshots = \"pinned_host\"\n").checkpoint.resident_tail == 2
     mmap = tape_of("[adjoint.tape]\nstorage = \"mmap\"\nscratch_dir = \"/scratch/tape\"\ncheckpointing = \"full\"\n")
     @test mmap.storage == AT.MmapCSTapeStorage("/scratch/tape") && mmap.checkpoint === AT.FullCheckpoint()
     for bad in ("storage = \"disk\"", "checkpointing = \"revolve\"", "content = \"compact\"",
                 "content = \"full_state\"",                            # the uncompacted tape is gone
                 "content = \"air_mass\"\ncheckpointing = \"stride\"\nstride = 2",   # Full only
                 "storage = \"mmap\"",                                   # needs scratch_dir
-                "scratch_dir = \"/scratch/tape\"",                       # only with mmap
-                "checkpointing = \"stride\"",                           # needs stride
                 "stride = 4",                                           # only with stride
                 "checkpointing = \"stride\"\nstride = 0", "checkpointing = \"stride\"\nstride = true",
                 "checkpointing = \"stride\"\nstride = 4.0", "checkpointing = \"stride\"\nstride = \"4\"",
                 "storage = \"mmap\"\nscratch_dir = \"\"", "storage = \"mmap\"\nscratch_dir = 3",
-                "storage = 1", "budget_gb = 10")
+                "storage = 1", "budget_gb = -1", "budget_gb = true", "budget_gb = inf",
+                "content = \"state\"\nreuse = \"fresh\"", "storage = \"device\"\nscratch_dir = \"x\"")
         @test_throws ArgumentError tape_of("[adjoint.tape]\n" * bad * "\n")
     end
     # The errors name the setting and the valid choices.

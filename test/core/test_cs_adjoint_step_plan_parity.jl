@@ -88,7 +88,11 @@ function _parity(c::Case)
     replayed = (_interior(ADJ.Footprint._replay_rm(forward)), _interior(ADJ.Footprint._replay_m(forward)))
 
     recorded = _replay(inp)
-    ops = ADJ.Footprint._record_cs_tape!(recorded, 1:n, AT.StateTape(), AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
+    ops = ADJ.Footprint._record_cs_tape!(recorded, 1:n, AT.StateTape(), begin
+        runtime = ADJ.Footprint._TapeRuntime(AT.AdjointTape())
+        ADJ.Footprint._prepare_tape!(runtime, recorded, n)
+        runtime.pool
+    end)
     taped = (_interior(ADJ.Footprint._replay_rm(recorded)), _interior(ADJ.Footprint._replay_m(recorded)))
 
     # A checkpoint inside the second met window (after its first step), as the

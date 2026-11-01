@@ -13,6 +13,15 @@ using AtmosTransport
 const Pre = AtmosTransport.Preprocessing
 const CONFIG_ROOT = joinpath(pkgdir(AtmosTransport), "config", "preprocessing")
 
+@testset "Removed GEOS closure is rejected during config validation" begin
+    cfg = TOML.parsefile(joinpath(CONFIG_ROOT, "geosit_c180_dec2021_catrine_f32.toml"))
+    for removed in ("pfix_corrected", "pfixcorrected", "pfix", "pressure_fixer_corrected",
+                    :pfix_corrected)
+        cfg["numerics"]["geos_cm_closure"] = removed
+        @test_throws ArgumentError Pre.validate_preprocessing_config(cfg)
+    end
+end
+
 function _shipped_preprocessing_configs()
     paths = String[]
     for (dir, _, files) in walkdir(CONFIG_ROOT)

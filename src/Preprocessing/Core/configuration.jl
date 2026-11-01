@@ -190,15 +190,15 @@ end
 Throw if a preprocessing `[numerics]` table sets `balance_mode` (or its older
 name `geos_balance_mode`): the per-layer balance it selected was removed, and
 every path that applies a Poisson balance uses the column balance
-(`HORIZONTAL_BALANCE_TAG`). GEOS `pressure_fixer` and `pfix_corrected` keep
-their native horizontal fluxes and record `horizontal_balance = "none"`.
+(`HORIZONTAL_BALANCE_TAG`). GEOS `pressure_fixer` keeps its native
+horizontal fluxes and records `horizontal_balance = "none"`.
 """
 function reject_removed_balance_mode(numerics::AbstractDict)
     for key in ("balance_mode", "geos_balance_mode")
         haskey(numerics, key) && throw(ArgumentError(
             "[numerics].$key is removed: every preprocessing path that applies a " *
             "Poisson balance uses the column balance (the per-layer balance left no " *
-            "vertical mass flux; GEOS pressure_fixer and pfix_corrected keep native fluxes); " *
+            "vertical mass flux; GEOS pressure_fixer keeps native fluxes); " *
             "delete the key"))
     end
     return nothing

@@ -157,8 +157,10 @@ relative).
 Every reverse-pass entry point (`cs_surface_emission_footprint`,
 `cs_surface_emission_footprint_from_seed`, `cs_surface_flux_jacobian`,
 `cs_surface_flux_4dvar`, `cs_surface_flux_4dvar_optimize`) takes one
-`tape = AdjointTape(; content, storage, checkpoint)` keyword, an immutable
-value composed of three typed axes (`src/Tape/AdjointTape.jl`):
+`tape` keyword, defaulting to `AutoTape()`. It resolves and reserves one
+concrete tape before recording. An explicit
+`AdjointTape(; content, storage, checkpoint)` fixes three typed axes; its
+constructor defaults are listed below (`src/Tape/AdjointTape.jl`):
 
 | Axis | Choices | Default |
 | --- | --- | --- |
@@ -296,6 +298,7 @@ so peak scaled-flux memory is twice one set.
 | --- | --- | --- |
 | `FullCheckpoint` | O(N) state snapshots | none — fastest reverse pass |
 | `StrideCheckpoint(K)` | one K-step window plus N/K checkpoints | one extra forward run |
+| `StrideCheckpoint(K; resident_tail = n, snapshots = PinnedHostCSTapeStorage())` | the resident tail, one head window and host tracer/air-mass checkpoints | re-records the head only |
 
 Both schedules share one driver per policy for every scheme family; a
 checkpoint is a replay snapshot (tracer and air mass with halos plus the
@@ -311,23 +314,25 @@ will be added when a case needs it.
 
 ### Tape storage and its pools
 
-The tape records can live on the device (the default), in pinned host memory,
-or on disk. Each call opens one runtime pool from the storage
+The tape records can live on the device, in pinned host memory, or on disk.
+`AutoTape()` tries device storage first; supplied fields constrain selection.
+Each call reserves its runtime pools from the resolved storage
 (`src/Tape/TapeStorage.jl`, `HostTapeArena.jl`, `MmapTapeStorage.jl`),
 records every tape of the call into it (each stride window rewinds it and
 reuses its memory), and releases it explicitly when it returns: device arrays
 go back to the GPU pool and pinned host memory to the system then, not at a
 later garbage collection. `cs_surface_flux_4dvar_optimize` keeps one pool for
 all its evaluations. A record read after its pool was rewound or released
-throws a `StaleTapeSlotError`. The pinned-host pool allocates host memory in
-chunks (64 MiB doubling to 1 GiB) and registers each chunk with the GPU
-driver once, so recording a state is one device-to-host copy into memory that
-is already pinned; staging and reads are synchronous copies.
+throws a `StaleTapeSlotError`. The pinned-host pool reserves its host memory
+and registers its chunks with the GPU driver before recording, so staging a
+state copies into memory that is already pinned. Staging and reads are
+synchronous copies; the read caches are reserved too.
 
 Measured on an L40S (C90 MERRA-2, 48 steps of 7.5 min, convection and
-diffusion, Float32, single runs against the previous per-window tapes):
+diffusion, Float32, single runs comparing the pool-reuse implementation
+against the earlier per-window tapes, before AutoTape reservation):
 
-| | before | now |
+| | before | after pool reuse |
 | --- | --- | --- |
 | device peak, `StrideCheckpoint`, upwind / monotone PPM | 7.13 / 11.38 GiB | 2.35 / 3.03 GiB |
 | device peak, 4-evaluation optimization, device `FullCheckpoint` / `StrideCheckpoint` (upwind) | 22.5 / 22.5 GiB | 7.3 / 2.9 GiB |
@@ -337,19 +342,15 @@ diffusion, Float32, single runs against the previous per-window tapes):
 | single device-tape call | — | 0–2 % more time (the tape is freed inside the call) |
 
 The on-disk tier needs a scratch directory; there is no default (a C90 day of
-PPM tape is tens of GB, more than a typical `/tmp`). Before recording, the
-call counts the bytes of the largest tape it records on the forward replay
-(one extra forward run with `FullCheckpoint`, the propagation pass of
-`StrideCheckpoint` at no extra cost; an optimization counts once for all its
-evaluations), checks that `dir` has them plus 10 % free, and reserves them
-with `fallocate` in one file, which is unlinked at once, mapped once, reused
-for every tape that fits, and unmapped and closed when the call returns, so
-its space goes back to the file system then. Too little space
-is an `ArgumentError` naming the required and available bytes, raised after
-the sizing pass and before the tape is recorded; with the extent reserved
-(ext4, XFS), the mmap writes can no longer end in a SIGBUS on a full file
-system. A file system that cannot reserve blocks for in-place writes (no
-`fallocate`, ZFS) is rejected by name. Tapes are not persisted.
+PPM tape is tens of GB, more than a typical `/tmp`). Before recording, the call sizes the largest tape from the binary schedule
+or one cached CFL/Lin–Rood counting replay, checks that `dir` has that much
+space plus 10 %, and reserves an anonymous file with `fallocate`. The file
+is mapped once, reused within its reservation, and unmapped and closed when
+the call returns. An entry point raises `TapeReservationError` if an explicit
+reservation fails; Auto tries another permitted candidate. Recording beyond
+the reservation raises `TapeReservationExceeded`. Reserved extents on ext4 or
+XFS protect writes against a full-disk SIGBUS; file systems that cannot
+reserve in-place writes (including ZFS) are rejected by name. Tapes are not persisted.
 
 ### Bitwise gate of the tape
 
@@ -487,9 +488,9 @@ screen only removes observations); the walk then starts at that step's
 end-of-step marker. With `FullCheckpoint` one evaluation therefore costs one
 forward run and one reverse pass (previously a forward run for ``H(x)`` and a
 second, taped, forward run); `StrideCheckpoint` adds the re-recording of its
-windows, as for a footprint. A `MmapCSTapeStorage` with `FullCheckpoint` adds
-the counting run that sizes its file before the forward run (once per
-optimization). The gradients, the cost and the
+head windows, as for a footprint. CFL-driven schedules and Lin–Rood add one
+cached sizing replay per runtime; binary split-sweep schedules use their
+closed-form size, including for mmap storage. The gradients, the cost and the
 simulated values are bit for bit those of the two-run evaluation
 (`test/core/test_cs_adjoint_tape_bitwise.jl`). `evaluation = CSCostOnly()`
 runs the forward run alone, without a tape, for callers that need the cost
@@ -1074,13 +1075,25 @@ tables and keys are errors. `[observations]` takes inline entries or a
 schema-v2 observation `file`, whose point records `[observations.placement]`
 places in the column of the `synthetic_hydrostatic` meteorology (the keys of
 `[output.observations]` placement, parsed by the same code), and
-`[adjoint.tape]` chooses the `AdjointTape` (storage, checkpointing). It does
+`[adjoint.tape]` defaults to automatic selection (`AutoTape`); `storage` and
+`checkpointing` accept `"auto"`, or constrain storage to `"device"`,
+`"pinned_host"`, `"mmap"` and checkpointing to `"full"`, `"stride"`.
+`stride` and `resident_tail` accept `"auto"` or an integer; `snapshots` is
+`"device"` or `"pinned_host"`. `budget_gb` overrides the measured device tape/snapshot budget and its safety margin.
+`scratch_dir` enables mmap with automatic storage and is required for explicit
+mmap storage. `content = "state" | "air_mass"` selects the content axis.
+The resolved pools and snapshots are reserved before recording. The
+binary-window size uses the per-window step schedule, while CFL and Lin–Rood
+counts are cached once per runtime. See [Tape and checkpointing](@ref) for
+candidate order, memory headroom, typed reservation errors and logging. It does
 not expose diffusion, convection or real-binary settings.
 For the lower-level Julia API, start with the
 [footprint tutorial](@ref First-emission-footprint), then
 `test/core/test_cs_inversion_truth_recovery.jl` for a larger inversion assembly.
-Pass `tape = AdjointTape(; checkpoint = StrideCheckpoint(K))` to re-record
-`K`-step windows instead of taping the whole run. Lin–Rood tapes currently
+Pass `tape = AdjointTape(; checkpoint = StrideCheckpoint(K))` to fix a
+`K`-step re-recording schedule. `resident_tail = n` retains the final `n`
+steps recorded by the forward run; `snapshots = PinnedHostCSTapeStorage()`
+moves the head's tracer/air-mass checkpoints to host memory. Lin–Rood tapes currently
 require `DeviceCSTapeStorage()`; split-sweep schemes also support
 `PinnedHostCSTapeStorage()` and `MmapCSTapeStorage(dir)`.
 

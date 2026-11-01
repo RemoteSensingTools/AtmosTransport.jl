@@ -177,10 +177,13 @@ and merged convection branches do not yet have a supported footprint reverse
 pass. Nonlinear limiters require derivatives around a specified base trajectory;
 finite differences that switch limiter branches need careful interpretation.
 
-Recording every step on the device is simplest for this tiny example. Long
-runs pass a `tape = AdjointTape(; storage, checkpoint)`: host or on-disk
-storage when the tape does not fit on the device, and `StrideCheckpoint(k)`
-to trade one extra forward run for a tape of `k` steps. Lin–Rood currently
+The default `tape = AutoTape()` selects device Full for this tiny example.
+For longer runs it chooses from the schedule size and memory budgets, reserves
+before recording, and can retain a resident tail or use host checkpoints.
+`AutoTape(; budget_bytes, scratch_dir)` overrides the measured device tape/snapshot budget and margin and
+enables on-disk storage. To fix a choice, pass
+`tape = AdjointTape(; storage, checkpoint)`: host or on-disk storage, or
+`StrideCheckpoint(k)` to trade recomputation for a `k`-step tape. Lin–Rood currently
 requires device tape storage. These choices and the exact supported
 combinations belong in [Adjoint status](@ref).
 

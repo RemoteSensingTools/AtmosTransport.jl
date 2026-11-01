@@ -335,7 +335,7 @@ _observation_run(::CSCostOnly, _replay, _runtime, _observations) = _UntapedRun()
 function _observation_run(::CSCostAndGradient, replay, runtime::_TapeRuntime, observations)
     taped_steps = maximum(obs -> obs.assimilate ? obs.step : 0, observations)
     taped_steps == 0 && return _UntapedRun()
-    return _begin_taped_run(runtime.tape.checkpoint, replay, runtime, taped_steps)
+    return _begin_taped_run(replay, runtime, taped_steps)
 end
 
 # Only a gradient needs the observations' linear functionals.
@@ -418,7 +418,8 @@ pass's forcing unchanged, bit for bit.
 
 One cost-and-gradient evaluation is one forward run and one reverse pass
 (with `FullCheckpoint`; `StrideCheckpoint` adds the re-recording of its
-windows, and a `MmapCSTapeStorage` the counting run that sizes its file),
+head). CFL-driven schedules add one cached sizing run per runtime; the
+binary-window contract uses a closed-form size,
 whatever the number of observations, as in TM5-4DVAR:
 
 1. the forward run gives the simulated values `Hᵢ(x) = Σₛ ωᵢₛ hᵢ(rₛ)`, each
@@ -440,8 +441,9 @@ The run replays the production step plan of `schedule` (a
 default: one step of `dt` per met window, the full
 operator suite every step), with the controls' rates in its surface-flux
 operator. Steps after the last assimilated step do not affect the cost and
-get a zero gradient. `tape` (an [`AdjointTape`](@ref AtmosTransport.Tape.AdjointTape):
-storage and checkpoint schedule) selects how the tape is stored, as in
+get a zero gradient. `tape` defaults to `AutoTape()`, resolving and reserving
+one concrete [`AdjointTape`](@ref AtmosTransport.Tape.AdjointTape) before
+recording; explicit descriptors fix the choice, as in
 `cs_surface_emission_footprint`; the call frees its memory when it returns.
 
 An averaging-kernel column the surface-pressure screen leaves out after the
@@ -492,7 +494,7 @@ function cs_surface_flux_4dvar(panels_rm0, panels_m0,
                                observations,
                                controls;
                                scheme::CSAdjointSupportedScheme,
-                               tape::AdjointTape = AdjointTape(),
+                               tape::Union{AdjointTape, AutoTape} = AutoTape(),
                                kwargs...)
     return _with_tape_runtime(tape) do runtime
         _cs_surface_flux_4dvar(runtime, panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
@@ -534,7 +536,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # Tape checks before the forward run, not after it.
-    _require_tape_supported(scheme, runtime.tape)
+    _require_tape_supported(scheme, runtime.request)
 
     seen = Set{Symbol}()
     for control in control_vec
