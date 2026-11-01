@@ -96,6 +96,11 @@ time; the runtime sees the typed value and dispatches at compile
 time. *There is no runtime branch on the scheme name.* Subtyping is
 the extension mechanism.
 
+`DrivenSimulation` evaluates interpolated face fluxes and humidity at each
+step's midpoint by default: ``\lambda_s = (s - 1/2)/N`` for ``N`` steps per
+met window. A one-step window therefore uses ``\lambda = 1/2``. See
+[Forcing time within a met window](../theory/advection_schemes.md#Forcing-time-within-a-met-window).
+
 ### Palindrome subcycling and the positivity budget
 
 The Strang split is a six-leg palindrome, `X → Y → Z → midpoint → Z → Y → X`

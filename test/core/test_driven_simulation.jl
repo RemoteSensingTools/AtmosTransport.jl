@@ -7,6 +7,16 @@ using .AtmosTransport.MetDrivers: driver_grid
 using .AtmosTransport.Models: current_qv, substep_index, window_index
 const Runner = AtmosTransport.Models.DrivenRunner
 
+@testset "Substep forcing fractions" begin
+    fraction = AtmosTransport.Models.Runner._substep_fraction
+    for FT in (Float32, Float64)
+        @test fraction(1, 1, FT, true) === FT(0.5)
+        @test fraction(1, 1, FT, false) === zero(FT)
+        @test [fraction(s, 2, FT, true) for s in 1:2] == FT[0.25, 0.75]
+        @test [fraction(s, 2, FT, false) for s in 1:2] == FT[0, 0.5]
+    end
+end
+
 # A documented custom driver may omit `surface_pressure_basis`; the generic
 # compatibility contract must continue to interpret its ps as total pressure.
 struct CompatibilityMetDriver{D} <: AbstractMetDriver
@@ -32,6 +42,7 @@ AtmosTransport.MetDrivers.supports_native_vertical_flux(::CompatibilityMetDriver
 
 function write_driven_latlon_binary(path::AbstractString;
                                     FT::Type{<:AbstractFloat}=Float64,
+                                    steps_per_window::Int=2,
                                     source_flux_sampling::Symbol=:window_start_endpoint,
                                     flux_sampling::Symbol=:window_constant,
                                     window_mass_scales::Tuple{Vararg{Real}}=(1, 1),
@@ -62,16 +73,44 @@ function write_driven_latlon_binary(path::AbstractString;
                            FT=FT,
                            dt_met_seconds=3600.0,
                            half_dt_seconds=1800.0,
-                           steps_per_window=2,
+                           steps_per_window,
                            mass_basis,
                            surface_pressure_basis=TotalSurfacePressure(),
                            source_flux_sampling=source_flux_sampling,
                            flux_sampling=flux_sampling,
                            extra_header=Dict(
-                               "poisson_balance_target_scale" => 0.25,
+                               "poisson_balance_target_scale" => 1 / (2 * steps_per_window),
                                "poisson_balance_target_semantics" => "forward_window_mass_difference / (2 * steps_per_window)",
                            ))
     return grid
+end
+
+@testset "One-step window forcing refresh" begin
+    for FT in (Float32, Float64), midpoint in (true, false), interpolate in (true, false)
+        mktemp() do path, io
+            close(io)
+            write_driven_latlon_binary(path; FT, steps_per_window=1)
+            driver = TransportBinaryDriver(path; FT, arch=CPU())
+            try
+                grid = driver_grid(driver)
+                state = CellState(MoistBasis, ones(FT, 4, 3, 2); CO2=fill(FT(400e-6), 4, 3, 2))
+                fluxes = allocate_face_fluxes(grid.horizontal, 2; FT, basis=MoistBasis)
+                model = TransportModel(state, fluxes, grid, UpwindScheme())
+                sim = DrivenSimulation(model, driver; stop_window=1,
+                    use_midpoint_forcing=midpoint,
+                    interpolate_fluxes_within_window=interpolate)
+                λ = AtmosTransport.Models.Runner._refresh_forcing!(sim, 1)
+                @test λ === (midpoint ? FT(0.5) : zero(FT))
+                @test all(isapprox.(current_qv(sim), midpoint ? FT(0.015) : FT(0.01)))
+                for (name, delta) in ((:am, 0.2), (:bm, 0.4), (:cm, 0.6))
+                    expected = midpoint && interpolate ? FT(delta) / 2 : zero(FT)
+                    @test all(isapprox.(getproperty(sim.model.fluxes, name), expected))
+                end
+            finally
+                close(driver)
+            end
+        end
+    end
 end
 
 @testset "runner initial condition uses start_window air mass" begin

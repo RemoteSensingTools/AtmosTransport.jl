@@ -70,7 +70,7 @@ mutable struct GEOSCubedSphereWindowWorkspace{FT, ST, SW, RAW, CA, VP, CV, DV, V
     fidelity_capture :: Ref{Any}
     omega_cells :: OmegaFidelityCells
     # Column-balance record of the accepted window (`NoColumnClosureRecord` for
-    # the pressure-fixer closures, which balance nothing).
+    # the pressure-fixer closure, which balances nothing).
     closure_record :: Base.RefValue{AbstractColumnClosureRecord}
 end
 
@@ -125,9 +125,9 @@ function allocate_window_workspace(grid::CubedSphereTargetGeometry,
     schedule_len >= 0 ||
         error("windows_per_day must be non-negative, got $(windows_per_day)")
     cm_closure in (:endpoint_balanced, :pressure_fixer, :moisture_filtered,
-                   :pfix_corrected, :omega_full_replacement, :omega_regularized) ||
+                   :omega_full_replacement, :omega_regularized) ||
         error("GEOS-CS cm_closure must be :endpoint_balanced, :pressure_fixer, " *
-              ":moisture_filtered, :pfix_corrected, :omega_full_replacement, " *
+              ":moisture_filtered, :omega_full_replacement, " *
               "or :omega_regularized; got $(cm_closure)")
     if uses_omega(cm_closure)
         global_mass_pin ||
@@ -300,62 +300,6 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
                                       workspace.m_next_target, steps)
         return (max_pre_residual = 0.0, max_post_residual = 0.0,
                 max_cg_iter = 0, mode = :pressure_fixer)
-    end
-
-    if workspace.cm_closure === :pfix_corrected
-        # "Spatially-resolved dry-mass correction" (generalizes the scalar global
-        # mass pin). Native fluxes (smooth pit) → pressure-fixer cm; correct the
-        # column drift toward the analyzed dry-PS with a ZERO-SUM SPATIAL LOW-PASS
-        # — only the LARGE-SCALE drift (which prevents the pressure-fixer blow-up
-        # and carries the global-mass target), leaving the grid-scale residual as
-        # a small bounded mass perturbation NOT advected into cm. cm stays at the
-        # smooth pressure-fixer floor.  `pit_eff = pit_native + δ_smooth/(2·steps)`;
-        # `cm[k+1]=cm[k]+conv−ΔB·pit_eff` and `m_next=m_cur+2·steps·ΔB·pit_eff` ⇒
-        # the replay gate closes by construction; global Σ(ΔB·δ_smooth)=Σδ lands
-        # the global dry mass on the analyzed (pinned) target.
-        # DIAGNOSTIC-ONLY LIMITATION: when δ_smooth ≠ 0 this leaves a nonzero
-        # SURFACE flux cm[Nz+1] = −δ_smooth/(2·steps) (the closed-bottom boundary
-        # is violated), and chain_mass=true accumulates negative UTLS mass. The
-        # tracer analysis summarized in docs/src/preprocessing/geos_native_cs.md showed it
-        # makes ~164–280 hPa WORSE. NOT a production closure.
-        two_steps = FT(2 * steps)
-        pit = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
-        δ   = ntuple(_ -> zeros(FT, Nc, Nc), CS_PANEL_COUNT)
-        @inbounds for p in 1:CS_PANEL_COUNT
-            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]
-            mc = workspace.m_cur[p]; md = workspace.m_next_delp[p]
-            for j in 1:Nc, i in 1:Nc
-                pp = zero(FT); cur = zero(FT); ana = zero(FT)
-                for k in 1:Nz
-                    pp  += (am[i, j, k] - am[i + 1, j, k]) +
-                           (bm[i, j, k] - bm[i, j + 1, k])
-                    cur += mc[i, j, k]; ana += md[i, j, k]
-                end
-                pit[p][i, j] = pp
-                δ[p][i, j]   = ana - (cur + two_steps * pp)   # column drift to analyzed
-            end
-        end
-        # large-scale, Σ-preserving
-        _smooth_cs_columns!(δ, workspace.smooth_iters, FT(DEFAULT_GEOS_SMOOTHING_WEIGHT), Nc)
-        @inbounds for p in 1:CS_PANEL_COUNT
-            am = workspace.am_v4[p]; bm = workspace.bm_v4[p]; cm = workspace.cm_v4[p]
-            mc = workspace.m_cur[p]; mt = workspace.m_next_target[p]
-            for j in 1:Nc, i in 1:Nc
-                pe = pit[p][i, j] + δ[p][i, j] / two_steps
-                cm[i, j, 1] = zero(FT); acc = zero(FT)
-                for k in 1:Nz
-                    conv = (am[i, j, k] - am[i + 1, j, k]) +
-                           (bm[i, j, k] - bm[i, j + 1, k])
-                    acc += conv - FT(workspace.ΔB[k]) * pe
-                    cm[i, j, k + 1] = acc
-                    mt[i, j, k] = mc[i, j, k] + two_steps * FT(workspace.ΔB[k]) * pe
-                end
-            end
-        end
-        fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
-                                      workspace.m_next_target, steps)
-        return (max_pre_residual = 0.0, max_post_residual = 0.0,
-                max_cg_iter = 0, mode = :pfix_corrected)
     end
 
     if workspace.cm_closure === :moisture_filtered
