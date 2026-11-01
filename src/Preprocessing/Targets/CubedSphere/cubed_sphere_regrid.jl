@@ -512,7 +512,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             cs_grid.poisson_scratch; tol=Float64(cs_balance_tol),
             max_iter=DEFAULT_POISSON_BALANCE_MAX_ITER,
             project_every=Int(cs_balance_project_every),
-            weights=balance_weights)
+            weights=balance_weights,
+            fixed_global_mass=output_basis == :dry &&
+                (get(h.raw_header, "mass_fix_enabled", false) ||
+                 get(h.raw_header, "global_mass_pin_enabled", false)))
         t_bal = time() - t_bal
 
         worst_pre  = max(worst_pre,  bal_diag.max_pre_residual)

@@ -802,7 +802,7 @@ function process_era5_n320_to_cs_day(date::Date,
                 target_grid.poisson_scratch; tol = Float64(cs_balance_tol),
                 max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
                 project_every = Int(cs_balance_project_every),
-                weights = balance_weights)
+                weights = balance_weights, fixed_global_mass = do_mass_pin)
             fill_cs_window_mass_tendency!(dm, m_dry, m_next, steps)
             cm_diag = diagnose_balanced_cs_cm!(cm, am, bm, dm, m_dry, Nc, Nz_int,
                                                 bal_diag, "ERA5 N320 window", balance_weights)

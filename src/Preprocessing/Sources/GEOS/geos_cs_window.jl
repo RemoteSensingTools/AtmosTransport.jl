@@ -377,7 +377,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_delp, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch; weights = workspace.balance_weights)
+            grid.poisson_scratch; weights = workspace.balance_weights,
+            fixed_global_mass = workspace.global_mass_pin_enabled)
         # dm_dry = (m_next_delp − m_cur) / (2·steps)
         fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                       workspace.m_next_delp, steps)
@@ -436,7 +437,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
         bal_diag = balance_cs_column_mass_fluxes!(
             workspace.am_v4, workspace.bm_v4, workspace.m_cur,
             workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-            grid.poisson_scratch; weights = workspace.balance_weights)
+            grid.poisson_scratch; weights = workspace.balance_weights,
+            fixed_global_mass = workspace.global_mass_pin_enabled)
         fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                       workspace.m_next_target, steps)
         global_dm = sum(sum(Float64, panel) for panel in workspace.dm_v4)
@@ -512,7 +514,8 @@ function _geos_prepare_window_for_steps!(workspace::GEOSCubedSphereWindowWorkspa
     bal_diag = balance_cs_column_mass_fluxes!(
         workspace.am_v4, workspace.bm_v4, workspace.m_cur,
         workspace.m_next_target, grid.face_table, grid.cell_degree, steps,
-        grid.poisson_scratch; weights = workspace.balance_weights)
+        grid.poisson_scratch; weights = workspace.balance_weights,
+            fixed_global_mass = workspace.global_mass_pin_enabled)
     fill_cs_window_mass_tendency!(workspace.dm_v4, workspace.m_cur,
                                   workspace.m_next_target, steps)
     cm_diag = diagnose_balanced_cs_cm!(workspace.cm_v4, workspace.am_v4,

@@ -255,6 +255,7 @@ function flush_final_windows!(workspace::LatLonSpectralWindowWorkspace{FT},
     apply_poisson_balance!(workspace.storage, workspace.last_hour_next,
                            workspace.steps_schedule, contract, substep_policy;
                            write_replay_on = workspace.write_replay_on,
+                           fixed_global_mass = settings.mass_fix_enable && settings.mass_basis == :dry,
                            weights = spectral_column_weights(grid, settings, vertical))
     fill_qv_endpoints!(workspace.storage, workspace.last_hour_next)
     return (begin

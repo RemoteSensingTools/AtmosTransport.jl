@@ -208,3 +208,13 @@ export DEFAULT_OBSERVATION_LAYER_TEMPERATURE_KELVIN
 "Relative column-pressure tolerance used to infer the basis of keyless legacy binaries."
 const SURFACE_PRESSURE_BASIS_TOLERANCE = 2e-5
 export SURFACE_PRESSURE_BASIS_TOLERANCE
+
+"""
+Relative global dry-mass budget tolerance for fixed-target preprocessing windows.
+Compensated post-pin Float64 endpoint differences measure about 1e-16 of total
+mass per window at 1°; 1e-14 allows roughly two orders of magnitude of margin.
+This mass-normalized check is independent of circulation and substep count.
+Lower-precision stored endpoints also allow their two-endpoint rounding bound.
+"""
+const GLOBAL_DRY_MASS_BUDGET_RTOL = 1.0e-14
+export GLOBAL_DRY_MASS_BUDGET_RTOL

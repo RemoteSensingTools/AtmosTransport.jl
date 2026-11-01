@@ -95,3 +95,47 @@ end
     interior = (left .!= 0) .& (right .!= 0)
     @test hflux[interior, 1] ≈ [1e6 * cos(f + 1) for f in 1:nfaces(mesh)][interior] rtol = 1e-14   # pure-pressure level
 end
+
+# Independent high-precision mass integral: exercise global area/pressure/
+# sensitivity reductions separately from cancellation in native layer sums.
+@testset "compensated humidity pin reaches rounding" begin
+    function dry_total_big(ps, area, dA, dB, qv)
+        nc, nz = length(ps), length(dA)
+        sum(BigFloat(area[c]) * sum((BigFloat(dA[k]) + BigFloat(dB[k]) * BigFloat(ps[c])) *
+            (1 - BigFloat(qv[c, k])) for k in 1:nz) for c in 1:nc)
+    end
+    function naive_pin!(ps, area, dA, dB, qv, target)
+        dry = alpha = total_area = 0.0
+        for c in eachindex(ps)
+            col = sensitivity = 0.0
+            for k in eachindex(dA)
+                col += (dA[k] + dB[k] * ps[c]) * (1 - qv[c, k])
+                sensitivity += dB[k] * (1 - qv[c, k])
+            end
+            dry += col * area[c]
+            alpha += sensitivity * area[c]
+            total_area += area[c]
+        end
+        ps .+= (target - dry / total_area) / (alpha / total_area)
+    end
+    for native_layers in (false, true)
+        target = 98325.0
+        ps = native_layers ? fill(200000.0, 16) : [100000.0; fill(200000.0, 8192)]
+        area = native_layers ? ones(length(ps)) : [2.0^54; ones(length(ps)-1)]
+        dB = native_layers ? [1.0; fill(2.0^-54, 136)] : [0.25, 0.25, 0.5]
+        dA = zeros(length(dB))
+        qv = fill(1/128, length(ps), length(dB))
+        expected = BigFloat(target) * sum(BigFloat, area)
+        naive = copy(ps)
+        naive_pin!(naive, area, dA, dB, qv, target)
+        pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv; target_ps_dry_pa=target)
+        error = abs(dry_total_big(ps, area, dA, dB, qv) / expected - 1)
+        naive_error = abs(dry_total_big(naive, area, dA, dB, qv) / expected - 1)
+        @test error < eps(Float64)
+        @test naive_error > 20eps(Float64)
+        # Warm the same concrete call before checking the allocation contract.
+        pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv; target_ps_dry_pa=target)
+        @test (@allocated pin_global_mean_ps_using_qv!(ps, area, dA, dB, qv;
+                                                     target_ps_dry_pa=target)) == 0
+    end
+end

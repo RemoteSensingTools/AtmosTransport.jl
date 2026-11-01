@@ -239,3 +239,8 @@ Live Calc_Kzz constants are separate from the legacy preprocessing values:
 `TM5_BLDIFF_CONSTANTS` retains `8.3144e3/28.94`; `TM5_GPH_CONSTANTS` retains
 287.05 and 0.608. `TM5_PBL_REFERENCE_PRESSURE` is TM5's 98500 Pa, and
 `TM5_PBL_CUTOFF_PRESSURE` is L137 half-level 57 at that pressure (8614.336891 Pa).
+
+`GLOBAL_DRY_MASS_BUDGET_RTOL` (`1e-14`) bounds compensated global dry-mass
+change relative to total mass in fixed-target preprocessing windows, independent
+of flux magnitude. It allows roughly 100 times the measured Float64 per-window
+roundoff; lower-precision storage also allows its two-endpoint rounding bound.

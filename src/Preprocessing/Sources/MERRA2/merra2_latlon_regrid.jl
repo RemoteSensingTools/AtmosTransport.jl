@@ -540,7 +540,8 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     diag = balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
                                           steps, g.poisson_scratch; tol,
                                           max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                          project_every, weights = d.balance.weights)
+                                          project_every, weights = d.balance.weights,
+                                          fixed_global_mass = d.mass_target !== nothing)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
     cm_diag = diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,

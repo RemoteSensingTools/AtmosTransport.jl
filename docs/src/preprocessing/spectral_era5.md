@@ -230,12 +230,11 @@ For each of the day's 24 hourly windows:
       dry surface pressure equals
       `Parameters.GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98,325 Pa for every
       meteorological source).
-        - LL and CS targets use the **hourly QV field** for the
-          offset.
-        - RG targets use the constant **`qv_global_climatology`**
-          scalar (the per-cell hourly QV is dry-converted later in
-          the pipeline; the mass-fix step itself uses the
-          climatology for cost reasons).
+    - LL, RG and CS use the **hourly native QV field** for the dry target.
+      The native-layer dry-pressure and sensitivity sums, and the global
+      pressure-times-area, sensitivity-times-area and area sums, use
+      compensated Float64 reductions. The small target difference retains the
+      compensation terms before solving for the uniform offset.
     - The preprocessor **applies the offset in place** while building
       the window — the binary's stored PS, mass, and fluxes are
       already pinned. The **LL writer** additionally records the
@@ -281,9 +280,16 @@ For each of the day's 24 hourly windows:
       column_balance_weights` (air mass in hybrid layers, `hybrid_mass`,
       by default), so `cm` keeps the vertical motion (see
       [Vertical transport](../theory/vertical_transport.md) section 2).
-    - **CS** (spectral source): a CG-based solve on the per-panel
+    - **CS** (spectral source): a CG-based solve on the global six-panel
       cubed-sphere Laplacian; cm is then derived via
       `diagnose_cs_cm!` rather than `recompute_cm_from_dm_target!`.
+    - In pinned dry windows, after the independent global-budget guard, the
+      remaining global residual is proportional to current column mass:
+      the solver target shifts by `R̄ (M_c / mean(M) - 1)`. Vertical closure
+      continues to use the original endpoint tendency. This avoids amplifying
+      rounding errors at small polar cells; it applies to all shared column
+      balance callers, including native-source CS preprocessing and regrids.
+      See [mass conservation](../theory/mass_conservation.md#dry-mass-pin-and-the-column-global-mode).
     - All three converge to the same current dry-basis tolerance and
       pass the per-cell write-time replay gate (`replay_tolerance(FT)`).
 

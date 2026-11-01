@@ -87,7 +87,8 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::ReducedGaussianTarget
                     flux64=raw.*flux_application_seconds(settings.met_interval,steps,:substep_mass_amount)
                     balance_compressed_column_fluxes!(flux64,Float64.(m),Float64.(m_next),
                         left,right,L,steps,scratch;
-                        weights,direct_solver=factor)
+                        weights,direct_solver=factor,mass_precision=FT,
+                        fixed_global_mass=settings.mass_fix_enable && settings.mass_basis == :dry)
                     flux .= FT.(flux64)
                     dm .= (Float64.(m_next).-Float64.(m))./(2steps)
                     recompute_cm_from_dm_target!(faceindexed_replay_layout(left,right),div,cm,

@@ -131,14 +131,15 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
                                        L::CompressedLaplacian,
                                        scratch;
                                        tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
-                                       max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER)
+                                       max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER,
+                                       projection::Val = Val(false))
     r  = scratch.r
     p  = scratch.p
     Ap = scratch.Ap
     z  = scratch.z
 
     # Enforce solvability: project rhs to range(L) (mean-zero).
-    project_mean_zero!(rhs)
+    project_mean_zero!(rhs, projection)
 
     fill!(psi, 0.0)
     copyto!(r, rhs)
@@ -162,7 +163,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         @. psi += alpha * p
         @. r   -= alpha * Ap
 
-        project_mean_zero!(r)
+        project_mean_zero!(r, projection)
 
         r_linf = maximum(abs, r)
         r_linf / rhs_linf < tol && break
@@ -170,7 +171,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         @inbounds for c in eachindex(r)
             z[c] = L.degree[c] > 0 ? r[c] / L.degree[c] : r[c]
         end
-        project_mean_zero!(z)
+        project_mean_zero!(z, projection)
         rz_new = dot(r, z)
         rz_old == 0.0 && break
         beta = rz_new / rz_old
@@ -179,7 +180,7 @@ function solve_compressed_poisson_pcg!(psi::AbstractVector{Float64},
         iter += 1
     end
 
-    project_mean_zero!(psi)
+    project_mean_zero!(psi, projection)
     return r_linf, iter
 end
 
@@ -249,7 +250,10 @@ D_c\\Big(\\sum_k F_k\\Big) = T_c \\equiv \\sum_k \\frac{m^{\\mathrm{cur}}_{c,k} 
 
 One Jacobi-preconditioned CG solve of `L ψ = D(Σ_k F_k) − T` (`L` the graph
 Laplacian with face multiplicities, `CompressedLaplacian`; the right-hand side
-is projected to zero mean, the part no horizontal flux can change) gives every
+removes the global mode in proportion to current column mass only with
+`fixed_global_mass=true`, after checking the independent fixed-target global
+budget; otherwise it retains the uniform mode. It is then accurately projected
+to zero mean) gives every
 interior face the column correction `δ_f = ψ_{right(f)} − ψ_{left(f)}`, which
 changes the column divergence by `−Lψ`. Each `δ_f` is spread over the layers
 by `spread_column_correction!` (air mass of the two cells for
@@ -281,13 +285,16 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
                                            weights::AbstractColumnWeights = MassWeightedColumn(),
                                            tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
                                            max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                           direct_solver = nothing)
+                                           direct_solver = nothing,
+                                           fixed_global_mass::Bool = false,
+                                           mass_precision::Type = eltype(m_cur))
     nc, Nz = size(m_cur)
     size(m_next) == size(m_cur) ||
         throw(DimensionMismatch("m_next $(size(m_next)) ≠ m_cur $(size(m_cur))"))
     size(hflux) == (length(face_left), Nz) ||
         throw(DimensionMismatch("hflux $(size(hflux)) ≠ (nfaces, Nz) = $((length(face_left), Nz))"))
     check_column_weight_levels(weights, Nz)
+    fixed_global_mass && check_fixed_global_mass(m_cur, m_next; mass_type=mass_precision)
     inv_scale = 1.0 / (2.0 * steps_per_window)
     psi = scratch.psi
     rhs = scratch.rhs
@@ -295,7 +302,15 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
     # 1. Column residual of the continuity target.
     _column_balance_residual!(rhs, hflux, m_cur, m_next, face_left, face_right, inv_scale)
     pre_raw = maximum(abs, rhs)
-    rhs_mean = sum(rhs) / nc
+    rhs_mean = +(_neumaier_sum(c -> rhs[c], 1:nc, Float64)...) / nc
+    col_mass = [ +(_neumaier_sum(k -> m_cur[c, k], 1:Nz, Float64)...) for c in 1:nc ]
+    mean_mass = +(_neumaier_sum(c -> col_mass[c], 1:nc, Float64)...) / nc
+    # Shift only the Poisson target; cm still uses the original endpoints.
+    if fixed_global_mass
+        @inbounds for c in 1:nc
+            rhs[c] -= rhs_mean * (col_mass[c] / mean_mass - 1.0)
+        end
+    end
     pre_proj = 0.0
     @inbounds for c in 1:nc
         pre_proj = max(pre_proj, abs(rhs[c] - rhs_mean))
@@ -307,10 +322,10 @@ function balance_compressed_column_fluxes!(hflux::AbstractMatrix{Float64},
 
     # 2. Solve L ψ = rhs (the solver projects rhs to zero mean in place).
     iter = if direct_solver === nothing
-        _, niter = solve_compressed_poisson_pcg!(psi, rhs, L, scratch; tol = tol, max_iter = max_iter)
+        _, niter = solve_compressed_poisson_pcg!(psi, rhs, L, scratch; tol = tol, max_iter = max_iter, projection=Val(true))
         niter
     else
-        solve_compressed_poisson_direct!(psi, rhs, direct_solver)
+        solve_compressed_poisson_direct!(psi, rhs, direct_solver; projection=Val(true))
         1
     end
     Lpsi = scratch.Ap
