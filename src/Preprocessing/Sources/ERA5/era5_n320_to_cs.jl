@@ -460,6 +460,7 @@ struct ERA5N320ToC180Pipeline{FT <: AbstractFloat,
     tm5_derive_scratches :: Union{Nothing, Vector{TM5ConvectionColumnScratch{FT}}}
     tm5_c180_fields    :: Union{Nothing, ERA5C180TM5ConvectionFields{FT}}
     c180_fields        :: ERA5C180RegridFields{FT}
+    c180_m_dry         :: NTuple{6, Array{FT, 3}} # native endpoint mass for face fluxes
     wind               :: W      # how U/V are regridded (`ScalarWindRegrid` or `CartesianWindRegrid`)
 end
 
@@ -521,7 +522,7 @@ function allocate_era5_n320_to_c180_pipeline(handles::ERA5GRIBDayHandles,
         spectral_ws, regrid_ws,
         window_fields, dry_fields, convection_fields,
         convection_c180_fields, tm5_derive_scratches, tm5_c180_fields,
-        c180_fields, wind)
+        c180_fields, ntuple(_ -> zeros(FT, target_grid.mesh.Nc, target_grid.mesh.Nc, Nz_int), 6), wind)
 end
 
 """
