@@ -257,3 +257,25 @@ kind   = "run"
 config = "configs/run_tm5pbl.toml"
 tags   = ["run", "reduced_gaussian", "cpu", "era5"]
 set    = {"input.binary_paths" = ["@CASE:pre_o24_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "upwind"}
+
+# TM5 spectral fluxes with the live Calc_Kzz input group.
+[[case]]
+name   = "pre_ll72_tm5_tm5pbl"
+kind   = "preprocess"
+config = "configs/pre_ll72_tm5_tm5pbl.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "latlon", "cpu", "era5", "tm5"]
+
+[[case]]
+name   = "pre_o24_tm5_tm5pbl"
+kind   = "preprocess"
+config = "configs/pre_o24_tm5_tm5pbl.toml"
+day    = "2021-12-01"
+tags   = ["preprocess", "reduced_gaussian", "cpu", "era5", "tm5"]
+
+[[case]]
+name   = "run_ll72_tm5_tm5pbl_cpu_f64"
+kind   = "run"
+config = "configs/run_tm5pbl.toml"
+tags   = ["run", "latlon", "cpu", "era5", "tm5"]
+set    = {"input.binary_paths" = ["@CASE:pre_ll72_tm5_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}

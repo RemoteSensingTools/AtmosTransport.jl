@@ -37,19 +37,12 @@ validate_gpu_spectral_backend() = validate_gpu_spectral_backend(Val(:cuda))
 validate_gpu_spectral_backend(::Val) = throw(ArgumentError(
     "spectral_synthesis=\"gpu\" requires a loaded, functional CUDA backend; use spectral_synthesis=\"cpu\" for CPU preprocessing"))
 
-# The TM5 day drivers do not assemble the live Calc_Kzz input group.
-reject_tm5_pbl(::AbstractSpectralFluxConstruction, ::Bool) = nothing
-reject_tm5_pbl(::TM5SpectralFluxes, include_tm5_pbl::Bool) = include_tm5_pbl && throw(ArgumentError(
-    "include_tm5_pbl is not supported with spectral_flux_construction=\"tm5_spectral\""))
-
 function resolve_spectral_construction(cfg)
     table = get(cfg, "preprocessing", Dict{String,Any}())
     check_known_keys(table, SPECTRAL_PREPROCESSING_KEYS, "[preprocessing]")
     c = parse_choice(get(table, "spectral_flux_construction", "point_sampled_spectral"),
         (point_sampled_spectral=PointSampledSpectralFluxes(), tm5_spectral=TM5SpectralFluxes()),
         "[preprocessing].spectral_flux_construction")
-    # Before target geometry is built: native RG geometry reads a GRIB file.
-    reject_tm5_pbl(c, _config_bool(table, "include_tm5_pbl", false, "[preprocessing].include_tm5_pbl"))
     c isa PointSampledSpectralFluxes && haskey(table, "quadrature_refinement_steps") &&
         throw(ArgumentError("quadrature_refinement_steps requires tm5_spectral"))
     # Do not add fields to historical settings: repr(settings) is fingerprinted.
@@ -66,7 +59,6 @@ function resolve_spectral_construction(cfg)
 end
 
 function validate_spectral_construction(c::TM5SpectralFluxes, grid, settings)
-    reject_tm5_pbl(c, get(settings,:include_tm5_pbl,false))
     grid isa Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry} ||
         throw(ArgumentError("tm5_spectral supports lat-lon and reduced-Gaussian targets; cubed sphere is deferred"))
     if grid isa LatLonTargetGeometry

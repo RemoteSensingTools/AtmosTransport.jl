@@ -468,7 +468,11 @@ in format version 5, all-or-nothing, one record per window:
 
 Enable the input writer with `[preprocessing] include_tm5_pbl = true`,
 `input.thermo_dir` and `input.surface_dir`. This is an hourly ERA5 spectral
-LL/RG option. The thermo sidecar must contain `t` in K and `q` in kg/kg;
+LL/RG option and can be combined with
+`[preprocessing] spectral_flux_construction = "tm5_spectral"`. The resulting
+v5 binary carries both the TM5 flux construction identity and the complete
+`tm5_pbl` group; the same input assembly serves both flux constructions.
+The thermo sidecar must contain `t` in K and `q` in kg/kg;
 the surface archive must contain the ten primitives, including the next day's
 00 UTC endpoint. NetCDF, split ZIP and ARCO surface layouts are supported.
 Surface primitives (`lsm`, stresses, heat fluxes, `sr`/`fsr`, 10 m winds and
@@ -484,8 +488,11 @@ The shared regridder's spherical-polygon approximation and RG ring-boundary
 slivers also apply here (see [conservative regridding](../preprocessing/regridding.md)). T/q retain coordinate-aware
 bilinear sampling at target cell centres and are merged with native moist
 layer-pressure weights before the endpoint mean. The LL and RG thermo paths
-share the existing bilinear sampler. Day-local input ownership reuses the shared
-hourly thermo endpoint, surface readers (including split-ZIP extraction), and
+share the existing bilinear sampler. The merge weights use each construction's
+stored window-start total surface pressure. Since that pressure can differ
+between constructions, merged T/q can differ beyond rounding; each merge is
+consistent with its binary's hybrid layers. Day-local input ownership reuses
+the shared hourly thermo endpoint, surface readers (including split-ZIP extraction), and
 surface remap weights. `grid.target_vertical` pressure-overlap remapping and
 `grid.level_top != 1` are rejected before synthesis; at least two output layers
 are required. ERA5 reanalysis accumulations are hourly interval totals labelled

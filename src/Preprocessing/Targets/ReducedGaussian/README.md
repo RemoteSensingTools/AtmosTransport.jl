@@ -46,3 +46,10 @@ from MassClosure.
 writer; surface cell-area means, thermo point sampling, shared-endpoint caching
 and vertical weighting reuse LatLonTarget's
 `load_tm5_pbl_target_window`. Default windows retain their v4 layout.
+
+`tm5_spectral` can be combined with `include_tm5_pbl=true`: the v5 binary
+retains the TM5 construction identity and appends the complete live Calc_Kzz
+input group with the shared day-local cache and next-day endpoint handling.
+T/q merge weights use each construction's stored window-start total surface
+pressure. Merged T/q can differ between constructions beyond rounding,
+consistent with each binary's hybrid layers.

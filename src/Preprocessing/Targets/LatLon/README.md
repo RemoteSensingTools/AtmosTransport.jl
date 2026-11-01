@@ -50,3 +50,12 @@ the historical delta payload. The optional spectral cache is per hour.
   and the shared conservative regridder on the actual LL/RG mesh.
   `TM5PBLInputCache` owns day-local surface readers, remap weights and the shared
   thermo endpoint; day drivers close it even on failure.
+
+`tm5_spectral` can be combined with `include_tm5_pbl=true`: the v5 binary
+retains the TM5 construction identity and appends the complete live Calc_Kzz
+input group with the shared day-local cache and next-day endpoint handling.
+T/q merge weights use each construction's stored window-start total surface
+pressure. Merged T/q can differ between constructions beyond rounding,
+consistent with each binary's hybrid layers.
+The pending PBL group travels with its one-slot storage until the next
+completed window supplies the flux deltas; logical window indices remain distinct.

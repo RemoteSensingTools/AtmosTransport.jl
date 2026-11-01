@@ -150,10 +150,6 @@ end
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(mass_basis=:moist))
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(flux_time_sampling=:window_start))
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(met_interval=7200.0))
-        # The typed day driver rejects live Calc_Kzz inputs before any read.
-        target = rg ? PP.ReducedGaussianTarget : PP.LatLonTarget
-        @test_throws r"include_tm5_pbl" target.process_day(c,Date(2021,12,1),grid,
-            tm5_settings(include_tm5_pbl=true,spectral_dir="/nonexistent"),vertical)
         @test_throws ArgumentError SP.integrate_vertical_flux!(zeros(nc,3),zeros(nc,2),[0.,0.3,0.8])
         q0=zeros(nc,2)
         a0=SP.construct_tm5_endpoint(ws,h,vo,d,4,q0,SP.TM5EndpointPlan(vertical),tm5_settings())
@@ -426,9 +422,12 @@ end
     cfg["grid"]["level_top"]=20
     delete!(cfg["grid"],"echlevs")
     @test_throws ArgumentError PP.validate_preprocessing_config(cfg)
-    # Live Calc_Kzz inputs are rejected before the native RG geometry GRIB is read.
-    cfg["grid"]=Dict{String,Any}("type"=>"era5_native_reduced_gaussian","geometry_source_grib"=>"/nonexistent.grib")
-    cfg["preprocessing"]["include_tm5_pbl"]=true
-    @test_throws r"include_tm5_pbl" PP.validate_preprocessing_config(cfg)
-    @test_throws r"include_tm5_pbl" PP.process_day(cfg)
+end
+
+@testset "TM5 combined inputs pass public preflight on LL/RG" begin
+    for target in ("pre_ll72_tm5_tm5pbl", "pre_o24_tm5_tm5pbl")
+        cfg=TOML.parsefile(joinpath(pkgdir(AtmosTransport),"test/golden/configs",target*".toml"))
+        cfg["input"]["coefficients"]=joinpath(pkgdir(AtmosTransport),"config/era5_L137_coefficients.toml")
+        @test PP.validate_preprocessing_config(cfg) !== nothing
+    end
 end
