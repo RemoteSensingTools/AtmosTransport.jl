@@ -447,20 +447,50 @@ entries(c::Case) = c.operators ? keys(VARIANT_TEMPLATES) :
 function variants(c::Case, entry::Symbol)
     vs = [replace(t, "K" => string(c.stride), "S" => s) for t in VARIANT_TEMPLATES[entry] for s in c.storages]
     _linear(c.scheme) && append!(vs, ["airmass/device"; ["airmass/$s" for s in c.storages]])
+    append!(vs, ["auto/device", "autostride/device", "autotail/device", "autohostsnap/device"])
+    c.scheme isa ADJ.CSAdjointLinRoodScheme || append!(vs, ["autobudget/device", "auto/pinned_host", "auto/mmap",
+        "autotail/pinned_host", "autotail/mmap", "autostride/mmap"])
     return unique!(vs)
 end
 
 const STORAGES = Dict("device" => () -> AT.DeviceCSTapeStorage(),
                       "pinned_host" => () -> AT.PinnedHostCSTapeStorage())
 
-function _variant_kwargs(variant::AbstractString, scratch::AbstractString)
+function _variant_kwargs(P, variant::AbstractString, scratch::AbstractString)
     variant == REFERENCE && return (;)
     schedule, storage = split(variant, '/')
+    if startswith(schedule, "auto")
+        backing = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
+        checkpoint = schedule == "autostride" ? AT.StrideCheckpoint(P.case.stride) :
+            schedule == "autotail" ? AT.StrideCheckpoint(P.case.stride; resident_tail = 2) :
+            schedule == "autohostsnap" ? AT.StrideCheckpoint(P.case.stride; resident_tail = 2,
+                snapshots = AT.PinnedHostCSTapeStorage()) : nothing
+        # Size the synthetic shared CPU budget from the actual schedule,
+        # including CFL subcycles and operator-state snapshots. Keep one
+        # feasible stride even when 80% of Full would be too small.
+        budget = schedule == "autobudget" ? _constrained_tape_budget(P) : nothing
+        return (; tape = AT.AutoTape(; storage = backing, checkpoint, budget_bytes = budget))
+    end
     content = schedule == "airmass" ? AT.AirMassTape() : AT.StateTape()
     checkpoint = schedule in ("full", "airmass") ? AT.FullCheckpoint() :
                  AT.StrideCheckpoint(parse(Int, chopprefix(schedule, "stride")))
     storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
     return (; tape = AT.AdjointTape(; content, storage, checkpoint))
+end
+
+function _constrained_tape_budget(P)
+    F = ADJ.Footprint
+    replay, _ = F._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
+        _common(P)..., base_emission_rates = P.rates)
+    runtime = F._TapeRuntime(AT.AdjointTape())
+    sizing = F._size_tape!(runtime, replay, P.nsteps)
+    state = F._snapshot_operator_state(replay)
+    snapbytes = 2 * TapeMod._bytes_per_panel_tuple(P.m0) + F._snapshot_bytes(state)
+    F._release_snapshot_state!(state)
+    fullbytes = F._layout_total(F._segment_layout(sizing, 1:P.nsteps))
+    feasible = [F._candidate_memory(AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K)),
+        sizing, P.nsteps, snapbytes).device for K in 1:P.nsteps]
+    return max(floor(Int, 0.8 * fullbytes), min(fullbytes, minimum(feasible)))
 end
 
 # ---------------------------------------------------------------------------
@@ -588,7 +618,7 @@ _common(P) = (; scheme = P.case.scheme, schedule = P.schedule, physics_kwargs(P)
 _norm(tuples) = sqrt(sum(sum(abs2, a) for t in tuples for a in t))
 
 function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractString)
-    kw = (; _common(P)..., _variant_kwargs(variant, scratch)...)
+    kw = (; _common(P)..., _variant_kwargs(P, variant, scratch)...)
     if entry === :footprint
         r = AT.cs_surface_emission_footprint(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh,
                                              first(_objectives(P)); base_emission_rates = P.rates, kw...)
@@ -617,7 +647,7 @@ function run_entry(P, entry::Symbol, variant::AbstractString, scratch::AbstractS
         # then starts before the end of the tape) and nothing else.
         [s.assimilated for s in r.stencils] == [trues(6); false; false] ||
             error("$(P.case.name): the surface-pressure screen of `_operator_observations` changed")
-        kw = (; _common(P)..., _variant_kwargs(variant, scratch)...)
+        kw = (; _common(P)..., _variant_kwargs(P, variant, scratch)...)
         chi = AT.cs_surface_flux_4dvar(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh, observations, _chi_controls(P);
                                        column_met, preconditioner = _preconditioner(P), kw...)
         return ("cost" => [r.cost], "simulated" => r.simulated, "gradients" => r.gradients,
@@ -701,9 +731,19 @@ end
 function case_limiter_codes(P)
     replay, _ = ADJ.Footprint._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
                                                   _common(P)..., base_emission_rates = P.rates)
-    pool = TapeMod._open_tape_pool(TapeMod.DeviceCSTapeStorage(), 0)
+    pool = begin
+        runtime = ADJ.Footprint._TapeRuntime(AT.AdjointTape())
+        ADJ.Footprint._prepare_tape!(runtime, replay, P.nsteps)
+        runtime.pool
+    end
     ops = ADJ.Footprint._record_cs_tape!(replay, 1:P.nsteps, TapeMod.StateTape(), pool)
-    return limiter_code_counts(ops, P.case.Nc, P.case.Nz)
+    try
+        @assert all(bank -> bank.cursor == length(bank.slabs), values(pool.banks))
+        return limiter_code_counts(ops, P.case.Nc, P.case.Nz)
+    finally
+        ADJ.Footprint._release_records!(ops)
+        TapeMod._release_tape_pool!(pool)
+    end
 end
 
 # ---------------------------------------------------------------------------

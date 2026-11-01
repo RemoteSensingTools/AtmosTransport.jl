@@ -56,6 +56,13 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
     AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
 
+# Query after reclaim so cached backend allocations count as available.
+function AtmosTransport.Tape._device_tape_memory(::CUDABackend, a)
+    AtmosTransport.Architectures._reclaim_backend_pool!(a)
+    free, capacity = CUDA.memory_info()
+    return Int(free), Int(capacity)
+end
+
 # Adjoint tape hooks (`src/Tape/`). Tape memory is released explicitly when a
 # reverse-pass call returns (device slabs, read caches, checkpoints, Lin–Rood
 # records), so the CUDA pool gets it back now rather than at a later GC.
@@ -86,5 +93,8 @@ function _unpin_host_chunk(registration::_CUDAHostRegistration)
     end
     return nothing
 end
+
+
+AtmosTransport.Tape._is_reservation_failure(err::CUDA.OutOfGPUMemoryError) = true
 
 end # module AtmosTransportCUDAExt

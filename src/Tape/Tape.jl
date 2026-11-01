@@ -16,7 +16,10 @@ Module dependency order:
 """
 module Tape
 
-export AbstractTapeContent, StateTape, AirMassTape, AdjointTape,
+using KernelAbstractions: get_backend
+using KernelAbstractions: CPU as KATapeCPU
+
+export AbstractTapeContent, StateTape, AirMassTape, AdjointTape, AutoTape, TapeReservationError, TapeReservationExceeded,
        AbstractCSTapeStorage,
        AbstractHostCSTapeStorage,
        DeviceCSTapeStorage,
@@ -26,7 +29,7 @@ export AbstractTapeContent, StateTape, AirMassTape, AdjointTape,
        HostCSTapeSlot,
        StaleTapeSlotError,
        _DeviceSlabPool, _PinnedHostArena, _MmapTapeFile,
-       _open_tape_pool, _needs_tape_size, _holds_tape_bytes,
+       _open_tape_pool, _holds_tape_bytes,
        _rewind_tape_pool!, _release_tape_pool!,
        _tape_panels, _tape_slot_bytes,
        _allocate_tape_slot, stage_panels!, _stage_panels, _stage_computed,
@@ -37,7 +40,7 @@ export AbstractTapeContent, StateTape, AirMassTape, AdjointTape,
        _bytes_per_panel_tuple,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
        _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord,
-       AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint,
+       AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, StrideSearch,
        checkpoint_window_count, checkpoint_window_range
 
 include("TapeStorage.jl")
@@ -46,5 +49,9 @@ include("TapeRecords.jl")
 include("MmapTapeStorage.jl")
 include("CheckpointSchedule.jl")
 include("AdjointTape.jl")
+include("TapeReservation.jl")
 
 end # module Tape
+
+using KernelAbstractions: get_backend
+using KernelAbstractions: CPU as KATapeCPU

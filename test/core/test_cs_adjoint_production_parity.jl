@@ -60,7 +60,7 @@ const SCRATCH = mktempdir()
 
 @testset "host tape storage gives distinct air-mass and tracer-mass reads (#57)" begin
     @testset "slot reads ($(nameof(typeof(pool))))" for
-            pool in (TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0),
+            pool in (TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), [(PB57.m, eltype(first(PB57.m))), (PB57.rm, eltype(first(PB57.rm)))]),
                      TapeMod._MmapTapeFile(SCRATCH, 1 << 26))
         m_slot = TapeMod._stage_panels(pool, PB57.m)
         rm_slot = TapeMod._stage_panels(pool, PB57.rm)

@@ -39,8 +39,11 @@ _replay(P) = first(FP._cs_replay_for_call(P.rm0, P.m0, P.am, P.bm, P.cm, P.mesh;
 # before them without a recorder; and the pool it was recorded into.
 function _record(P, steps = 1:P.nsteps)
     replay = _replay(P)
+    runtime = FP._TapeRuntime(AT.AdjointTape())
+    size = FP._size_tape!(runtime, replay, P.nsteps)
+    pool = TP._reserve_tape_pool(TP.DeviceCSTapeStorage(),
+        filter(TP._layout_pooled, FP._segment_layout(size, steps)))
     FP._replay_steps!(replay, 1:(first(steps) - 1))
-    pool = TP._open_tape_pool(TP.DeviceCSTapeStorage(), 0)
     return FP._record_cs_tape!(replay, steps, TP.StateTape(), pool), pool
 end
 
@@ -74,6 +77,7 @@ const LINROOD_CASE = Case(name = "linrood5_tm5win_boundary_vmr", scheme = AT.Lin
     P = H.problem(c)
     ops, pool = _record(P)
     limited = H._limited(c.scheme)
+    @test all(bank -> bank.cursor == length(bank.slabs), values(pool.banks))
     # Every slab of the pool is one staged slot, read by at least one record.
     read = IdDict{Any, Int}()
     foreach(op -> foreach(s -> s === nothing || (read[s] = get(read, s, 0) + 1), _slots(op)), ops)

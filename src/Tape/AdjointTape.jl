@@ -116,3 +116,72 @@ _check_tape_schedule(::AirMassTape, ::StrideCheckpoint) = throw(ArgumentError(
     "AirMassTape keeps one recorded tape for the whole run and reuses it; StrideCheckpoint " *
     "re-records each window from its checkpoint in every reverse pass. Use FullCheckpoint() " *
     "with AirMassTape(), or StateTape() with StrideCheckpoint."))
+
+"""
+    AutoTape(; storage = nothing, checkpoint = nothing, content = nothing,
+             budget_bytes = nothing, scratch_dir = nothing)
+
+Resolve and reserve an `AdjointTape` before recording, from the step schedule
+and the available backend and host memory. Supplied axes constrain the search;
+`budget_bytes` replaces the measured device tape and snapshot budget and its
+safety margin; on CPU it also replaces the shared host budget.
+`scratch_dir` enables the mmap candidate. With no fitting reservation, throw
+[`TapeReservationError`](@ref). The default content is `StateTape`.
+"""
+struct AutoTape{S, K, C}
+    storage::S
+    checkpoint::K
+    content::C
+    budget_bytes::Union{Nothing, Int}
+    scratch_dir::Union{Nothing, String}
+end
+
+function AutoTape(; storage::Union{Nothing, AbstractCSTapeStorage} = nothing,
+                   checkpoint::Union{Nothing, AbstractCheckpointSchedule, StrideSearch} = nothing,
+                   content::Union{Nothing, AbstractTapeContent} = nothing,
+                   budget_bytes::Union{Nothing, Integer} = nothing,
+                   scratch_dir::Union{Nothing, AbstractString} = nothing)
+    budget_bytes === nothing || budget_bytes >= 0 || throw(ArgumentError("budget_bytes must be >= 0"))
+    scratch_dir === nothing || !isempty(strip(scratch_dir)) || throw(ArgumentError("scratch_dir must be nonempty"))
+    storage === nothing || storage isa MmapCSTapeStorage || scratch_dir === nothing ||
+        throw(ArgumentError("scratch_dir requires automatic or mmap storage"))
+    storage isa MmapCSTapeStorage && scratch_dir !== nothing && storage.dir != scratch_dir &&
+        throw(ArgumentError("scratch_dir disagrees with MmapCSTapeStorage.dir"))
+    content === nothing || checkpoint === nothing || _check_tape_schedule(content, checkpoint)
+    return AutoTape(storage, checkpoint, content,
+                    budget_bytes === nothing ? nothing : Int(budget_bytes),
+                    scratch_dir === nothing ? nothing : String(scratch_dir))
+end
+
+"""
+    TapeReservationError(estimate_bytes, budget_bytes, msg)
+
+No permitted tape candidate could be reserved before recording. The estimate
+and available budget are in bytes; `msg` describes the failed choices.
+"""
+struct TapeReservationError <: Exception
+    estimate_bytes::Int
+    budget_bytes::Int
+    msg::String
+end
+Base.showerror(io::IO, e::TapeReservationError) = print(io, "TapeReservationError: ", e.msg,
+    " (estimate ", e.estimate_bytes, " bytes, budget ", e.budget_bytes, " bytes)")
+
+"""
+    TapeReservationExceeded(capacity_bytes, requested_bytes)
+
+Recording requested more memory than was reserved before the forward run.
+No storage spill or unreserved pool growth is allowed.
+"""
+struct TapeReservationExceeded <: Exception
+    capacity_bytes::Int
+    requested_bytes::Int
+end
+Base.showerror(io::IO, e::TapeReservationExceeded) = print(io,
+    "TapeReservationExceeded: requested ", e.requested_bytes,
+    " bytes from a reservation of ", e.capacity_bytes, " bytes")
+
+_check_tape_schedule(::AirMassTape, ::StrideSearch) =
+    throw(ArgumentError("AirMassTape requires FullCheckpoint"))
+
+_check_tape_schedule(::AbstractTapeContent, ::StrideSearch) = nothing

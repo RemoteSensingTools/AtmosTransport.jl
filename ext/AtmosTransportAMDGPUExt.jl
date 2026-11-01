@@ -41,6 +41,13 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::AnyROCArray) =
     AtmosTransport.Architectures.foreach_host_array(_pin_host_array!, storage)
 
+# Query after reclaim so cached backend allocations count as available.
+function AtmosTransport.Tape._device_tape_memory(::ROCBackend, a)
+    AtmosTransport.Architectures._reclaim_backend_pool!(a)
+    free, capacity = AMDGPU.info()
+    return Int(free), Int(capacity)
+end
+
 # Adjoint tape hooks (`src/Tape/`): explicit release of tape memory, and
 # synchronous device↔host tape copies (staging and every read wait).
 _free_tape_array!(a::ROCArray) = AMDGPU.unsafe_free!(a)
@@ -59,5 +66,9 @@ _pin_host_chunk(::ROCArray, ptr::Ptr, nbytes::Integer) =
 
 _unpin_host_chunk(registration::_ROCHostRegistration) =
     (AMDGPU.unsafe_free!(registration.wrapper); nothing)
+
+
+AtmosTransport.Tape._is_reservation_failure(err::AMDGPU.HIP.HIPError) =
+    err.code in (AMDGPU.HIP.hipErrorOutOfMemory, AMDGPU.HIP.hipErrorMemoryAllocation)
 
 end # module AtmosTransportAMDGPUExt

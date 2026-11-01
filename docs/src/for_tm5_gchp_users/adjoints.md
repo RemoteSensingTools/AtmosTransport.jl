@@ -302,15 +302,20 @@ storage, checkpoint)` keyword (the inversion driver: `[adjoint.tape]`). The
 
 Each call opens the tape's memory once, reuses it for every stride window
 (and, in `cs_surface_flux_4dvar_optimize`, every evaluation), and frees it
-when it returns. An mmap tape is sized before it is recorded: the call counts
-its largest tape on the forward replay (once per optimization), checks that
-`dir` has that much space plus 10 % free (an `ArgumentError` with the
-required and available bytes otherwise, raised after this sizing pass), and
-reserves it with `fallocate` in one unlinked file that is unmapped and closed
+when it returns. Binary split-sweep schedules use a closed-form size; CFL
+and Lin–Rood counts are cached once per runtime. Mmap checks that `dir` has
+the reservation plus 10 % free, then reserves it with `fallocate` in one unlinked file that is unmapped and closed
 when the call returns. Use a local file system that can reserve blocks (ext4,
 XFS); others, such as ZFS or NFS without `fallocate`, are rejected by name.
 Tapes are not persisted. Every storage works with every checkpoint policy.
 Lin-Rood currently supports device tape storage only.
+
+`AutoTape()` is the default request; its fields constrain selection. A failed
+explicit reservation raises `TapeReservationError`, and recording beyond
+reserved capacity raises `TapeReservationExceeded`. Stride's
+`resident_tail` retains the final steps recorded in the forward run;
+`snapshots = PinnedHostCSTapeStorage()` moves checkpoint tracer and air masses
+to host memory while operator state keeps its backend types.
 
 The `checkpoint` controls the memory/recompute trade-off:
 

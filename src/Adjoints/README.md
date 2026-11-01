@@ -57,3 +57,9 @@ finite-difference tests are the numerical gate.
 Architectures.zeros_like owns non-fenced panel zero allocation, shared with
 Footprint and Inversion.Solver. PanelArrays.jl retains dimensioned surface
 allocation and panel copies. LinRoodTape.jl remains untouched.
+
+Reverse-pass entry points default to `AutoTape()`: supplied fields constrain
+one concrete tape, sized and reserved before recording. An explicit
+`AdjointTape` is reserved without replacement. A runtime (one per optimization)
+caches CFL counts and pool reservations across evaluations; resident-tail
+and pinned-host-snapshot Stride choices preserve the same reverse order.
