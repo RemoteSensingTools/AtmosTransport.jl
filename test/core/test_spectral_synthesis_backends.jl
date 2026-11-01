@@ -44,6 +44,8 @@ end
     check_ring_synthesis()
     c=AtmosTransport.Preprocessing.Common
     @test c.resolve_spectral_construction(Dict()) == NamedTuple()
+    # Live Calc_Kzz inputs share the spectral [preprocessing] table.
+    @test c.resolve_spectral_construction(Dict("preprocessing"=>Dict("include_tm5_pbl"=>true))) == NamedTuple()
     config=Dict{String,Any}("preprocessing"=>Dict{String,Any}("spectral_flux_construction"=>"tm5_spectral","spectral_synthesis"=>"cpu"))
     settings=c.resolve_spectral_construction(config)
     @test settings.spectral_flux_construction isa c.TM5SpectralFluxes

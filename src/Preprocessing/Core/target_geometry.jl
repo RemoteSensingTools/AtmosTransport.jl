@@ -374,9 +374,6 @@ function validate_tm5_pbl_target(::AbstractTargetGeometry, settings, vertical=no
 end
 function validate_tm5_pbl_target(::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry}, settings, vertical=nothing)
     get(settings,:include_tm5_pbl,false) || return nothing
-    # The TM5 flux day drivers do not assemble the input group.
-    spectral_construction(settings) isa TM5SpectralFluxes && throw(ArgumentError(
-        "include_tm5_pbl is not supported with spectral_flux_construction=\"tm5_spectral\""))
     first(get(settings,:level_range,1:137)) == 1 || throw(ArgumentError("include_tm5_pbl requires grid.level_top=1 (the complete native thermo column)"))
     if vertical !== nothing
         first(vertical.level_range) == 1 || throw(ArgumentError("include_tm5_pbl requires grid.level_top=1"))

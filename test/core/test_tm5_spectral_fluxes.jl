@@ -150,6 +150,10 @@ end
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(mass_basis=:moist))
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(flux_time_sampling=:window_start))
         @test_throws ArgumentError CO.validate_spectral_construction(c,grid,tm5_settings(met_interval=7200.0))
+        # The typed day driver rejects live Calc_Kzz inputs before any read.
+        target = rg ? PP.ReducedGaussianTarget : PP.LatLonTarget
+        @test_throws r"include_tm5_pbl" target.process_day(c,Date(2021,12,1),grid,
+            tm5_settings(include_tm5_pbl=true,spectral_dir="/nonexistent"),vertical)
         @test_throws ArgumentError SP.integrate_vertical_flux!(zeros(nc,3),zeros(nc,2),[0.,0.3,0.8])
         q0=zeros(nc,2)
         a0=SP.construct_tm5_endpoint(ws,h,vo,d,4,q0,SP.TM5EndpointPlan(vertical),tm5_settings())

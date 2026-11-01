@@ -201,9 +201,6 @@ end
             enabled=Pre.ERA5SpectralSettings((;include_tm5_pbl=true,thermo_dir=dir,met_interval=3600.,level_range=1:2))
             @test_throws r"target_vertical" Pre.validate_tm5_pbl_target(grid,enabled,merge(vertical,(;merge_map=Int[])))
             @test_throws r"at least two" Pre.validate_tm5_pbl_target(grid,enabled,merge(vertical,(;Nz=1,merge_map=[1,1])))
-            tm5=Pre.ERA5SpectralSettings((;include_tm5_pbl=true,thermo_dir=dir,met_interval=3600.,level_range=1:2,
-                spectral_flux_construction=Pre.TM5SpectralFluxes()))
-            @test_throws r"tm5_spectral" Pre.validate_tm5_pbl_target(grid,tm5,vertical)
         end
     end
 end

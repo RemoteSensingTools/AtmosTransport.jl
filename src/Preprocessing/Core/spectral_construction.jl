@@ -39,7 +39,7 @@ validate_gpu_spectral_backend(::Val) = throw(ArgumentError(
 
 function resolve_spectral_construction(cfg)
     table = get(cfg, "preprocessing", Dict{String,Any}())
-    check_known_keys(table, SPECTRAL_CONSTRUCTION_KEYS, "[preprocessing]")
+    check_known_keys(table, SPECTRAL_PREPROCESSING_KEYS, "[preprocessing]")
     c = parse_choice(get(table, "spectral_flux_construction", "point_sampled_spectral"),
         (point_sampled_spectral=PointSampledSpectralFluxes(), tm5_spectral=TM5SpectralFluxes()),
         "[preprocessing].spectral_flux_construction")
@@ -59,6 +59,9 @@ function resolve_spectral_construction(cfg)
 end
 
 function validate_spectral_construction(c::TM5SpectralFluxes, grid, settings)
+    # The TM5 day drivers do not assemble the live Calc_Kzz input group.
+    get(settings,:include_tm5_pbl,false) && throw(ArgumentError(
+        "include_tm5_pbl is not supported with spectral_flux_construction=\"tm5_spectral\""))
     grid isa Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry} ||
         throw(ArgumentError("tm5_spectral supports lat-lon and reduced-Gaussian targets; cubed sphere is deferred"))
     if grid isa LatLonTargetGeometry
