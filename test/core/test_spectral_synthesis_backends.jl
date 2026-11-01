@@ -46,8 +46,9 @@ end
     @test c.resolve_spectral_construction(Dict()) == NamedTuple()
     # Live Calc_Kzz inputs share the spectral [preprocessing] table.
     @test c.resolve_spectral_construction(Dict("preprocessing"=>Dict("include_tm5_pbl"=>true))) == NamedTuple()
-    @test_throws r"include_tm5_pbl" c.resolve_spectral_construction(Dict("preprocessing"=>
+    combined=c.resolve_spectral_construction(Dict("preprocessing"=>
         Dict("spectral_flux_construction"=>"tm5_spectral","include_tm5_pbl"=>true)))
+    @test combined.spectral_flux_construction isa c.TM5SpectralFluxes
     config=Dict{String,Any}("preprocessing"=>Dict{String,Any}("spectral_flux_construction"=>"tm5_spectral","spectral_synthesis"=>"cpu"))
     settings=c.resolve_spectral_construction(config)
     @test settings.spectral_flux_construction isa c.TM5SpectralFluxes

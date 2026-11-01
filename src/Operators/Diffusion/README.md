@@ -231,9 +231,25 @@ column result. Its guard retains the finite BL/free K. The refresh stores no
 PBL-height diagnostic and `update_field!` returns the field, as required by the
 field interface. Scratch is approximately 16 floating values per cell/layer,
 plus D and one integer guard count per cell; large RG meshes can require about
-1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds for
-synthetic and real ERA5 columns; on the sampled ERA5 windows the conditioning
-of the Richardson-number numerator gave a maximum Float32 D error of 1e-2.
+1.2 GB of Float32 scratch.
+
+Float32 Calc_Kzz never subtracts two rounded θv values. Δθv, the
+bulk-Richardson numerator, the geopotential log-pressure ratio and the
+centre-height fraction use algebraically identical forms that remove cancellation
+in operand differences within a factor of two and greatly improve near-surface
+accuracy. The final sum can still cancel: a synthetic model-top interface gives
+approximately −144.27376 + 144.26372 = −0.010040283 K (amplification ≈28738).
+The refresh's top-down pressure sum uses `_kahan_add`. Each
+change is a helper with a Float64 method that keeps TM5's literal expression,
+so Float64 results are bitwise unchanged. The kernel uses Float32 operations
+only, using Kahan's `expm1` formulation with Float32 `exp` and `log` to avoid
+AMDGPU's Float64 fallback; `log1p` has a Float32 implementation on CUDA, AMDGPU
+and Metal. On the sampled ERA5 windows the Float32 D error relative to
+Float64 has p99 5.5e-5 and
+maximum 3.9e-3 (literal Float32 differences: 1.3e-4 and 1.0e-2). Rounding the
+inputs to Float32 alone gives about the same error. Before the Kahan `expm1`
+replacement, CUDA agreed with CPU Float32 to p99 4.6e-6 (previously 5e-5),
+and the kernel cost 4 % more. Manual §14 has the measurements and bounds.
 
 Host fallback staging uses Architectures.host_array. Zeroed workspace scratch
 uses Architectures.zeros_like, retaining one allocation and fill per array.

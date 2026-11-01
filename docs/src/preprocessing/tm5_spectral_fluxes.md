@@ -510,9 +510,16 @@ end
   sources reject all four spectral-only keys. Planning rejects cubed sphere, moist basis and sampling other than
   `window_mean`. The day driver requires next-day 00 UTC. The new route
   requires retained native interfaces, rather than pressure-overlap remapping.
-- The TM5 day drivers do not assemble the live Calc_Kzz input group, so
-  `[preprocessing] include_tm5_pbl = true` is rejected with this construction
-  (see [TM5 boundary layer](../theory/tm5_boundary_layer.md)).
+- `[preprocessing] include_tm5_pbl = true` can be combined with this construction
+  on LL and RG. The v5 binary retains the `tm5_spectral` construction identity
+  and includes the complete live Calc_Kzz input group. Set `input.surface_dir`
+  and `input.thermo_dir`, then select `[diffusion] kind = "tm5_calc_kzz"` at
+  runtime (see [TM5 boundary layer](../theory/tm5_boundary_layer.md)).
+  Both constructions share the day-local PBL input cache, area-mean surface
+  fields and T/q assembly, including next-day 00 UTC endpoints.
+  T/q merge weights use each construction's stored window-start total surface
+  pressure. Merged T/q can therefore differ between constructions beyond
+  rounding, consistent with each binary's hybrid layers.
 - The default path stays bitwise unchanged; every flux pull request gates the
   `pre_ll72`, `pre_o24` and `pre_c24` goldens.
 
