@@ -241,9 +241,9 @@ it is set:
 - lat-lon → cubed-sphere regrid: `--column-balance-weights` of
   `scripts/preprocessing/regrid_ll_transport_binary_to_cs.jl`.
 
-The GEOS closures that keep the native fluxes (`pressure_fixer`,
-`pfix_corrected`) have no column balance; the met source's weights do not
-apply to them and are ignored (no error), and their headers omit
+The GEOS `pressure_fixer` closure keeps the native fluxes and has no column
+balance; the met source's weights do not apply and are ignored (no error),
+and its header omits
 `column_balance_weights` (`horizontal_balance = "none"`). MERRA-2 and ERA5 N320
 headers always record the choice; the other paths record it when it is not
 `"mass"`. `AtmosTransport.Preprocessing.validate_preprocessing_config(cfg)`

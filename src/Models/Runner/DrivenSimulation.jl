@@ -148,9 +148,7 @@ function _check_basis_compatibility(model::TransportModel, driver::D) where {D <
 end
 
 @inline function _substep_fraction(substep::Int, steps_per_window::Int, ::Type{FT}, use_midpoint::Bool) where FT
-    if steps_per_window == 1
-        return zero(FT)
-    elseif use_midpoint
+    if use_midpoint
         return (FT(substep) - FT(0.5)) / FT(steps_per_window)
     else
         return (FT(substep) - one(FT)) / FT(steps_per_window)

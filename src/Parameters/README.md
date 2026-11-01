@@ -63,7 +63,7 @@ other AtmosTransport modules; every later module may import from it.
     initial condition sets none
   - `DEFAULT_GEOS_SMOOTHING_SWEEPS` (8, an `Int`) and
     `DEFAULT_GEOS_SMOOTHING_WEIGHT` (0.5), the sweeps of the GEOS moisture
-    filter and column-drift correction and the weight of one sweep
+    filter and the weight of one sweep
   - `DEFAULT_MAX_SUBCYCLES` (4096, an `Int`), the most CFL subcycles one
     split-sweep advection step may need before the run stops
   - `DEFAULT_MAX_STEPS_PER_WINDOW` (4096, an `Int`), the most write-time

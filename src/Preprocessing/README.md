@@ -162,8 +162,8 @@ ERA5 N320 and MERRA-2 to CS:
 - Balance before `cm`: horizontal fluxes are balanced against the target
   `(m_next - m) / (2 * steps)` (each substep applies them twice; see
   `MetDrivers.poisson_balance_target`), then `cm` is diagnosed from that explicit
-  `dm`. The GEOS diagnostic closures `pressure_fixer` and `pfix_corrected`
-  skip the balance; every non-default closure logs a warning.
+  `dm`. The GEOS diagnostic closure `pressure_fixer` skips the balance;
+  every non-default closure logs a warning.
 - A kept binary passed the write-time replay gate (unless
   `[numerics] write_replay_check = false` skipped it) and the per-substep
   positivity gate against `positivity_cfl_limit` (default `0.95`, in
