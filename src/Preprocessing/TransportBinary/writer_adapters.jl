@@ -62,7 +62,7 @@ function write_window!(writer::LatLonBinaryWriter{FT},
     verify_flux_fidelity!(writer.fidelity, ready.fidelity, ready.index)
     storage = ready.payload.storage
     bytes = write_window!(writer.io,
-                          ready.index,
+                          get(ready.payload,:storage_index,ready.index),
                           storage,
                           writer.settings,
                           writer.merged,

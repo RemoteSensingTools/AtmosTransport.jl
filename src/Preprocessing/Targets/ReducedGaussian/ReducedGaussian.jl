@@ -1,6 +1,15 @@
 """Reduced-Gaussian spectral staging, window contracts and daily preprocessing."""
 module ReducedGaussianTarget
 
+import ..Common: GPUSynthesis, AutoSynthesisPrecision, PointSampledSpectralFluxes, TM5SpectralFluxes, spectral_construction, validate_spectral_construction, balance_window_layers!
+import ..Spectral: spectral_synthesis_metadata, SpectralIntegralWorkspace, construct_tm5_endpoint, TM5EndpointPlan, with_spectral_hours
+import ..LatLonTarget: tm5_horizontal_convergence, balance_tm5_layers!, dry_target_fluxes!
+import ..MassClosure: DirectRingPoisson, balance_compressed_level!
+import ..Common: validate_spectral_vertical
+import ..Spectral: read_day_spectral_streaming
+import ..TransportBinary: tm5_construction_metadata, settings_include_surface
+import ...MetDrivers.BinaryFormat: TM5SpectralFluxesHeader, write_streaming_window!, close_streaming_transport_binary!, abandon_streaming_transport_binary!
+
 import ..Spectral: era5_thermo_path
 
 import ...Grids, ...State
@@ -11,7 +20,7 @@ import ...Grids: AtmosGrid,
     ncells,
     nfaces,
     nrings
-import ...MetDrivers: ReplayScratch,
+import ...MetDrivers: flux_application_seconds, ReplayScratch,
     faceindexed_replay_layout,
     flux_kind,
     recompute_cm_from_dm_target!,
@@ -61,7 +70,7 @@ import Dates: Date,
     Day
 import FFTW: FFTW
 import GRIB: GRIB
-import ..LatLonTarget: log_mass_fix_configuration,
+import ..LatLonTarget: process_window!, log_mass_fix_configuration,
     should_log_window
 import NCDatasets: NCDataset, dimnames
 import ..TransportBinary: AbstractWindowContract,
@@ -153,5 +162,6 @@ include("reduced_gaussian_contracts.jl")
 include("reduced_transport_helpers.jl")
 include("reduced_window_buffer.jl")
 include("reduced_spectral_day.jl")
+include("tm5_spectral_day.jl")
 
 end # module ReducedGaussianTarget

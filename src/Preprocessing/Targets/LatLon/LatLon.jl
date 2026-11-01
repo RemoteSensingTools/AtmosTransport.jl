@@ -1,11 +1,18 @@
 """Lat-lon spectral staging, window contracts and daily preprocessing."""
 module LatLonTarget
 
+import ..Common: GPUSynthesis, AutoSynthesisPrecision, PointSampledSpectralFluxes, TM5SpectralFluxes, spectral_construction, validate_spectral_construction, balance_window_layers!
+import ..Spectral: spectral_synthesis_metadata, SpectralIntegralWorkspace, construct_tm5_endpoint, TM5EndpointPlan, with_spectral_hours, balance_mass_fluxes!
+import ..Common: validate_spectral_vertical
+import ...Parameters: STANDARD_GRAVITY
+import ..Spectral: read_day_spectral_streaming
+import ..TransportBinary: tm5_construction_metadata, tm5_flux_evidence, quarantine_streaming_binary!
+
 import ..Spectral: era5_thermo_path
 
 import ...State
 import ...AtomicFiles: commit_atomic_staging
-import ...MetDrivers: ReplayScratch,
+import ...MetDrivers: flux_application_seconds, ReplayScratch,
     recompute_cm_from_dm_target!,
     replay_tolerance,
     structured_replay_layout,
@@ -161,5 +168,7 @@ export AbstractQVWorkspace,
 include("latlon_workspaces.jl")
 include("latlon_contracts.jl")
 include("latlon_spectral.jl")
+include("tm5_layer_balance.jl")
+include("tm5_spectral_day.jl")
 
 end # module LatLonTarget

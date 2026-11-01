@@ -33,4 +33,15 @@ No adjoint. Certificate writing mirrors MetDrivers/BinaryFormat header parsing; 
 
 ## Numerical contract
 
-Binary format remains v4. Shared helpers preserve conversion boundaries, native-layer order, sample salts, tolerances and the summary escape hatch before integer rescue arithmetic. Arithmetic variants stay separate.
+Default binaries remain v4; the TM5 construction records its v5 identity. Shared helpers preserve conversion boundaries, native-layer order, sample salts, tolerances and the summary escape hatch before integer rescue arithmetic. Arithmetic variants stay separate.
+
+# shared: tm5_construction_metadata, tm5_flux_evidence
+
+`tm5_spectral_metadata.jl` records the v5 spectral construction identity and
+honest unavailable flux-fidelity evidence where no independent spectral
+re-evaluator is attached. Legacy outputs stay v4. The new LL/RG construction
+uses the existing window-constant and explicit-dm runtime contracts.
+
+The LL writer adapter accepts a `storage_index` payload slot independent of the
+logical window index, allowing two-window streaming with the existing deltas.
+TM5 v5 provenance records the actual synthesis backend and float precision.

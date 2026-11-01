@@ -252,6 +252,8 @@ dry-mass pin and the source/target pair. Shared by `process_day(cfg)` and
 point accepts.
 """
 function _native_preprocessing_plan(cfg::AbstractDict)
+    check_known_keys(get(cfg,"preprocessing",Dict{String,Any}()), (),
+        "[preprocessing] in a native-source run (configure the met-source TOML instead)")
     # Native sources take their column weights from the met-source file.
     haskey(get(cfg, "numerics", Dict()), "column_balance_weights") && throw(ArgumentError(
         "[numerics] column_balance_weights applies to ERA5 spectral configs; native sources " *
@@ -556,11 +558,13 @@ setup, numerics and the source/target pair. Shared by `process_day(cfg)` and
 function _spectral_preprocessing_plan(cfg::AbstractDict, grid::AbstractTargetGeometry)
     settings_nt = resolve_runtime_settings(cfg)
     settings = ERA5SpectralSettings(
-        merge(settings_nt, (T_target = target_spectral_truncation(grid),)))
+        merge(settings_nt, (T_target = spectral_read_truncation(spectral_construction(settings_nt), grid),)))
+    validate_spectral_construction(spectral_construction(settings), grid, settings)
     check_spectral_column_weights(grid, settings)
     validate_flux_construction(settings, "ERA5 spectral")
     vertical = build_vertical_setup(settings.coeff_path, settings.level_range,
                                     settings.min_dp, cfg["grid"])
+    Common.validate_spectral_vertical(spectral_construction(settings), vertical)
     spectral_column_weights(grid, settings, vertical)  # the output coordinate has hybrid layers
     positivity_cfl_limit       = _resolve_positivity_cfl_limit(cfg)
     require_substep_positivity = _resolve_require_substep_positivity(cfg)

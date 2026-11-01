@@ -35,3 +35,6 @@ its coefficient differences from the already loaded native coordinate.
 ## Forward<->adjoint mirrors
 
 None.
+
+`InterfaceMassFluxField` selects retained interfaces for non-convective
+kg/s mass fluxes using the same production reduction as `ConvectionInterfaceFlux`.

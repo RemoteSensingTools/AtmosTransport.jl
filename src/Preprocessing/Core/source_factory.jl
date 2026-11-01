@@ -50,10 +50,20 @@ end
 # elsewhere the keys would be silently ignored, so they are rejected.
 const FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face_fluxes",
                                  "face_interpolation", "wind_regrid")
-const ALL_FLUX_KEYS = (FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling")
+const SPECTRAL_CONSTRUCTION_KEYS = ("spectral_flux_construction", "spectral_synthesis",
+    "spectral_synthesis_float", "quadrature_refinement_steps")
+const ALL_FLUX_KEYS = (FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling",
+    SPECTRAL_CONSTRUCTION_KEYS...)
+# All native-source preprocessing choices. Each source still rejects unsupported
+# flux keys below; ConfigChecks catches misspellings before dispatch.
+const NATIVE_PREPROCESSING_KEYS = (ALL_FLUX_KEYS..., "mass_flux_dt_seconds", "level_orientation",
+    "physics_dir", "physics_layout", "include_surface", "include_convection",
+    "include_vdiff_fields", "include_convective_cloud_base",
+    "include_tm5_diffusion", "arco_surface_pressure", "winds_collection", "layout", "collections_optional", "collections_required", "format")
 supported_flux_keys(::Type) = ()
 function reject_unsupported_flux_keys(ctor::Type, cfg)
     pre_cfg = get(cfg, "preprocessing", Dict{String,Any}())
+    check_known_keys(pre_cfg, NATIVE_PREPROCESSING_KEYS, "[preprocessing]")
     for key in ALL_FLUX_KEYS
         haskey(pre_cfg, key) && !(key in supported_flux_keys(ctor)) && throw(ArgumentError(
             "[preprocessing].$(key) is not implemented for $(nameof(ctor)) sources"))

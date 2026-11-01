@@ -355,6 +355,8 @@ files = [
     "core/test_era5_n320_window_reader.jl",
     "core/test_era5_surface_reader.jl",
     "core/test_spectral_ring_synthesis.jl",
+    "core/test_tm5_spectral_fluxes.jl",
+    "core/test_spectral_synthesis_backends.jl",
     "core/test_preprocessing_cache_io.jl",
     "core/test_spectral_targets.jl",
     "core/test_geos_reader.jl",

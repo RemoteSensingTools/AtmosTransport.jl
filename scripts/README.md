@@ -266,3 +266,7 @@ commit that contains the file; recover it with `git show <commit>:<path>`.
 | `scripts/diagnostics/catrine_true_mass_balance_gc.py` | `scripts/diagnostics/catrine_true_mass_balance.jl --model geoschem` (`Analysis.GEOSChemCATRINEArchive`, `Analysis.global_totals`) | `a5df02ae` |
 | `scripts/diagnostics/float32_conservation_attribution.py` | `scripts/diagnostics/float32_conservation_attribution.jl` (`write-configs`, `budget`; `Analysis.drift_statistics`, `Analysis.twin_relative_difference`) | `a5df02ae` |
 | `scripts/diagnostics/compare_float32_float64_runs.py` | numbers: `scripts/diagnostics/compare_float32_float64_runs.jl` (JSON and NetCDF; `Analysis.twin_relative_difference`, `Analysis.weighted_difference_stats`); figures: `scripts/visualization/plot_float32_vs_float64.py` | `a5df02ae` |
+
+The preprocessing CLI loads the CUDA extension when `tm5_spectral` selects
+GPU synthesis (its default). `spectral_synthesis = "cpu"` selects the reference
+without loading a GPU runtime; library callers load their backend explicitly.

@@ -45,3 +45,20 @@ column-weight choice immediately.
 ## Forward<->adjoint mirrors
 
 None.
+
+`spectral_construction.jl` owns `AbstractSpectralFluxConstruction`,
+`PointSampledSpectralFluxes`, `TM5SpectralFluxes`, `AbstractSpectralSynthesis`,
+`spectral_construction`, `spectral_resolution`,
+`spectral_read_truncation`, `spectral_source_flux_sampling`, `balance_window_layers!`,
+`validate_gpu_spectral_backend`, `resolve_spectral_construction` and
+`validate_spectral_construction`. The strategy selector is
+`[preprocessing].spectral_flux_construction`; existing face settings keep their meaning.
+
+# shared: AbstractSpectralFluxConstruction, PointSampledSpectralFluxes, TM5SpectralFluxes, AbstractSpectralSynthesis, spectral_construction, spectral_resolution, spectral_read_truncation, spectral_source_flux_sampling, balance_window_layers!, validate_gpu_spectral_backend, resolve_spectral_construction, validate_spectral_construction
+
+`validate_spectral_vertical` checks complete A/B columns and merge maps before
+any meteorology read. ConfigChecks rejects unknown preprocessing keys and
+native sources reject spectral-only options. Backend and automatic precision
+choices are parsed into `CPUSynthesis`, `GPUSynthesis`, `AutoSynthesisPrecision`.
+
+# shared: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, validate_spectral_vertical

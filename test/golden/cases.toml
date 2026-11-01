@@ -214,3 +214,18 @@ kind   = "run"
 config = "configs/run_c90_merra2.toml"
 tags   = ["run", "cubed_sphere", "gpu", "merra2"]
 add    = {"advection.limiter" = "cw84"}
+
+# TM5-FLUX-1 definitions only; references are recorded by the main session.
+[[case]]
+name = "pre_ll72_tm5"
+kind = "preprocess"
+config = "configs/pre_ll72_tm5.toml"
+day = "2021-12-01"
+tags = ["preprocess", "latlon", "cpu", "tm5"]
+
+[[case]]
+name = "pre_o24_tm5"
+kind = "preprocess"
+config = "configs/pre_o24_tm5.toml"
+day = "2021-12-01"
+tags = ["preprocess", "reduced_gaussian", "cpu", "tm5"]

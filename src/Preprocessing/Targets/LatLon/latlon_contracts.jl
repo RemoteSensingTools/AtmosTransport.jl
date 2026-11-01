@@ -94,7 +94,10 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
                                 write_replay_on::Bool = true,
-                                weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+                                weights::AbstractColumnWeights = MassWeightedColumn(),
+                                rebuild_rates = nothing,
+                                poisson_workspace = nothing,
+                                window_offset::Int = 0) where FT
     contract === nothing &&
         throw(ArgumentError("adaptive LL Poisson balance requires a LatLonContract"))
     Nt = length(storage.all_m)
@@ -105,7 +108,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
     div_scratch = Array{Float64}(undef, Nx, Ny, Nz)
     replay_layout = structured_replay_layout()
 
-    poisson_ws = LLPoissonWorkspace(Nx, Ny)
+    poisson_ws = poisson_workspace === nothing ? LLPoissonWorkspace(Nx, Ny) : poisson_workspace
     mode = substep_policy.adaptive_substeps ? "adaptive" : "fixed"
     @info "  Applying column mass-balance correction with $(mode) substep schedule..."
 
@@ -123,10 +126,14 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
         steps = initial_substeps(substep_policy, steps_schedule[win_idx])
         old_steps = steps_schedule[win_idx]
         while true
-            old_steps == steps ||
+            if rebuild_rates !== nothing
+                rebuild_rates(win_idx,steps)
+            else
+                old_steps == steps ||
                 rescale_substep_amounts!(
                     (storage.all_am[win_idx], storage.all_bm[win_idx]),
                     old_steps, steps)
+            end
             old_steps = steps
             steps_schedule[win_idx] = steps
             contract.steps_per_window = steps
@@ -163,7 +170,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 bm = storage.all_bm[win_idx],
                                 cm = storage.all_cm[win_idx],
                                 m_next = m_next),
-                               contract, win_idx)
+                               contract, window_offset+win_idx)
             else
                 positivity = verify_substep_positivity_ll!(
                     storage.all_m[win_idx], storage.all_am[win_idx],
@@ -175,7 +182,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
             next_steps = next_substeps(substep_policy, steps,
                                        diag.positivity.ratio)
             if next_steps == steps
-                update_accumulator!(contract, diag.positivity, win_idx)
+                update_accumulator!(contract, diag.positivity, window_offset+win_idx)
                 if write_replay_on &&
                         (worst_replay_win == 0 ||
                          diag.replay.max_rel_err > worst_replay_rel)

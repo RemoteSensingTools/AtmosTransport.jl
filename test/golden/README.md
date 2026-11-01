@@ -286,3 +286,8 @@ Add a `[[case]]` to `cases.toml` with a config template in `configs/`
 exist in the template, each `add` key must not), record it into the reference with
 `record <ref> --cases=<name>`, and run `check <ref> <new> --cases=<name>` to
 confirm it is reproducible.
+
+`pre_ll72_tm5` and `pre_o24_tm5` select `tm5_spectral`, pin synthesis to CPU
+and use NOAA `ml137_tropo34a` levels. Their definitions are separate from the
+unchanged legacy cases. Record their references only in the main session;
+GPU synthesis is compared by tolerance using the opt-in backend test.

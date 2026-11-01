@@ -616,7 +616,10 @@ Run the full hourly processing chain for one analysis window:
 spectral synthesis, humidity load, optional dry-mass fix, optional dry-basis
 conversion, vertical merging, and storage.
 """
-function process_window!(win_idx::Int,
+process_window!(win_idx::Int,hour::Int,spec,grid::LatLonTargetGeometry,vertical,settings,args...;kwargs...) =
+    process_window!(spectral_construction(settings),win_idx,hour,spec,grid,vertical,settings,args...;kwargs...)
+
+function process_window!(::PointSampledSpectralFluxes, win_idx::Int,
                          hour::Int,
                          spec,
                          grid::LatLonTargetGeometry,
@@ -656,8 +659,8 @@ end
 function _store_window_surface_fields!(storage::WindowStorage{FT},
                                        win_idx::Int,
                                        surface_reader::ERA5SurfaceReader,
-                                       ::Type{FT}) where FT
-    surface = load_era5_surface_window(surface_reader, win_idx, FT)
+                                       ::Type{FT}; source_window::Int=win_idx) where FT
+    surface = load_era5_surface_window(surface_reader, source_window, FT)
     storage.all_pblh[win_idx] = surface.pblh
     storage.all_t2m[win_idx] = surface.t2m
     storage.all_ustar[win_idx] = surface.ustar

@@ -564,6 +564,12 @@ end
         "scripts/preprocessing/preprocess_transport_binary.jl",
     )
     preprocess_parse = getfield(preprocess_cli, :_parse_cli)
+    preload_spectral = getfield(preprocess_cli, :_preload_tm5_spectral_runtime!)
+    @test preload_spectral(Dict()) === false
+    @test preload_spectral(Dict("preprocessing"=>Dict(
+        "spectral_flux_construction"=>"tm5_spectral", "spectral_synthesis"=>"cpu"))) === false
+    @test preload_spectral(Dict("source"=>Dict("toml"=>"native.toml"),
+        "preprocessing"=>Dict("spectral_flux_construction"=>"tm5_spectral"))) === false
     @test preprocess_parse(["--help"]) === nothing
     @test preprocess_parse(["-h"]) === nothing
     @test preprocess_parse([cfg, "--day", "2021-12-01"])[2] == "2021-12-01"
