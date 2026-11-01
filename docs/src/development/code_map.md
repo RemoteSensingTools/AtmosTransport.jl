@@ -905,7 +905,7 @@ None recorded.
 
 ## `src/Preprocessing`
 
-Size: **71588 bytes / 20453.7 tokens**. Public names: **0**.
+Size: **71740 bytes / 20497.1 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessing/Sources/GEOS`, `src/Preprocessing/Sources/MERRA2`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/Targets/ReducedGaussian`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -914,7 +914,7 @@ Used by: `ext`, `src`.
 Files:
 
 - `Preprocessing.jl` (33941 bytes)
-- `entrypoint.jl` (37647 bytes)
+- `entrypoint.jl` (37799 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -922,7 +922,7 @@ None recorded.
 
 ## `src/Preprocessing/Core`
 
-Size: **67134 bytes / 19181.1 tokens**. Public names: **88**.
+Size: **67606 bytes / 19316.0 tokens**. Public names: **88**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Regridding`.
 
@@ -936,9 +936,9 @@ Files:
 - `logging.jl` (1134 bytes)
 - `met_readers.jl` (5960 bytes)
 - `met_sources.jl` (8642 bytes)
-- `source_factory.jl` (4601 bytes)
-- `spectral_construction.jl` (5783 bytes)
-- `target_geometry.jl` (17871 bytes)
+- `source_factory.jl` (4741 bytes)
+- `spectral_construction.jl` (6355 bytes)
+- `target_geometry.jl` (17631 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1155,7 +1155,7 @@ None recorded.
 
 ## `src/Preprocessing/TransportBinary`
 
-Size: **140332 bytes / 40094.9 tokens**. Public names: **122**.
+Size: **140334 bytes / 40095.4 tokens**. Public names: **122**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/State`.
 
@@ -1172,7 +1172,7 @@ Files:
 - `tm5_spectral_metadata.jl` (965 bytes)
 - `topology_dispatch.jl` (2392 bytes)
 - `window_contracts.jl` (19448 bytes)
-- `writer_adapters.jl` (8470 bytes)
+- `writer_adapters.jl` (8472 bytes)
 
 Forward ↔ adjoint mirrors:
 
