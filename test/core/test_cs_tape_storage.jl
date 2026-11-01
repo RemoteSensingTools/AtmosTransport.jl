@@ -77,7 +77,8 @@ TapeMod._unpin_host_chunk(r::_PseudoRegistration) = (pop!(_REGISTERED, r.ptr); n
 
 @testset "device pool: arrays reused across tapes, stale slots refused" begin
     src = _build_panels(:m; Nz = 3)
-    pool = TapeMod._open_tape_pool(AT.DeviceCSTapeStorage(), 0)
+    pool = TapeMod._reserve_tape_pool(AT.DeviceCSTapeStorage(),
+        vcat(fill((src, eltype(first(src))), 3), [(src, Float64)]))
     slots = [TapeMod._stage_panels(pool, map(a -> a .+ k, src)) for k in 1:3]
     @test all(k -> all(p -> TapeMod._tape_panels(slots[k], TapeMod.AirMassRead())[p] == src[p] .+ k, 1:6), 1:3)
     arrays = [slot.panels for slot in slots]
@@ -86,10 +87,10 @@ TapeMod._unpin_host_chunk(r::_PseudoRegistration) = (pop!(_REGISTERED, r.ptr); n
     @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(slots[1], TapeMod.AirMassRead())
     again = [TapeMod._stage_panels(pool, src) for _ in 1:2]
     @test all(k -> again[k].panels === arrays[k], 1:2)
-    # A state of another element type takes a new array in that place.
+    # Another element type takes its separately reserved bank.
     other = TapeMod._stage_panels(pool, map(a -> Float64.(a), src))
     @test other.panels !== arrays[3] && eltype(other.panels[1]) === Float64
-    @test length(pool.slabs) == 3
+    @test length(pool.slabs) == 4
     @test TapeMod._tape_panels(other, TapeMod.TracerMassRead())[2] == Float64.(src[2])
     TapeMod._release_tape_pool!(pool)
     @test pool.released && isempty(pool.slabs)
@@ -98,15 +99,15 @@ TapeMod._unpin_host_chunk(r::_PseudoRegistration) = (pop!(_REGISTERED, r.ptr); n
 end
 
 @testset "pinned-host arena: chunks allocated and pinned once, reused across tapes" begin
-    # A 2.24 MB state: the first chunk (64 MiB) holds 29 of them.
+    # Reserve forty 2.24 MB states before any recording.
     src = wrap6(_build_panels(:m; Nc = 48, Hp = 3, Nz = 16, FT = Float64))
     nbytes = TapeMod._tape_slot_bytes(src)
-    arena = TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+    arena = TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), fill((src, Float64), 40))
     slots = [TapeMod._stage_panels(arena, src) for _ in 1:40]
     nchunks = length(arena.chunks)
-    @test nchunks == 2 && length(_REGISTERED) == 2
+    @test nchunks == 1 && length(_REGISTERED) == 1
     @test all(c -> haskey(_REGISTERED, c.base) && _REGISTERED[c.base] == c.capacity, arena.chunks)
-    @test arena.chunks[1].capacity == TapeMod._HOST_ARENA_MIN_CHUNK
+    @test arena.chunks[1].capacity == 40nbytes
     @test all(slot -> all(p -> UInt(pointer(slot.panels[p])) % 64 == 0, 1:6), slots)
     # Reads copy into the role's device cache.
     got = TapeMod._tape_panels(slots[end], TapeMod.AirMassRead())
@@ -117,7 +118,7 @@ end
     @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(slots[1], TapeMod.AirMassRead())
     doubled = map(a -> _PseudoDevArray(a.data .* 2), src)
     again = [TapeMod._stage_panels(arena, doubled) for _ in 1:40]
-    @test [c.base for c in arena.chunks] == bases && length(_REGISTERED) == 2
+    @test [c.base for c in arena.chunks] == bases && length(_REGISTERED) == 1
     @test pointer(again[1].panels[1]) == pointer(slots[1].panels[1])
     @test TapeMod._tape_panels(again[40], TapeMod.TracerMassRead())[6].data == 2 .* src[6].data
     # Release unregisters and frees every chunk now.
@@ -126,7 +127,7 @@ end
     @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(again[1], TapeMod.AirMassRead())
     @test_throws TapeMod.StaleTapeSlotError TapeMod._stage_panels(arena, src)
     # Plain host panels need no registration.
-    cpu = TapeMod._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+    cpu = TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), [(map(a -> a.data, src), Float64)])
     slot = TapeMod._stage_panels(cpu, map(a -> a.data, src))
     @test cpu.chunks[1].registration === nothing
     @test TapeMod._tape_panels(slot, TapeMod.AirMassRead())[1] == src[1].data
@@ -165,7 +166,7 @@ end
             @test_throws TapeMod.StaleTapeSlotError TapeMod.stage_panels!(slot, src)
             TapeMod._stage_panels(storage, src)
             # Growth past the reservation is a counting bug, not a silent extension.
-            @test_throws ErrorException TapeMod._stage_panels(storage, src)
+            @test_throws TapeMod.TapeReservationExceeded TapeMod._stage_panels(storage, src)
             @test filesize(storage.io) == 2nbytes
             @test TapeMod._holds_tape_bytes(storage, 2nbytes) && !TapeMod._holds_tape_bytes(storage, 2nbytes + 1)
 
@@ -208,7 +209,7 @@ end
             catch e
                 e
             end
-            @test err isa ArgumentError
+            @test err isa TapeMod.TapeReservationError
             msg = sprint(showerror, err)
             @test occursin("needs $(capacity) bytes", msg) && occursin("are available", msg)
             # The directory is created; nothing is left in it.
@@ -287,7 +288,7 @@ end
             for (slot, src) in zip(slots, sources)
                 got = TapeMod._tape_panels(slot, air)
                 @test all(p -> got[p] isa _PseudoDevArray && got[p].data == src[p].data, 1:6)
-                @test got === storage.read_caches[(air, shape_key(src))]
+                @test got === storage.read_caches[(air, eltype(first(src)), shape_key(src))]
             end
             @test length(storage.read_caches) == 4   # one per distinct shape
             # The other role reads into its own buffers (issue #57).
@@ -342,7 +343,7 @@ end
         @test AT.AdjointTape() === AT.AdjointTape(AT.StateTape(), AT.DeviceCSTapeStorage(),
                                                   AT.FullCheckpoint())
         tape = AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))
-        @test tape isa AT.AdjointTape{AT.StateTape, AT.PinnedHostCSTapeStorage, AT.StrideCheckpoint}
+        @test tape isa AT.AdjointTape{AT.StateTape, <:AT.PinnedHostCSTapeStorage, <:AT.StrideCheckpoint}
         @test isbits(tape)                        # a descriptor: no runtime state
         for bad in ((; storage = :device), (; storage = "mmap"), (; checkpoint = :full),
                     (; content = nothing))
@@ -373,25 +374,20 @@ end
         end
     end
 
-    @testset "a runtime reuses its pool; a larger mmap tape gets a new file" begin
+    @testset "a reserved runtime reuses its pool and refuses larger tapes" begin
         Footprint = AT.Adjoints.Footprint
-        mktempdir() do root
-            dir = joinpath(root, "tape")
+        mktempdir() do dir
             runtime = Footprint._TapeRuntime(AT.AdjointTape(; storage = AT.MmapCSTapeStorage(dir)))
+            @test_throws AT.TapeReservationExceeded Footprint._tape_pool!(runtime, 1)
+            runtime.pool = TapeMod._open_tape_pool(runtime.tape.storage, 1 << 16)
             first_pool = Footprint._tape_pool!(runtime, 1 << 16)
-            @test Footprint._tape_pool!(runtime, 1 << 12) === first_pool   # rewound, reused
+            @test Footprint._tape_pool!(runtime, 1 << 12) === first_pool
             @test first_pool.generation == 2
-            larger = Footprint._tape_pool!(runtime, 1 << 20)
-            @test larger !== first_pool && first_pool.released && larger.capacity == 1 << 20
+            @test_throws AT.TapeReservationExceeded Footprint._tape_pool!(runtime, 1 << 20)
             Footprint._release_tape_runtime!(runtime)
-            @test larger.released && runtime.pool === nothing
+            @test first_pool.released && runtime.pool === nothing
             @test _mappings_under(dir) == 0
         end
-        runtime = Footprint._TapeRuntime(AT.AdjointTape())
-        pool = Footprint._tape_pool!(runtime, 0)
-        @test Footprint._tape_pool!(runtime, 1 << 40) === pool          # device pools grow on demand
-        Footprint._release_tape_runtime!(runtime)
-        @test pool.released
     end
 
     @testset "one tape serves every call and schedule" begin

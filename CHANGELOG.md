@@ -12,6 +12,14 @@
   change by half the window's endpoint difference. Window-constant face fluxes and runs with
   midpoint forcing disabled are unchanged, as is every multi-step window (bitwise). No golden case
   or audited transport binary has one-step windows.
+- **Automatic adjoint tapes.** Footprints, Jacobians and surface-flux 4D-Var
+  default to `AutoTape()`, selecting one concrete tape from schedule sizes,
+  backend/host budgets and user constraints. Pools and checkpoints reserve
+  before recording; failures use `TapeReservationError` and overruns use
+  `TapeReservationExceeded`. Stride supports resident tails and pinned host
+  snapshots. The inversion config accepts automatic axes and `budget_gb`.
+  Lin–Rood horizontal payloads remain unpooled and are sized by counting.
+
 - **F1 foundation consolidation.** Runtime, preprocessing, inversion and binary
   metadata parsers use ConfigChecks; progress settings use LogLevels. Array
   staging/allocation/zeroing/scaling use Architectures, and remaining snapshot

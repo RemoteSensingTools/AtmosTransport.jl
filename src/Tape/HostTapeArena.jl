@@ -11,14 +11,9 @@
 # the chunks in order; `_release_tape_pool!` unregisters and frees them at
 # once.
 #
-# Chunks grow geometrically with the arena (from 64 MiB to 1 GiB): a tape of
-# T bytes takes about log2 of the first gigabyte plus T / 1 GiB chunks, and
-# wastes less than one slot per chunk at its end.
+# Reservation allocates the complete arena before recording. Recording and
+# rewind never grow it.
 # ---------------------------------------------------------------------------
-
-const _HOST_ARENA_MIN_CHUNK = Int64(64) << 20
-const _HOST_ARENA_MAX_CHUNK = Int64(1) << 30
-const _HOST_PAGE = Int64(4096)
 
 # One chunk: the `malloc`ed block, its first 64-byte boundary, the usable bytes
 # from there and the backend registration (`nothing` for CPU panels).
@@ -39,28 +34,16 @@ mutable struct _PinnedHostArena <: _AbstractHostTapePool
     read_caches::Dict{CSTapeReadCacheKey, CSPanelCache}
 end
 
-function _open_tape_pool(::PinnedHostCSTapeStorage, _nbytes::Integer)
-    arena = _PinnedHostArena(_HostTapeChunk[], 0, 0, 1, false, nothing,
-                             Dict{CSTapeReadCacheKey, CSPanelCache}())
-    # An arena dropped without `_release_tape_pool!`: the GC unregisters and
-    # frees its chunks.
-    finalizer(_release_tape_pool!, arena)
-    return arena
-end
-
 """Bytes of host memory the arena holds."""
 _arena_bytes(arena::_PinnedHostArena) = sum(c -> c.capacity, arena.chunks; init = Int64(0))
-
-# The size of the next chunk: at least one slot; otherwise the arena's size so
-# far (doubling it), between 64 MiB and 1 GiB, in whole pages.
-_next_chunk_bytes(arena::_PinnedHostArena, nbytes::Int64) =
-    cld(max(nbytes, clamp(_arena_bytes(arena), _HOST_ARENA_MIN_CHUNK, _HOST_ARENA_MAX_CHUNK)),
-        _HOST_PAGE) * _HOST_PAGE
 
 # A chunk registered for the backend of `template`, the arena's zero-size
 # array on the source backend (`read_template`): `_pin_host_chunk` dispatches
 # on its array type.
 function _new_host_chunk(capacity::Int64, template::AbstractArray)
+    budget = first(_host_tape_memory())
+    capacity <= budget || throw(TapeReservationError(Int(capacity), budget,
+        "pinned host chunk exceeds host/cgroup headroom"))
     memory = Libc.malloc(capacity + _TAPE_ALIGN)
     memory == C_NULL && throw(OutOfMemoryError())
     base = Ptr{UInt8}(cld(UInt(memory), _TAPE_ALIGN) * _TAPE_ALIGN)
@@ -79,28 +62,20 @@ function _free_host_chunk!(chunk::_HostTapeChunk)
     return nothing
 end
 
-# The address of `nbytes` more bytes: in the current chunk if they fit, else
-# at the start of the next one (an existing chunk after a rewind, a new one
-# otherwise; a chunk too small for one slot is replaced).
+# Take a whole slot from the reserved chunks in order.
 function _arena_take!(arena::_PinnedHostArena, nbytes::Int64)
-    template = arena.read_template
-    if arena.chunk > 0 && arena.used + nbytes <= arena.chunks[arena.chunk].capacity
-        offset = arena.used
-    else
+    arena.chunk == 0 && (arena.chunk = 1)
+    if arena.chunk <= length(arena.chunks) && arena.used + nbytes > arena.chunks[arena.chunk].capacity
         arena.chunk += 1
-        if arena.chunk > length(arena.chunks)
-            push!(arena.chunks, _new_host_chunk(_next_chunk_bytes(arena, nbytes), template))
-        elseif arena.chunks[arena.chunk].capacity < nbytes
-            # Allocate before freeing: if the allocation fails, the arena
-            # still owns the old chunk (and releases it once).
-            old = arena.chunks[arena.chunk]
-            arena.chunks[arena.chunk] = _new_host_chunk(_next_chunk_bytes(arena, nbytes), template)
-            _free_host_chunk!(old)
-        end
-        offset = Int64(0)
+        arena.used = 0
     end
-    arena.used = offset + nbytes
-    return arena.chunks[arena.chunk].base + offset
+    arena.chunk <= length(arena.chunks) ||
+        throw(TapeReservationExceeded(_arena_bytes(arena), _arena_bytes(arena) + nbytes))
+    chunk = arena.chunks[arena.chunk]
+    nbytes <= chunk.capacity || throw(TapeReservationExceeded(chunk.capacity, nbytes))
+    base = chunk.base + arena.used
+    arena.used += nbytes
+    return base
 end
 
 function _allocate_tape_slot(arena::_PinnedHostArena, panels::NTuple{6})

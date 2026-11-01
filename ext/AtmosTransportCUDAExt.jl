@@ -56,6 +56,16 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
     AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
 
+# Cached but unused pool memory counts as available. Trimming the pool here
+# would force the following allocations to repopulate it; CUDA's allocator
+# reclaims by itself when an allocation does not fit. The pool counters are
+# `nothing` when pooling is disabled.
+function AtmosTransport.Tape._device_tape_memory(::CUDABackend, _a)
+    info = CUDA.MemoryInfo()
+    cached = something(info.pool_reserved_bytes, 0) - something(info.pool_used_bytes, 0)
+    return Int(info.free_bytes) + max(Int(cached), 0), Int(info.total_bytes)
+end
+
 # Adjoint tape hooks (`src/Tape/`). Tape memory is released explicitly when a
 # reverse-pass call returns (device slabs, read caches, checkpoints, Lin–Rood
 # records), so the CUDA pool gets it back now rather than at a later GC.
@@ -86,6 +96,8 @@ function _unpin_host_chunk(registration::_CUDAHostRegistration)
     end
     return nothing
 end
+
+AtmosTransport.Tape._is_reservation_failure(err::CUDA.OutOfGPUMemoryError) = true
 
 # TM5 spectral synthesis: core owns portable KA/GEMM/FFT and quadrature;
 # CUDA owns device selection and the strict precision policy.

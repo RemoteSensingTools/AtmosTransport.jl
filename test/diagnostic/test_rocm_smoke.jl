@@ -36,7 +36,7 @@ else
         @test all(p -> host[p] == Array(panels[p]), 1:6)
         # The pinned-host arena registers its chunk once; the registration
         # lives until the arena is released.
-        arena = T._open_tape_pool(AtmosTransport.PinnedHostCSTapeStorage(), 0)
+        arena = T._reserve_tape_pool(AtmosTransport.PinnedHostCSTapeStorage(), [(panels, eltype(first(panels)))])
         try
             slot = T._stage_panels(arena, panels)
             GC.gc()
