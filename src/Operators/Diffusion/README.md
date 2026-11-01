@@ -231,7 +231,9 @@ column result. Its guard retains the finite BL/free K. The refresh stores no
 PBL-height diagnostic and `update_field!` returns the field, as required by the
 field interface. Scratch is approximately 16 floating values per cell/layer,
 plus D and one integer guard count per cell; large RG meshes can require about
-1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds.
+1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds for
+synthetic and real ERA5 columns; on the sampled ERA5 windows the conditioning
+of the Richardson-number numerator gave a maximum Float32 D error of 1e-2.
 
 Host fallback staging uses Architectures.host_array. Zeroed workspace scratch
 uses Architectures.zeros_like, retaining one allocation and fill per array.

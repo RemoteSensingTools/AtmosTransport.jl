@@ -581,7 +581,9 @@ earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
 | ``K_{vh}``, entrainment | ``10^{-11}``–``10^{-10}`` scaled for finite, well-conditioned columns; non-finite TM5 cases against the §9 rule |
 | ``D`` and cutoff | inactive zeros exact; with injected ``K_{vh}``, ``M``, ``G``: ``10^{-12}`` scaled |
 | Solve | backward residual ``10^{-13}``–``10^{-12}`` (Float64); isolated layers bit-exact; constant mixing ratio and mass within solver rounding |
-| Float32 against Float64 CPU | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``2 × 10^{-5}``; all K (including above cutoff): ``3 × 10^{-3}``; branch flips reported separately |
+| Float32 against Float64 CPU, synthetic fixture columns (well conditioned) | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``2 × 10^{-5}``; all K (including above cutoff): ``3 × 10^{-3}``; branch flips reported separately |
+| Float32 against Float64 CPU, real ERA5 windows | D per nonzero entry: median ``≤ 3 × 10^{-5}``, p99 ``≤ 5 × 10^{-4}``, maximum ``≤ 5 × 10^{-2}``; D column L1: p99 ``≤ 10^{-3}``, maximum ``≤ 3 × 10^{-2}``; branch flips reported |
+| CUDA Float32 against CPU Float32 | D per nonzero entry: p99 ``≤ 2 × 10^{-4}``, maximum ``≤ 5 × 10^{-3}`` |
 
 **Edge inventory (synthetic).** Neutral ``H_v = +0`` and ``−0``; small stable
 flux; strong convection; zero and weak shear; no Ri crossing; a crossing
@@ -611,13 +613,34 @@ singular-expression counts agree. Measured Float32 D errors are `1.67734e-4`
 maximum per nonzero entry and `1.97981e-5` maximum column L1 relative error;
 active K has maximum relative error `1.63822e-4`. Across all K interfaces,
 including those above the mixing cutoff, the maximum is `2.68030e-3`.
-The earlier blanket `1e-6`–`1e-5` per-stage goal is not met by these columns;
-the table states the tested acceptance bounds, not a GPU result. The prepared
-CUDA check compares against both Float64 CPU and Float32 CPU (the latter to
-`1e-5` scaled), with scalar indexing disabled. GPU execution remains a
-main-session check. These
-measurements cover the finite TM5 values; non-finite entrainment checks use
-the documented guard. They are column parity, not full-model TM5 parity.
+These measurements cover the finite TM5 values; non-finite entrainment checks
+use the documented guard. They are column parity, not full-model TM5 parity.
+
+**Float32 on real data.** The fixture bounds do not hold on real ERA5 columns.
+Measured on 2021-12-01 (O24, windows at 00, 01, 02 and 12 UTC, identical
+window-start inputs), the Float32 D error relative to Float64 per nonzero entry
+has median `1.2e-5`, p99 `1.3e-4`, p99.9 `4.5e-4` and maximum `1.0e-2`; the
+column L1 error has p99 `2.7e-4` and maximum `9.1e-3`. About 1.8 % of entries
+exceed `1e-4` and at most 0.033 % exceed `1e-3`. No PBL-height crossing index or
+stability sign changes. The error comes from the conditioning of the scheme,
+not from a Float32 defect. K is a function of the gradient Richardson number,
+whose numerator ``Δθ_v = θ_{v,l+1} − θ_{v,l}`` is a difference of two values near
+300 K. At weak-shear, near-neutral interfaces (``|Δθ_v| ≈ 10^{-3}``–``10^{-2}`` K) the
+relative condition number of K with respect to T reaches ``4.7 × 10^5``. Rounding
+only the Float64 inputs to Float32 already gives `1.1e-3`–`5.8e-3`, and relative
+input noise of `1e-7` gives `3.3e-3`–`7.8e-2`. A Float32 column that forms every
+``Δθ_v`` exactly (in Float64, rounded once) still has maximum errors of
+`1.1e-3`–`4.0e-3`, the input-rounding level. In one 900 s diffusion solve, the Float32 D changes a surface
+plume's mixing ratio by at most `3.2e-4` of the column maximum.
+
+**CUDA.** On an NVIDIA L40S, CUDA Float32 D differs from CPU Float32 by p99
+`5e-5` and at most `7.7e-4` (O24) and `1.3e-3` (LL 72×37, 00 UTC). Pressures
+and winds agree bitwise; ``θ`` differs by up to 2 ulp, geopotential by up to 3 ulp
+and heights by up to 8 ulp (libdevice `powf`/`logf` and FMA contraction, not
+separated), and the same conditioning amplifies these differences. CUDA Float32 against CPU Float64 on LL 72×37 at
+00 UTC has a maximum of `3.1e-3` and column L1 maximum `1.9e-3`. Three-window
+Float32 CUDA runs with live Calc_Kzz change the total air mass by `-3.1e-9`
+(O24) and `-1.9e-9` (LL 72×37).
 
 ## 15. Owner decisions (2026-10-30)
 
