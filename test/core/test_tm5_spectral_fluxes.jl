@@ -426,4 +426,9 @@ end
     cfg["grid"]["level_top"]=20
     delete!(cfg["grid"],"echlevs")
     @test_throws ArgumentError PP.validate_preprocessing_config(cfg)
+    # Live Calc_Kzz inputs are rejected before the native RG geometry GRIB is read.
+    cfg["grid"]=Dict{String,Any}("type"=>"era5_native_reduced_gaussian","geometry_source_grib"=>"/nonexistent.grib")
+    cfg["preprocessing"]["include_tm5_pbl"]=true
+    @test_throws r"include_tm5_pbl" PP.validate_preprocessing_config(cfg)
+    @test_throws r"include_tm5_pbl" PP.process_day(cfg)
 end
