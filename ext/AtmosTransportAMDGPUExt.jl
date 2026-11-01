@@ -41,11 +41,12 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::AnyROCArray) =
     AtmosTransport.Architectures.foreach_host_array(_pin_host_array!, storage)
 
-# Query after reclaim so cached backend allocations count as available.
-function AtmosTransport.Tape._device_tape_memory(::ROCBackend, a)
-    AtmosTransport.Architectures._reclaim_backend_pool!(a)
+# Cached but unused pool memory counts as available. Trimming the pool here
+# would force the following allocations to repopulate it; AMDGPU's allocator
+# reclaims by itself when an allocation does not fit.
+function AtmosTransport.Tape._device_tape_memory(::ROCBackend, _a)
     free, capacity = AMDGPU.info()
-    return Int(free), Int(capacity)
+    return Int(free) + max(AMDGPU.cached_memory() - AMDGPU.used_memory(), 0), Int(capacity)
 end
 
 # Adjoint tape hooks (`src/Tape/`): explicit release of tape memory, and
