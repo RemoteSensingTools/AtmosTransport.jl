@@ -12,7 +12,7 @@ Dependencies include static imports, qualified references, shared-module name us
 
 ## `ext`
 
-Size: **66119 bytes / 18891.1 tokens**. Public names: **0**.
+Size: **66373 bytes / 18963.7 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/Extras/Visualization`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/Spectral`, `src/Tape`.
 
@@ -21,7 +21,7 @@ Used by: none.
 Files:
 
 - `AtmosTransportAMDGPUExt.jl` (2864 bytes)
-- `AtmosTransportCUDAExt.jl` (5680 bytes)
+- `AtmosTransportCUDAExt.jl` (5934 bytes)
 - `AtmosTransportMakieExt.jl` (52491 bytes)
 - `AtmosTransportMetalExt.jl` (4094 bytes)
 - `AtmosTransportNVTXExt.jl` (990 bytes)

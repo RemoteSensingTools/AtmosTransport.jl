@@ -56,11 +56,14 @@ end
 AtmosTransport.Architectures._pin_host_memory!(storage, ::CUDA.AbstractGPUArray) =
     AtmosTransport.Architectures.foreach_host_array(a -> isempty(a) || CUDA.pin(a), storage)
 
-# Query after reclaim so cached backend allocations count as available.
-function AtmosTransport.Tape._device_tape_memory(::CUDABackend, a)
-    AtmosTransport.Architectures._reclaim_backend_pool!(a)
-    free, capacity = CUDA.memory_info()
-    return Int(free), Int(capacity)
+# Cached but unused pool memory counts as available. Trimming the pool here
+# would force the following allocations to repopulate it; CUDA's allocator
+# reclaims by itself when an allocation does not fit. The pool counters are
+# `nothing` when pooling is disabled.
+function AtmosTransport.Tape._device_tape_memory(::CUDABackend, _a)
+    info = CUDA.MemoryInfo()
+    cached = something(info.pool_reserved_bytes, 0) - something(info.pool_used_bytes, 0)
+    return Int(info.free_bytes) + max(Int(cached), 0), Int(info.total_bytes)
 end
 
 # Adjoint tape hooks (`src/Tape/`). Tape memory is released explicitly when a
