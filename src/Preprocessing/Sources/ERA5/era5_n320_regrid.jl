@@ -232,19 +232,24 @@ function _next_day_core_only_handle(handles::ERA5GRIBDayHandles)
 end
 
 """
-    _endpoint_face_fluxes!(method, thickness, x, pipe, vc, gravity, dt_factor, Nc, Nz)
+    _endpoint_face_fluxes!(method, thickness, x, pipe, vc, gravity, dt_factor, Nc, Nz, pin_strategy)
 
 Face mass fluxes `x.am`, `x.bm` of one window endpoint (`pipe`, one hour) on the
 native levels. `MoistFluxThickness` uses hybrid pressure thickness from total
 surface pressure. `DryMassFluxThickness` uses the dry thickness
-`(1-q) Δp = g m_dry / A` on the target or source grid, respectively.
+`g m_dry / A` on the native-level target or source grid, respectively,
+including the same global-pin pressure offset as the stored endpoint mass.
+With pinning disabled, retain the original source thickness and target-grid
+`(1-q) Δp` arithmetic, including its storage rounding.
 """
-function _fill_era5_flux_thickness!(::MoistFluxThickness, x, pipe, vc, Nc, Nz)
+function _fill_era5_flux_thickness!(::MoistFluxThickness, x, pipe, vc, Nc, Nz,
+                                    _pin_strategy::AbstractERA5PinSensitivityStrategy)
     fill_cs_layer_thickness!(x.dp, pipe.c180_fields.ps, vc.A, vc.B, Nc, Nz)
     return nothing
 end
 
-function _fill_era5_flux_thickness!(::DryMassFluxThickness, x, pipe, vc, Nc, Nz)
+function _fill_era5_flux_thickness!(::DryMassFluxThickness, x, pipe, vc, Nc, Nz,
+                                    ::NoERA5MassPin)
     A, B = vc.A, vc.B
     @inbounds for p in 1:6, k in 1:Nz
         dA = Float64(A[k + 1]) - Float64(A[k])
@@ -257,22 +262,30 @@ function _fill_era5_flux_thickness!(::DryMassFluxThickness, x, pipe, vc, Nc, Nz)
     return nothing
 end
 
+function _fill_era5_flux_thickness!(::DryMassFluxThickness, x, pipe, vc, Nc, Nz,
+                                    ::AbstractERA5PinSensitivityStrategy)
+    fill_dry_mass_flux_thickness!(x.dp, pipe.c180_m_dry,
+                                  pipe.target_grid.mesh.cell_areas,
+                                  eltype(x.dp[1])(STANDARD_GRAVITY))
+    return nothing
+end
+
 function _endpoint_face_fluxes!(method::Union{PanelAverageFluxes, VectorFaceFluxes}, thickness,
-                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
-    _fill_era5_flux_thickness!(thickness, x, pipe, vc, Nc, Nz)
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz, pin_strategy)
+    _fill_era5_flux_thickness!(thickness, x, pipe, vc, Nc, Nz, pin_strategy)
     face_fluxes!(method, x, gravity, dt_factor, Nc, Nz)
     return nothing
 end
 
 function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, ::MoistFluxThickness,
-                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz, _pin_strategy)
     w = pipe.window_fields
     line_integral_face_fluxes!(x.am, x.bm, method, w.u, w.v, w.ps, vc.A, vc.B, gravity, dt_factor, Nz)
     return nothing
 end
 
 function _endpoint_face_fluxes!(method::LineIntegralFaceFluxes, ::DryMassFluxThickness,
-                                x, pipe, vc, gravity, dt_factor, Nc, Nz)
+                                x, pipe, vc, gravity, dt_factor, Nc, Nz, _pin_strategy)
     w = pipe.window_fields
     line_integral_face_fluxes!(x.am, x.bm, method, w.u, w.v,
                                pipe.dry_fields.delp_dry, gravity, dt_factor, Nz)
@@ -305,6 +318,43 @@ function _capture_era5_endpoint_flux_fidelity(method::LineIntegralFaceFluxes,
                                         pipe.dry_fields.delp_dry, ft, gravity,
                                         dt_factor, Nc, Nz; sample_map = smap,
                                         line_rows = rows)
+end
+
+# Apply the stored endpoint's pressure offset on the native grid. Do not pin
+# N320 independently: regridding PS/Q changes the global dry-mass integral.
+function _offset_era5_native_flux_mass!(mass, qv, areas, dB, gravity, delta_ps)
+    iszero(delta_ps) && return nothing
+    n = length(areas)
+    m, q = reshape(mass, n, :), reshape(qv, n, :)
+    @inbounds for k in axes(m, 2), c in 1:n
+        humidity = clamp(Float64(q[c, k]), 0.0, MAX_SPECIFIC_HUMIDITY)
+        correction = Float64(dB[k]) * delta_ps * (1.0 - humidity) *
+                     Float64(areas[c]) / Float64(gravity)
+        m[c, k] = eltype(m)(Float64(m[c, k]) + correction)
+    end
+    return nothing
+end
+
+_pin_era5_native_flux_mass!(::NoERA5MassPin, _pipe, _delta_ps, _gravity) = nothing
+
+function _pin_era5_native_flux_mass!(::AbstractERA5PinSensitivityStrategy,
+                                     pipe, delta_ps, gravity)
+    dB = diff(pipe.vc.B)
+    for p in 1:6
+        _offset_era5_native_flux_mass!(pipe.c180_m_dry[p], pipe.c180_fields.qv[p],
+            pipe.target_grid.mesh.cell_areas, dB, gravity, delta_ps)
+    end
+    _offset_era5_native_flux_mass!(pipe.dry_fields.m_dry, pipe.window_fields.qv,
+        pipe.cell_areas, dB, gravity, delta_ps)
+    fill_dry_mass_flux_thickness!(pipe.dry_fields.delp_dry,
+        pipe.dry_fields.m_dry, pipe.cell_areas, gravity)
+    dry = pipe.dry_fields
+    fill!(dry.ps_dry_acc, 0.0)
+    @inbounds for k in axes(dry.delp_dry, 2), c in axes(dry.delp_dry, 1)
+        dry.ps_dry_acc[c] += Float64(dry.delp_dry[c, k])
+    end
+    copyto!(dry.ps_dry, dry.ps_dry_acc)
+    return nothing
 end
 
 """
@@ -486,7 +536,6 @@ function process_era5_n320_to_cs_day(date::Date,
 
         # --- CS-side workspaces (dry mass on target, face flux, balance). ---
         cs_cell_areas = mesh.cell_areas   # (Nc, Nc), shared across panels
-        native_m_dry    = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
         native_ps_dry   = ntuple(_ -> zeros(FT, Nc, Nc), 6)
         native_ps_acc   = ntuple(_ -> zeros(Float64, Nc, Nc), 6)
         native_dp       = ntuple(_ -> zeros(FT, Nc, Nc, Nz_native), 6)
@@ -631,15 +680,15 @@ function process_era5_n320_to_cs_day(date::Date,
                                       Float64(global_mass_target_kg) * Float64(gravity) /
                                       (cs_total_area(cs_cell_areas)))
         pin_endpoint_mass! = function (m_dry, ps_dry, native_qv, merged_qv)
-            do_mass_pin || return nothing
-            _pin_era5_endpoint_mass!(
+            do_mass_pin || return 0.0
+            stats = _pin_era5_endpoint_mass!(
                 pin_strategy, m_dry, native_qv, merged_qv,
                 pin_sensitivity.native, pin_sensitivity.merged,
                 plan, cs_cell_areas, gravity, global_mass_target_kg)
             for p in 1:6
                 ps_from_air_mass!(ps_dry[p], m_dry[p], cs_cell_areas, gravity, Nc, Nz_int)
             end
-            return nothing
+            return stats.delta_ps_pa
         end
 
         # --- Open the streaming writer. ---
@@ -735,7 +784,7 @@ function process_era5_n320_to_cs_day(date::Date,
             hour = win - 1
             process_era5_n320_window!(pipe, handles, date, hour)
 
-            derive_c180_dry_mass!(native_m_dry,
+            derive_c180_dry_mass!(pipe.c180_m_dry,
                                    native_ps_dry, native_ps_acc,
                                    pipe.c180_fields.ps, pipe.c180_fields.qv,
                                    native_vc, cs_cell_areas)
@@ -751,12 +800,13 @@ function process_era5_n320_to_cs_day(date::Date,
                 end
             end
             _merge_era5_c180_state!(merged_fields, m_dry,
-                                     pipe.c180_fields, native_m_dry,
+                                     pipe.c180_fields, pipe.c180_m_dry,
                                      native_dp, plan)
             for p in 1:6
                 copyto!(ps_dry[p], native_ps_dry[p])
             end
-            pin_endpoint_mass!(m_dry, ps_dry, pipe.c180_fields.qv, merged_fields.qv)
+            delta_ps = pin_endpoint_mass!(m_dry, ps_dry, pipe.c180_fields.qv, merged_fields.qv)
+            _pin_era5_native_flux_mass!(pin_strategy, pipe, delta_ps, gravity)
             return nothing
         end
 
@@ -772,14 +822,14 @@ function process_era5_n320_to_cs_day(date::Date,
         _balance_window_at_steps! = function (pipe, pipe_end, m_dry, m_next, am, bm, cm, dm, steps)
             dt = out_dt_factor_for(steps)
             _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x, pipe,
-                                   native_vc, gravity, dt, Nc, Nz_native)
+                                   native_vc, gravity, dt, Nc, Nz_native, pin_strategy)
             start_capture = _capture_era5_endpoint_flux_fidelity(
                 flux_method, flux_thickness, flux_x, pipe,
                 target_grid.face_table, gravity, dt, Nc, Nz_native,
                 fidelity_map, fidelity_rows)
             if window_mean    # trapezoidal rule: mean of the start and end fluxes
                 _endpoint_face_fluxes!(flux_method, flux_thickness, flux_x_end, pipe_end,
-                                       native_vc, gravity, dt, Nc, Nz_native)
+                                       native_vc, gravity, dt, Nc, Nz_native, pin_strategy)
                 end_capture = _capture_era5_endpoint_flux_fidelity(
                     flux_method, flux_thickness, flux_x_end, pipe_end,
                     target_grid.face_table, gravity, dt, Nc, Nz_native,
@@ -961,7 +1011,7 @@ function process_era5_n320_to_cs_day(date::Date,
                                    nxt_pipe.window_fields,
                                    nxt_pipe.regrid_ws,
                                    target_grid, nxt_pipe.wind)
-            derive_c180_dry_mass!(native_m_dry,
+            derive_c180_dry_mass!(nxt_pipe.c180_m_dry,
                                    native_ps_dry, native_ps_acc,
                                    nxt_pipe.c180_fields.ps, nxt_pipe.c180_fields.qv,
                                    native_vc, cs_cell_areas)
@@ -976,13 +1026,14 @@ function process_era5_n320_to_cs_day(date::Date,
                 end
             end
             _merge_era5_c180_state!(nxt_fields, nxt_m_dry,
-                                     nxt_pipe.c180_fields, native_m_dry,
+                                     nxt_pipe.c180_fields, nxt_pipe.c180_m_dry,
                                      native_dp, plan)
             for p in 1:6
                 copyto!(nxt_ps_dry[p], native_ps_dry[p])
             end
-            pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
-                               nxt_pipe.c180_fields.qv, nxt_fields.qv)
+            delta_ps = pin_endpoint_mass!(nxt_m_dry, nxt_ps_dry,
+                                          nxt_pipe.c180_fields.qv, nxt_fields.qv)
+            _pin_era5_native_flux_mass!(pin_strategy, nxt_pipe, delta_ps, gravity)
         else
             require_configured_terminal_day(
                 handles.date, configured_last_day, "ERA5 N320 preprocessor",
