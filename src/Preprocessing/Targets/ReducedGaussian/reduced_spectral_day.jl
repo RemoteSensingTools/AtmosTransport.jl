@@ -18,7 +18,11 @@ When `qv_ws` is provided and `settings.mass_basis == :dry`, loads QV from the
 thermo file and interpolates it to RG cells; the window is then finished by
 [`pin_convert_merge_window!`](@ref).
 """
-function synthesize_and_merge_window!(work::ReducedTransformWorkspace,
+synthesize_and_merge_window!(work::ReducedTransformWorkspace,merged::ReducedMergeWorkspace,
+    hour::Int,spec,grid::ReducedGaussianTargetGeometry,vertical,settings,args...;kwargs...) =
+    synthesize_and_merge_window!(spectral_construction(settings),work,merged,hour,spec,grid,vertical,settings,args...;kwargs...)
+
+function synthesize_and_merge_window!(::PointSampledSpectralFluxes,work::ReducedTransformWorkspace,
                                       merged::ReducedMergeWorkspace{FT},
                                       hour::Int,
                                       spec,
@@ -398,7 +402,7 @@ Pipeline per window:
   spectral synthesis → mass fix → level merge → (wait for next window) →
   column Poisson balance using (m_cur, m_next) → cm recomputation → stream-write
 """
-function process_day(date::Date,
+function process_day(::PointSampledSpectralFluxes,date::Date,
                      grid::ReducedGaussianTargetGeometry,
                      settings::ERA5SpectralSettings,
                      vertical;

@@ -12,12 +12,17 @@ CUDA_VISIBLE_DEVICES= julia --startup-file=no --project=test scripts/checks/chec
 folder order and reasoned folder-order exceptions. The files in
 `test/structure/` snapshot existing debt: duplicate helpers, body clones,
 private uses, detached docstrings, core-to-non-core uses and oversized
-folders. Every snapshot may only shrink relative to the base. Editing a
-snapshot in the same diff cannot grant a new edge or allowance. The order
-checks use the actual include order and `folder_order` independently of the
-ratchet. A folder-order exception is kept only for a reverse edge that the
-order rules, including module child wiring and shared-module wiring, would
-otherwise reject.
+folders. A PR may add module or folder dependency edges declared in
+`src/LAYERS.toml` when they point strictly downward: from a later identity to
+an earlier one in `order` or `folder_order`. Extensions load after the package,
+so edges from `ext/` to `src/` identities are downward. New upward or sideways
+edges still fail, and removing edges is allowed. Dependencies used in code
+must still be declared. Folder-order exceptions and every other allowance
+remain shrink-only relative to the base, subject to the migration transfers
+below. The order checks use the actual include order and `folder_order`
+independently of the ratchet. A folder-order exception is kept only for a
+reverse edge that the order rules, including module child wiring and
+shared-module wiring, would otherwise reject.
 
 ## Moves, renames and splits
 

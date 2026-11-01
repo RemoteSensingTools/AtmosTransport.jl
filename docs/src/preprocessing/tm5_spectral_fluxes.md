@@ -10,14 +10,31 @@ hybrid mass tendency. The existing construction (face- and centre-sampled
 winds times a face pressure thickness, see [ERA5 spectral path](spectral_era5.md))
 stays the default; the design calls it `PointSampledSpectralFluxes`.
 
-!!! warning "Planned, not implemented"
-    Of everything on this page, only the binary version-5 identity keys exist
-    (bundle TM5-0, see [Binary format](../concepts/binary_format.md)). Every
-    stage, type and function marked *planned* below is the design of the
-    TM5-FLUX-1 and TM5-FLUX-2 pull requests. The last section lists the status.
+LL and RG are implemented by TM5-FLUX-1. The point-sampled construction stays
+the default. Select the new route explicitly:
 
-The page follows the design of 2026-10-30, with the owner answers of that
-day. Statements marked *estimate* are design estimates, not measurements.
+```toml
+[preprocessing]
+spectral_flux_construction = "tm5_spectral"
+spectral_synthesis = "cpu" # reference; omit for GPU (CLI loads CUDA)
+# spectral_synthesis_float = "auto" # GPU: auto, Float64 or Float32
+# quadrature_refinement_steps = 2
+
+[numerics]
+flux_time_sampling = "window_mean"
+```
+
+The selector is `spectral_flux_construction`, since the existing
+`flux_construction` settings describe the face-method family. Existing configs
+keep their interpretation and default arithmetic. The new route requires a global target, the hourly ERA5 interval and dry
+basis, a next-day 00 UTC spectral and humidity endpoint, and retained native
+interfaces (`echlevs` or layer merging). Cubed-sphere direct integration and
+pressure-overlap vertical remapping are outside this construction. The hybrid-B
+extent must run from 0 to 1, with `level_top=1` and zero top A. These contracts are checked during configuration planning, before reading meteorology. GPU selection on the legacy point-sampled route
+is rejected explicitly; its opt-in is deferred.
+
+The page follows the design of 2026-10-30 with the owner answers of that day.
+Statements marked *estimate* are estimates, not measurements.
 
 ## Sources
 
@@ -88,12 +105,17 @@ retained zonal wavenumber is synthesised. The unnormalised `bfft` is kept.
 `gts:829–830`). `compute_legendre_column!` evaluates it; this is a documented
 difference (§13).
 
-**Cost (estimate).** At TL639 on a 1° target there are 8 refined rows per cell
-row. Legendre work per row grows with ``T^2`` (``639^2/179^2 ≈ 13``) and the row
-count by about 4.5, about 50 times today's 1° Legendre work, for 137 levels of
-three fields plus LNSP and its gradient per instant. The plan reuses the
-batched multi-field synthesis of `ReducedSpectralSynthesis` and the threaded
-synthesis; S5 records a benchmark.
+**Cost.** The retained TL639 work is approximately 101 times the legacy
+T179, 1° Legendre work: eight times as many refined rows, multiplied by
+``639·641/(179·181)``. The earlier estimate of 50 times omitted half the
+latitude refinement. Batched GEMM reduces the actual wall-time ratio.
+With this implementation on one CPU thread (Julia 1.12.6, BLAS one thread),
+a real T639/137-level instant on 360×180 LL takes 84.4 s for synthesis and
+quadrature; plan construction takes 8.6 s. A complete window using two
+identical copies of that real endpoint and ``q=0`` takes 171–183 s through
+pin, merge, balance, dry conversion, closure and replay, excluding plan
+construction and GRIB decode. This is a stage benchmark, not a changing
+real-hour pair or a golden reference.
 
 ## 2. Vorticity and divergence to pseudo-winds
 
@@ -137,9 +159,11 @@ radius difference is ``3.6 × 10^{-5}``.
 **Remaining truncation.** For vorticity and divergence truncated at ``T``, the
 wind has a nonzero degree ``T + 1``:
 ``U_{T+1}^m = R_v\,δ_{m,T+1} ζ_T^m`` and ``V_{T+1}^m = −R_v\,δ_{m,T+1} D_T^m``.
-Both TM5 and `vod2uv!` drop this row. Whether S4 extends the wind output to
-``T + 1`` or keeps the existing `vod2uv!` is decided in S4; the effect is sized
-by the planned single-mode tests.
+TM5 and the legacy `vod2uv!` drop this row. The new construction's
+`complete_wind_coefficients` retains it, using the existing transform within
+``[m,T]`` and adding the exact neighbour at ``T+1``. This is required for the
+Gauss test to converge for a source mode at degree ``T``. The single-mode
+tests size both retained contributions explicitly.
 
 ## 3. Cell surface pressure: the discrete rule
 
@@ -150,7 +174,7 @@ cosine-weighted linear quadrature in ``φ`` (`IntervalQuad_Cos_Lin`, `gi:1926`)
 and divides by the cell area (key `'exp,aver'`, `tmm:1876`). The cell value
 ``\bar p_{s,c}`` is therefore the exact integral of a piecewise-linear
 interpolant of ``e^{H}``; it is neither ``\iint e^{H}\,dA / S_c`` nor
-``\exp`` of the mean of ``H``. The planned construction implements this rule
+``\exp`` of the mean of ``H``. The construction implements this rule
 with the same refinement. The layer mass is
 
 ```math
@@ -189,13 +213,13 @@ need them.
 - `IntArea_shi_ll_fgh` uses the adjacent-row mean at the pole even for the
   ``D \cos φ`` integrand, which is zero there (`gi:2498–2511`, `gi:2588–2593`).
 
-The plan uses open (pole-free) quadrature nodes in the polar rows instead; the
+The construction uses open (pole-free) quadrature nodes in the polar rows instead; the
 difference is listed in §13.
 
 ## 5. Independent vertical flux
 
 Per native layer, TM5 integrates the horizontal mass divergence directly from
-the spectral fields. With the two radii of the conventions, the planned form is
+the spectral fields. With the two radii of the conventions, the implemented form is
 
 ```math
 C_k = \frac{R R_v}{g}\iint D_k\left(ΔA_k + ΔB_k e^{H}\right)\cos φ\,dλ\,dφ
@@ -282,6 +306,9 @@ problem by FFT: eigenvalues ``2(\cos(2π i/N_λ) + \cos(2π j/N_φ) − 2)``
 south gauges are subtracted so the outer faces stay closed (`GTS:3172–3192`).
 The per-layer global-mean residual is left uncorrected; it cancels in the
 column sum. pydyn transcribes this solve (`pydyn/balance.py:183–201`).
+Our dry-pin route first makes the target solvable: for cell c, solve against
+``H^*_{c,k} - (S_c/\sum S)\sum_{c'}H^*_{c',k}``. The pressure guard removes
+only the known global water tendency (§9); final dry repair imposes the dry budget.
 
 **Guards.** `CheckMassBalance` compares the column convergence with the
 surface-pressure tendency, relative to the mean surface pressure [s⁻¹]
@@ -295,7 +322,7 @@ surface-pressure tendency, relative to the mean surface pressure [s⁻¹]
 These are repeated Poisson passes, not Richardson extrapolation. pydyn raises
 on the pre-check (`pydyn/balance.py:211`) but returns `ok = False` after the
 third failed post-check (`pydyn/balance.py:212–218`), and its forward driver
-ignores the flag (`pydyn/forward.py:134`). The plan follows the Fortran and
+ignores the flag (`pydyn/forward.py:134`). The construction follows the Fortran and
 raises an error.
 
 **Known difference.** The existing `balance_mass_fluxes!`
@@ -342,23 +369,23 @@ has no separate closure type.
 `recompute_cm_from_divergence!` is already the ``ΔB \times`` pit form and stays a
 staging helper.
 
-## 8. Pipeline on LL and RG targets (planned)
+## 8. Pipeline on LL and RG targets
 
-E marks an existing function, N a planned new one.
+E marks a shared existing function, N a new implemented function.
 
 | # | Stage | Functions | Home |
 |---|---|---|---|
-| 1 | Read the spectral day and the next day's hour 00 | E `read_day_spectral_streaming`, `validate_spectral_header`. No truncation. The next-day 00 record is required: no zero-tendency fallback. | `Spectral/spectral_io.jl` |
+| 1 | Read one hour at a time and the next day's hour 00 | `with_spectral_hours`, `read_hour0_spectral`, `validate_spectral_header`; ecCodes indexes and per-hour caches. Full source truncation. Next-day 00 is required. | `Spectral/spectral_hour_io.jl` |
 | 2 | Humidity on native levels | E `read_window_qv!` (LL), `load_rg_qv!` (RG), unchanged | `Targets/` |
-| 3 | Ring evaluation | E `compute_legendre_column!`, `fill_ring_spectrum!` (oversized FFT), `vod2uv!`; N exact LNSP gradient | `Spectral/` |
-| 4 | Cell PS, face fluxes, ``C_k`` and ``W`` (§3–§5) | N `integrate_surface_pressure!`, `integrate_face_fluxes!`, `integrate_vertical_flux!`; LL boxes, RG per-ring boxes and LCM face segments (§10) | `Spectral/`, `MassClosure/` |
+| 3 | Ring evaluation | `RingSynthesisPlan`, `synthesize_rings`, `synthesize_native_fields`, `complete_wind_coefficients`, `lnsp_gradient`; batched GEMM and oversized inverse FFT | `Spectral/` |
+| 4 | Cell PS, face fluxes, ``C_k`` and ``W`` (§3–§5) | N `integrate_surface_pressure!`, `integrate_face_fluxes!`, `integrate_vertical_flux!`; LL boxes, RG per-ring boxes and LCM face segments (§10) | `Spectral/spectral_integral_fluxes.jl` |
 | 5 | Dry pin on the integrated PS, fluxes not recomputed (Q1) | E `pin_global_mean_ps_using_qv!` | `Spectral/mass_support.jl` |
-| 6 | Moist masses from the pinned PS | E `compute_dp!`, `compute_air_mass!` (LL), `compute_reduced_dp_and_mass!` (RG) | `Spectral/`, `Targets/ReducedGaussian/` |
-| 7 | Target levels | E `plan_vertical`, `apply_vertical!` with `MassField` and `MassFluxField` sums; N `InterfaceMassFluxField` (selects retained interfaces with the body of `ConvectionInterfaceFlux`); E `merge_qv!` weighted by the pinned moist masses. The NOAA levels are `ml137_tropo34a`, not `ml137_tropo34`. | `Vertical/`, `Spectral/` |
-| 8 | Per window: balance both endpoint sets against the window's ``\dot M`` (§6) | LL: E `balance_mass_fluxes!` one level at a time with target ``H^\ast``; RG: per-level ring solve from a neutral split of `balance_compressed_column_fluxes!`; N TM5 guards and passes | `Spectral/`, `MassClosure/` |
-| 9 | Dry carrier on target layers, for each balanced endpoint set with its own instant's ``q`` | E `apply_dry_basis_native!`, `apply_dry_basis_reduced!` | `Spectral/`, `Targets/ReducedGaussian/` |
-| 10 | Window flux: mean of the two dry endpoint sets (Q2) | N, a few lines | `TransportBinary/` |
-| 11 | Substep schedule, amounts, column balance, `cm`, replay gates | E schedule; amounts via `MetDrivers.flux_application_seconds`; `apply_poisson_balance!` → `balance_column_mass_fluxes!` (LL), `balance_window!` (RG); `recompute_cm_from_dm_target!` with the dry endpoint ``Δm`` | `Targets/`, `MassClosure/`, `MetDrivers/` |
+| 6 | Moist masses from the pinned PS | `construct_tm5_endpoint`: area × (ΔA+ΔB PS)/g | `Spectral/tm5_endpoint.jl` |
+| 7 | Target levels | `TM5EndpointPlan` prepares `plan_vertical` once per day; `apply_vertical!` with `MassField` and `MassFluxField` sums; N `InterfaceMassFluxField` (selects retained interfaces with the body of `ConvectionInterfaceFlux`); E `merge_qv!` weighted by the pinned moist masses. The NOAA levels are `ml137_tropo34a`, not `ml137_tropo34`. | `Vertical/`, `Spectral/` |
+| 8 | Per window: balance both endpoint sets against the window's ``\dot M`` (§6) | `balance_window_layers!`, `balance_tm5_layers!`; LL `balance_mass_fluxes!`, RG `balance_compressed_level!` with reused `DirectRingPoisson`; guards and up to three passes | `Targets/`, `MassClosure/` |
+| 9 | Dry carrier on target layers, for each balanced endpoint set with its own instant's ``q`` | `dry_target_fluxes!`; LL reuses `apply_dry_basis_native!`, RG uses arithmetic face humidity | `Targets/` |
+| 10 | Window flux: mean of the two dry endpoint sets (Q2) | `balance_window_layers!` | `Targets/LatLon/tm5_layer_balance.jl` |
+| 11 | Substep schedule, amounts, column balance, `cm`, replay gates | E schedule; amounts via `MetDrivers.flux_application_seconds`; `apply_poisson_balance!` → `balance_column_mass_fluxes!` (LL), `balance_compressed_column_fluxes!` (RG); `recompute_cm_from_dm_target!` with the dry endpoint ``Δm`` | `Targets/`, `MassClosure/`, `MetDrivers/` |
 | 12 | Write | E writers; version-5 header with the construction identity | `TransportBinary/`, `MetDrivers/BinaryFormat/` |
 
 Folders are under `src/Preprocessing/` unless they start with `MetDrivers/`.
@@ -366,7 +393,7 @@ The order differs on purpose from the existing route:
 
 - **Existing route:** pin → recompute fluxes → dry conversion on native levels
   → merge → column balance → `cm`.
-- **Planned route:** moist integration → pin (no recompute) → moist merge →
+- **TM5 route:** moist integration → pin (no recompute) → moist merge →
   moist per-layer balance with ``W`` → dry conversion of each endpoint set on
   target layers → window mean → shared dry column balance and closure.
 
@@ -376,8 +403,19 @@ the stored rates; no field already balanced in amount units is rescaled. This
 is the rule of the cubed-sphere spectral writer
 (`src/Preprocessing/Targets/CubedSphere/cubed_sphere_spectral.jl`).
 
-**Memory (estimate).** Raw rates for the 25 instants of a 1° L34 day take about
-1.4 GB in Float64; if that is too much, two instants per window are streamed.
+**Memory.** Both targets decode one spectral hour at a time with ecCodes
+indexes; the optional decoded cache contains one hour per JLD2 file. The
+next-day reader also reads only hour 00. Constructed endpoints retain merged
+PS, mass, humidity, face rates and W, without native C. Only two endpoints
+survive at a time. RG closes and writes each window immediately. LL closes
+each window and keeps one completed lookahead window to form the historical
+delta payload; it retains neither a day of outputs nor a day of pristine rates.
+Synthesis batches bound the refined-grid field buffers. Float64 surface and
+3-D plans share Legendre tables; duplicate face rings share their synthesis.
+The coefficient working set at T639/L137 is approximately 1.80 GB per hour,
+plus the required next-day hour (3.60 GB combined), versus 43.25 GB for the
+previous 24-hour source allocation alone. These decimal sizes exclude plans,
+quadrature and target buffers. The handoff records the CPU measured extrapolation.
 
 ## 9. Mass consistency under the dry pin
 
@@ -393,17 +431,24 @@ additively so that the global dry mass implied by the native humidity equals
   masses; `merge_qv!` preserves ``\sum q M`` exactly. Together,
   ``\sum_K (1 − \bar q_K) M_K`` on target layers equals the pinned native dry
   mass in exact arithmetic.
-- **Global water term.** The moist per-layer balance sees a global moist
-  tendency equal to the water change; the zero-mode removal leaves it in
-  place. *Estimate:* ``10^{-11}`` to ``10^{-9}`` s⁻¹, far below the
-  ``10^{-7}`` post-check. TM5's total-pressure pin avoids the term by
-  construction. This is the one physics consequence of keeping our pin.
+- **Global water term.** The dry pin leaves a global moist tendency equal
+  to the global water change. Before each layer solve, remove the layer's
+  area-weighted global target, so the target is globally solvable. The guard
+  compares the column against the moist tendency minus the known global
+  water tendency distributed by area; global dry-mass drift still fails.
+  This prevents an index-space mean from becoming a polar pressure error.
+  Previously a global fractional water rate G/M appeared as
+  ``(G/M)(\bar S/S_c)`` in the guard, with mean/min area ratio about 290 at
+  0.25°. Thus even a ``10^{-9}`` s⁻¹ global estimate could give nearly
+  ``3×10^{-7}`` s⁻¹ at the smallest cells. The scaled-cap regression exceeds
+  the old maximum threshold and passes after the source projection. Final
+  dry column repair still imposes the stored dry endpoint budget.
 - **Local E − P term.** The dry conversion leaves a local column residual of
   about ``E − P`` relative to the column mass (*estimate:* about ``10^{-9}``
   s⁻¹ for 3 mm per day, up to ``3 × 10^{-7}`` s⁻¹ for 10 mm per hour of heavy
   rain). The shared dry column balance removes it, as in the existing route.
 - **``q = 0`` limit.** After the column balance, the dry route's `cm` equals the
-  hybrid-B closure in exact arithmetic (a planned S6b test).
+  hybrid-B closure in exact arithmetic (covered by the closure and dry-limit tests).
 
 ## 10. Reduced Gaussian specifics
 
@@ -422,22 +467,23 @@ Owner decision Q11: RG ships with LL from the first flux pull request.
   `src/Preprocessing/MassClosure/ring_poisson_balance.jl`); the per-layer
   route needs ``2N_z`` solves per window, so it needs a factor-once direct
   solve of the same Laplacian, reused across levels, endpoint sets and
-  windows. The existing column PCG path stays unchanged; S6a carries a
-  benchmark gate.
+  windows. The existing column PCG path stays unchanged. On O90 (35,640 cells,
+  2,250,376 faces), one-thread compression takes 0.18–0.41 s, factorization
+  0.70–0.88 s, and 68 reused layer solves 0.40–0.43 s.
 
 The direct RG spectral path already shares the LL primitives
 (`ReducedSpectralSynthesis`; `spectral_to_ring!` and
 `compute_reduced_horizontal_fluxes!` in
 `src/Preprocessing/Targets/ReducedGaussian/reduced_transport_helpers.jl`).
 
-## 11. Types, dispatch and configuration (planned)
+## 11. Types, dispatch and configuration
 
 ```julia
 abstract type AbstractSpectralFluxConstruction end
 struct PointSampledSpectralFluxes <: AbstractSpectralFluxConstruction end  # default: today's bodies
-struct TM5SpectralFluxes{R} <: AbstractSpectralFluxConstruction
+struct TM5SpectralFluxes <: AbstractSpectralFluxConstruction
     refinement_steps :: Int   # TM5 ShRefinement nstep = 2
-    vod2uv_radius    :: R     # IFS_EARTH_RADIUS (Q4)
+    vod2uv_radius    :: Float64     # IFS_EARTH_RADIUS (Q4)
 end
 ```
 
@@ -445,25 +491,35 @@ end
 |---|---|---|
 | `spectral_resolution(c, grid, T_source)` | `target_spectral_truncation(grid)` | `T_source` |
 | LL `process_window!(c, …)`, RG `synthesize_and_merge_window!(c, …)` | current body, untouched | stages 3–7 |
-| `balance_window_layers!(c, storage, …)` before the shared flush | no-op | stages 8–10 |
+| `process_day(c, …)` | legacy daily workflow | hourly read, two endpoints, `balance_window_layers!` for stages 8–10, per-window closure/write |
 
-- The only other new nominal type is `InterfaceMassFluxField <: AbstractFieldKind`
+- Backend choices are parsed into `CPUSynthesis` / `GPUSynthesis`, with
+  `AutoSynthesisPrecision` or a float type; dispatch constructs the actual plan.
+- `InterfaceMassFluxField <: AbstractFieldKind`
   (a kg s⁻¹ interface flux is not a convective flux, even where the selection
   body is the same).
 - In S8 the cubed-sphere method `SpectralIntegralFaceFluxes` joins the
   `face_fluxes` family (`face_flux_method`, with a new `AbstractFaceFluxMethod`
   over `PanelAverageFluxes`, `VectorFaceFluxes` and `LineIntegralFaceFluxes`).
-- Configuration: one key, parsed once into the type; an absent key means the
-  default with exactly today's settings. The design proposes
-  `[preprocessing] flux_construction = "tm5_spectral"`, but "flux construction"
-  already names the face-flux options read from `[preprocessing]` and
-  `[numerics]` (`parse_flux_construction`, `FLUX_CONSTRUCTION_KEYS`,
-  `src/Preprocessing/MassClosure/flux_construction.jl`). S3 must choose a key
-  that does not collide, or rename; this is an open design point. Planning
-  rejects cubed-sphere targets until S8, `mass_basis = "moist"`, and any
-  `flux_time_sampling` other than `"window_mean"`.
+- `[preprocessing].spectral_flux_construction` is parsed once with
+  `ConfigChecks.parse_choice`; absence adds no fields to historical settings,
+  preserving their fingerprint representation. `flux_construction` and the
+  existing face-method keys retain their meaning. `TM5SpectralFluxes` has the
+  fixed IFS radius and a positive `quadrature_refinement_steps` (default 2).
+- `ConfigChecks.check_known_keys` rejects unknown preprocessing keys, and native
+  sources reject all four spectral-only keys. Planning rejects cubed sphere, moist basis and sampling other than
+  `window_mean`. The day driver requires next-day 00 UTC. The new route
+  requires retained native interfaces, rather than pressure-overlap remapping.
+- The TM5 day drivers do not assemble the live Calc_Kzz input group, so
+  `[preprocessing] include_tm5_pbl = true` is rejected with this construction
+  (see [TM5 boundary layer](../theory/tm5_boundary_layer.md)).
 - The default path stays bitwise unchanged; every flux pull request gates the
   `pre_ll72`, `pre_o24` and `pre_c24` goldens.
+
+```@docs
+AtmosTransport.Preprocessing.TM5SpectralFluxes
+AtmosTransport.Preprocessing.PointSampledSpectralFluxes
+```
 
 ## 12. Binary identity
 
@@ -487,9 +543,36 @@ version 5 only when the identity is recorded, so every existing output stays
 version 4. The mesh radius stays in the existing `planet_radius_m`. The
 window flux uses the existing version-4 sampling tags
 (`source_flux_sampling = "window_mean"`, `flux_sampling = "window_constant"`);
-taking the LL and RG tags from the settings is planned for S3.
+the new LL and RG route records these tags from its construction.
+
+The v5 headers also record `spectral_synthesis` (`cpu`/`gpu`),
+`spectral_synthesis_float` (the actual Float64/Float32 plan type), and
+`spectral_surface_float` (Float64). CUDA's math mode is set to PEDANTIC
+for each transform and restored even on exceptions; FAST_MATH is rejected.
 
 ## 13. Differences from TM5
+
+The atmospheric sizes below are measured in the independent **2026-10-31
+WIND_DIFF_PROBE**, `/temp1/cfranken/plan/tm5_parity/WIND_DIFF_PROBE.md`,
+using the original ERA5 T639 analysis coefficients for 2022-01-15 00–01 UTC.
+They cover native levels 1, 60, 96 and 137 on a common 1° target, before pin,
+balance, drying or merging. Caps mean |latitude| > 85°. They are raw flux and
+wind differences, not final transport errors or full-day statistics.
+
+| Difference | Real T639 size (probe sections: winds, fluxes, Nabla proxy) |
+|---|---|
+| Truncation-edge wind rows | L137 cap RMS Δu=0.140 m/s (3.53%), Δv=0.176 m/s (4.39%); cap maxima about 1.1 m/s. On the nearest extra open polar rings, maxima rise to about 11 m/s. |
+| Point sampling versus face integration | Global raw net-divergence RMS changes by 9–26%; face RMS by 0.3–6.1%, cap net divergence by 8–54%. Includes wind–pressure covariance and face averaging. |
+| Open polar quadrature versus TM5 endpoint rules | L137 Fu cap RMS changes by about 8%; L1 cap net-divergence RMS by 40%. The top-level reference divergence is small. |
+| Wind radius convention | 0.003594% coherent wind scale change (approximately 0.0036%). |
+| n=T Nabla sign | No direct wind/face effect. L96 forcing proxy δC is 0.41% of global and 26.9% of cap horizontal-divergence RMS. The proxy uses 1° latitude midpoints and eight longitude trapezoids, not full refined IntArea or a full-column W comparison. |
+| Suppressed Legendre corner | L137 global u RMS about 3.5×10⁻⁴ m/s; negligible aloft and in polar caps; redundant once the corner wind coefficient is zeroed. |
+| Special n=m=T−1 branch | Exactly zero isolated difference on the measured coefficients. |
+
+The unit-coefficient values below are reproducible analytic test anchors;
+they are not atmospheric amplitudes. The separate missing T+1 gradient,
+full-column forcing and final balanced transport effects were not isolated
+by this four-level probe.
 
 | TM5 | Here | Reason or size |
 |---|---|---|
@@ -497,19 +580,29 @@ taking the LL and RG tags from the settings is planned for S3.
 | Forecast records (`h06h18tr3`), valid-time and lead bookkeeping, balanced fluxes interpolated to each dynamic-step midpoint | Hourly analyses; the window flux is the mean of the two endpoint sets, each balanced against the same tendency | Owner decision Q2; the mean is the exact window integral of TM5's linear interpolation |
 | NOAA 1° archive plus offline coarsener | Direct integration on the target grid | Owner decision; *estimate:* a direct coarse integral differs from the sum of 1° fluxes |
 | Mass-weighted coarsening of 1° T and Q | ``q`` from the existing reader (point values on target cells), merged with the pinned moist masses | ``q`` is a grid-point field, not spectral |
-| ``n = T`` Nabla sign error and gradient truncated at ``T`` (§5) | Exact gradient to degree ``T + 1`` | Q3; sized by the planned single-mode tests |
-| ``P_T^T = 0`` (§1) | ``P_T^T`` evaluated | Q3; affects the ``(T, T)`` coefficient only; sized by the planned tests |
-| `vod2uv` edge rows ``n = T−1``, ``m = T−1`` and ``n = T`` (§2) | All neighbour terms inside ``[m, T]`` | Q3; sized by the planned single-mode tests |
-| Polar rows: ``1/(N_λ + 1)`` mean and adjacent-row mean for ``D\cos φ`` (§4) | Open polar nodes | Q3; sized by the planned polar tests |
+| ``n = T`` Nabla sign error and gradient truncated at ``T`` (§5) | Exact gradient to degree ``T + 1`` | Q3; single-mode sign-only difference is ``2(T-1)ε_{m,T}H_{T-1}^m`` |
+| ``P_T^T = 0`` (§1) | ``P_T^T`` evaluated | Q3; removed unit corner has amplitude ``2P_T^T`` for a real coefficient |
+| `vod2uv` edge rows ``n = T−1``, ``m = T−1`` and ``n = T`` (§2) | All neighbour and ``iσ`` terms inside ``[m, T]`` | Q3; omitted terms are ``−R_v δ_{m,T}ζ_T^m`` and ``iR_v σ_{m,T}D_T^m`` (and the V counterparts); the special ``m=n=T−1`` branch already agrees |
+| Polar rows: ``1/(N_λ + 1)`` mean and adjacent-row mean for ``D\cos φ`` (§4) | Open polar nodes | Q3; duplicate-endpoint unit cosine has spurious mean ``1/(N_λ+1)``; substituted endpoint for constant D adds ``(h/2)sin(h)`` |
 | ``π`` literal `3.14159265358979` (`binas:35`) | Julia's ``π`` | relative ``1.0 × 10^{-15}`` |
 | `vod2uv` radius `ae`, 6.371 × 10⁶ m | `IFS_EARTH_RADIUS`, 6.371229 × 10⁶ m | Q4; relative ``3.6 × 10^{-5}`` |
 | One radius: ``R^2/g`` in the ``D`` term of ``C_k`` | ``R R_v/g`` (§5) | follows from Q4; keeps ``W`` consistent with the face fluxes |
-| Wind row ``n = T + 1`` dropped (§2) | also dropped by `vod2uv!` | shared truncation; whether S4 keeps it is decided in S4, sized by the planned single-mode tests |
+| Wind row ``n = T + 1`` dropped (§2) | retained by the new complete transform | unit VO/D coefficient contributes ``±R_v δ_{m,T+1}``; required for Gauss convergence |
 | Balance never skips a level | `balance_mass_fluxes!` skips levels with residual ``< 10^{-10}`` | harmless |
 | `tsp` and the `'bottom'` `FillLevels` key | Not built | not consumed |
 | Check_CFL, polar clustering, prognostic slopes, diffusion inside convection, window-end convection | Runtime unchanged | These bound any "TM5-style" claim: this is a flux construction, not TM5 runtime parity |
 
-## 14. Tolerances (planned targets)
+For the unit-coefficient tests at ``T=7``, the missing ``n=T+1`` LNSP
+gradient at ``m=2`` is −3.39549875051. A unit ``ζ_T^1`` has the omitted
+``n=T−1`` wind coefficient +451573.541727 m s⁻¹ and ``n=T+1`` coefficient
+−395852.518767 m s⁻¹. A unit ``D_T^2`` has the omitted ``n=T`` zonal
+coefficient −227543.892857i m s⁻¹; the ``m=T`` corner is −796403.625i m s⁻¹.
+These are unit spectral amplitudes, not measured atmospheric winds. The
+special ``m=n=T−1`` branch contributes zero discrepancy. At polar interval
+``h=0.0125`` radians the substituted D endpoint adds 7.81229655107 × 10⁻⁵
+to the unit-integrand quadrature.
+
+## 14. Validation tolerances
 
 | Boundary | Criterion |
 |---|---|
@@ -524,8 +617,7 @@ A tolerance is never loosened to cover a wrong grid, product, basis or missing
 modes, and an absent or skipped fixture is never reported as passed. pydyn has
 no spectral stage, so it can check stages 8 and 11 (balance and `dynam0`) but
 not stages 3–4. Synthetic pydyn fixtures for stages 8 and 11 are local-only,
-kept outside the repository and not committed. The parity loader and tests
-are planned for S6a (TM5-FLUX-1): they will load fixtures from
+kept outside the repository and not committed. The parity loader and tests load fixtures from
 `ATMOSTR_TM5_FIXTURES_DIR` and skip with a clear message when the variable
 is unset or the required fixtures are absent.
 
@@ -555,14 +647,54 @@ with attributable deltas, S8 cubed-sphere direct target).
 | Item | Status |
 |---|---|
 | Binary version 5: `flux_construction` identity keys, readers accepting versions 4 and 5, inspector display | Implemented (TM5-0) |
-| pydyn balance and `dynam0` fixtures | Generated locally outside the repository; not committed; loader and parity tests planned for S6a using `ATMOSTR_TM5_FIXTURES_DIR`, with a clear skip when unset or fixtures are absent |
-| Construction types, configuration, dispatch hooks, `InterfaceMassFluxField` (S3) | Planned (TM5-FLUX-1) |
-| Spectral evaluator and quadrature for LL and RG rings (S4) | Planned (TM5-FLUX-1) |
-| Integrated PS, face fluxes and ``W`` (S5) | Planned (TM5-FLUX-1) |
-| Per-layer balance, TM5 guards, RG factor-once solve (S6a) | Planned (TM5-FLUX-1) |
-| End to end for LL and RG, new goldens `pre_ll72_tm5`, `pre_o24_tm5` (S6b) | Planned (TM5-FLUX-1) |
+| pydyn balance and `dynam0` fixtures | Generated locally outside the repository; not committed; loader and parity tests implemented using `ATMOSTR_TM5_FIXTURES_DIR`, with a clear skip when unset or fixtures are absent |
+| Construction types, configuration, dispatch hooks, `InterfaceMassFluxField` (S3) | Implemented (TM5-FLUX-1) |
+| Spectral evaluator and quadrature for LL and RG rings (S4) | Implemented (TM5-FLUX-1) |
+| Integrated PS, face fluxes and ``W`` (S5) | Implemented (TM5-FLUX-1) |
+| Per-layer balance, TM5 guards, RG factor-once solve (S6a) | Implemented (TM5-FLUX-1) |
+| End to end for LL and RG, new cases `pre_ll72_tm5`, `pre_o24_tm5` (S6b) | Implemented; golden definitions only, references generated separately |
 | First real day and attributable deltas (S7) | Planned (TM5-FLUX-2) |
 | Cubed-sphere direct target (S8) | Planned (TM5-FLUX-2) |
+
+## 17. Synthesis backends and measurements
+
+`CPURingSynthesis` uses batched host GEMM and unnormalised FFTW;
+`GPUSpectralSynthesis` uses the same portable KernelAbstractions pack/scatter/
+gather stages, device GEMM and device FFT. Refined samples stay on the device
+through quadrature, whose accumulation is Float64. Batches are limited to
+eight field levels in the day driver. Surface LNSP and both gradients always
+use Float64. Core does not load CUDA. With CUDA loaded, automatic precision
+uses Float64 on A100/H100/B200-class devices and Float32 for 3-D fields on
+L40S-class devices. `FAST_MATH` is rejected and the CUDA extension selects
+pedantic math through `CUDA.math_mode!`, restoring the caller's mode after each transform. GPU execution is opt-in in tests:
+
+```bash
+ATMOSTR_TEST_SPECTRAL_GPU=1 julia --project=test test/core/test_spectral_synthesis_backends.jl
+```
+
+The preprocessing CLI loads CUDA when this construction requests GPU
+synthesis. Library callers load their backend explicitly before planning.
+No silent CPU fallback occurs. The GPU runtime and performance
+checks require a GPU session; the CPU-array version exercises the portable
+kernels in ordinary CI. The spike's mirrored-table optimization, pinned
+staging and copy-free cuFFT execution are performance follow-ups; this
+implementation uses bounded batches and standard array/FFT APIs.
+
+Measured synthetic Gauss residuals ``||C + H||₂ / ||C||₂`` with refinement
+steps 2, 4, 8 are 0.0322, 0.00778, 0.00252 on LL and 0.0138, 0.00453,
+0.00135 on RG (degree 4, two layers, variable pressure and a truncation-edge
+divergence mode). Constant-pressure solid-body rotation gives exactly zero
+``C`` and meridional flux. Degree-7 quirk sizing gives 5.76461 for the
+sign-only gradient difference with a unit ``H_6^2`` coefficient and 1.77259
+for ``P_7^7(0)``; a repeated-endpoint cosine mean at 16 longitudes is
+0.0588235. These are analytic signal sizes, not climatological errors.
+
+The 2026-10-31 real-wind probe found that point versus face integration
+changes raw net-divergence RMS by 9–26% in four native layers of one ERA5
+window, before balance, pinning and drying. It also measured near-surface
+polar-cap wind edge differences of about 0.14 m/s in u and 0.176 m/s in v.
+These establish the importance of face integration and the edge terms;
+they are not measurements of final balanced cm or tracer differences.
 
 ## References
 

@@ -144,7 +144,7 @@ function build_v4_header(date::Date,
     contract = canonical_window_constant_contract(
         steps_per_window   = sizes.steps_per_met,
         humidity_sampling  = settings.include_qv ? :window_endpoints : :none,
-        source_flux_sampling = :window_start_endpoint,
+        source_flux_sampling = spectral_source_flux_sampling(spectral_construction(settings)),
         include_flux_delta = true,
     )
 

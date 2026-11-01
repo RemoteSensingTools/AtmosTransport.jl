@@ -36,7 +36,7 @@ calls at once. The Legendre table holds `n_rings × (T + 1)(T + 2)/2` values
 (1.1 GB for N320 at T639) and the half-spectrum buffer `Nf × Σ_j (nlon_j ÷ 2 + 1)`
 complex values (0.6 GB for 137 levels).
 """
-struct ReducedSpectralSynthesis{G <: ReducedGaussianTargetGeometry, P}
+struct ReducedSpectralSynthesis{G <: ReducedGaussianTargetGeometry, P} <: AbstractSpectralSynthesis
     grid          :: G
     T             :: Int
     Nf            :: Int

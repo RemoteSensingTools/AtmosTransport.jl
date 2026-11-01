@@ -46,6 +46,23 @@ column-weight choice immediately.
 
 None.
 
+`spectral_construction.jl` owns `AbstractSpectralFluxConstruction`,
+`PointSampledSpectralFluxes`, `TM5SpectralFluxes`, `AbstractSpectralSynthesis`,
+`spectral_construction`, `spectral_resolution`,
+`spectral_read_truncation`, `spectral_source_flux_sampling`, `balance_window_layers!`,
+`validate_gpu_spectral_backend`, `resolve_spectral_construction` and
+`validate_spectral_construction`. The strategy selector is
+`[preprocessing].spectral_flux_construction`; existing face settings keep their meaning.
+
+# shared: AbstractSpectralFluxConstruction, PointSampledSpectralFluxes, TM5SpectralFluxes, AbstractSpectralSynthesis, spectral_construction, spectral_resolution, spectral_read_truncation, spectral_source_flux_sampling, balance_window_layers!, validate_gpu_spectral_backend, resolve_spectral_construction, validate_spectral_construction
+
+`validate_spectral_vertical` checks complete A/B columns and merge maps before
+any meteorology read. ConfigChecks rejects unknown preprocessing keys and
+native sources reject spectral-only options. Backend and automatic precision
+choices are parsed into `CPUSynthesis`, `GPUSynthesis`, `AutoSynthesisPrecision`.
+
+# shared: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, validate_spectral_vertical
+
 `configuration.jl` parses `[preprocessing] include_tm5_pbl` with ConfigChecks
 and requires `input.surface_dir` for the optional LL/RG live-Calc_Kzz inputs.
 `validate_tm5_pbl_target` rejects unsupported vertical mapping, truncated top

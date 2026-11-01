@@ -8,9 +8,9 @@ using Printf
 import ...Grids: panel_convention_tag
 using ...ConfigChecks: config_bool as _config_bool, config_int, config_float, config_date, parse_choice, check_known_keys, parse_float_type
 using ...AtomicFiles: open_atomic_staging
-using ...Parameters: EARTH_RADIUS, GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
+using ...Parameters: IFS_EARTH_RADIUS, EARTH_RADIUS, GLOBAL_MEAN_DRY_SURFACE_PRESSURE, GLOBAL_MEAN_SPECIFIC_HUMIDITY,
     DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_PROJECT_EVERY, HORIZONTAL_BALANCE_TAG,
-    ERA5_NATIVE_LEVEL_COUNT
+    ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
 using ...Grids: cell_area_matrix, CSGlobalFaceTable, build_cs_global_face_table,
     parse_panel_convention, parse_cs_definition
 using ...Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nrings, ring_longitudes,
@@ -46,6 +46,7 @@ include("binary_pipeline.jl")
 include("met_sources.jl")
 include("logging.jl")
 include("target_geometry.jl")
+include("spectral_construction.jl")
 include("configuration.jl")
 include("met_readers.jl")
 

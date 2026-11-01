@@ -300,7 +300,7 @@ Run the full one-day preprocessing workflow for the structured lat-lon target:
 read spectral input, process all windows, close continuity against forward mass
 endpoints, and write the final binary.
 """
-function process_day(date::Date,
+function process_day(::PointSampledSpectralFluxes, date::Date,
                      grid::LatLonTargetGeometry,
                      settings::ERA5SpectralSettings,
                      vertical;
