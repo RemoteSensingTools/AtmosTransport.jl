@@ -232,3 +232,6 @@ PBL-height diagnostic and `update_field!` returns the field, as required by the
 field interface. Scratch is approximately 16 floating values per cell/layer,
 plus D and one integer guard count per cell; large RG meshes can require about
 1.2 GB of Float32 scratch. The manual states measured Float32 K/D bounds.
+
+Host fallback staging uses Architectures.host_array. Zeroed workspace scratch
+uses Architectures.zeros_like, retaining one allocation and fill per array.

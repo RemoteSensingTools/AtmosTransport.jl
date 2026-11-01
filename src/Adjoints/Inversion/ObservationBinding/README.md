@@ -23,7 +23,7 @@ the package-level module during static inference on Julia 1.10.
 
 ## Depends on
 
-Adjoints core (objectives/functionals), Footprint (replay), Grids, State,
+ConfigChecks, Adjoints core (objectives/functionals), Footprint (replay), Grids, State,
 Parameters and AtmosTransport.Observations (placement, retrievals, reader and
 writer primitives). External: Dates, NCDatasets. No dependency on Solver.
 
@@ -51,3 +51,6 @@ the binding's clamp-policy sampling, including terminal/outside times.
 The two ISO parsers have different accepted inputs and remain separate.
 
 # shared: CELL_AVERAGE_PLACEMENT_CODE, CSDepartureSet, CSObservation, CSObservationSet, CSObservationStencil, ClampOutOfRange, _observation_replay, _observe_cs_forward!, bind_to_mesh, build_departure_set
+
+ConfigChecks.parse_choice owns binding-policy and kind parsing. Typed policy
+instances pass through; String choices remain case sensitive and reject Symbols.

@@ -11,6 +11,7 @@ module SectionTimer
 # separate CPU microbenchmark.
 
 using Printf
+using ..ConfigChecks: env_flag
 
 # NVTX integration is OPTIONAL — provided by the `AtmosTransportNVTXExt`
 # package extension, which loads only when the user has NVTX in their
@@ -287,10 +288,9 @@ Inspect `ENV["ATMOSTR_TIMERS"]`, `ENV["ATMOSTR_NVTX"]`,
 is a no-op for that axis. Returns `true` if anything was enabled.
 """
 function maybe_enable_from_env!()
-    truthy = s -> lowercase(s) in ("1", "true", "on", "yes")
-    timing_on = truthy(get(ENV, "ATMOSTR_TIMERS", ""))
-    nvtx_on   = truthy(get(ENV, "ATMOSTR_NVTX", ""))
-    alloc_on  = truthy(get(ENV, "ATMOSTR_ALLOC_TIMERS", ""))
+    timing_on = env_flag("ATMOSTR_TIMERS")
+    nvtx_on   = env_flag("ATMOSTR_NVTX")
+    alloc_on  = env_flag("ATMOSTR_ALLOC_TIMERS")
     if timing_on || nvtx_on
         enable!(timing = timing_on, allocations = alloc_on, nvtx = nvtx_on)
         return true

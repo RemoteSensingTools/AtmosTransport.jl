@@ -66,15 +66,14 @@ DiffusionWorkspace(factors, layer_thickness, ledger_carry,
                        _diffusion_scratch(factors))
 
 # Scratch and carry allocate only the storage read by the numerical kernels.
-_diffusion_scratch(factors::NTuple{6, AbstractArray}) = map(_diffusion_scratch, factors)
-_diffusion_scratch(factors::AbstractArray) = fill!(similar(factors), zero(eltype(factors)))
+const _diffusion_scratch = zeros_like
 function DiffusionWorkspace(air_mass::AbstractArray{FT, N}, n_tracers::Integer = 0) where {FT, N}
     N in (2, 3) || throw(ArgumentError(
         "DiffusionWorkspace requires rank-2 or rank-3 air mass; got rank $N"))
     Nt = Int(n_tracers)
     Nt >= 0 || throw(ArgumentError("n_tracers must be nonnegative"))
     columns = size(air_mass)[1:N-1]                    # (Nx, Ny) or (ncells,)
-    ledger_carry = fill!(similar(air_mass, FT, columns..., Nt), zero(FT))
+    ledger_carry = zeros_like(air_mass, FT, columns..., Nt)
     return DiffusionWorkspace(similar(air_mass), similar(air_mass), ledger_carry)
 end
 
@@ -92,7 +91,7 @@ function DiffusionWorkspace(air_mass::NTuple{6, A}, halo_width::Integer,
         throw(DimensionMismatch("all cubed-sphere air-mass panels must have the same shape"))
     factors = ntuple(_ -> similar(air_mass[1], FT, Nx, Ny, Nz), 6)
     layer_thickness = ntuple(_ -> similar(air_mass[1], FT, Nx, Ny, Nz), 6)
-    ledger_carry = ntuple(_ -> fill!(similar(air_mass[1], FT, Nx, Ny, Nt), zero(FT)), 6)
+    ledger_carry = ntuple(_ -> zeros_like(air_mass[1], FT, Nx, Ny, Nt), 6)
     return DiffusionWorkspace(factors, layer_thickness, ledger_carry)
 end
 

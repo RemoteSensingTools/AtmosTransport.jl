@@ -35,3 +35,6 @@ differ. Those differences require a stated-delta follow-up.
 - `CMFMCMatrixConvection.jl`: rate cache and delegation to TM5.
 - `cmfmc_matrix_kernels.jl`: shared rate-derivation body and topology wrappers.
 - `adjoint_kernels.jl`: transpose of the direct CS column.
+
+Architectures owns host_array staging and fill_zero! for empty rate storage.
+Their copy and per-array fill policies are unchanged.

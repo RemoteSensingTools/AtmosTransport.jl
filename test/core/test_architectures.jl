@@ -331,3 +331,30 @@ KernelAbstractions.get_backend(::_OtherBackendArray) = _OTHER_BACKEND
     @test Arch.copy_arrays!(mixed, src) === mixed
     @test mixed[1] == src[1] && other.data == src[2]
 end
+
+
+@testset "shared array storage preserves ownership and traversal" begin
+    a = reshape(Float32[-0.0, 2, 3, 4], 2, 2)
+    @test Arch.host_array(a) === a
+    v = @view a[:, 1:1]
+    h = Arch.host_array(v)
+    @test h == v
+    h[2] = -9
+    @test a[2, 1] == 2
+    panels = (a, (copy(a),))
+    z = Arch.zeros_like(panels)
+    @test size(z[1]) == size(a) && eltype(z[1]) === Float32
+    @test z[1] !== a && z[2][1] !== panels[2][1]
+    @test all(iszero, z[1]) && all(iszero, z[2][1])
+    @test !any(signbit, z[1])
+    visits = Any[]
+    allocated = Arch.similar_arrays(panels; allocator = x -> (push!(visits, x); similar(x)))
+    @test visits[1] === a && visits[2] === panels[2][1]
+    @test size(allocated[2][1]) == size(a)
+    @test Arch.scale_arrays!(panels, 0.5f0) === panels
+    @test reinterpret(UInt32, vec(a)) == reinterpret(UInt32, Float32[-0.0, 1, 1.5, 2])
+    @test panels[2][1] == a
+    @test Arch.fill_zero!(panels) === panels
+    @test all(iszero, a) && all(iszero, panels[2][1])
+    @test Arch.fill_zero!(nothing) === nothing
+end

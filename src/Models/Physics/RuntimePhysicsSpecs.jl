@@ -16,26 +16,6 @@
 #
 # This file holds the convection, advection, chemistry, and diffusion spec families.
 
-# --- Typed TOML-value accessors (clean errors at the boundary) -------------
-# Report the section, key, and offending value when a TOML value has the wrong
-# type, before attempting numeric conversion.
-# `label` is the TOML table name (e.g. "[convection]") for the error message.
-
-function _spec_bool(section, key::AbstractString, default::Bool, label::AbstractString)
-    return _config_bool(get(section, key, default), "$(label).$(key)")
-end
-function _spec_int(section, key::AbstractString, default::Int, label::AbstractString)
-    v = get(section, key, default)
-    v isa Integer && !(v isa Bool) ||
-        throw(ArgumentError("$(label).$(key) must be an integer; got $(repr(v))"))
-    return Int(v)
-end
-function _spec_float64(section, key::AbstractString, default::Float64, label::AbstractString)
-    v = get(section, key, default)
-    v isa Real && !(v isa Bool) || throw(ArgumentError("$(label).$(key) must be a number; got $(repr(v))"))
-    return Float64(v)
-end
-
 # =========================================================================
 # Convection
 # =========================================================================
@@ -59,13 +39,9 @@ end
 # `[convection] cloud_base` choices (kind = "cmfmc").
 const _CLOUD_BASE_RULES = (cmfmc = CMFMCEdgeCloudBase(), dqrcu = ArchivedCloudBase())
 
-function _cloud_base_rule(section)
-    raw = lowercase(String(get(section, "cloud_base", "cmfmc")))
-    key = Symbol(raw)
-    haskey(_CLOUD_BASE_RULES, key) && return _CLOUD_BASE_RULES[key]
-    throw(ArgumentError("Unknown [convection] cloud_base: $(repr(raw)). Supported: " *
-                        join(keys(_CLOUD_BASE_RULES), " | ")))
-end
+_cloud_base_rule(section) =
+    parse_choice(get(section, "cloud_base", "cmfmc"), _CLOUD_BASE_RULES,
+                 "[convection].cloud_base"; allow_symbol = true)
 
 # Configuration scalars are independent of tracer precision. In particular,
 # TM5Convection's type parameter describes the workspace budget, not the arrays
@@ -99,19 +75,16 @@ end
 
 const _CONVECTION_KINDS = (:none, :tm5, :cmfmc, :cmfmc_matrix)
 
-function _parse_convection_kind(section)
-    raw = lowercase(String(get(section, "kind", "none")))
-    Symbol(raw) in _CONVECTION_KINDS && return Symbol(raw)
-    throw(ArgumentError(
-        "Unknown [convection] kind: $(repr(raw)). Supported: $(join(_CONVECTION_KINDS, " | "))"))
-end
+_parse_convection_kind(section) =
+    parse_choice(get(section, "kind", "none"), NamedTuple{_CONVECTION_KINDS}(_CONVECTION_KINDS),
+                 "[convection].kind"; allow_symbol = true)
 
 # Shared knob extraction + validation for the collaborative-LU kinds.
 function _collab_lu_knobs(section)
-    budget     = _spec_float64(section, "tile_workspace_gib", 1.0, "[convection]")
-    use_collab = _spec_bool(section, "use_collab_lu", false, "[convection]")
-    lmax_conv  = _spec_int(section, "lmax_conv", 0, "[convection]")
-    n_merge    = _spec_int(section, "n_merge", 1, "[convection]")
+    budget     = config_float(get(section, "tile_workspace_gib", 1.0), "[convection].tile_workspace_gib")
+    use_collab = _config_bool(section, "use_collab_lu", false, "[convection].use_collab_lu")
+    lmax_conv  = config_int(get(section, "lmax_conv", 0), "[convection].lmax_conv")
+    n_merge    = config_int(get(section, "n_merge", 1), "[convection].n_merge")
 
     lmax_conv >= 0 || throw(ArgumentError("[convection].lmax_conv must be >= 0; got $(lmax_conv)"))
 
@@ -143,7 +116,7 @@ function convection_spec(section)
         "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(get(section, "kind", "none"))))"))
     kind === :none  && return NoConvectionSpec()
     kind === :cmfmc &&
-        return CMFMCConvectionSpec(_spec_bool(section, "clamp", false, "[convection]"),
+        return CMFMCConvectionSpec(_config_bool(section, "clamp", false, "[convection].clamp"),
                                    _cloud_base_rule(section))
     knobs = _collab_lu_knobs(section)
     kind === :tm5 && return TM5ConvectionSpec(knobs...)
@@ -244,62 +217,41 @@ _default_advection_scheme(::InversionAdvectionContext) = throw(ArgumentError(
     "the selected scheme. Supported: $(join(_ADVECTION_SCHEMES, " | "))."))
 
 function _parse_advection_scheme(section, context::AbstractAdvectionContext = ForwardAdvectionContext())
-    raw = lowercase(String(get(() -> _default_advection_scheme(context), section, "scheme")))
-    Symbol(raw) in _ADVECTION_SCHEMES && return Symbol(raw)
-    throw(ArgumentError(
-        "Unknown [advection] scheme: $(repr(raw)). Supported: $(join(_ADVECTION_SCHEMES, " | "))"))
+    return parse_choice(get(() -> _default_advection_scheme(context), section, "scheme"),
+                        NamedTuple{_ADVECTION_SCHEMES}(_ADVECTION_SCHEMES), "[advection].scheme"; allow_symbol = true)
 end
 
 # `[advection] vertical` selects the PPM vertical reconstruction.
-const _VERTICAL_RECONSTRUCTIONS = Dict(
-    "same_as_horizontal" => SameAsHorizontal(),
-    "fv3_kord8"          => FV3ScalarProfile(),                            # GCHP, iv = 0
-    "fv3_kord8_signed"   => FV3ScalarProfile(; positive_definite = false)) # iv = 1
+const _VERTICAL_RECONSTRUCTIONS = (
+    same_as_horizontal = SameAsHorizontal(),
+    fv3_kord8 = FV3ScalarProfile(),                            # GCHP, iv = 0
+    fv3_kord8_signed = FV3ScalarProfile(; positive_definite = false)) # iv = 1
 
-function _parse_vertical_reconstruction(section)
-    raw = get(section, "vertical", "same_as_horizontal")
-    key = raw isa AbstractString ? lowercase(raw) : ""
-    haskey(_VERTICAL_RECONSTRUCTIONS, key) || throw(ArgumentError(
-        "Unknown [advection] vertical: $(repr(raw)). Supported: " *
-        join(sort!(collect(keys(_VERTICAL_RECONSTRUCTIONS))), " | ")))
-    return _VERTICAL_RECONSTRUCTIONS[key]
-end
+_parse_vertical_reconstruction(section) =
+    parse_choice(get(section, "vertical", "same_as_horizontal"),
+                 _VERTICAL_RECONSTRUCTIONS, "[advection].vertical")
 
 # `[advection] limiter` selects the PPM limiter: the default monotone PPM, or
 # the complete Colella–Woodward scheme (`CW84Limiter`). The inversion driver
 # also accepts the unlimited PPM (see `InversionAdvectionContext`).
-const _PPM_LIMITERS = Dict("monotone" => MonotoneLimiter(), "cw84" => CW84Limiter())
-const _INVERSION_PPM_LIMITERS = merge(_PPM_LIMITERS, Dict("none" => NoLimiter()))
+const _PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter())
+const _INVERSION_PPM_LIMITERS = merge(_PPM_LIMITERS, (none = NoLimiter(),))
 
 _ppm_limiters(::ForwardAdvectionContext) = _PPM_LIMITERS
 _ppm_limiters(::InversionAdvectionContext) = _INVERSION_PPM_LIMITERS
 
-_ppm_limiter_note(::ForwardAdvectionContext) =
-    " (`none`, the unlimited PPM, is accepted only by the 4D-Var inversion driver)"
-_ppm_limiter_note(::InversionAdvectionContext) = ""
-
-function _parse_ppm_limiter(section, context::AbstractAdvectionContext)
-    raw = get(section, "limiter", "monotone")
-    key = raw isa AbstractString ? lowercase(raw) : ""
-    limiters = _ppm_limiters(context)
-    haskey(limiters, key) || throw(ArgumentError(
-        "Unknown [advection] limiter: $(repr(raw)). Supported: " *
-        join(sort!(collect(keys(limiters))), " | ") * _ppm_limiter_note(context) * "."))
-    return limiters[key]
-end
+_parse_ppm_limiter(section, context::AbstractAdvectionContext) =
+    parse_choice(get(section, "limiter", "monotone"), _ppm_limiters(context), "[advection].limiter")
 
 # Lin–Rood's vertical sweeps default to the GCHP-matched FV3 profile. Every
 # choice has an adjoint, so the inversion driver uses the same default and an
 # inversion runs the forward model of a forward run with the same table.
-function _parse_linrood_vertical(section)
-    raw = get(section, "vertical", "fv3_kord8")
-    key = raw isa AbstractString ? lowercase(raw) : ""
-    key == "upwind" && return UpwindScheme()
-    key in _LINROOD_VERTICALS || throw(ArgumentError(
-        "[advection] `scheme = \"linrood\"` supports vertical = " *
-        "$(join(_LINROOD_VERTICALS, " | ")); got $(repr(raw))."))
-    return PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS[key])
-end
+_parse_linrood_vertical(section) =
+    parse_choice(get(section, "vertical", "fv3_kord8"),
+                 NamedTuple{Symbol.(_LINROOD_VERTICALS)}((UpwindScheme(),
+                  PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS.fv3_kord8),
+                  PPMScheme(; vertical = _VERTICAL_RECONSTRUCTIONS.fv3_kord8_signed))),
+                 "[advection].vertical (linrood)")
 
 """
     advection_spec(section[, context = ForwardAdvectionContext()]) -> AbstractAdvectionSpec
@@ -330,7 +282,7 @@ function advection_spec(section, context::AbstractAdvectionContext = ForwardAdve
         return PPMAdvectionSpec(_parse_ppm_limiter(section, context),
                                 _parse_vertical_reconstruction(section))
     end
-    order = _spec_int(section, "ppm_order", DEFAULT_LINROOD_PPM_ORDER, "[advection]")                    # :linrood
+    order = config_int(get(section, "ppm_order", DEFAULT_LINROOD_PPM_ORDER), "[advection].ppm_order")                    # :linrood
     order in _LINROOD_PPM_ORDERS || throw(ArgumentError(
         "[advection] `ppm_order` must be 5 or 7 for `scheme = \"linrood\"`; got $(order)."))
     return LinRoodAdvectionSpec(order, _parse_linrood_vertical(section))
@@ -374,7 +326,7 @@ function binary_cfl_check(cfg)
     haskey(get(cfg, "run", Dict{String, Any}()), "check_binary_cfl") && throw(ArgumentError(
         "`check_binary_cfl` belongs in [advection], not [run]."))
     advection = get(cfg, "advection", Dict{String, Any}())
-    _spec_bool(advection, "check_binary_cfl", false, "[advection]") || return NoBinaryCFLCheck()
+    _config_bool(advection, "check_binary_cfl", false, "[advection].check_binary_cfl") || return NoBinaryCFLCheck()
     scheme = _parse_advection_scheme(advection)
     scheme in (:upwind, :slopes, :ppm) || throw(ArgumentError(
         "[advection] `check_binary_cfl` applies to the split-sweep schemes (upwind, " *
@@ -412,12 +364,9 @@ end
 
 const _CHEMISTRY_KINDS = (:none, :decay)
 
-function _parse_chemistry_kind(section)
-    raw = lowercase(String(get(section, "kind", "none")))
-    Symbol(raw) in _CHEMISTRY_KINDS && return Symbol(raw)
-    throw(ArgumentError(
-        "Unknown [chemistry] kind: $(repr(raw)). Supported: $(join(_CHEMISTRY_KINDS, " | "))"))
-end
+_parse_chemistry_kind(section) =
+    parse_choice(get(section, "kind", "none"), NamedTuple{_CHEMISTRY_KINDS}(_CHEMISTRY_KINDS),
+                 "[chemistry].kind"; allow_symbol = true)
 
 # A single half-life must be a positive number. The TOML parser normally hands us
 # a Real, but a config arriving from test/programmatic code (or a stray string)
@@ -526,12 +475,9 @@ const _DIFFUSION_KINDS = (none = :none, constant = :constant,
                           tm5_dkg = :tm5_dkg, tm5_calc_kzz = :tm5_calc_kzz)
 const _DIFFUSION_KIND_LIST = join(("\"$(k)\"" for k in keys(_DIFFUSION_KINDS)), ", ")
 
-function _parse_diffusion_kind(section)
-    raw = lowercase(String(get(section, "kind", "none")))
-    haskey(_DIFFUSION_KINDS, Symbol(raw)) && return _DIFFUSION_KINDS[Symbol(raw)]
-    throw(ArgumentError(
-        "Unknown [diffusion] kind: $(repr(raw)). Supported: $(join(keys(_DIFFUSION_KINDS), " | "))"))
-end
+_parse_diffusion_kind(section) =
+    parse_choice(get(section, "kind", "none"), _DIFFUSION_KINDS,
+                 "[diffusion].kind"; allow_symbol = true)
 
 """
     diffusion_spec(section) -> AbstractDiffusionSpec
@@ -560,14 +506,14 @@ function diffusion_spec(section)
     kind = _parse_diffusion_kind(section)
     kind === :none && return NoDiffusionSpec()
     if kind === :nonlocal_vdiff
-        _spec_bool(section, "surface_flux_boundary", true, "[diffusion]") || throw(ArgumentError(
+        _config_bool(section, "surface_flux_boundary", true, "[diffusion].surface_flux_boundary") || throw(ArgumentError(
             "[diffusion] kind = \"geoschem_nonlocal_vdiff\" adds emissions before one full " *
             "diffusion solve (GEOS-Chem VDIFF); remove `surface_flux_boundary = false`."))
         return GCHPNonlocalVdiffDiffusionSpec()
     end
-    sfb = _spec_bool(section, "surface_flux_boundary", false, "[diffusion]")
+    sfb = _config_bool(section, "surface_flux_boundary", false, "[diffusion].surface_flux_boundary")
     kind === :constant &&
-        return ConstantDiffusionSpec(_spec_float64(section, "value", 1.0, "[diffusion]"), sfb)
+        return ConstantDiffusionSpec(config_float(get(section, "value", 1.0), "[diffusion].value"), sfb)
     kind === :pbl   && return WindowPBLKzDiffusionSpec(sfb)
     kind === :vdiff && return HoltslagBovilleVdiffDiffusionSpec(sfb)
     kind === :tm5_calc_kzz && return TM5CalcKzzDiffusionSpec(sfb)

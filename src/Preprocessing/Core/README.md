@@ -53,3 +53,6 @@ levels, non-hourly windows and fewer than two output layers before synthesis.
 `target_surface_means` adapts target geometry to the existing conservative
 `Regridding` builder/application, with intensive cell-area-mean semantics;
 it returns the weights for reuse by day-local input ownership.
+
+ConfigChecks owns common scalar parsing and the spectral mass-basis choice.
+Deferred native flux-choice validation still occurs after keyword overrides.

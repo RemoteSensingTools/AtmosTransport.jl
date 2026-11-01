@@ -189,3 +189,6 @@ and clock transition; resource cleanup drains prefetch before closing its input 
 `model_setup.jl` asserts packed-state rank and mesh type at the structured
 recipe boundary, so LL/RG model construction preserves their topology contract
 and generic inference excludes an impossible empty mesh intersection.
+
+Run-window and check intervals use ConfigChecks. LogLevels owns progress
+choice/interval parsing; `progress.jl` owns reporter types and rendering.

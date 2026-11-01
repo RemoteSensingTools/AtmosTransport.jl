@@ -5,13 +5,13 @@ from `Extras`. Analysis re-exports the conservation API for existing scripts.
 
 `Diagnostics.jl` defines `AtmosTransport.Diagnostics`, loaded after `Models`
 and before Extras. It depends on `Architectures`, `Parameters`, `Grids`,
-`MetDrivers`, `Operators`, `Output`, `GriddedIO`, `Models`, and the standard
+`MetDrivers`, `Operators`, `Output`, `GriddedIO`, `Models`, `State`, and the standard
 libraries Dates, Statistics and TOML plus NCDatasets. `RunContext` uses the
 runner's existing layout helpers without changing their logic.
 
 [`../SectionTimer.jl`](../SectionTimer.jl) is the separate foundation module `SectionTimer`, loaded
-right after `Architectures`, before every other module. Timing is off by default;
-it depends only on `Printf`.
+after ConfigChecks and `Architectures`, before runtime modules. Timing is off by default;
+it depends on `Printf` and ConfigChecks.env_flag.
 
 ## Conservation API
 
@@ -120,3 +120,6 @@ retain their original arithmetic rather than switching to StepPlans.window_clock
 ## Forward<->adjoint mirrors
 
 None. These host diagnostics compare forward transport budgets and snapshots.
+
+State.panel_interior supplies mass-diagnostic interior views, cropped to the
+original mesh extent; plain Float64 summation and halo inference remain here.

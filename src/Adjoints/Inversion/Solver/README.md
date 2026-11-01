@@ -22,7 +22,7 @@
 
 ## Depends on
 
-Inversion.ObservationBinding, Footprint, Adjoints core, Tape, Grids, Parameters and
+Architectures, Inversion.ObservationBinding, Footprint, Adjoints core, Tape, Grids, Parameters and
 Operators (no-op defaults). External: KernelAbstractions, FFTW, Optim.
 
 ## Used by
@@ -53,3 +53,6 @@ no correlation across panels. FFTW uses CPU scratch. LogNormal transforms
 require positive backgrounds. Scratch is reused and is not thread-safe.
 L-BFGS shares one cost/gradient evaluation per visited point, including its
 initial point and returned result. GD uses L2 gradient tolerance, L-BFGS L∞.
+
+Jacobian aggregates and gradient panel storage use Architectures.zeros_like.
+Tape configuration and solver configuration in the parallel PR are untouched.

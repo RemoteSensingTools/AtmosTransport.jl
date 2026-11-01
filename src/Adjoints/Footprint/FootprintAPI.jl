@@ -224,7 +224,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
     # matters only for the limited schemes, whose reverse replays branches of
     # the base trajectory.
     tape_rm0 = base_panels_rm0 === nothing ?
-        _zero_panel_tuple_like(panels_m0) :
+        zeros_like(ntuple(p -> panels_m0[p], 6)) :
         base_panels_rm0
     return only(_cs_surface_footprints(
         tape_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,

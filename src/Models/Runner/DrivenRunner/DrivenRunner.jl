@@ -65,14 +65,14 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ....Models.Physics: DEFAULT_AIR_MASS_RESET_MODE, _spec_int
+using ....Models.Physics: DEFAULT_AIR_MASS_RESET_MODE
 using ....ConfigChecks: config_bool as _config_bool
 using ....Models.Core: Callback, NaNChecker, WindowInterval
 using ....Models.InitialConditionIO: AbstractInitialConditionSpec, initial_condition_spec
 using Dates: Dates, Date, DateTime, Day, Millisecond, Time, @dateformat_str
 using Printf: @sprintf, @printf
 using Logging
-using ....LogLevels: log_level, with_log_level
+using ....LogLevels: log_level, with_log_level, progress_settings
 using ProgressMeter: Progress, next!, finish!, update!
 
 import ....expand_data_path
@@ -291,7 +291,7 @@ function _run_driven_simulation_inputs(cfg, input_cfg, binary_paths, arch::Abstr
     binary_humidity = [_binary_observation_humidity(item.caps) for item in binary_caps]
     run_cfg = get(cfg, "run", Dict{String, Any}())
     _check_window_range(window_layout;
-                        start_window = Int(get(run_cfg, "start_window", 1)),
+                        start_window = config_int(get(run_cfg, "start_window", 1), "[run].start_window"),
                         stop_window_override = get(run_cfg, "stop_window", nothing))
     # Rolling NVMe input staging (opt-in via [input.staging]; default off ⇒
     # `staged_path_for!` returns the NAS path, bit-identical to today). Created
@@ -411,13 +411,7 @@ end
 function _header_date(driver)
     raw = driver.reader.header.raw_header
     haskey(raw, "date") || return nothing
-    value = raw["date"]
-    try
-        return Date(String(value))
-    catch err
-        err isa ArgumentError || rethrow()
-        throw(ArgumentError("invalid transport-binary `date` header $(repr(value))"))
-    end
+    return config_date(raw["date"], "transport-binary `date` header")
 end
 
 # The forcing day in a binary's file name: the first `YYYYMMDD` or
@@ -510,7 +504,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     FT = _cfg_float_type(cfg)
     assert_float_type!(arch, FT)
     run_cfg = get(cfg, "run", Dict{String, Any}())
-    start_window = Int(get(run_cfg, "start_window", 1))
+    start_window = config_int(get(run_cfg, "start_window", 1), "[run].start_window")
     stop_window_override = get(run_cfg, "stop_window", nothing)
     haskey(run_cfg, "reset_air_mass_each_window") &&
         throw(ArgumentError("run.reset_air_mass_each_window was replaced by " *
@@ -824,7 +818,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     assert_float_type!(arch, FT)
 
     run_cfg = get(cfg, "run", Dict{String, Any}())
-    Int(get(run_cfg, "start_window", 1)) == 1 || throw(ArgumentError(
+    config_int(get(run_cfg, "start_window", 1), "[run].start_window") == 1 || throw(ArgumentError(
         "Cubed-sphere driven runs currently require [run] start_window=1."))
     advection = build_runtime_advection(cfg, CubedSphereRuntimeRecipeStyle())
     Hp = configured_halo_width(cfg, advection)

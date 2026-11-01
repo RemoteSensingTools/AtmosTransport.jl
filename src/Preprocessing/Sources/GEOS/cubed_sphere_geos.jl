@@ -211,7 +211,7 @@ function _process_day_geos_cs_unified(date::Date,
                                       cm_closure::Symbol = :endpoint_balanced,
                                       smooth_iters::Integer = DEFAULT_GEOS_SMOOTHING_SWEEPS,
                                       omega_regularization::OmegaRegularization = OmegaRegularization())
-    _OMEGA_TIMING[] = get(ENV, "ATMOS_OMEGA_TIMING", "0") in ("1", "true", "yes")
+    _OMEGA_TIMING[] = env_flag("ATMOS_OMEGA_TIMING"; true_values = ("1", "true", "yes"), case_sensitive = true)
     Nc     = grid.Nc
     npanel = CS_PANEL_COUNT
     Nz     = vertical.Nz

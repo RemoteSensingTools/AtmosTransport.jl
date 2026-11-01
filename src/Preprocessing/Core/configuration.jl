@@ -19,12 +19,8 @@ function resolve_mass_basis(cfg)
     thermo_dir = expand_data_path(get(get(cfg, "input", Dict()), "thermo_dir", ""))
     include_qv = _config_bool(get(cfg, "output", Dict{String, Any}()),
                               "include_qv", !isempty(thermo_dir), "[output].include_qv")
-    basis_str = lowercase(String(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "dry")))
-    mass_basis = basis_str == "dry" ? :dry : :moist
-
-    if basis_str != "moist" && basis_str != "dry"
-        error("Invalid output.mass_basis='$basis_str' (expected 'moist' or 'dry')")
-    end
+    mass_basis = parse_choice(get(get(cfg, "output", Dict{String, Any}()), "mass_basis", "dry"),
+                              (dry = :dry, moist = :moist), "[output].mass_basis"; allow_symbol = true)
     if mass_basis == :dry && isempty(thermo_dir)
         error("output.mass_basis='dry' requires input.thermo_dir for native qv")
     end
@@ -66,8 +62,7 @@ function resolve_mass_fix_settings(cfg)
     return (
         mass_fix_enable = _config_bool(mass_fix_cfg, "enable", true, "[mass_fix].enable"),
         target_ps_dry_pa = GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
-        qv_global_climatology = Float64(get(mass_fix_cfg, "qv_global_climatology",
-                                            GLOBAL_MEAN_SPECIFIC_HUMIDITY)),
+        qv_global_climatology = config_float(get(mass_fix_cfg, "qv_global_climatology", GLOBAL_MEAN_SPECIFIC_HUMIDITY), "[mass_fix].qv_global_climatology"),
     )
 end
 
@@ -137,7 +132,7 @@ function resolve_preprocessing_cache_settings(cfg)
     spectral_cache_dir = expanduser(String(get(cache_cfg, "spectral_coefficients_dir",
                                                spectral_dir_default)))
     qv_preload = _config_bool(cache_cfg, "qv_preload", true, "[cache].qv_preload")
-    qv_preload_max_gb = Float64(get(cache_cfg, "qv_preload_max_gb", 8.0))
+    qv_preload_max_gb = config_float(get(cache_cfg, "qv_preload_max_gb", 8.0), "[cache].qv_preload_max_gb")
     qv_preload_max_bytes = Int64(floor(qv_preload_max_gb * 1024.0^3))
     return (
         spectral_cache_dir = spectral_cache_dir,
@@ -162,9 +157,8 @@ function resolve_balance_settings(cfg)
     numerics = get(cfg, "numerics", Dict{String, Any}())
     reject_removed_balance_mode(numerics)
     return (
-        cs_balance_tol = Float64(get(numerics, "cs_balance_tol", DEFAULT_POISSON_BALANCE_TOL)),
-        cs_balance_project_every = Int(get(numerics, "cs_balance_project_every",
-                                           DEFAULT_POISSON_PROJECT_EVERY)),
+        cs_balance_tol = config_float(get(numerics, "cs_balance_tol", DEFAULT_POISSON_BALANCE_TOL), "[numerics].cs_balance_tol"),
+        cs_balance_project_every = config_int(get(numerics, "cs_balance_project_every", DEFAULT_POISSON_PROJECT_EVERY), "[numerics].cs_balance_project_every"),
         column_balance_weights = resolve_column_balance_weights(numerics),
     )
 end
@@ -287,8 +281,8 @@ function resolve_runtime_settings(cfg)
     out_dir = expand_data_path(cfg["output"]["directory"])
     thermo_dir, include_qv, mass_basis = resolve_mass_basis(cfg)
 
-    level_top = Int(get(cfg["grid"], "level_top", 1))
-    level_bot = Int(get(cfg["grid"], "level_bot", ERA5_NATIVE_LEVEL_COUNT))
+    level_top = config_int(get(cfg["grid"], "level_top", 1), "[grid].level_top")
+    level_bot = config_int(get(cfg["grid"], "level_bot", ERA5_NATIVE_LEVEL_COUNT), "[grid].level_bot")
     min_dp = Float64(cfg["grid"]["merge_min_thickness_Pa"])
 
     dt = Float64(cfg["numerics"]["dt"])

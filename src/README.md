@@ -161,3 +161,25 @@ Metal extension). Output's snapshot column sums select their device or
 host-slab path with it, as `compensated_total` does.
 
 # shared: _total_accumulator_type
+
+## Depends on
+
+Foundation leaves use standard libraries and Adapt/KernelAbstractions.
+ConfigChecks loads before Architectures and SectionTimer; LogLevels uses ConfigChecks.
+
+## Used by
+
+All later package layers consume the foundation modules through relative imports.
+
+## Forward<->adjoint mirrors
+
+Architectures owns `host_array`, `similar_arrays`, `scale_arrays!`, `zeros_like`
+and `fill_zero!` for both forward and reverse storage. Host Arrays alias;
+CPU views are copied. Zeroing/scaling visits each tuple member in order.
+`copy_arrays!` retains its existing batched launch policy; per-panel `copyto!`
+consumers keep their original launch and synchronization behavior.
+
+ConfigChecks owns strict scalar/date/choice parsing and `env_flag`; each
+environment caller preserves its historical spellings. Choice callers specify
+case sensitivity and Symbol acceptance explicitly. LogLevels owns
+`progress_settings`; reporter types remain in DrivenRunner.

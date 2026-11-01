@@ -39,3 +39,5 @@ source level orientation, endpoint timing, conversions and arithmetic order.
 The surface reader is initialized outside the daily `try` and closed in `finally`, including failed builds. Coverage division, Float64 dry mass and native merged pin sensitivity retain their existing policies.
 
 GRIB levels are canonical top-down; the former single-value `level_orientation` setting is removed. State merges retain extensive mass and moist-dp-weighted thermodynamics; no merged dry-DELP or endpoint accumulator is stored.
+
+ConfigChecks.env_flag preserves ERA5_N320_PROFILE as the exact string "1".

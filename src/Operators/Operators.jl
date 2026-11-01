@@ -12,6 +12,8 @@ Provides:
 """
 module Operators
 
+using ..Architectures: fill_zero!
+
 # Re-export State and Grids into Operators scope for sub-submodules
 using ..SectionTimer
 using ..State

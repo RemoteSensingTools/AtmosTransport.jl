@@ -3,14 +3,31 @@
 
 The `[logging] level` of run and preprocessing configs: parse it and run code
 at that level. `Preprocessing` and `Models` both use it, so this module is
-loaded right after `ConfigChecks`.
+loaded with the foundation modules before its consumers.
 """
 module LogLevels
+
+using ..ConfigChecks: config_int, parse_choice
 
 using Logging
 import Logging: min_enabled_level, shouldlog, handle_message, catch_exceptions
 
-export log_level, with_log_level, LevelFilterLogger
+export log_level, with_log_level, LevelFilterLogger, progress_settings
+
+"""
+    progress_settings(section) -> (kind, interval)
+
+Parse `[logging].progress` and the positive integer interval for line reports.
+Reporter types belong to the runner; this module owns the configuration vocabulary.
+"""
+function progress_settings(section::AbstractDict)
+    kind = parse_choice(get(section, "progress", "bar"),
+                        (bar = :bar, lines = :lines, none = :none), "[logging].progress")
+    interval = kind === :lines ?
+        config_int(get(section, "progress_interval_windows", 24),
+                   "[logging].progress_interval_windows"; min = 1) : nothing
+    return (; kind, interval)
+end
 
 const LOG_LEVELS = Dict("debug" => Logging.Debug, "info" => Logging.Info,
                         "warn" => Logging.Warn, "error" => Logging.Error)

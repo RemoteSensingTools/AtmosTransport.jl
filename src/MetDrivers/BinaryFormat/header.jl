@@ -522,22 +522,15 @@ surface_pressure_basis(h::TransportBinaryHeader) = h.surface_pressure_basis
 grid_type(h::TransportBinaryHeader) = grid_type(h.geometry)
 horizontal_topology(h::TransportBinaryHeader) = horizontal_topology(h.geometry)
 
-function parse_fidelity_status(value)
-    text = lowercase(String(value))
-    text == fidelity_tag(FidelityPassed()) && return FidelityPassed()
-    text == fidelity_tag(FidelityFailed()) && return FidelityFailed()
-    text == fidelity_tag(FidelityNotApplicable()) && return FidelityNotApplicable()
-    text == fidelity_tag(FidelityUnavailable()) && return FidelityUnavailable()
-    throw(ArgumentError("unsupported fidelity status $(repr(text)); expected passed, failed, not_applicable, or unavailable"))
-end
+parse_fidelity_status(value) =
+    parse_choice(value, (passed = FidelityPassed(), failed = FidelityFailed(),
+                        not_applicable = FidelityNotApplicable(), unavailable = FidelityUnavailable()),
+                 "fidelity status"; allow_symbol = true)
 
-function parse_flux_fidelity_kind(value)
-    text = lowercase(String(value))
-    text == fidelity_tag(WindRederivedFidelity()) && return WindRederivedFidelity()
-    text == fidelity_tag(NativePassthroughFidelity()) && return NativePassthroughFidelity()
-    text == fidelity_tag(NoFluxFidelityKind()) && return NoFluxFidelityKind()
-    throw(ArgumentError("unsupported flux_fidelity_kind $(repr(text)); expected wind_rederived, native_passthrough, or none"))
-end
+parse_flux_fidelity_kind(value) =
+    parse_choice(value, (wind_rederived = WindRederivedFidelity(),
+                        native_passthrough = NativePassthroughFidelity(), none = NoFluxFidelityKind()),
+                 "flux_fidelity_kind"; allow_symbol = true)
 
 @inline _optional_float(hdr, key) = haskey(hdr, key) ? Float64(getproperty(hdr, key)) : nothing
 @inline optional_header_int(hdr, key) = haskey(hdr, key) ? Int(getproperty(hdr, key)) : nothing
@@ -938,13 +931,8 @@ end
 function _transport_parse_on_disk_float_type(hdr)
     haskey(hdr, :float_type) ||
         throw(ArgumentError("transport binary header is missing float_type"))
-    ft_str = string(hdr.float_type)
-    if ft_str == "Float64"
-        return :Float64, 8
-    elseif ft_str == "Float32"
-        return :Float32, 4
-    end
-    throw(ArgumentError("unsupported transport binary float_type=$(repr(ft_str)); expected Float32 or Float64"))
+    return parse_choice(string(hdr.float_type), (Float64 = (:Float64, 8), Float32 = (:Float32, 4)),
+                        "transport binary float_type"; case_sensitive = true)
 end
 
 function _transport_parse_mass_basis(hdr)
@@ -956,15 +944,9 @@ end
 @inline transport_surface_pressure_basis_label(::TotalSurfacePressure) = "total"
 @inline transport_surface_pressure_basis_label(::DrySurfacePressure) = "dry"
 
-function _transport_parse_surface_pressure_basis(value)
-    basis = lowercase(String(value))
-    basis == "total" && return TotalSurfacePressure()
-    basis == "dry" && return DrySurfacePressure()
-    throw(ArgumentError(
-        "unsupported transport binary surface_pressure_basis=$(repr(basis)); " *
-        "expected total or dry"))
-end
-
+_transport_parse_surface_pressure_basis(value) =
+    parse_choice(value, (total = TotalSurfacePressure(), dry = DrySurfacePressure()),
+                 "transport binary surface_pressure_basis"; allow_symbol = true)
 
 function _transport_parse_tm5_convection_mass_basis(hdr, payload_sections)
     all(section in payload_sections for section in TM5_CONVECTION_PAYLOAD_SECTIONS) ||
@@ -1160,7 +1142,6 @@ function parse_transport_header(raw_bytes::Vector{UInt8};
         raw_header,
     )
 end
-
 
 function _transport_common_header(grid_type::String,
                                   horizontal_topology::String,

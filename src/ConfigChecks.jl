@@ -5,13 +5,14 @@ Shared helpers for reading TOML configuration tables: strict Boolean, integer,
 real and date values, string choices from a table of options, the
 `[numerics] float_type` parser, and known-key checks that
 suggest the intended key for a misspelled one. `Output`, `Preprocessing` and
-`Models` use them, so this module is loaded right after `Architectures`.
+`Models` use them; architecture selection and timers use them too, so this
+module is loaded before `Architectures` and `SectionTimer`.
 """
 module ConfigChecks
 
 using Dates: Date
 
-export config_bool, config_int, config_float, config_date, parse_choice,
+export config_bool, config_int, config_float, config_date, parse_choice, env_flag,
        parse_float_type, key_suggestion, unknown_key_messages, check_known_keys
 
 """
@@ -72,20 +73,37 @@ function config_date(value, path::AbstractString)
 end
 
 """
-    parse_choice(value, choices::NamedTuple, path)
+    parse_choice(value, choices::NamedTuple, path; case_sensitive=false, allow_symbol=false)
 
 Return the entry of `choices` whose key is the string `value` in lower case,
 e.g. `parse_choice("Daily", (single = A(), daily = B()), "[output].split")`
 returns `B()`. Alias spellings are extra keys with the same value. A value that
 is not a string, or not a key, raises an `ArgumentError` naming `path` and
 listing one spelling per distinct choice (the first key that maps to it).
+`case_sensitive=true` preserves case-sensitive interfaces; `allow_symbol=true`
+also accepts Symbol keys. Both policies are explicit at migrated callers.
 """
-function parse_choice(value, choices::NamedTuple, path::AbstractString)
-    value isa AbstractString ||
-        throw(ArgumentError("$(path) must be a string; got $(repr(value))"))
-    key = Symbol(lowercase(value))
+function parse_choice(value, choices::NamedTuple, path::AbstractString;
+                      case_sensitive::Bool = false, allow_symbol::Bool = false)
+    text = allow_symbol && value isa Symbol ? String(value) : value
+    text isa AbstractString ||
+        throw(ArgumentError("$(path) must be a string$(allow_symbol ? " or Symbol" : ""); got $(repr(value))"))
+    key = Symbol(case_sensitive ? text : lowercase(text))
     haskey(choices, key) && return choices[key]
     throw(ArgumentError("$(path) must be one of $(_choice_spellings(choices)); got $(repr(value))"))
+end
+
+"""
+    env_flag(name; true_values=("1", "true", "on", "yes"), case_sensitive=false)
+
+Read an environment flag at call time; an unset or unrecognized value is false.
+Callers with historical narrower spellings pass their original `true_values`
+and case policy, so consolidation does not enable new runtime paths.
+"""
+function env_flag(name::AbstractString;
+                  true_values = ("1", "true", "on", "yes"), case_sensitive::Bool = false)
+    value = get(ENV, name, "")
+    return (case_sensitive ? value : lowercase(value)) in true_values
 end
 
 # The first key of each distinct value: canonical spellings, without aliases.

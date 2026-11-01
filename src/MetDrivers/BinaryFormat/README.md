@@ -6,7 +6,7 @@ are re-exported by MetDrivers.
 
 ## Depends on
 
-Architectures, AtomicFiles, Parameters, Grids, State, and parent capability
+Architectures, ConfigChecks, AtomicFiles, Parameters, Grids, State, and parent capability
 generics. Reader types and file ownership belong to BinaryReaders.
 
 ## Used by
@@ -90,3 +90,7 @@ The optional v5 `tm5_pbl` group is implemented for LL/RG. The exported
 T/q and ten surface primitives. `validate_tm5_pbl_inputs` checks values and shapes
 for generic writers and the spectral LL writer. The contract rejects partial groups and v4
 use; `TransportWindow.tm5_pbl` and its Adapt rule carry the group to runtime.
+
+ConfigChecks.parse_choice owns fidelity, surface-pressure basis and disk-type
+choice parsing. Disk types remain case sensitive; other tags preserve their
+previous case-insensitive String/Symbol policy. Header layout is unchanged.

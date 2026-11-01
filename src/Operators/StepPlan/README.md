@@ -100,7 +100,7 @@ Convection owns its workspace snapshot methods in `../Convection/workspace_state
 
 ## Depends on
 
-Architectures, Grids, State, SectionTimer and earlier Operators modules:
+Architectures, ConfigChecks, Grids, State, SectionTimer and earlier Operators modules:
 Advection supplies the hook interface and sweeps; Diffusion and SurfaceFlux
 supply the concrete midpoint operators.
 
@@ -119,3 +119,7 @@ factory listed above is shared by production and replay.
 Driven stepping and replay call the same clock/dt functions and execute the
 same stages. Recorder hooks preserve operator order; checkpoint restoration
 preserves persistent operator state.
+
+ConfigChecks owns cadence/reset choice parsing; case-sensitive String/Symbol
+inputs and `nothing` defaults are preserved. Persistent-state zeroing delegates
+to Architectures.fill_zero! through the Operators checkpoint interface.
