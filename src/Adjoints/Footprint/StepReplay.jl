@@ -362,6 +362,15 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
 
     start_targets = schedule.window_start_air_mass
     end_targets = schedule.window_end_air_mass
+    for targets in (start_targets, end_targets)
+        targets === nothing && continue
+        for panels in targets
+            panels isa NTuple{6, AbstractArray} || throw(ArgumentError("air-mass reset targets require six panels"))
+            all(p -> size(panels[p]) == size(panels_m0[p]) &&
+                eltype(panels[p]) === eltype(panels_m0[p]), 1:6) ||
+                throw(ArgumentError("air-mass reset targets must match the initial air-mass panel shapes and element types"))
+        end
+    end
     meteo = _CSReplayMeteo(schedule.start_time, schedule.binary_substeps, diffusion_meteo,
                            _first_target(start_targets), _first_target(end_targets))
     return _CSReplay(schedule.plan, steps, state, grid, mesh, fluxes, scheme, advection_ws,

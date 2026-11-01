@@ -104,6 +104,7 @@ mutable struct _CSCountingRecorder{C <: AbstractTapeContent, L} <: _AbstractCSRe
     convection_m       :: Any
     diffusion_workspace :: Any
     slot_bytes_through_step :: Vector{Int}    # `slot_bytes` at the end of each counted step
+    layouts::Vector{Vector{Any}}
     pending_slot_bytes      :: Vector{Int}    # bytes a recording ending after the step adds (`_finish_recording!`)
 end
 
@@ -114,7 +115,7 @@ Counts what a `_CSTapeRecorder(content, pool, scheme)` stages, step by step.
 """
 _CSCountingRecorder(content::AbstractTapeContent, scheme) =
     _CSCountingRecorder(content, cs_advection_style(scheme), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0.0, nothing, false, false, 0, nothing, nothing, Int[], Int[])
+                        0.0, nothing, false, false, 0, nothing, nothing, Int[], Vector{Any}[], Int[])
 
 # ---------------------------------------------------------------------------
 # What staging and recording do
@@ -125,7 +126,8 @@ _sync!(::_CSCountingRecorder, _panels) = nothing
 
 _stage!(r::_CSTapeRecorder, panels) = _stage_panels(r.storage, panels)
 _stage!(r::_CSCountingRecorder, panels) =
-    (_count_state!(r, _bytes_per_panel_tuple(panels), _tape_slot_bytes(panels)); nothing)
+    (_count_layout!(r, panels, eltype(first(panels)));
+     _count_state!(r, _bytes_per_panel_tuple(panels), _tape_slot_bytes(panels)); nothing)
 
 function _count_state!(r::_CSCountingRecorder, bytes::Integer, slot_bytes::Integer)
     r.state += 1
@@ -150,9 +152,12 @@ function _stage_codes!(r::_CSTapeRecorder{C, S}, direction::Symbol, scheme, pane
                            r.storage, panels_m, UInt8)
 end
 _stage_codes!(r::_CSCountingRecorder, _direction, _scheme, panels_m, _panels_rm) =
-    (_count_state!(r, _bytes_per_panel_tuple(UInt8, panels_m), _tape_slot_bytes(UInt8, panels_m)); nothing)
+    (_count_layout!(r, panels_m, UInt8);
+     _count_state!(r, _bytes_per_panel_tuple(UInt8, panels_m), _tape_slot_bytes(UInt8, panels_m)); nothing)
 
 function _codes_scratch!(r::_CSTapeRecorder, panels_m)
+    shared = _tape_code_scratch!(r.storage, panels_m)
+    shared === nothing || return shared
     scratch = r.codes_scratch
     scratch isa NTuple{6} && all(p -> size(scratch[p]) == size(panels_m[p]), 1:6) && return scratch
     scratch === nothing || _free_tape_panels!(scratch)
@@ -380,6 +385,8 @@ end
 # fy_in and the interior face fluxes am, bm), outside the pool: they count
 # toward `state_bytes`, not toward the slot bytes an mmap tape reserves.
 function record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:start}, panels_rm, panels_m)
+    _count_layout!(r, panels_rm; pooled = false)
+    _count_layout!(r, panels_m; pooled = false)
     r.linrood += 1
     bytes = _bytes_per_panel_tuple(panels_m)
     r.state += 2
@@ -387,12 +394,25 @@ function record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:start}, panel
     return nothing
 end
 record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:phase2}, q_buf) =
-    (r.state += 1; r.state_bytes += _bytes_of(Tuple(q_buf)); nothing)
+    (_count_layout!(r, Tuple(q_buf); pooled = false);
+     r.state += 1; r.state_bytes += _bytes_of(Tuple(q_buf)); nothing)
 record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:phase3}, q_buf) =
-    (r.state += 1; r.state_bytes += _bytes_of(Tuple(q_buf)); nothing)
+    (_count_layout!(r, Tuple(q_buf); pooled = false);
+     r.state += 1; r.state_bytes += _bytes_of(Tuple(q_buf)); nothing)
 record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:faces}, fx_in, fy_in) =
-    (r.state_bytes += _bytes_of(Tuple(fx_in)) + _bytes_of(Tuple(fy_in)); nothing)
+    (_count_layout!(r, Tuple(fx_in); pooled = false); _count_layout!(r, Tuple(fy_in); pooled = false);
+     r.state_bytes += _bytes_of(Tuple(fx_in)) + _bytes_of(Tuple(fy_in)); nothing)
 record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:finish}, fx_out, am, bm, ::Val) =
-    (r.state_bytes += _bytes_of(Tuple(fx_out)) + _bytes_of(Tuple(am)) + _bytes_of(Tuple(bm)); nothing)
+    (_count_layout!(r, Tuple(fx_out); pooled = false); _count_layout!(r, Tuple(am); pooled = false);
+     _count_layout!(r, Tuple(bm); pooled = false);
+     r.state_bytes += _bytes_of(Tuple(fx_out)) + _bytes_of(Tuple(am)) + _bytes_of(Tuple(bm)); nothing)
 
 _bytes_of(panels) = sum(p -> sizeof(eltype(p)) * length(p), panels)
+
+function _count_layout!(r::_CSCountingRecorder, panels, T = eltype(first(panels)); pooled::Bool = true)
+    while length(r.layouts) < r.current_step
+        push!(r.layouts, Any[])
+    end
+    push!(r.layouts[r.current_step], (panels, T, pooled))
+    return nothing
+end

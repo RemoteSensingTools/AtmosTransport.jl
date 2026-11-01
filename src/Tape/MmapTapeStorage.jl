@@ -41,7 +41,8 @@ forward run with `FullCheckpoint`; the checkpoint propagation pass with
 `StrideCheckpoint`; a `cs_surface_flux_4dvar_optimize` call counts once for
 all its evaluations). It then checks that `dir` has that many bytes plus 10 %
 free, and reserves them with `fallocate` in one anonymous (unlinked) file
-before recording; later tapes of the call reuse the file. Too little space is an `ArgumentError`
+before recording; later tapes of the call reuse the file. Too little space is a
+`TapeReservationError`
 naming the required and available bytes, raised after the sizing pass and
 before the tape is recorded. A file system that cannot reserve blocks for
 in-place writes (no `fallocate`, e.g. some NFS mounts, or ZFS) is an
@@ -92,9 +93,9 @@ end
 
 Create an anonymous scratch file of `capacity` bytes in `dir`: check the file
 system and its free space, create and unlink the file, reserve the extent and
-map it. Throws an `ArgumentError` with the required and available bytes when
-the file system cannot hold it, and one naming the file system when it cannot
-reserve blocks. `_release_tape_pool!` unmaps and closes it (without it, the
+map it. Throws a `TapeReservationError` with the required and available bytes
+when the file system cannot hold it, or an `ArgumentError` naming an
+unsupported file system. `_release_tape_pool!` unmaps and closes it (without it, the
 GC does).
 """
 function _MmapTapeFile(dir::AbstractString, capacity::Integer)
@@ -131,7 +132,7 @@ function _map_tape_extent(io::IOStream, capacity::Int64, dir)
                 C_NULL, capacity, _PROT_READ_WRITE, _MAP_SHARED, fd(io), 0)
     # Read errno before anything else can allocate (and a GC overwrite it).
     err = ptr == _MAP_FAILED ? Libc.errno() : 0
-    err == 0 || throw(ArgumentError(
+    err == 0 || throw(TapeReservationError(Int(capacity), 0,
         "MmapCSTapeStorage: could not map $(_format_tape_bytes(capacity)) of the tape in " *
         "$(repr(dir)): $(Libc.strerror(err))"))
     return Ptr{UInt8}(ptr)
@@ -189,7 +190,7 @@ function _check_tape_free_space(dir, capacity::Int64)
             available = Int64(diskstat(dir).available)
         end
     end
-    available >= required || throw(ArgumentError(
+    available >= required || throw(TapeReservationError(Int(capacity), Int(available),
         "MmapCSTapeStorage: the adjoint tape needs $(_format_tape_bytes(capacity)) " *
         "plus $(round(Int, 100 * _MMAP_TAPE_HEADROOM)) % headroom, " *
         "$(_format_tape_bytes(required)) in total, in $(repr(dir)), but only " *
@@ -213,6 +214,8 @@ function _reserve_tape_extent!(io::IOStream, capacity::Int64, dir)
                 "MmapCSTapeStorage: $(repr(dir)) is on $(fstype), which cannot reserve " *
                 "space (fallocate: $(Libc.strerror(err))); choose a scratch directory on " *
                 "a local file system such as ext4 or XFS"))
+            err in (Libc.ENOMEM, Libc.ENOSPC) && throw(TapeReservationError(Int(capacity),
+                Int(diskstat(dir).available), "mmap extent allocation: $(Libc.strerror(err))"))
             throw(ArgumentError(
                 "MmapCSTapeStorage: could not reserve $(_format_tape_bytes(capacity)) in " *
                 "$(repr(dir)) ($(fstype), $(_format_tape_bytes(Int64(diskstat(dir).available))) " *
@@ -258,8 +261,6 @@ function _zero_fill_tape_extent!(io::IOStream, capacity::Int64, dir)
     return io
 end
 
-_needs_tape_size(::MmapCSTapeStorage) = true
-
 _open_tape_pool(storage::MmapCSTapeStorage, nbytes::Integer) = _MmapTapeFile(storage.dir, nbytes)
 
 # A rewound file holds any tape up to its reservation; a larger one needs a
@@ -289,10 +290,7 @@ end
 # The base offset of `nbytes` more bytes of the reserved extent.
 function _bump_cursor!(file::_MmapTapeFile, nbytes::Int64)
     base = file.cursor
-    base + nbytes <= file.capacity || error(
-        "the mmap adjoint tape in $(repr(file.dir)) needs more than its reserved " *
-        "$(_format_tape_bytes(file.capacity)): the tape byte count of the reverse-pass " *
-        "driver disagrees with the recorder")
+    base + nbytes <= file.capacity || throw(TapeReservationExceeded(file.capacity, base + nbytes))
     file.cursor = base + nbytes
     return base
 end

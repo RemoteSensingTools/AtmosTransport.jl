@@ -55,4 +55,5 @@ L-BFGS shares one cost/gradient evaluation per visited point, including its
 initial point and returned result. GD uses L2 gradient tolerance, L-BFGS L∞.
 
 Jacobian aggregates and gradient panel storage use Architectures.zeros_like.
-Tape configuration and solver configuration in the parallel PR are untouched.
+
+Tape selection and reservation are described in the [Inversion README](../README.md).

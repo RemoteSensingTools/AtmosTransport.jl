@@ -542,7 +542,7 @@ end
         out, mout = map(copy, rm), map(copy, m)
         ws = Adv.CSLinRoodAdvectionWorkspace(mesh, m[1])
         recorder = Adj.Footprint._CSTapeRecorder(AtmosTransport.StateTape(),
-            AtmosTransport.Tape._open_tape_pool(AtmosTransport.DeviceCSTapeStorage(), 0),
+            AtmosTransport.Tape._reserve_tape_pool(AtmosTransport.DeviceCSTapeStorage(), Any[]),
             AtmosTransport.LinRoodPPMScheme(ord))
         Adv.fv_tp_2d_cs!(out, mout, inner_am, inner_bm, mesh, Val(ord), ws.cs, ws.linrood;
                          recorder)

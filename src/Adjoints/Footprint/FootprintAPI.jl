@@ -107,15 +107,16 @@ starts) and the diffusion workspaces' `factors` as scratch; do not pass a live
 production model's workspaces. `cs_adjoint_inputs(sim)` captures every input
 of a `DrivenSimulation` configuration, with fresh workspaces.
 
-`tape` is an [`AdjointTape`](@ref): where the staged states live
-(`storage`: `DeviceCSTapeStorage()`, the default; `PinnedHostCSTapeStorage()`;
-or `MmapCSTapeStorage(dir)`, a scratch file in `dir`, sized and reserved
-before the tape is recorded) and how much of the run is taped at once
-(`checkpoint`: `FullCheckpoint()`, the default, or `StrideCheckpoint(K)`,
-which trades one extra forward run for a tape of `K` steps). Every storage
-works with every schedule. The call opens the tape's memory, reuses it for
-every stride window and frees it (unmaps and closes an mmap file) when it
-returns. The Lin–Rood tape is device-only.
+`tape` defaults to [`AutoTape`](@ref), which resolves and reserves a concrete
+[`AdjointTape`](@ref) from the schedule, memory budgets and supplied
+constraints before recording. An explicit `AdjointTape` fixes the content,
+storage and checkpoint schedule and is reserved without replacement.
+`TapeReservationError` means no reservation fits; `TapeReservationExceeded`
+means recording outgrew the reservation. Stride may retain a `resident_tail`
+recorded by the forward run and use pinned host `snapshots` for the head.
+The call reuses its pools and frees them when it returns. The Lin–Rood tape
+is device-only; its horizontal records remain outside the pools and are
+sized by counting.
 """
 function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        panels_am_steps,
@@ -135,7 +136,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        convection_op = NoConvection(),
                                        convection_forcing = nothing,
                                        convection_workspace = nothing,
-                                       tape::AdjointTape = AdjointTape())
+                                       tape::Union{AdjointTape, AutoTape} = AutoTape())
     return only(_cs_objective_footprints(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, (objective,);
@@ -167,7 +168,7 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   convection_op = NoConvection(),
                                   convection_forcing = nothing,
                                   convection_workspace = nothing,
-                                  tape::AdjointTape = AdjointTape())
+                                  tape::Union{AdjointTape, AutoTape} = AutoTape())
     Nz = size(panels_rm0[1], 3)
     starts = [_ObjectiveStart(objective) for objective in objectives]
     foreach(start -> _validate_start(start, mesh, Nz), starts)
@@ -197,7 +198,7 @@ operator and the result holds the emission footprints. `surface_flux = false`
 replays a configuration without surface sources (palindrome center `V(dt)`):
 the result's `footprints` are empty and `initial_adjoint` is the
 initial-condition sensitivity `dJ/drm_0`, which every result also carries.
-`tape` is an [`AdjointTape`](@ref), as for `cs_surface_emission_footprint`.
+`tape` defaults to [`AutoTape`](@ref), as for `cs_surface_emission_footprint`.
 """
 function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  panels_m0,
@@ -219,7 +220,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  convection_op = NoConvection(),
                                                  convection_forcing = nothing,
                                                  convection_workspace = nothing,
-                                                 tape::AdjointTape = AdjointTape())
+                                                 tape::Union{AdjointTape, AutoTape} = AutoTape())
     # The tape is recorded around `base_panels_rm0`, zero when unspecified; it
     # matters only for the limited schemes, whose reverse replays branches of
     # the base trajectory.
@@ -263,7 +264,7 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 mesh::CubedSphereMesh,
                                 starts::AbstractVector;
                                 scheme::CSAdjointSupportedScheme,
-                                tape::AdjointTape,
+                                tape::Union{AdjointTape, AutoTape},
                                 dt = nothing,
                                 schedule = nothing,
                                 surface_flux::Bool = true,

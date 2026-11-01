@@ -48,7 +48,11 @@ else
             @test map(Array, _interior(ADJ.Footprint._replay_rm(forward))) == expected
             recorded = replay()
             tape = ADJ.Footprint._record_cs_tape!(recorded, 1:sum(c.steps), AT.StateTape(),
-                                                  AT.Tape._open_tape_pool(AT.DeviceCSTapeStorage(), 0))
+                                                  begin
+                                                      runtime = ADJ.Footprint._TapeRuntime(AT.AdjointTape())
+                                                      ADJ.Footprint._prepare_tape!(runtime, recorded, sum(c.steps))
+                                                      runtime.pool
+                                                  end)
             @test map(Array, _interior(ADJ.Footprint._replay_rm(recorded))) == expected
             resets = filter(op -> op isa AT.Tape._CSAirMassResetRecord, tape)
             @test length(resets) == 3 # two window ends and one window advance

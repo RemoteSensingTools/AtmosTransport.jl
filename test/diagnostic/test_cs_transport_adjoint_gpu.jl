@@ -141,7 +141,7 @@ else
         T = AT.Tape
         ext = Base.get_extension(AT, :AtmosTransportCUDAExt)
         panels = ntuple(p -> CUDA.CuArray(fill(Float32(p), 12, 12, 4)), 6)
-        arena = T._open_tape_pool(AT.PinnedHostCSTapeStorage(), 0)
+        arena = T._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), fill((panels, eltype(first(panels))), 4))
         slots = [T._stage_panels(arena, panels) for _ in 1:4]
         @test length(arena.chunks) == 1
         @test arena.chunks[1].registration isa ext._CUDAHostRegistration

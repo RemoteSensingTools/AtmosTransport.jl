@@ -18,7 +18,7 @@ contains no transport physics and no reverse-loop logic; recording lives in
 
 - `Tape` is a real submodule. [`../AtmosTransport.jl`](../AtmosTransport.jl)
   includes `Tape/Tape.jl` and then `Adjoints/Adjoints.jl`, so `Tape` loads
-  first. It imports nothing from other AtmosTransport modules and no package
+  first. It imports nothing from other AtmosTransport modules and uses KernelAbstractions for backend dispatch
   (the mmap tier calls POSIX `mmap`, `munmap` and `fallocate`, the pinned-host
   arena `malloc` and `free`, directly).
 - [`../Adjoints/Adjoints.jl`](../Adjoints/Adjoints.jl) pulls the names in with
@@ -31,6 +31,12 @@ contains no transport physics and no reverse-loop logic; recording lives in
 
 ## Entry Points
 
+- `AutoTape(; storage, checkpoint, content, budget_bytes, scratch_dir)`
+  in [`AdjointTape.jl`](AdjointTape.jl): the default request for every
+  reverse-pass entry point. Fields constrain selection; Footprint resolves
+  and reserves a concrete tape once per runtime, and logs one pick. Typed
+  failures are `TapeReservationError` (nothing could be reserved) and
+  `TapeReservationExceeded` (recording outgrew a reservation).
 - `AdjointTape(; content, storage, checkpoint)` in
   [`AdjointTape.jl`](AdjointTape.jl): the `tape` keyword of every reverse-pass
   entry point (`cs_surface_emission_footprint`, `..._from_seed`,
@@ -47,16 +53,16 @@ contains no transport physics and no reverse-loop logic; recording lives in
     `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)` (a scratch
     directory, required: no default, never `/tmp` implicitly);
   - checkpoint (`AbstractCheckpointSchedule`, [`CheckpointSchedule.jl`](CheckpointSchedule.jl)):
-    `FullCheckpoint()` (default), `StrideCheckpoint(K)`, plus
+    `FullCheckpoint()` (default), `StrideCheckpoint(K; resident_tail = 0,
+    snapshots = DeviceCSTapeStorage())`, plus
     `checkpoint_window_count` and `checkpoint_window_range`.
 - Runtime pools (one per reverse-pass call, or per
   `cs_surface_flux_4dvar_optimize` call for all its evaluations; the
   Footprint drivers own them):
-  - `_open_tape_pool(storage, nbytes)`: `_DeviceSlabPool` (device arrays),
+  - `_reserve_tape_pool(storage, layout)`: `_DeviceSlabPool` (device arrays),
     `_PinnedHostArena` (host chunks, [`HostTapeArena.jl`](HostTapeArena.jl)),
     `_MmapTapeFile` (one reserved, mapped scratch file of `nbytes`,
-    [`MmapTapeStorage.jl`](MmapTapeStorage.jl)); `_needs_tape_size(storage)`
-    says whether the driver must count `nbytes` first (mmap only);
+    [`MmapTapeStorage.jl`](MmapTapeStorage.jl)); the resolver sizes and reserves every pool before recording;
   - `_rewind_tape_pool!(pool)` before each further tape (a stride window, a
     later 4D-Var evaluation): the next slots reuse the pool's memory, and the
     previous tape's slots become stale; `_holds_tape_bytes(pool, nbytes)` says
@@ -101,8 +107,7 @@ contains no transport physics and no reverse-loop logic; recording lives in
   pools' slots (`HostCSTapeSlot`, 64-byte aligned views, `_tape_slot_bytes`)
   and their role- and shape-keyed read caches, `_bytes_per_panel_tuple`
 - [`HostTapeArena.jl`](HostTapeArena.jl) — `_PinnedHostArena`, the pool of
-  `PinnedHostCSTapeStorage`: chunks of `malloc`ed host memory (64 MiB doubling
-  to 1 GiB), each registered with the backend once and reused across rewinds
+  `PinnedHostCSTapeStorage`: chunks of `malloc`ed host memory reserved before recording, each registered with the backend once and reused across rewinds
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
   recorder
 - [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — `MmapCSTapeStorage(dir)` and
@@ -111,7 +116,11 @@ contains no transport physics and no reverse-loop logic; recording lives in
   release)
 - [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
   stride window arithmetic
-- [`AdjointTape.jl`](AdjointTape.jl) — `AbstractTapeContent`,
+- [`TapeReservation.jl`](TapeReservation.jl) — host/cgroup headroom,
+  backend memory-query hooks, layout keys and exact-size pool reservations
+  (device slab banks, pinned arena chunks, reserved mmap extents)
+- [`AdjointTape.jl`](AdjointTape.jl) — `AutoTape`, typed reservation errors,
+  `AbstractTapeContent`,
   `StateTape`, `AirMassTape`, `AdjointTape` (rejects `AirMassTape` with
   `StrideCheckpoint`)
 
@@ -119,11 +128,10 @@ contains no transport physics and no reverse-loop logic; recording lives in
 
 - Adding a storage: subtype `AbstractCSTapeStorage` (or
   `AbstractHostCSTapeStorage` if reads copy into device caches) with an
-  immutable descriptor, implement `_open_tape_pool(storage, nbytes)` returning
+  immutable descriptor, implement `_reserve_tape_pool(storage, layout)` returning
   a pool with `generation` and `released` fields, and for the pool
   `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`,
-  `_rewind_tape_pool!` and `_release_tape_pool!` (plus `_needs_tape_size` and
-  `_holds_tape_bytes` if it reserves its size up front).
+  `_rewind_tape_pool!` and `_release_tape_pool!` (plus `_holds_tape_bytes` for a fixed-size reservation).
 - Adding a tape content: subtype `AbstractTapeContent`; the recorders
   (`../Adjoints/Footprint/TapeRecorder.jl`) and the Full driver
   (`_begin_full_run`, `../Adjoints/Footprint/StrideCheckpoint.jl`) dispatch on
@@ -168,8 +176,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
   file checks `diskstat(dir).available` against them plus 10 % (re-measuring
   for up to 5 s after a GC when short, since XFS frees an earlier tape's
   unlinked blocks lazily) and reserves them with `fallocate` (retried on
-  EINTR) before the first record (zero fill off Linux). A full disk is an
-  `ArgumentError` with the required and available bytes; a file system that
+  EINTR) before the first record (zero fill off Linux). A full disk is a
+  `TapeReservationError` with the required and available bytes; a file system that
   cannot reserve blocks for in-place writes (no `fallocate`, ZFS) is an
   `ArgumentError` naming it. Growth past the reservation is an error (a
   counting bug), never a sparse extension. With the extent reserved on ext4 or
@@ -188,8 +196,7 @@ contains no transport physics and no reverse-loop logic; recording lives in
   cache. Chunks are reused in order after a rewind. On release the backend is
   synchronized first, then each chunk leaves the arena and is unregistered and
   freed (also on an error or interrupt part-way, never twice; an arena dropped
-  without release is released by its finalizer). A chunk too small for a slot
-  is replaced after its successor is allocated.
+  without release is released by its finalizer). Recording beyond the reservation raises `TapeReservationExceeded`.
 - One reverse-pass call records all its tapes into one pool: Stride windows
   rewind it. Tapes are not persisted (nothing in `src/` or `scripts/` read a
   saved tape back).
@@ -243,8 +250,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
 
 ## Depends on
 
-No packages (POSIX `mmap`, `munmap`, `fallocate`, `malloc` and `free`
-through `ccall`). Tape contains storage and records; it imports no adjoint or
+KernelAbstractions for backend dispatch; POSIX `mmap`, `munmap`, `fallocate`, `malloc` and `free`
+through `ccall`. Tape contains storage and records; it imports no adjoint or
 inversion implementation.
 
 ## Used by
@@ -266,3 +273,13 @@ read cannot overwrite the other operand of a limited-sweep transpose.
 The pinned-host arena and the mmap file share the host slot type, its read
 caches and the synchronous copy hooks in TapeStorage.jl; the GPU extensions
 add only the backend hooks (free, synchronize, pin a chunk).
+
+The runtime reserves the selected pools before recording. Rewinds cannot grow a
+reserved device bank or pinned arena; mmap already reserves its extent.
+Host chunks check current host/cgroup headroom before allocation. Backend
+queries reclaim cached CUDA/AMDGPU memory first; an unknown backend raises a
+typed error. Host slots use `HostCSTapeSlot{P,A}`; tapes are not persisted.
+
+# shared: _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_bytes, _layout_pooled, _device_tape_memory, _tape_device_margin, _host_tape_budget, _check_tape_schedule, StrideSearch, _host_tape_memory, _is_reservation_failure
+
+Automatic selection tries device Full, device Stride with device snapshots, device Stride with pinned-host snapshots, then mmap candidates only when `scratch_dir` is set; a resident tail uses the tape’s selected storage.
