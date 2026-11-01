@@ -14,22 +14,28 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
   `cs_adjoint_inputs` shares them) share one flux state, so `flux_scale ≠ 1`
   scales each set once.
 - `ReplaySupport.jl`: replay-specific extension of `require_adjoint_support`.
-- `TapeRecorder.jl`: production recorder hooks (staging the tape's content
-  into the call's pool) and counting recorder (also the per-step byte count
-  an mmap tape reserves before recording).
-- `TapeRecording.jl`: sweep records by tape content and scheme, recording and
+- `TapeRecorder.jl`: the recorder hooks, shared by the tape recorder
+  (staging into the call's pool) and the counting recorder (the per-step
+  byte count an mmap tape reserves before recording, and
+  `cs_tape_byte_estimate`): what each record stages, which records share a
+  slot (split sweeps: the palindrome center and the next Z sweep; a
+  convection record and the next air mass with its interior), the limiter
+  codes of limited PPM sweeps.
+- `TapeRecording.jl`: recording a range of steps (`_record_cs_tape!`) and
   `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
 - `TapeRuntime.jl`: the runtime of an `AdjointTape` for one call or one
   optimization (`_TapeRuntime`, `_with_tape_runtime`): its pool, opened
   once, rewound for each further tape and released explicitly; the counted
-  mmap bytes (once per runtime); explicit release of checkpoints and Lin–Rood
-  records.
+  mmap bytes (once per runtime); the `AirMassTape` recording it holds and
+  its identity (`_TapeIdentity`, `_held_air_mass_tape`); explicit release of
+  checkpoints and Lin–Rood records.
 - `StrideCheckpoint.jl`: Full/Stride drivers in four phases on one replay
   (`_begin_taped_run`, the forward run `_run_forward!`, `_reverse_taped_run`,
-  `_end_taped_run!`), the 4D-Var's zero-start forced reverse
+  `_end_taped_run!`; Full records, or with `AirMassTape` reuses the tape its
+  runtime holds), the 4D-Var's zero-start forced reverse
   (`_forced_reverse`), and the tape checks made before the forward run
-  (`_require_tape_supported`).
+  (`_require_tape_supported`: Lin–Rood storage, `AirMassTape` legality).
 - `FootprintAPI.jl`: footprint and seeded-footprint entry points.
 
 ## Depends on
@@ -60,8 +66,25 @@ listed below.
 Replay executes production StepPlan stages with production operators and
 recorder hooks. Checkpoints save tracer/air-mass halos and persistent operator
 state (emission Kahan compensation, convection/diffusion carries and caches).
-Each sweep stores its entering air mass and, for limited schemes, tracer mass.
-The reverse reads them with separate Tape roles. Every step ends with a
+Each sweep stores its entering air mass and, for limited PPM, the limiter
+branch code of every cell (computed by `record_ppm_limiter_codes!` from the
+entering state; the FV3-profile sweeps of Lin–Rood store the tracer mass).
+The reverse reads them with separate Tape roles. The center's air mass and a
+convection call's are not staged again: their records share the slot of the
+sweep (or `:preserve_vmr` reset) that stages the same air mass, and a
+recording stages a convection air mass still waiting for a slot at its end
+(`_finish_recording!`). With `AirMassTape` (linear schemes) the first forward
+run of a runtime records the tape and later ones reuse it after comparing
+their identity (grid, taped steps, windows, scheme and operators, met
+checksums) and the pool generation with the recording's. Checksums weight bit
+patterns by cell position; device reductions feed one result vector, copied
+to the host once per evaluation (reset targets cover interiors only). Holding
+a tape also rejects tracer payloads in sweep or Lin–Rood horizontal records.
+Device code slots use air-mass shapes directly; only host staging needs code
+scratch, freed even if recording throws. With `flux_scale ≠ 1`, a held tape
+retains the first evaluation's scaled flux copies; later evaluations also
+allocate their own copies, so peak scaled-flux memory is twice one set.
+Every step ends with a
 forcing marker; one emission record per step stores the surface footprint.
 Full and Stride give the same gradients bit for bit on one CPU thread
 (`test/core/test_cs_adjoint_tape_bitwise.jl`). Each call opens one tape pool

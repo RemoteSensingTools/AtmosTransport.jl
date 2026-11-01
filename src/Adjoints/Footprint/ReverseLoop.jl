@@ -99,19 +99,7 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
         if op isa _CSStepEndRecord
             _inject_step_forcing!(lambda_panels, forcing, op.step, mesh)
         elseif op isa _CSSweepRecord
-            # A record's air mass and tracer mass are read with different
-            # roles: host-side tape storage returns one device cache per
-            # role, so the kernel never gets `m === rm` (issue #57).
-            if op.panels_rm === nothing
-                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
-                                       op.panels_flux, op.direction, op.scheme,
-                                       mesh, ws, op.flux_scale)
-            else
-                _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
-                                       _tape_panels(op.panels_rm, TracerMassRead()),
-                                       op.panels_flux, op.direction, op.scheme, mesh, ws,
-                                       op.flux_scale)
-            end
+            _reverse_sweep!(lambda_panels, op, mesh, ws)
         elseif op isa _CSHaloRecord
             _adjoint_fill_panel_halos!(lambda_panels, mesh; dir=op.dir)
         elseif op isa _CSMidpointRecord
@@ -146,6 +134,21 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
     synchronize(get_backend(lambda_panels[1]))
     return nothing
 end
+
+# Reverse of a sweep record. Its air mass and its tracer part (the limiter
+# codes of a limited PPM sweep, the tracer mass of an FV3-profile sweep) are
+# read with different roles: host-side tape storage returns one device cache
+# per role, so the kernel never gets one buffer for both operands (issue #57).
+_reverse_sweep!(lambda_panels, op::_CSSweepRecord{<:Any, <:Any, Nothing}, mesh::CubedSphereMesh, ws) =
+    _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
+                           op.panels_flux, op.direction, op.scheme, mesh, ws, op.flux_scale)
+_reverse_sweep!(lambda_panels, op::_CSSweepRecord, mesh::CubedSphereMesh, ws) =
+    _adjoint_scheme_sweep!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
+                           _tape_panels(op.panels_tracer, _tracer_read_role(op.scheme)),
+                           op.panels_flux, op.direction, op.scheme, mesh, ws, op.flux_scale)
+
+_tracer_read_role(::CSAdjointNonlinearScheme) = LimiterCodeRead()
+_tracer_read_role(::CSAdjointFV3Vertical) = TracerMassRead()
 
 # The clock a diffusion record was taken at, for `update_field!` of the
 # operator's Kz field in the reverse solve.

@@ -125,7 +125,9 @@
 #
 #     [adjoint.tape]              # optional: the gradient's tape (`AdjointTape`), shared
 #                                 # by every evaluation of the optimization
-#     content = "full_state"      # what each record stages (the only content today)
+#     content = "state"           # state (default): every evaluation records its tape |
+#                                 # air_mass: recorded once and reused by every evaluation
+#                                 # (upwind, slopes and unlimited PPM only; full checkpointing)
 #     storage = "device"          # device (default) | pinned_host | mmap (any letter case)
 #     scratch_dir = "/scratch/tape"   # mmap only, and required there: a directory on a
 #                                     # local file system (ext4, XFS) with room for the tape
@@ -168,7 +170,7 @@ const _OBSERVATION_PLACEMENT_KEYS = (AT.Observations.VERTICAL_PLACEMENT_KEYS...,
 # constructor of its value given the table; and the keys a choice reads beyond
 # its axis key (required with that choice, rejected with any other).
 const _TAPE_LABEL = "[adjoint.tape]"
-const _TAPE_CONTENTS = (full_state = _ -> AT.FullStateTape(),)
+const _TAPE_CONTENTS = (state = _ -> AT.StateTape(), air_mass = _ -> AT.AirMassTape())
 const _TAPE_STORAGES = (device = _ -> AT.DeviceCSTapeStorage(),
                         pinned_host = _ -> AT.PinnedHostCSTapeStorage(),
                         mmap = t -> AT.MmapCSTapeStorage(AT.expand_data_path(_tape_scratch_dir(t))))
@@ -367,7 +369,7 @@ function _adjoint_tape(cfg)
     tape = get(get(cfg, "adjoint", Dict{String, Any}()), "tape", Dict{String, Any}())
     tape isa AbstractDict || throw(ArgumentError("$(_TAPE_LABEL) must be a TOML table"))
     AT.ConfigChecks.check_known_keys(tape, _ADJOINT_TAPE_KEYS, _TAPE_LABEL)
-    return AT.AdjointTape(; content = _tape_choice(tape, "content", _TAPE_CONTENTS, "full_state"),
+    return AT.AdjointTape(; content = _tape_choice(tape, "content", _TAPE_CONTENTS, "state"),
                           storage = _tape_choice(tape, "storage", _TAPE_STORAGES, "device"),
                           checkpoint = _tape_choice(tape, "checkpointing", _TAPE_CHECKPOINTS, "full"))
 end

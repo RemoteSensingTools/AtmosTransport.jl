@@ -31,32 +31,34 @@ function _cache_cs_seam_seeds!(seeds, lambda::NTuple{6}, mesh::CubedSphereMesh,
     return nothing
 end
 
-Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{1})
-    if rm === nothing
+# `codes` are the limiter branch codes of a limited PPM sweep (`PPMLimiterCodes`),
+# or `nothing` for a linear scheme.
+Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, codes, i, j, k, F, seed, scheme, N, ::Val{1})
+    if codes === nothing
         _add_x_face_adjoint!(lambda, m, Int32(i), j, k, F, seed, scheme, _HaloPaddedAxis())
     else
-        _add_x_face_adjoint!(lambda, m, rm, Int32(i), j, k, F, seed, scheme, _HaloPaddedAxis())
+        _add_x_face_adjoint!(lambda, m, codes, Int32(i), j, k, F, seed, scheme, _HaloPaddedAxis())
     end
 end
-Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, rm, i, j, k, F, seed, scheme, N, ::Val{2})
-    if rm === nothing
+Base.@propagate_inbounds function _add_cs_seam_adjoint!(lambda, m, codes, i, j, k, F, seed, scheme, N, ::Val{2})
+    if codes === nothing
         _add_y_face_adjoint!(lambda, m, i, Int32(j), k, F, seed, scheme, Int32(N))
     else
-        _add_y_face_adjoint!(lambda, m, rm, i, Int32(j), k, F, seed, scheme, Int32(N))
+        _add_y_face_adjoint!(lambda, m, codes, i, Int32(j), k, F, seed, scheme, Int32(N))
     end
 end
 
-@kernel function _cs_seam_adjoint_kernel!(lambda, @Const(m), @Const(rm), @Const(flux),
+@kernel function _cs_seam_adjoint_kernel!(lambda, @Const(m), @Const(codes), @Const(flux),
                                          @Const(seeds), scheme, direction, edge,
                                          seam, Nc, Hp, scale)
     s, k = @index(Global, NTuple)
     i, j = cs_seam_face_index(edge, s, Nc)
     i += Hp; j += Hp
-    @inbounds _add_cs_seam_adjoint!(lambda, m, rm, i, j, k,
+    @inbounds _add_cs_seam_adjoint!(lambda, m, codes, i, j, k,
         scale * flux[i, j, k], seeds[s, k, seam], scheme, Nc + 2Hp, direction)
 end
 
-function _apply_cs_seam_adjoint!(lambda::NTuple{6}, m::NTuple{6}, rm,
+function _apply_cs_seam_adjoint!(lambda::NTuple{6}, m::NTuple{6}, codes,
                                  flux::NTuple{6}, seeds, mesh::CubedSphereMesh,
                                  scheme, direction::Val{D}, scale) where D
     Nc, Hp, Nz = mesh.Nc, mesh.Hp, size(lambda[1], 3)
@@ -64,8 +66,8 @@ function _apply_cs_seam_adjoint!(lambda::NTuple{6}, m::NTuple{6}, rm,
     kernel! = _cs_seam_adjoint_kernel!(backend, 64)
     for (seam, (p, edge)) in enumerate(canonical_seams(mesh.connectivity))
         cs_seam_axis(edge) == D || continue
-        rm_panel = rm === nothing ? nothing : rm[p]
-        kernel!(lambda[p], m[p], rm_panel, flux[p], seeds, scheme, direction,
+        codes_panel = codes === nothing ? nothing : codes[p]
+        kernel!(lambda[p], m[p], codes_panel, flux[p], seeds, scheme, direction,
                 edge, seam, Nc, Hp, eltype(lambda[p])(scale); ndrange=(Nc, Nz))
     end
     return nothing
