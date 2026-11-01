@@ -339,10 +339,10 @@ end
     reference = footprint()
 
     @testset "AdjointTape" begin
-        @test AT.AdjointTape() === AT.AdjointTape(AT.FullStateTape(), AT.DeviceCSTapeStorage(),
+        @test AT.AdjointTape() === AT.AdjointTape(AT.StateTape(), AT.DeviceCSTapeStorage(),
                                                   AT.FullCheckpoint())
         tape = AT.AdjointTape(; storage = AT.PinnedHostCSTapeStorage(), checkpoint = AT.StrideCheckpoint(2))
-        @test tape isa AT.AdjointTape{AT.FullStateTape, AT.PinnedHostCSTapeStorage, AT.StrideCheckpoint}
+        @test tape isa AT.AdjointTape{AT.StateTape, AT.PinnedHostCSTapeStorage, AT.StrideCheckpoint}
         @test isbits(tape)                        # a descriptor: no runtime state
         for bad in ((; storage = :device), (; storage = "mmap"), (; checkpoint = :full),
                     (; content = nothing))

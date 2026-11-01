@@ -108,3 +108,49 @@ function require_adjoint_support(plan::StepPlan, ops::StepOperators...)
         "the cubed-sphere adjoint cannot replay this step plan: " * join(gaps, " ")))
     return plan
 end
+
+# ---------------------------------------------------------------------------
+# What a scheme's reverse reads of the forward run (`AirMassTape` legality)
+# ---------------------------------------------------------------------------
+
+"""
+    AbstractTapeDependence
+
+What the reverse pass of a cubed-sphere advection scheme reads of the forward
+run besides the met inputs, `tape_dependence(scheme)`:
+[`AirMassDependence`](@ref) or [`TracerDependence`](@ref).
+"""
+abstract type AbstractTapeDependence end
+
+"""
+    AirMassDependence()
+
+The reverse reads the air mass only: a tape of the scheme does not depend on
+the tracer or the emissions, so one recording serves every tracer and every
+evaluation of an optimization (`AirMassTape`).
+"""
+struct AirMassDependence <: AbstractTapeDependence end
+
+"""
+    TracerDependence()
+
+The reverse also reads state that depends on the tracer: the limiter branches
+of a monotone or CW84 PPM sweep, the tracer masses of Lin–Rood's operators.
+Every forward run records its own tape (`StateTape`).
+"""
+struct TracerDependence <: AbstractTapeDependence end
+
+"""
+    tape_dependence(scheme) -> AbstractTapeDependence
+
+`AirMassDependence()` for the schemes whose sweep is linear in the tracer mass
+(`UpwindScheme()`, `SlopesScheme(NoLimiter())`, `PPMScheme(NoLimiter())`):
+their reverse, and that of every other operator with an adjoint (convection,
+diffusion, surface fluxes, air-mass resets), reads only the air mass, the met
+forcing and the clock. `TracerDependence()` for limited PPM and Lin–Rood,
+whose reverse replays limiter branches of the tracer. An `AirMassTape` needs
+`AirMassDependence`.
+"""
+tape_dependence(::CSAdjointLinearScheme) = AirMassDependence()
+tape_dependence(::CSAdjointNonlinearScheme) = TracerDependence()
+tape_dependence(::CSAdjointLinRoodScheme) = TracerDependence()

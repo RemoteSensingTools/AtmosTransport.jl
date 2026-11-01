@@ -16,7 +16,7 @@ Module dependency order:
 """
 module Tape
 
-export AbstractTapeContent, FullStateTape, AdjointTape,
+export AbstractTapeContent, StateTape, AirMassTape, AdjointTape,
        AbstractCSTapeStorage,
        AbstractHostCSTapeStorage,
        DeviceCSTapeStorage,
@@ -29,11 +29,11 @@ export AbstractTapeContent, FullStateTape, AdjointTape,
        _open_tape_pool, _needs_tape_size, _holds_tape_bytes,
        _rewind_tape_pool!, _release_tape_pool!,
        _tape_panels, _tape_slot_bytes,
-       _allocate_tape_slot, stage_panels!, _stage_panels,
+       _allocate_tape_slot, stage_panels!, _stage_panels, _stage_computed,
        _free_tape_array!, _free_tape_panels!, _tape_synchronize,
        _pin_host_chunk, _unpin_host_chunk,
        _register_tape_read_backend!, _tape_read_cache!,
-       AbstractTapeReadRole, AirMassRead, TracerMassRead,
+       AbstractTapeReadRole, AirMassRead, TracerMassRead, LimiterCodeRead,
        _bytes_per_panel_tuple,
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
        _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord,

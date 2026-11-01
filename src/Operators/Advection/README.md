@@ -96,7 +96,9 @@ Adjoints keeps support policy, recording and reverse-walk wiring.
   `CSAdjointFV3Vertical`: reverse scratch and kernel dispatch
   unions; the public `Adjoints.CSAdjointWorkspace` import remains available.
 - `_adjoint_scheme_sweep!`, `_adjoint_fill_panel_halos!`: numerical reverse
-  entrypoints consumed by the Adjoints tape walk and Lin–Rood tape wiring.
+  entrypoints consumed by the Adjoints tape walk and Lin–Rood tape wiring;
+  `record_ppm_limiter_codes!`: the limiter branch codes the tape recorder
+  stages for a limited PPM sweep, which `_adjoint_scheme_sweep!` reads.
 - `_cs_packed_sweep_workgroupsize`: backend launch-layout extension hook.
 - `_share_lr_seam_faces!`, `_accumulate_linrood_halo_adjoint!`,
   `apply_linrood_horizontal_adjoint_single_panel!`, `apply_linrood_update_adjoint!`:
@@ -106,11 +108,12 @@ Adjoints keeps support policy, recording and reverse-walk wiring.
   forward execution and shared midpoint/halo contracts.
 
 `_ppm_edge_value(..., FT)` is the common fourth-order edge expression for
-reconstruction, ORD5/ORD7 scalar edges and the split-sweep adjoint value.
+reconstruction, ORD5/ORD7 scalar edges and the limiter codes of the split-sweep
+adjoint.
 The fenced D6 Lin–Rood edge formula remains unchanged.
 
 <!-- The structure checker reads these explicit owned interfaces. -->
-# shared: _adjoint_scheme_sweep!, _adjoint_fill_panel_halos!, _cs_packed_sweep_workgroupsize, _share_lr_seam_faces!, _accumulate_linrood_halo_adjoint!
+# shared: _adjoint_scheme_sweep!, _adjoint_fill_panel_halos!, _cs_packed_sweep_workgroupsize, _share_lr_seam_faces!, _accumulate_linrood_halo_adjoint!, record_ppm_limiter_codes!
 
 ## Forward<->adjoint mirrors
 

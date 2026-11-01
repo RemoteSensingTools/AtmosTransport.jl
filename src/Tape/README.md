@@ -37,8 +37,12 @@ contains no transport physics and no reverse-loop logic; recording lives in
   `cs_surface_flux_jacobian`, `cs_surface_flux_4dvar`,
   `cs_surface_flux_4dvar_optimize`), an immutable descriptor composed of
   three axes, each a type:
-  - content (`AbstractTapeContent`): `FullStateTape()`, the full state each
-    operator's reverse reads (the only content today);
+  - content (`AbstractTapeContent`): `StateTape()` (default), what each
+    operator's reverse reads of the forward run, recorded by every forward
+    run (shared slots, limiter codes for limited PPM); `AirMassTape()`, the
+    air mass only, recorded once per call or optimization and reused after an
+    identity check (schemes whose reverse reads no tracer; `FullCheckpoint`
+    only, an `ArgumentError` at construction otherwise);
   - storage (`AbstractCSTapeStorage`): `DeviceCSTapeStorage()` (default),
     `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)` (a scratch
     directory, required: no default, never `/tmp` implicitly);
@@ -62,11 +66,15 @@ contains no transport physics and no reverse-loop logic; recording lives in
     caches are freed (`unsafe_free!` on a GPU), pinned chunks unregistered and
     freed, the mmap file unmapped and closed, now rather than at a later GC.
 - Slot API: `_stage_panels(pool, panels)` allocates and fills a slot;
-  `_tape_panels(slot, role)` returns readable panels; `stage_panels!` refills.
+  `_stage_computed(fill!, pool, scratch)` allocates a slot shaped like
+  `scratch` and lets a kernel write it; device pools accept a fourth element-type
+  argument to template UInt8 slots directly from air-mass panels. Device slots
+  are filled in place; host slots stage through `scratch`. `_tape_panels(slot, role)`
+  returns readable panels; `stage_panels!` refills.
   Every slot carries the generation of its pool; using a slot after a rewind
   or release throws `StaleTapeSlotError`. The read role (`AirMassRead()`,
-  `TracerMassRead()`, subtypes of `AbstractTapeReadRole`) names the
-  reverse-kernel operand the read feeds. Device slots (`CSTapeSlot`) return
+  `TracerMassRead()`, `LimiterCodeRead()`, subtypes of
+  `AbstractTapeReadRole`) names the reverse-kernel operand the read feeds. Device slots (`CSTapeSlot`) return
   their arrays; host slots (`HostCSTapeSlot`, pinned host and mmap) copy into
   one read cache per role and panel shape, on the device for GPU panels, so
   two reads for one kernel never share a buffer.
@@ -104,7 +112,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
 - [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
   stride window arithmetic
 - [`AdjointTape.jl`](AdjointTape.jl) — `AbstractTapeContent`,
-  `FullStateTape`, `AdjointTape`
+  `StateTape`, `AirMassTape`, `AdjointTape` (rejects `AirMassTape` with
+  `StrideCheckpoint`)
 
 ## Common Tasks
 
@@ -115,10 +124,11 @@ contains no transport physics and no reverse-loop logic; recording lives in
   `_allocate_tape_slot`, `stage_panels!`, `_tape_panels(slot, role)`,
   `_rewind_tape_pool!` and `_release_tape_pool!` (plus `_needs_tape_size` and
   `_holds_tape_bytes` if it reserves its size up front).
-- Adding a tape content: subtype `AbstractTapeContent` and add the record
-  methods that dispatch on it (`_record_sweep!`, `_staged_tuples_per_sweep` in
-  `../Adjoints/Footprint/TapeRecording.jl`); the reverse loop dispatches on
-  the records.
+- Adding a tape content: subtype `AbstractTapeContent`; the recorders
+  (`../Adjoints/Footprint/TapeRecorder.jl`) and the Full driver
+  (`_begin_full_run`, `../Adjoints/Footprint/StrideCheckpoint.jl`) dispatch on
+  it, and `_require_tape_content` says which schemes it takes; the reverse
+  loop dispatches on the records.
 - Adding a record type: define it in [`TapeRecords.jl`](TapeRecords.jl),
   add a branch in `_walk_window_reverse!`
   (`../Adjoints/Footprint/ReverseLoop.jl`).
@@ -185,8 +195,14 @@ contains no transport physics and no reverse-loop logic; recording lives in
   saved tape back).
 - A host-side read stays valid until the next read with the same role. A
   reverse kernel that takes two staged states reads them with two roles:
-  the limited-PPM sweep record reads `m` with `AirMassRead()` and `rm` with
+  the limited-PPM sweep record reads `m` with `AirMassRead()` and its limiter
+  codes with `LimiterCodeRead()`, the FV3-profile sweep record `rm` with
   `TracerMassRead()` (one shared cache gave the kernel `m === rm`, issue #57).
+- A slot may be read by several records: a split-sweep tape stages the
+  palindrome center's air mass once for its diffusion records and the reverse
+  half's first Z sweep, and a convection record takes the slot of the next
+  air mass with the same interior (`_CSConvectionRecord`); the records hold
+  the same slot object.
 - Only staged slots are copied. Flux tuples (`_CSSweepRecord.panels_flux`)
   and forcing/operator objects are kept by reference, so callers must not
   change them before the reverse pass ends. The steps of a met window

@@ -33,14 +33,23 @@ inverse and tangent interfaces have been removed.
 ## Tape and checkpointing
 
 Every reverse-pass entry point takes `tape = AdjointTape(; content, storage,
-checkpoint)`: what each record stages (`FullStateTape()`), where the staged
-states live (`DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`,
+checkpoint)`: what each record stages and how long a recording serves
+(`StateTape()`, recorded by every forward run, or `AirMassTape()`, recorded
+once per call or optimization for the schemes whose reverse reads the air mass
+only, `tape_dependence`), where the staged states live
+(`DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`,
 `MmapCSTapeStorage(dir)`) and how much of the run is taped at once
 (`FullCheckpoint()`, `StrideCheckpoint(K)`). The value holds no memory: each
 call opens its tape's memory, reuses it for every stride window (and
 `cs_surface_flux_4dvar_optimize` for every evaluation) and frees it when it
 returns. The on-disk storage `MmapCSTapeStorage(dir)` takes a required
 scratch directory; each call reserves its tape there before recording.
+
+A split-sweep tape stages each state once: the palindrome center's diffusion
+records and a convection call share the slots of the sweeps that read the same
+air mass, and a monotone or CW84 PPM sweep stages one byte of limiter branches
+per cell instead of the tracer mass (see
+[what the tape stages](@ref adjoint-tape-compaction)).
 
 ```@autodocs
 Modules = [AtmosTransport.Tape]
