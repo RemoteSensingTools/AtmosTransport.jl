@@ -358,7 +358,7 @@ function read_era5_n320_window_fields!(fields::ERA5N320WindowFields{FT},
     size(fields.qv) == (nc, Nz) ||
         throw(DimensionMismatch("fields.qv size $(size(fields.qv)) != ($nc, $Nz)"))
 
-    _prof = get(ENV, "ERA5_N320_PROFILE", "") == "1"
+    _prof = env_flag("ERA5_N320_PROFILE"; true_values = ("1",), case_sensitive = true)
     _t_io = time()
     for msg in _core_messages(handles, date, hour)     # only this date and hour
         grid_type  = String(msg["gridType"])

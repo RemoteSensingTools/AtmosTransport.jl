@@ -10,6 +10,7 @@ runtime validation, so grid metadata cannot diverge from model storage.
 """
 module Architectures
 
+using ..ConfigChecks: config_bool
 using Adapt
 using DocStringExtensions
 using KernelAbstractions: KernelAbstractions as KA, @kernel, @index
@@ -28,6 +29,37 @@ export launch!
 export AbstractPointOp, index_space, apply_point!, host_parallel, Fused, Sequence, LinearCopy,
        copy_arrays!
 export FusionPolicy, FuseLaunches, SeparateLaunches, fusion_policy
+export host_array, similar_arrays, scale_arrays!, zeros_like, fill_zero!
+
+"""Return an Array unchanged; copy other array storage (including CPU views) to an Array."""
+host_array(a::Array) = a
+host_array(a) = Array(a)
+
+"""
+    similar_arrays(reference; allocator=similar)
+
+Allocate arrays like `reference`, visiting nested tuples in order. Pass
+`allocator = a -> Base.invokelatest(similar, a)` at world-age boundaries.
+"""
+similar_arrays(reference::AbstractArray; allocator = similar) = allocator(reference)
+similar_arrays(reference::Tuple; allocator = similar) =
+    map(a -> similar_arrays(a; allocator), reference)
+
+"""Scale each array in order, retaining one broadcast per array."""
+@inline scale_arrays!(dest::AbstractArray, scale) = (dest .*= scale; dest)
+@inline function scale_arrays!(dest::Tuple, scale)
+    foreach(a -> scale_arrays!(a, scale), dest)
+    return dest
+end
+
+"""Fill arrays with element-type zero, in tuple order; accept `nothing` for absent storage."""
+fill_zero!(::Nothing) = nothing
+fill_zero!(a::AbstractArray) = (fill!(a, zero(eltype(a))); a)
+fill_zero!(t::Tuple) = (foreach(fill_zero!, t); t)
+
+"""Allocate zeroed storage like an array or nested tuple, in the same order; optional arguments go to `similar`."""
+zeros_like(a::AbstractArray, args...) = fill_zero!(similar(a, args...))
+zeros_like(t::Tuple) = map(zeros_like, t)
 
 abstract type AbstractArchitecture end
 
@@ -163,9 +195,7 @@ architecture. An omitted backend selects `CPU()` unless `use_gpu = true`, in
 which case a usable GPU runtime is detected.
 """
 function architecture_from_config(config)
-    use_gpu = get(config, "use_gpu", false)
-    use_gpu isa Bool || throw(ArgumentError(
-        "[architecture].use_gpu must be true or false; got $(repr(use_gpu))"))
+    use_gpu = config_bool(config, "use_gpu", false, "[architecture].use_gpu")
     raw_backend = get(config, "backend", nothing)
 
     raw_backend === nothing && return use_gpu ? autodetect_gpu_architecture() : CPU()

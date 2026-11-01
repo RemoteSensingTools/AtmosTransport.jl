@@ -67,11 +67,10 @@ _output_interior(values, ::Union{LatLonMesh,ReducedGaussianMesh}, halo) = values
 function _output_interior(values::NTuple{6}, mesh::CubedSphereMesh, halo)
     h = Int(halo)
     h >= 0 || throw(ArgumentError("halo_width must be non-negative"))
-    r = h + 1:h + mesh.Nc
     return map(values) do panel
         size(panel, 1) >= mesh.Nc + 2h && size(panel, 2) >= mesh.Nc + 2h ||
             throw(DimensionMismatch("panel cannot provide requested interior"))
-        @view panel[r, r, :]
+        @view panel_interior(panel, h)[1:mesh.Nc, 1:mesh.Nc, :]
     end
 end
 

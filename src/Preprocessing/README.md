@@ -247,3 +247,9 @@ TM5 coefficient reads/caches are per hour, with two retained moist endpoints.
 LL retains one completed lookahead output window; RG writes immediately.
 Spectral owns direct quadrature and endpoint reduction; Targets owns the moist
 layer balance, dry conversion and mean. MassClosure stays source independent.
+
+ConfigChecks owns entrypoint date/scalar/choice parsing; TOML dates and ISO
+strings both work. Numeric settings reject Booleans; integer settings require
+integers representable as Int. Vertical numeric-string and infinity spellings
+retain their separate existing policy. Native mass-basis tags remain case
+sensitive; spectral tags retain case-insensitive parsing.

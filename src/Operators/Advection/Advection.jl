@@ -23,6 +23,9 @@ Provides:
 """
 module Advection
 
+using ...Architectures: host_array
+using ...ConfigChecks: env_flag
+
 using ...Grids: cs_panel_edge_seam, canonical_seams
 
 using ...Grids: face_connectivity

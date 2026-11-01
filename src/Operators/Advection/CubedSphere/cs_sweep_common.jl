@@ -145,7 +145,7 @@ end
 
 @inline _cs_gpu_profile_enabled() =
     SectionTimer.is_enabled() &&
-    lowercase(get(ENV, "ATMOSTR_PROFILE_GPU", "")) in ("1", "true", "on", "yes")
+    env_flag("ATMOSTR_PROFILE_GPU")
 
 @inline function _profiled_launch_and_sync!(launch!::F, backend, launch_section::Symbol,
                                             sync_section::Symbol) where {F}

@@ -58,3 +58,7 @@ configured runner (DrivenRunner closes inputs after draining it):
 refresh functions and clock transition; the capture copies the fluxes exactly
 when `_refreshes_fluxes` says production rewrote them. Operators.StepPlans owns clock/dt
 arithmetic. Resource cleanup drains prefetch before closing the input binary.
+
+Storage allocation delegates to Architectures.similar_arrays with the existing
+`Base.invokelatest(similar, array)` allocator at every leaf. Flux scaling uses
+`scale_arrays!`, retaining one broadcast per panel in the original order.

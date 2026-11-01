@@ -44,7 +44,7 @@ mass basis, supported operators, and load-time consistency gates.
 - Entry point: `scripts/run_transport.jl` ->
   `run_driven_simulation(cfg)` in `src/Models/Runner/DrivenRunner/DrivenRunner.jl`
 - Top-level include order follows `src/AtmosTransport.jl`:
-  `Architectures -> SectionTimer -> ConfigChecks -> LogLevels -> AtomicFiles ->`
+  `ConfigChecks -> Architectures -> SectionTimer -> LogLevels -> AtomicFiles ->`
   `Quantities -> Parameters -> Grids -> State -> Output -> Observations ->`
   `MetDrivers -> Operators -> Tape -> Adjoints -> Regridding -> GriddedIO ->`
   `Preprocessing -> Models -> Diagnostics -> Extras`.
@@ -59,7 +59,7 @@ mass basis, supported operators, and load-time consistency gates.
     Chemistry -> StepPlans`. `StepPlans` composes a step and owns the
     emission/diffusion midpoint of the advection Strang palindrome; Advection
     only calls the abstract `apply_midpoint!` hook (`NoMidpoint` by default).
-  - `Adjoints`: core -> `Footprint` -> `Inversion` (`Observations`, `Solver`).
+  - `Adjoints`: core -> `Footprint` -> `Inversion` (`ObservationBinding`, `Solver`).
   - `Preprocessing`, in pipeline order: `Common` (folder `Core/`) -> `Vertical`
     -> `Spectral` -> `MassClosure` -> `PhysicsInputs` -> `TransportBinary` ->
     `LatLonTarget` / `ReducedGaussianTarget` / `CubedSphereTarget` (folder

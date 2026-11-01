@@ -40,3 +40,6 @@ CSAdjointWorkspace, CSAdjointLinearScheme, CSAdjointNonlinearScheme, CSAdjointFV
 ## Forward<->adjoint mirrors
 
 HaloExchange.jl ↔ HaloAdjoint.jl; CubedSphereSeams.jl ↔ CubedSphereSeamsAdjoint.jl; cs_sweep_*.jl ↔ AdvectionAdjoint.jl; vertical_fv3_profile.jl ↔ vertical_fv3_profile_adjoint.jl. Tape recording remains in Adjoints/Footprint. The limited PPM reverse is split in two halves that must stay in step: `_ppm_limiter_code` evaluates, at record time, the predicates and values (mixing ratios, edges, minmod slopes, profile constraints; per-axis stencil clamps) the reverse needs, and `_ppm_face_coeffs` applies the derivative of each recorded branch in the forward linearization's operation order.
+
+The GPU profiling toggle delegates to ConfigChecks.env_flag with its original
+truth spellings; kernel bodies and sweep/launch order are unchanged.

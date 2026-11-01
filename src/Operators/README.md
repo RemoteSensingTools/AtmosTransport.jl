@@ -151,3 +151,6 @@ zeroing stay with that interface.
 
 Diffusion transpose kernels live beside their forward code. Tape/objective wiring
 stays in Adjoints. Other operator mirrors are listed in `test/structure/mirrors.toml`.
+
+Architectures.fill_zero! owns array/tuple/nothing checkpoint zeroing; the
+Operators `_zero_state!` binding is its internal checkpoint-interface alias.

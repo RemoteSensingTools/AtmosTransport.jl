@@ -92,3 +92,21 @@ All in [`Visualization.jl`](Visualization.jl):
 ## Docs
 
 API page: [`../../../docs/src/api/output_visualization.md`](../../../docs/src/api/output_visualization.md).
+
+## Depends on
+
+ConfigChecks (case-sensitive transform/unit choices), Grids, Regridding,
+Parameters and GriddedIO; Dates, NCDatasets, Printf and Statistics.
+
+## Used by
+
+The optional Makie extension and visualization scripts.
+
+## Shared helpers owned here
+
+Snapshot data types, field views, rasterization and plotting entry points.
+Choice validation delegates to ConfigChecks; typed transforms/units pass through.
+
+## Forward<->adjoint mirrors
+
+None; this module is non-core visualization and has no tests.

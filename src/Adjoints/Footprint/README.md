@@ -40,7 +40,7 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 
 ## Depends on
 
-Adjoints core, Tape, Grids, State, MetDrivers, Parameters and Operators,
+Architectures, Adjoints core, Tape, Grids, State, MetDrivers, Parameters and Operators,
 including StepPlans. External: KernelAbstractions. There is no dependency on
 Inversion; observation-specific replay sampling belongs to Inversion.ObservationBinding.
 
@@ -110,3 +110,6 @@ The replay's transport stage uses StepPlans `transport_step!` and its concrete
 Center/diffusion/emission records retain their order; ReverseLoop visits them
 backwards, including both half solves for split coupling. Numerical transposes
 beside the forward sweeps and the fenced Lin–Rood tape code are unchanged.
+
+Non-fenced reverse-start and air-mass adjoint zero allocation uses
+Architectures.zeros_like, preserving allocation/fill order and element types.

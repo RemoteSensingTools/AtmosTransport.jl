@@ -32,7 +32,7 @@ Public recipe/spec parsers and materializers retain their exports. The runtime
 style tags and `runtime_physics_attributes` retain qualified access. The runner
 uses these explicitly shared config assembly seams:
 
-# shared: _spec_int, _ADVECTION_SPEC_KEYS, _advection_section, _diffusion_section, _convection_section, _chemistry_section
+# shared: _ADVECTION_SPEC_KEYS, _advection_section, _diffusion_section, _convection_section, _chemistry_section
 
 Other underscore helpers are private to Physics. The Models facade re-exports
 only public names; tests reach private helpers as `Models.Physics._name`.
@@ -41,3 +41,6 @@ only public names; tests reach private helpers as `Models.Physics._name`.
 
 Runner's `cs_adjoint_inputs` invokes its production forcing refresh. Physics
 contains no separate adjoint arithmetic; forcing is captured for replay.
+
+Scalar and choice parsing delegates to ConfigChecks, including the existing
+forward/inversion limiter tables. No private numeric-parser interface remains.

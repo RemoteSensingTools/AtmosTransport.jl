@@ -28,19 +28,10 @@ function run_logging(cfg::AbstractDict)
 end
 
 function _progress_reporter(section)
-    raw = get(section, "progress", "bar")
-    kind = raw isa AbstractString ? lowercase(raw) : nothing
-    kind == "bar" && return ProgressBar()
-    kind == "none" && return NoProgress()
-    kind == "lines" &&
-        return ProgressLines(_positive_int(section, "progress_interval_windows", 24, "[logging]"))
-    throw(ArgumentError("[logging].progress must be \"bar\", \"lines\" or \"none\"; got $(repr(raw))"))
-end
-
-function _positive_int(section, key, default, label)
-    value = _spec_int(section, key, default, label)    # rejects Booleans
-    value >= 1 || throw(ArgumentError("$(label).$(key) must be at least 1; got $(value)"))
-    return value
+    settings = progress_settings(section)
+    settings.kind === :bar && return ProgressBar()
+    settings.kind === :none && return NoProgress()
+    return ProgressLines(settings.interval)
 end
 
 """
@@ -55,6 +46,6 @@ function run_checks(cfg::AbstractDict)
     section = get(cfg, "checks", Dict{String, Any}())
     section isa AbstractDict || throw(ArgumentError("[checks] must be a table"))
     _config_bool(section, "nan_check", true, "[checks].nan_check") || return NamedTuple()
-    interval = _positive_int(section, "nan_check_interval_windows", 1, "[checks]")
+    interval = config_int(get(section, "nan_check_interval_windows", 1), "[checks].nan_check_interval_windows"; min = 1)
     return (nan_checker = Callback(NaNChecker(), WindowInterval(interval)),)
 end

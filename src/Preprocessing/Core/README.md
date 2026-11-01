@@ -62,3 +62,6 @@ native sources reject spectral-only options. Backend and automatic precision
 choices are parsed into `CPUSynthesis`, `GPUSynthesis`, `AutoSynthesisPrecision`.
 
 # shared: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, validate_spectral_vertical
+
+ConfigChecks owns common scalar parsing and the spectral mass-basis choice.
+Deferred native flux-choice validation still occurs after keyword overrides.

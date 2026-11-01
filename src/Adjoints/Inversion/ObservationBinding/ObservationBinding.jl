@@ -28,7 +28,6 @@
 #     `CSColumnMeanObjective`.
 # ---------------------------------------------------------------------------
 
-
 """
     AbstractOutOfRangePolicy
 
@@ -53,20 +52,9 @@ struct ClampOutOfRange <: AbstractOutOfRangePolicy end
 
 _parse_out_of_range_policy(policy::AbstractOutOfRangePolicy) = policy
 
-function _parse_out_of_range_policy(raw::AbstractString)
-    raw == "reject" && return RejectOutOfRange()
-    raw == "skip" && return SkipOutOfRange()
-    raw == "clamp" && return ClampOutOfRange()
-    throw(ArgumentError(
-        "out_of_range_policy must be \"reject\", \"skip\", or \"clamp\"; " *
-        "got $(repr(raw))."))
-end
-
-_parse_out_of_range_policy(raw) = throw(ArgumentError(
-    "out_of_range_policy must be a concrete AbstractOutOfRangePolicy or one " *
-    "of the strings \"reject\", \"skip\", or \"clamp\"; got $(repr(raw)). " *
-    "Symbol policies are not supported; use RejectOutOfRange(), " *
-    "SkipOutOfRange(), or ClampOutOfRange()."))
+_parse_out_of_range_policy(raw) =
+    parse_choice(raw, (reject = RejectOutOfRange(), skip = SkipOutOfRange(), clamp = ClampOutOfRange()),
+                 "out_of_range_policy"; case_sensitive = true)
 
 """
     AbstractFlaggedRecordPolicy
@@ -90,14 +78,9 @@ evaluation-only ones included.
 struct CosampleFlaggedRecords <: AbstractFlaggedRecordPolicy end
 
 _parse_flagged_records(policy::AbstractFlaggedRecordPolicy) = policy
-function _parse_flagged_records(raw::AbstractString)
-    raw == "drop" && return DropFlaggedRecords()
-    raw == "cosample" && return CosampleFlaggedRecords()
-    throw(ArgumentError("flagged_records must be \"drop\" or \"cosample\"; got $(repr(raw))"))
-end
-_parse_flagged_records(raw) = throw(ArgumentError(
-    "flagged_records must be DropFlaggedRecords(), CosampleFlaggedRecords(), \"drop\" or \"cosample\"; got " *
-    "$(repr(raw))"))
+_parse_flagged_records(raw) =
+    parse_choice(raw, (drop = DropFlaggedRecords(), cosample = CosampleFlaggedRecords()),
+                 "flagged_records"; case_sensitive = true)
 
 _binds_flagged(::DropFlaggedRecords) = false
 _binds_flagged(::CosampleFlaggedRecords) = true

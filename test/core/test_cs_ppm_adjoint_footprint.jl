@@ -448,6 +448,42 @@ end
             diffusion_workspace=diffusion_ws)
     end
 
+    @testset "Vector mass panels preserve seeded footprint bits ($FT)" for FT in (Float32, Float64)
+        mesh, panels_m, _, panels_am, panels_bm, panels_cm =
+            _transport_cs_problem(Nc=3, Nz=3, nsteps=2, FT=FT)
+        masses = collect(panels_m)
+        @test masses isa Vector{Array{FT, 3}}
+        seed = ntuple(p -> [FT(sin(i + 2j + 3k + p))
+                            for i in axes(masses[p], 1), j in axes(masses[p], 2),
+                                k in axes(masses[p], 3)], 6)
+        # The former panel helper indexed any container and allocated/filled
+        # each panel before advancing. Supply that base through the public API.
+        old_zero = ntuple(6) do p
+            a = similar(masses[p])
+            fill!(a, zero(eltype(a)))
+            a
+        end
+        kwargs = (; scheme=AT.PPMScheme(AT.NoLimiter()), dt=FT(1))
+        reference = AT.cs_surface_emission_footprint_from_seed(
+            seed, masses, panels_am, panels_bm, panels_cm, mesh;
+            kwargs..., base_panels_rm0=old_zero)
+        for container in (masses, panels_m)
+            result = AT.cs_surface_emission_footprint_from_seed(
+                seed, container, panels_am, panels_bm, panels_cm, mesh; kwargs...)
+            @test result.lag_steps == reference.lag_steps
+            @test result.dt === reference.dt
+            @test length(result.footprints) == length(reference.footprints)
+            for p in 1:6
+                @test reinterpret(UInt8, vec(result.initial_adjoint[p])) ==
+                      reinterpret(UInt8, vec(reference.initial_adjoint[p]))
+                for step in eachindex(reference.footprints)
+                    @test reinterpret(UInt8, vec(result.footprints[step][p])) ==
+                          reinterpret(UInt8, vec(reference.footprints[step][p]))
+                end
+            end
+        end
+    end
+
     @testset "Explicit final adjoint seed matches built-in objective seed" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _constant_cs_problem(Nc=3, Nz=3, nsteps=1)

@@ -94,6 +94,11 @@ end
     @test Pre.resolve_column_balance_weights(Dict("column_balance_weights" => "Hybrid_B")) === :hybrid_b
     @test_throws ArgumentError Pre.resolve_column_balance_weights(Dict("column_balance_weights" => "pressure"))
     @test_throws ArgumentError Pre.resolve_column_balance_weights(Dict("column_balance_weights" => 1))
+    @test_throws ArgumentError Pre.resolve_balance_settings(Dict("numerics" => Dict("cs_balance_tol" => true)))
+    for bad in (true, 1.0, big(typemax(Int)) + 1)
+        @test_throws ArgumentError Pre.resolve_balance_settings(
+            Dict("numerics" => Dict("cs_balance_project_every" => bad)))
+    end
     @test Pre.with_column_weights_record(Dict{String, Any}(), :hybrid_b) ==
           Dict("column_balance_weights" => "hybrid_b")
     @test Pre.GEOS._with_geos_column_weights_record(Dict{String, Any}(), :hybrid_mass,

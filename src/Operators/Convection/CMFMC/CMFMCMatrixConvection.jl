@@ -181,8 +181,8 @@ function CMFMCMatrixWorkspace(air_mass;
     derived_detu = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     zero_entd    = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
     zero_detd    = _cmfmc_matrix_rate_like(air_mass, FT, Hp)
-    _fill_zero!(zero_entd)
-    _fill_zero!(zero_detd)
+    fill_zero!(zero_entd)
+    fill_zero!(zero_detd)
     valid = Ref{Bool}(false)
     return CMFMCMatrixWorkspace{FT,
                                 typeof(tm5_ws),
@@ -192,10 +192,6 @@ function CMFMCMatrixWorkspace(air_mass;
         tm5_ws, derived_entu, derived_detu, zero_entd, zero_detd, valid,
     )
 end
-
-@inline _fill_zero!(arr::AbstractArray) = (fill!(arr, zero(eltype(arr))); nothing)
-@inline _fill_zero!(t::NTuple{N, <:AbstractArray}) where {N} =
-    (for a in t; fill!(a, zero(eltype(a))); end; nothing)
 
 function Adapt.adapt_structure(to, ws::CMFMCMatrixWorkspace{FT}) where {FT}
     tm5 = Adapt.adapt(to, ws.tm5_workspace)

@@ -22,6 +22,7 @@ Concrete types:
 """
 module Fields
 
+using ...Architectures: host_array
 using Adapt
 using ...Parameters: GEOSCHEM_CONSTANTS, VIRTUAL_TEMPERATURE_FACTOR
 

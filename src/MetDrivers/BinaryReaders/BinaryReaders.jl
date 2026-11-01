@@ -1,5 +1,6 @@
 """Memory-mapped transport readers and LL/RG/CS runtime drivers."""
 module BinaryReaders
+using ...Architectures: scale_arrays!
 using Adapt
 using Printf: @sprintf
 using ...Architectures: array_adapter_for, AbstractPointOp, Fused, select_panel,

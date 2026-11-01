@@ -30,3 +30,5 @@ AdvectionWorkspace, TracerView, strang_split_mt!, the abstract midpoint hook and
 ## Forward<->adjoint mirrors
 
 No LL/RG numerical adjoint is shipped. Shared reconstruction is mirrored by `../CubedSphere/AdvectionAdjoint.jl`.
+
+Host staging for subcycle budgets uses Architectures.host_array (views copy).
