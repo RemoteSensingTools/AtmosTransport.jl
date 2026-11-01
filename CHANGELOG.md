@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **ERA5 N320 pinned dry flux thickness.** With `flux_thickness = "dry_mass"`
+  and the global dry-mass pin enabled, fluxes now use pinned native-level
+  thickness on the source and cubed-sphere grids. Pin-off arithmetic is
+  bitwise preserved. A one-day ERA5 N320 → C90 L117 Float32 comparison
+  (2022-01-15, line integrals) changed `am`/`bm`/`cm` by 0.016–0.018 % relative
+  RMS (maximum relative change about 0.02 %); `m`, `ps`, `dm`, and all included
+  physics payloads were bitwise identical. Flux-fidelity relative RMS improved
+  from 2.5e-7 to 1.0e-7 and its maximum from 2.0e-4 to 6.8e-5. Closure and replay
+  residuals remained at the same numerical scale; global mass residuals were
+  unchanged. Existing ERA5 N320 dry-mass binaries built with the pin retain
+  their old, unpinned-thickness fluxes until regenerated; regenerate products
+  that copy those fluxes as well.
 - **GEOS `pfix_corrected` cm closure removed.** It wrote a nonzero vertical mass flux through the
   bottom interface that no runtime vertical sweep transports, so surface mixing ratios drifted by
   about `cm[Nz+1]/m` per sweep. The option and all its spellings now fail config validation; no
