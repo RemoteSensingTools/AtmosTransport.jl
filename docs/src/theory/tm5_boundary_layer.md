@@ -475,7 +475,10 @@ Surface primitives (`lsm`, stresses, heat fluxes, `sr`/`fsr`, 10 m winds and
 orography) are **cell-area means** on the actual LL or RG mesh, using the package's
 shared conservative regridder with intensive-field semantics. In particular,
 `lsm` is the coastal cell's land fraction, rather than the value at its centre.
-This follows TM5's two-dimensional `area-aver` input convention
+Excursions of the remapped fraction within 1e-12 of [0, 1] are clamped:
+rounding in the area mean leaves it up to about 3e-15 above 1 in all-land cells
+(LL 72×37, 2021-12-01). Larger excursions fail the binary validator. This
+follows TM5's two-dimensional `area-aver` input convention
 (`base/trunk/src/tmm.F90:1062–1065`). Roughness uses an arithmetic area mean.
 The shared regridder's spherical-polygon approximation and RG ring-boundary
 slivers also apply here (see [conservative regridding](../preprocessing/regridding.md)). T/q retain coordinate-aware

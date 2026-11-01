@@ -105,6 +105,10 @@ function _load_tm5_pbl_target_window(date,win,settings,vertical,ps,grid,shape,ca
         interval_seconds=settings.met_interval)
     source = cache.regridder === nothing ? era5_surface_source_mesh(reader,grid.mesh.radius) : nothing
     means,cache.regridder = target_surface_means(source,grid,surface;regridder=cache.regridder)
+    # Area means of a fraction leave [0,1] by rounding (≈3e-15 in all-land cells);
+    # larger excursions are left for the binary validator to reject.
+    snap(x) = -1e-12 <= x <= 1+1e-12 ? clamp(x,0,1) : x
+    means = merge(means,(;lsm=snap.(means.lsm)))
     sampled = map(a->reshape(FT.(a),shape[1:end-1]),means)
     return (;t=reshape(FT.(t),shape),q=reshape(FT.(q),shape),sampled...)
 end
