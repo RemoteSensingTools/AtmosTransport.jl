@@ -163,15 +163,49 @@ transport, instead of total-air `Δp`:
 
 ```math
 \Delta p_{\mathrm{dry},k}
-  = (1-q_k)\,\left|\Delta A_k + \Delta B_k p_s\right|
-  = \frac{g\,m_{\mathrm{dry},k}}{A_{\mathrm{cell}}}.
+  = \frac{g\,m_{\mathrm{dry},k}^{\mathrm{pinned}}}{A_{\mathrm{cell}}}.
 ```
 
 For target-grid face methods this thickness is evaluated in each cubed-sphere
-cell before interpolation to faces. ERA5's line-integral method evaluates the
-equivalent `(1-q) Δp` on N320 before integrating along a cube face. ERA5 N320
-defaults to `dry_mass`, matching its dry-basis layer masses; MERRA-2 retains
-its historical `moist` default for compatibility.
+cell before interpolation to faces. ERA5 N320 retains native-level mass for
+both hourly endpoints and applies the stored merged endpoint's uniform moist
+surface-pressure offset before computing thickness. The native correction is
+
+```math
+\delta m_k = \Delta B_k\,\delta p_s\,(1-q_k)\,A_{\mathrm{cell}}/g.
+```
+
+ERA5's line-integral method applies that same `δp_s` to native N320 dry mass,
+then evaluates `g m_dry / A` before integrating along a cube face. It does not
+independently pin the N320 global integral: conservative regridding of `ps`
+and `q` does not preserve their product. Each endpoint retains its own
+correction, including the next-day hour-0 lookahead; fluxes are merged only
+after native-level reconstruction and endpoint averaging. With a pin, this
+is the same mass-to-thickness rule as MERRA-2. With pinning disabled, ERA5
+retains its original source-grid dry pressure thickness and target-grid
+`(1-q) Δp` arithmetic, without rebuilding through `g m_dry / A`; Float32 and
+Float64 rounding are bitwise preserved. ERA5 N320 defaults to `dry_mass`;
+MERRA-2 retains its historical
+`moist` default. The `moist` thickness option continues to use unpinned total
+surface pressure.
+
+A one-day ERA5 N320 → C90 L117 Float32 comparison (2022-01-15, line integrals,
+global dry-mass pin enabled) measured relative RMS changes of 0.0161 %, 0.0159 %,
+and 0.0178 % in `am`, `bm`, and `cm`, respectively (about 0.016–0.018 %; maximum
+relative changes about 0.02 %). Here relative RMS is RMS(after−before)/RMS(before),
+and maximum relative change is max|after−before|/max|before|. All stored `m`,
+`ps`, `dm`, and included physics payloads were bitwise identical, as was the
+substep schedule. Flux-fidelity relative RMS improved from 2.5e-7 to 1.0e-7,
+and maximum relative error from 2.0e-4 to 6.8e-5. Closure and replay residuals
+remained at the same numerical scale: the worst post-column-balance residual
+was 273 kg in both builds, and worst write-time replay relative residuals were
+8.32e-8 and 8.47e-8. Global mass residuals were unchanged, with maximum relative
+endpoint mass residual 8.03e-11 in both builds.
+
+Existing ERA5 N320 dry-mass binaries built with the global dry-mass pin retain
+the old, unpinned-thickness fluxes until regenerated. Regenerate those binaries
+and any products that copy their fluxes (including convection sidecars).
+Replay and closure gates alone cannot detect this wind/thickness inconsistency.
 
 **ERA5** (`.../era5_n320_regrid.jl` and
 `.../cubed_sphere_spectral.jl`). Instantaneous hourly winds are supplied on

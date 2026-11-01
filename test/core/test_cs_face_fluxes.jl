@@ -288,9 +288,13 @@ interior_divergence(am, bm, Nc) =
         @test dp[1][1, 1, :] ≈ [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
 
         qv = ntuple(_ -> fill(0.1, Nc, Nc, Nz), 6)
-        pipe = (c180_fields = (ps = ps, qv = qv),)
-        P.ERA5._fill_era5_flux_thickness!(P.DryMassFluxThickness(), x, pipe, vc, Nc, Nz)
-        @test dp[1][1, 1, :] ≈ 0.9 .* [1000.0, 2000.0 + 0.2e5, 0.8e5 - 3000.0]
+        # The retained native mass already includes the endpoint pin; ps/q
+        # here intentionally describe a different, unpinned thickness.
+        pipe = (c180_fields = (ps = ps, qv = qv), c180_m_dry = m,
+                target_grid = (mesh = mesh,))
+        P.ERA5._fill_era5_flux_thickness!(P.DryMassFluxThickness(), x, pipe, vc, Nc, Nz,
+                                          P.ERA5.PurePressureMergePinCompatibility())
+        @test all(p -> dp[p] == g .* m[p] ./ mesh.cell_areas, 1:6)
     end
 
     @testset "winds regridded as vectors near the poles" begin

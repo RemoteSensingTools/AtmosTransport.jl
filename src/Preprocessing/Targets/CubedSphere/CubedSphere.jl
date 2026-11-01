@@ -204,7 +204,7 @@ include("cubed_sphere_spectral.jl")
 include("cubed_sphere_regrid.jl")
 include("cubed_sphere_coarsen.jl")
 
-export cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
+export fill_dry_mass_flux_thickness!, cs_total_air_mass, derive_c180_dry_mass!, fill_cs_mass_delta_payload!, pin_cs_global_air_mass!, pin_cs_global_air_mass_from_sensitivity!, ps_from_air_mass!
 include("mass_helpers.jl")
 
 end # module CubedSphereTarget
