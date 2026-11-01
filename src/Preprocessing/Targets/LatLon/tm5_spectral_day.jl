@@ -102,6 +102,7 @@ function process_day(c::TM5SpectralFluxes,date::Date,grid::LatLonTargetGeometry,
                 local_schedule = [steps]
                 apply_poisson_balance!(storage,last,local_schedule,contract,substep_policy;
                     write_replay_on=write_replay_check,weights,rebuild_rates,
+                    fixed_global_mass=settings.mass_fix_enable && settings.mass_basis == :dry,
                     poisson_workspace=dry_solver,window_offset=i-1)
                 push!(schedule,only(local_schedule))
                 fill_qv_endpoints!(storage,last)

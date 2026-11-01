@@ -2,6 +2,8 @@ module MassClosure
 
 export balance_cs_level!, cs_level_scratches, cs_column_convergence
 
+using ...Architectures: _neumaier_sum
+
 using LinearAlgebra: mul!, dot, cholesky, Symmetric
 using SparseArrays: SparseMatrixCSC, sparse
 using ...Parameters: DEFAULT_POISSON_BALANCE_TOL, DEFAULT_POISSON_BALANCE_MAX_ITER,
@@ -12,7 +14,7 @@ using ...Grids: LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, cs_face_edge_l
     cs_corner_xyz, PanelConnectivity, ncells, nfaces, cell_area, panel_cell_center_lonlat,
     panel_cell_local_tangent_basis, default_panel_connectivity, reciprocal_edge, EDGE_NORTH,
     EDGE_SOUTH, EDGE_EAST, EDGE_WEST
-using ..Common: AbstractColumnWeights, MassWeightedColumn, ERA5SpectralSettings,
+using ..Common: check_fixed_global_mass, AbstractColumnWeights, MassWeightedColumn, ERA5SpectralSettings,
     validate_column_balance_weights
 import ..Common: check_column_weight_levels, column_weights, spread_column_correction!,
     target_balance_geometry

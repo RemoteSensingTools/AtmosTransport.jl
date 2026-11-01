@@ -10,3 +10,12 @@ iterates in the range of the singular graph Laplacian (which has a
     @. v -= s
     return v
 end
+
+@inline project_mean_zero!(v::AbstractVector{Float64}, ::Val{false}) = project_mean_zero!(v)
+
+"""Compensated nullspace projection selected only by column solves."""
+@inline function project_mean_zero!(v::AbstractVector{Float64}, ::Val{true})
+    s = +(_neumaier_sum(i -> v[i], eachindex(v), Float64)...) / length(v)
+    @. v -= s
+    return v
+end

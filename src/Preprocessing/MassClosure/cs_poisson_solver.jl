@@ -160,13 +160,14 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
                                 scratch;
                                 tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
                                 max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                project_every::Int=DEFAULT_POISSON_PROJECT_EVERY)
+                                project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
+                                projection::Val=Val(false))
     r  = scratch.r
     p  = scratch.p
     Ap = scratch.Ap
     z  = scratch.z
 
-    project_mean_zero!(rhs)
+    project_mean_zero!(rhs, projection)
     fill!(psi, 0.0)
     copyto!(r, rhs)
 
@@ -192,7 +193,7 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
         r_linf / rhs_linf < tol && break
 
         _cs_precondition!(z, r, degree)
-        do_project && project_mean_zero!(z)
+        do_project && project_mean_zero!(z, projection)
         rz_new = _cs_dot(r, z)
         rz_old == 0.0 && break
         beta = rz_new / rz_old
@@ -201,7 +202,7 @@ function solve_cs_poisson_pcg!(psi::AbstractVector{Float64},
         iter += 1
     end
 
-    project_mean_zero!(psi)
+    project_mean_zero!(psi, projection)
     return r_linf, iter
 end
 

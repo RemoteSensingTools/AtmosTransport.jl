@@ -50,3 +50,8 @@ Opt-in LL live-Calc_Kzz inputs add a complete `tm5_pbl` group and a v5
 construction identity: point-sampled by default, or TM5 spectral when selected.
 `writer_adapters.jl` appends its arrays after the unchanged v4 sections. Default writers still emit v4. RG uses BinaryFormat's
 existing optional-section stream packing.
+
+`ColumnClosureRecord` carries the column global-mode policy through full-window
+storage and adaptive rescaling rechecks, so pinned dry windows use mass-weighted
+projected diagnostics while moist/unpinned windows retain uniform projection.
+The four-value constructor retains the uniform default.

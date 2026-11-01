@@ -258,3 +258,24 @@ strings both work. Numeric settings reject Booleans; integer settings require
 integers representable as Int. Vertical numeric-string and infinity spellings
 retain their separate existing policy. Native mass-basis tags remain case
 sensitive; spectral tags retain case-insensitive parsing.
+
+The humidity-aware spectral dry pin uses compensated native and global sums.
+Shared LL/RG/CS column balances leave roundoff global residuals proportional to
+current column mass, avoiding polar amplification at the unchanged `1e-12`
+Float64 replay tolerance. This affects every spectral/TM5 and native-source
+caller of those balances, including regrids; native mass pins remain separate.
+See the manual's mass-conservation page for equations and validation numbers.
+
+On ERA5 2021-12-01 (1°, Float64 dry mass, 34 levels, 24 windows), replay
+maxima decrease from 1.471e-12 to 5.823e-15 for TM5 and from
+1.064e-12 to 6.107e-15 for point-sampled construction. Counts above
+1e-12 decrease from 536 and 6 to zero. Maximum |global ΔM| per window decreases
+from 135,695.388 to 666.004 kg (TM5), and from
+121,982.453 to 659.033 kg (point-sampled).
+
+The mass-proportional global-mode shift is enabled only for fixed dry-mass
+targets, after Common's compensated mass-normalized budget guard (`1e-14`
+for Float64; lower precision allows two-endpoint storage rounding). Moist and
+unpinned paths retain their uniform global mode and original endpoint tendency.
+TM5 LL/RG layer solves and standalone CS per-level solves retain original
+projection arithmetic; only column calls select compensated projection dispatch.

@@ -551,3 +551,124 @@ end
     @test_throws ArgumentError Prep.HybridBWeightedColumn(reverse(B))
     @test_throws ArgumentError Prep.HybridMassWeightedColumn(reverse(B))
 end
+
+@testset "mass-weighted column global mode avoids polar amplification" begin
+    using AtmosTransport.MetDrivers: ReplayScratch, structured_replay_layout,
+        recompute_cm_from_dm_target!, verify_window_continuity
+    nx, ny, nz = 16, 180, 3
+    m = [1e12 * k * cospi((j-0.5)/ny - 0.5) for i in 1:nx, j in 1:ny, k in 1:nz]
+    # Former pin error (~3e-14 relative); a uniform cell
+    # residual exceeds 1e-12 when divided by a small polar layer budget.
+    next = m .* (1 + 3e-14)
+    dm = (next .- m) ./ 2
+    ws = Prep.LLPoissonWorkspace(nx, ny)
+    scratch = ReplayScratch(size(m))
+    function replay(am, bm)
+        cm = zeros(nx, ny, nz+1)
+        recompute_cm_from_dm_target!(structured_replay_layout(), scratch.div, cm, m, dm, am, bm)
+        cm[:, :, 1] .= 0; cm[:, :, end] .= 0
+        verify_window_continuity(structured_replay_layout(), scratch, m, cm, next, 1, am, bm)
+    end
+    # Reproduce the former uniform-nullspace column solve independently.
+    am_uniform, bm_uniform = zeros(nx+1, ny, 1), zeros(nx, ny+1, 1)
+    Prep.balance_mass_fluxes!(am_uniform, bm_uniform, sum(dm; dims=3), ws; log_summary=false)
+    am_old, bm_old = zeros(nx+1, ny, nz), zeros(nx, ny+1, nz)
+    for k in 1:nz
+        am_old[:, :, k] .= am_uniform[:, :, 1] .* (k / sum(1:nz))
+        bm_old[:, :, k] .= bm_uniform[:, :, 1] .* (k / sum(1:nz))
+    end
+    @test replay(am_old, bm_old).max_rel_err > 1e-12
+    # The fixed-target guard now rejects that former pin error. Actual
+    # post-pin roundoff (~1e-16/window) is well inside its 1e-14 bound.
+    @test_throws ErrorException Prep.balance_column_mass_fluxes!(
+        zeros(nx+1, ny, nz), zeros(nx, ny+1, nz), m, dm, ws; fixed_global_mass=true)
+    next .= m .* (1 + 2eps(Float64))
+    dm .= (next .- m) ./ 2
+    am, bm = zeros(nx+1, ny, nz), zeros(nx, ny+1, nz)
+    dm_before = copy(dm)
+    diag = Prep.balance_column_mass_fluxes!(am, bm, m, dm, ws; fixed_global_mass=true)
+    @test replay(am, bm).max_rel_err < 1e-13
+    @test diag.max_rhs_mean > 0
+    @test dm == dm_before
+    @test am[1, :, :] == am[end, :, :]
+    @test all(iszero, bm[:, 1, :]) && all(iszero, bm[:, end, :])
+    # Review regression: divergence-free zonal circulation diluted the replay
+    # metric enough to accept 1e-10 global drift over 100 substeps. The global
+    # guard uses mass only, before any flux changes; roundoff still passes.
+    steps = 100
+    for drift in (1e-10, 2eps(Float64))
+        next .= m .* (1 + drift)
+        dm .= (next .- m) ./ (2steps)
+        am = [0.25m[1,j,k] for i in 1:nx+1, j in 1:ny, k in 1:nz]
+        bm = zeros(nx, ny+1, nz)
+        before = copy(am)
+        if drift == 1e-10
+            @test_throws ErrorException Prep.balance_column_mass_fluxes!(
+                am, bm, m, dm, ws; fixed_global_mass=true, steps_per_window=steps)
+            @test am == before && all(iszero, bm)
+        else
+            Prep.balance_column_mass_fluxes!(am, bm, m, dm, ws;
+                fixed_global_mass=true, steps_per_window=steps)
+            cm = zeros(nx,ny,nz+1)
+            recompute_cm_from_dm_target!(structured_replay_layout(), scratch.div, cm, m, dm, am, bm)
+            cm[:,:,1] .= 0; cm[:,:,end] .= 0
+            @test verify_window_continuity(structured_replay_layout(), scratch,
+                m, cm, next, steps, am, bm).max_rel_err < 1e-12
+        end
+    end
+    # Unpinned/moist windows keep the uniform mode and physical tendency.
+    next .= m .* (1 + 1e-10)
+    dm .= (next .- m) ./ 2
+    am, bm = zeros(nx+1,ny,nz), zeros(nx,ny+1,nz)
+    Prep.balance_column_mass_fluxes!(am, bm, m, dm, ws)
+    @test replay(am, bm).max_rel_err > 1e-12
+    # Cancellation in the global reduction cannot hide a budget error.
+    @test_throws ErrorException Prep.Common.check_fixed_global_mass(
+        fill(1e12, 3), [1e16, 1.0, -1e16]; applications=1)
+end
+
+@testset "CS column diagnostics remove the mass-weighted global mode" begin
+    nc, nz, steps = 4, 3, 2
+    mesh = CubedSphereMesh(; Nc=nc)
+    ft = Prep.build_cs_global_face_table(nc, mesh.connectivity)
+    degree = Prep.cs_cell_face_degree(ft)
+    m = ntuple(p -> [2.0^40 * k * (p == 1 && j == 1 ? 1/1024 : 1.0)
+                     for i in 1:nc, j in 1:nc, k in 1:nz], 6)
+    next = map(x -> x .* (1 + 2.0^-48), m)
+    am = ntuple(_ -> zeros(nc+1, nc, nz), 6)
+    bm = ntuple(_ -> zeros(nc, nc+1, nz), 6)
+    scratch = Prep.CSPoissonScratch(ft.nc)
+    diag = Prep.balance_cs_column_mass_fluxes!(am, bm, m, next, ft, degree, steps,
+                                              scratch; tol=1e-12, closure_tol=1e-9, fixed_global_mass=true)
+    @test_throws ErrorException Prep.balance_cs_column_mass_fluxes!(
+        am, bm, m, map(x -> x .* (1 + 1e-10), m), ft, degree, steps,
+        scratch; fixed_global_mass=true)
+    @test diag.final_column_projected_residual < 1e-9
+    @test diag.final_column_mean_residual > 0.001
+    record = Prep.column_closure_record(diag,
+        (; max_booked_residual=0.0, max_raw_residual_ratio=0.0))
+    stored = Prep.full_window_column_closure_record(record,
+        map(x -> x .* (2steps), am), map(x -> x .* (2steps), bm),
+        m, next, ft, steps, scratch)
+    @test stored.projected_residual_kg < 2steps * 1e-9
+    rescaled = Prep.rescaled_column_closure_record(record,
+        map(x -> x ./ 2, am), map(x -> x ./ 2, bm), m, next, ft, steps, 2steps, scratch)
+    @test rescaled.projected_residual_kg < 1e-9
+    # Independent divergence in global face-table order.
+    div = zeros(ft.nc)
+    for k in 1:nz
+        layer = similar(div)
+        Prep.cs_face_divergence!(layer, am, bm, ft, k)
+        div .+= layer
+    end
+    mass = zeros(ft.nc)
+    for c in 1:ft.nc
+        i, j, p = AtmosTransport.Grids.cs_panel_ij(c, nc)
+        mass[c] = sum(m[p][i, j, :])
+        div[c] += sum(next[p][i, j, :] .- m[p][i, j, :]) / (2steps)
+    end
+    rbar = sum(div) / length(div)
+    q = mass ./ (sum(mass) / length(mass))
+    @test maximum(abs, div .- rbar .* q) < 1e-9
+    @test maximum(abs, div .- rbar) > 0.001
+end

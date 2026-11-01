@@ -73,3 +73,10 @@ it returns the weights for reuse by day-local input ownership.
 
 ConfigChecks owns common scalar parsing and the spectral mass-basis choice.
 Deferred native flux-choice validation still occurs after keyword overrides.
+
+`check_fixed_global_mass` in `binary_pipeline.jl` owns the independent compensated
+global-budget guard for fixed dry targets. It accepts endpoint arrays or CS
+panel tuples, or LL per-application tendencies and their application count.
+Moist/unpinned paths do not assert a zero global change.
+
+# shared: check_fixed_global_mass

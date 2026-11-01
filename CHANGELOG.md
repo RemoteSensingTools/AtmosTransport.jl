@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Dry-mass rounding and polar replay closure.** The humidity-aware spectral
+  pressure pin compensates every native/global reduction. LL/RG/CS column
+  balances leave the remaining global mode proportional to column mass; this
+  applies to pinned dry spectral, TM5, native-source and regrid callers after
+  an independent compensated global-budget guard (`1e-14` relative for Float64,
+  with storage rounding allowed for lower precision). Moist and unpinned paths
+  retain their uniform mode; TM5 layer and standalone CS projection arithmetic
+  stays unchanged. On a Float64
+  1° ERA5 day, replay maxima fall from 1.471e-12 to 5.823e-15 (TM5) and
+  from 1.064e-12 to 6.107e-15 (point-sampled), with zero budgets above the
+  unchanged 1e-12 tolerance. Maximum global mass changes fall from
+  135,695.388 to 666.004 kg/window and 121,982.453 to 659.033 kg/window,
+  respectively. All spectral `pre_*` goldens are expected to change at rounding
+  level. See the manual's mass-conservation page for distributions and scope.
+
 - **ERA5 N320 pinned dry flux thickness.** With `flux_thickness = "dry_mass"`
   and the global dry-mass pin enabled, fluxes now use pinned native-level
   thickness on the source and cubed-sphere grids. Pin-off arithmetic is

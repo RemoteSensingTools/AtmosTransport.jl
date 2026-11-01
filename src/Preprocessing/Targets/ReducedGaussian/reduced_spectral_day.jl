@@ -176,6 +176,7 @@ function balance_window!(hflux_work::Matrix{Float64},
                          cL::CompressedLaplacian,
                          steps_per_window::Int;
                          weights::AbstractColumnWeights = MassWeightedColumn(),
+                         fixed_global_mass::Bool = false,
                          tol::Float64 = DEFAULT_POISSON_BALANCE_TOL,
                          max_iter::Int = DEFAULT_POISSON_BALANCE_MAX_ITER) where FT
 
@@ -191,7 +192,8 @@ function balance_window!(hflux_work::Matrix{Float64},
     diag = balance_compressed_column_fluxes!(
         hflux_work, m_cur_work, m_next_work,
         work.face_left, work.face_right, cL,
-        steps_per_window, scratch; weights, tol=tol, max_iter=max_iter)
+        steps_per_window, scratch; weights, tol=tol, max_iter=max_iter,
+        fixed_global_mass, mass_precision=FT)
 
     # Store balanced hflux back as FT.
     buf.hflux[slot] .= FT.(hflux_work)
@@ -330,7 +332,8 @@ function driver_drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWor
     ready_diag = drain_ready_windows!(workspace, contract, written_win,
                                       ctx.steps_per_window;
                                       write_replay_on = ctx.write_replay_on,
-                                      substep_policy = ctx.substep_policy)
+                                      substep_policy = ctx.substep_policy,
+                                      fixed_global_mass = ctx.settings.mass_fix_enable && ctx.settings.mass_basis == :dry)
     t_bal = time() - t_bal
     _rg_unified_record_diag!(ctx, ready_diag, written_win)
     diag = ready_diag.balance
@@ -363,6 +366,7 @@ function driver_flush_final_windows!(workspace::ReducedGaussianSpectralWindowWor
                                       ctx.steps_per_window;
                                       write_replay_on = ctx.write_replay_on,
                                       substep_policy = ctx.substep_policy,
+                                      fixed_global_mass = ctx.settings.mass_fix_enable && ctx.settings.mass_basis == :dry,
                                       m_next)
     t_bal = time() - t_bal
     _rg_unified_record_diag!(ctx, ready_diag, Nt)
