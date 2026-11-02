@@ -57,6 +57,7 @@ function balance_cs_level!(
     tol::Float64,
     max_iter::Int,
     project_every::Int,
+    mass_weighted_global_mode::Bool = false,
 ) where FT
     Nc = ft.Nc
     nc = ft.nc
@@ -80,7 +81,22 @@ function balance_cs_level!(
     end
 
     rhs_raw_linf = cs_linf(rhs)
-    rhs_mean = rhs_sum / nc
+    rhs_mean = mass_weighted_global_mode ? +(_neumaier_sum(c -> rhs[c], 1:nc, Float64)...) / nc : rhs_sum / nc
+    mean_mass = 1.0
+    if mass_weighted_global_mode
+        mass_sum = _neumaier_sum(1:nc, Float64) do c
+            i, j, p = cs_panel_ij(c, Nc)
+            Float64(panels_m[p][i, j, k])
+        end
+        mean_mass = +(mass_sum...) / nc
+    end
+    if mass_weighted_global_mode
+        @inbounds for c in 1:nc
+            i, j, p = cs_panel_ij(c, Nc)
+            q = Float64(panels_m[p][i, j, k]) / mean_mass
+            rhs[c] -= rhs_mean * (q - 1.0)
+        end
+    end
     pre_proj = 0.0
     @inbounds @simd for c in 1:nc
         a = abs(rhs[c] - rhs_mean)
@@ -95,7 +111,7 @@ function balance_cs_level!(
     # 3. Solve L * psi = rhs.
     _, it = solve_cs_poisson_pcg!(psi, rhs, ft, degree, cg_scratch;
                                   tol=tol, max_iter=max_iter,
-                                  project_every=project_every)
+                                  project_every=project_every, projection=Val(mass_weighted_global_mode))
 
     # Diagnostic: post-solve projected residual.
     Lpsi = scratch.Ap
@@ -105,7 +121,8 @@ function balance_cs_level!(
         i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
                   Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
-        rhs[c] = (div[c] - target) - rhs_mean
+        q = mass_weighted_global_mode ? Float64(panels_m[p_idx][i_local, j_local, k]) / mean_mass : 1.0
+        rhs[c] = (div[c] - target) - rhs_mean * q
     end
     post_proj = 0.0
     @inbounds @simd for c in 1:nc
@@ -145,6 +162,9 @@ convergence at every cell matches the prescribed mass tendency:
     dm_dt[c, k] = (m_next[c, k] - m_cur[c, k]) / (2 × steps_per_window)
 
 Returns a diagnostic NamedTuple with pre/post residuals and CG iteration counts.
+`mass_weighted_global_mode=true` is used on the single-level column buffers by
+`balance_cs_column_mass_fluxes!`; the standalone per-level balance defaults to
+its original uniform global mode.
 """
 function balance_cs_global_mass_fluxes!(
     panels_am::NTuple{6, Array{FT, 3}},
@@ -158,6 +178,7 @@ function balance_cs_global_mass_fluxes!(
     tol::Float64=DEFAULT_POISSON_BALANCE_TOL,
     max_iter::Int=DEFAULT_POISSON_BALANCE_MAX_ITER,
     project_every::Int=DEFAULT_POISSON_PROJECT_EVERY,
+    mass_weighted_global_mode::Bool=false,
 ) where FT
 
     Nc = ft.Nc
@@ -178,7 +199,8 @@ function balance_cs_global_mass_fluxes!(
         diag = balance_cs_level!(
             k, panels_am, panels_bm, panels_m, panels_m_next,
             ft, degree, scratches[Threads.threadid()], inv_scale;
-            tol=tol, max_iter=max_iter, project_every=project_every)
+            tol=tol, max_iter=max_iter, project_every=project_every,
+            mass_weighted_global_mode)
         pre_by_level[k] = diag.pre
         post_by_level[k] = diag.post
         rhs_mean_by_level[k] = diag.rhs_mean
@@ -235,7 +257,7 @@ end
 @inline _residual_ratio(r::Float64, tol::Float64) = r == 0 ? 0.0 : r / tol
 
 # Column residuals of the stored fluxes after a closure pass: the raw and
-# mean-free (projected) maxima, the mean, and the largest ratio of a cell's
+# mass-weighted-global-mode-free maxima, the mean, and the largest ratio of a cell's
 # projected residual to its own tolerance `scratch.tol[c]`.
 function cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
                                            col_bm::NTuple{6, Array{FT, 3}},
@@ -243,29 +265,35 @@ function cs_column_balance_projected_linf(col_am::NTuple{6, Array{FT, 3}},
                                            col_m_next::NTuple{6, Array{FT, 3}},
                                            ft::CSGlobalFaceTable,
                                            steps_per_window::Int,
-                                           scratch::CSPoissonScratch) where FT
+                                           scratch::CSPoissonScratch;
+                                           mass_weighted_global_mode::Bool=false) where FT
     Nc = ft.Nc
     inv_scale = 1.0 / (2.0 * steps_per_window)
     div = scratch.div
     cs_face_divergence!(div, col_am, col_bm, ft, 1)
 
     raw_linf = 0.0
-    mean = 0.0
     @inbounds for c in 1:ft.nc
         i_local, j_local, p_idx = cs_panel_ij(c, Nc)
         target = (Float64(col_m[p_idx][i_local, j_local, 1]) -
                   Float64(col_m_next[p_idx][i_local, j_local, 1])) * inv_scale
         r = div[c] - target
         div[c] = r
-        mean += r
         raw_linf = max(raw_linf, abs(r))
     end
-    mean /= ft.nc
+    mean = +(_neumaier_sum(c -> div[c], 1:ft.nc, Float64)...) / ft.nc
+    mass_sum = _neumaier_sum(1:ft.nc, Float64) do c
+        i, j, p = cs_panel_ij(c, Nc)
+        Float64(col_m[p][i, j, 1])
+    end
+    mean_mass = +(mass_sum...) / ft.nc
     projected_linf = 0.0
     worst_ratio = 0.0
     tol = scratch.tol
     @inbounds for c in 1:ft.nc
-        r = abs(div[c] - mean)
+        i, j, p = cs_panel_ij(c, Nc)
+        q = mass_weighted_global_mode ? Float64(col_m[p][i, j, 1]) / mean_mass : 1.0
+        r = abs(div[c] - mean * q)
         projected_linf = max(projected_linf, r)
         worst_ratio = max(worst_ratio, _residual_ratio(r, tol[c]))
     end
@@ -370,13 +398,18 @@ local air mass, by default; `HybridBWeightedColumn` follows TM5). Seam faces
 use the two cells in `ft.face_left/right`, independent of which panel owns the
 canonical stored face.
 
-The column equation is
+With `fixed_global_mass=true`, the independent global dry-mass budget guard
+runs before any flux correction. The projected column equation is
 
 ```math
 r_c = ∑_{f∂c} s_{cf}∑_k F_{f,k}
       - \\frac{∑_k(m_{c,k}-m'_{c,k})}{2N_s}, \\qquad
-r_c^\\perp = r_c - \\frac{1}{N_c}∑_d r_d .
+q_c = M_c / \\operatorname{mean}(M), \\qquad
+r_c^\\perp = r_c - q_c \\frac{1}{N_c}∑_d r_d .
 ```
+
+For moist or unpinned windows, leave `fixed_global_mass=false` (the default):
+`q_c = 1`, with no mass-proportional shift or zero-global-change assertion.
 
 Corrections repeat until every cell has `|r_c^⊥| ≤ τ_c` or `closure_passes`
 is exhausted, in which case this function raises. The typed tolerance is per
@@ -415,10 +448,12 @@ function balance_cs_column_mass_fluxes!(
     closure_passes::Int=8,
     closure_tol::Float64=COLUMN_CLOSURE_TOL_KG,
     weights::AbstractColumnWeights=MassWeightedColumn(),
+    fixed_global_mass::Bool=false,
 ) where FT
     Nc = ft.Nc
     Nz = size(panels_am[1], 3)
 
+    fixed_global_mass && check_fixed_global_mass(panels_m, panels_m_next)
     closure_passes > 0 || throw(ArgumentError("closure_passes must be positive"))
     closure_tol >= 0.0 || throw(ArgumentError("closure_tol must be non-negative"))
 
@@ -447,7 +482,7 @@ function balance_cs_column_mass_fluxes!(
         end
         diag = balance_cs_global_mass_fluxes!(
             col_am, col_bm, col_m, col_m_next, ft, degree, steps_per_window, scratch;
-            tol, max_iter, project_every)
+            tol, max_iter, project_every, mass_weighted_global_mode=fixed_global_mass)
 
         max_face_delta = max(max_face_delta,
             _distribute_cs_column_delta!(panels_am, panels_bm, panels_m,
@@ -461,7 +496,8 @@ function balance_cs_column_mass_fluxes!(
                                  Nc, Nz)
         cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol)
         final_stats = cs_column_balance_projected_linf(
-            col_am, col_bm, col_m, col_m_next, ft, steps_per_window, scratch)
+            col_am, col_bm, col_m, col_m_next, ft, steps_per_window, scratch;
+            mass_weighted_global_mode=fixed_global_mass)
         if final_stats.worst_ratio <= 1
             converged = true
             break
@@ -480,6 +516,7 @@ function balance_cs_column_mass_fluxes!(
         max_rhs_mean = diag.max_rhs_mean,
         max_pre_projected = diag.max_pre_projected,
         max_post_projected = diag.max_post_projected,
+        mass_weighted_global_mode = fixed_global_mass,
         final_column_raw_residual = final_stats.raw_linf,
         final_column_projected_residual = final_stats.projected_linf,
         final_column_mean_residual = final_stats.mean_abs,
@@ -531,7 +568,8 @@ function recheck_cs_column_closure(panels_am::NTuple{6, Array{FT, 3}},
     end
     cs_column_roundoff_tolerance!(scratch, panels_am, panels_bm, ft, closure_tol, flux_scale)
     stats = cs_column_balance_projected_linf(col_am, col_bm, col_m, col_m_next, ft,
-                                              steps_per_window, scratch)
+                                              steps_per_window, scratch;
+                                              mass_weighted_global_mode=get(balance_diag, :mass_weighted_global_mode, false))
     return merge(balance_diag, (
         final_column_raw_residual = stats.raw_linf,
         final_column_projected_residual = stats.projected_linf,

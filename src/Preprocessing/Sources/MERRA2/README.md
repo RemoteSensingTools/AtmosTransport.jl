@@ -33,3 +33,7 @@ No adjoint. Replay and positivity use the shared CS/binary contracts. Preserve
 source level orientation, endpoint timing, conversions and arithmetic order.
 
 Endpoint blocks keep dry mass and stored pressure. The daily scratch owns the Float64 pressure accumulator; unused dry-DELP output is removed. OMEGA storage remains live when the input provides OMEGA.
+
+Dry flux thickness uses the shared Targets/CubedSphere
+`fill_dry_mass_flux_thickness!` rule (`g*m/A` from pinned mass); its arithmetic
+and the historical moist default are unchanged.

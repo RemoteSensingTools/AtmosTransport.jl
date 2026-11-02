@@ -46,3 +46,6 @@ weights for T/q and area means for surface fields. These means accumulate in
 Float64, snap land fractions within 1e-12 to [0,1], then convert to the output
 precision. The pass-through records a regridded
 construction identity. N320→CS support is deferred pending archive coverage.
+
+`fill_dry_mass_flux_thickness!` converts native-level pinned dry mass to `g*m/A`
+for CS panel arrays or source-grid arrays. ERA5 and MERRA-2 share this rule.

@@ -314,6 +314,12 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                               dm_dt::Array{FT, 3},
                               ws::LLPoissonWorkspace;
                               log_summary::Bool=true) where FT
+    balance_mass_fluxes!(am, bm, dm_dt, ws, Val(false); log_summary)
+end
+
+function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
+                              dm_dt::Array{FT, 3}, ws::LLPoissonWorkspace,
+                              ::Val{compensated}; log_summary::Bool=true) where {FT,compensated}
     Nx = size(am, 1) - 1
     Ny = size(bm, 2) - 1
     Nz = size(am, 3)
@@ -332,9 +338,11 @@ function balance_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         max_residual = max(max_residual, max_res_k)
         max_res_k < 1e-10 && continue
 
+        # Remove the nullspace accurately before the FFT sees the RHS.
+        residual_mean = compensated ? +(_neumaier_sum(c -> ws.residual[c], eachindex(ws.residual), Float64)...) / (Nx * Ny) : 0.0
         # In-place FFT solve: ψ̂ = R̂ / eigenvalue
         @inbounds for j in 1:Ny, i in 1:Nx
-            ws.cmplx_buf[i, j] = complex(ws.residual[i, j])
+            ws.cmplx_buf[i, j] = complex(compensated ? ws.residual[i, j] - residual_mean : ws.residual[i, j])
         end
         ws.fft_plan * ws.cmplx_buf
         @inbounds for j in 1:Ny, i in 1:Nx
@@ -401,12 +409,18 @@ over the layers by `spread_column_correction!` with the column `weights`
 `column_balance_weights`, `hybrid_mass` by default, built from the output
 coordinate's `B`). The layer winds keep their vertical structure, and `cm`
 diagnosed afterwards from the explicit tendency carries the vertical motion
-and closes at the top and the surface.
+and closes at the top and the surface. The unsatisfiable global residual
+is left in proportion to current column mass, via a shift of the solver-only
+column target by `R̄ * (M_c / mean(M) - 1)` only with `fixed_global_mass=true`,
+after the independent global budget guard (using `steps_per_window`). Otherwise
+the uniform mode remains. `dm_dt` is not modified.
 """
 function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
                                      m::Array{FT, 3}, dm_dt::Array{FT, 3},
                                      ws::LLPoissonWorkspace;
-                                     weights::AbstractColumnWeights = MassWeightedColumn()) where FT
+                                     weights::AbstractColumnWeights = MassWeightedColumn(),
+                                     fixed_global_mass::Bool = false,
+                                     steps_per_window::Int = 1) where FT
     Nx = size(am, 1) - 1
     Ny = size(bm, 2) - 1
     Nz = size(am, 3)
@@ -417,6 +431,7 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
     size(dm_dt) == size(m) ||
         error("balance_column_mass_fluxes!: dm_dt shape $(size(dm_dt)) incompatible with m $(size(m))")
     check_column_weight_levels(weights, Nz)
+    fixed_global_mass && check_fixed_global_mass(m, dm_dt; applications=2steps_per_window)
 
     col_am = zeros(FT, Nx + 1, Ny, 1)
     col_bm = zeros(FT, Nx, Ny + 1, 1)
@@ -441,9 +456,26 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
         pre_residual = max(pre_residual, abs(conv - Float64(col_dm[i, j, 1])))
     end
 
+    # Conservative faces cannot remove the global residual. Shift only the
+    # solver target so the residual left for cm is proportional to column mass,
+    # rather than constant per cell (which amplifies polar replay errors).
+    col_mass = [ +(_neumaier_sum(k -> Float64(m[i, j, k]), 1:Nz, Float64)...)
+                 for i in 1:Nx, j in 1:Ny ]
+    mean_mass = +(_neumaier_sum(c -> col_mass[c], eachindex(col_mass), Float64)...) / (Nx * Ny)
+    @inbounds for j in 1:Ny, i in 1:Nx
+        ws.residual[i, j] = (Float64(col_am[i, j, 1]) - Float64(col_am[i + 1, j, 1])) +
+                           (Float64(col_bm[i, j, 1]) - Float64(col_bm[i, j + 1, 1])) - Float64(col_dm[i, j, 1])
+    end
+    residual_mean = +(_neumaier_sum(c -> ws.residual[c], eachindex(ws.residual), Float64)...) / (Nx * Ny)
+    if fixed_global_mass
+        @inbounds for j in 1:Ny, i in 1:Nx
+            col_dm[i, j, 1] += FT(residual_mean * (col_mass[i, j] / mean_mass - 1.0))
+        end
+    end
+
     col_am_before = copy(col_am)
     col_bm_before = copy(col_bm)
-    balance_mass_fluxes!(col_am, col_bm, col_dm, ws; log_summary=false)
+    balance_mass_fluxes!(col_am, col_bm, col_dm, ws, Val(true); log_summary=false)
 
     max_face_delta = 0.0
     @inbounds for j in 1:Ny, i in 1:Nx + 1
@@ -471,11 +503,14 @@ function balance_column_mass_fluxes!(am::Array{FT, 3}, bm::Array{FT, 3},
             conv += (Float64(am[i, j, k]) - Float64(am[i + 1, j, k])) +
                     (Float64(bm[i, j, k]) - Float64(bm[i, j + 1, k]))
         end
-        post_residual = max(post_residual, abs(conv - Float64(col_dm[i, j, 1])))
+        # Report the original endpoint budget, not the shifted solver target.
+        tendency = +(_neumaier_sum(k -> Float64(dm_dt[i, j, k]), 1:Nz, Float64)...)
+        post_residual = max(post_residual, abs(conv - tendency))
     end
 
     return (max_pre_residual = pre_residual,
             max_post_residual = post_residual,
+            max_rhs_mean = abs(residual_mean),
             max_face_delta = max_face_delta)
 end
 
@@ -842,7 +877,9 @@ The correction is still spatially uniform in `ps`; only the global dry-mass
 targeting uses the instantaneous humidity pattern. `sp` and `area` hold one
 value per column and `qv` adds the level dimension last: lat-lon `(Nx, Ny)`
 and `(Nx, Ny, Nz)`, or reduced-Gaussian `(ncell,)` and `(ncell, Nz)`. The
-default target is `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98325 Pa).
+default target is `GLOBAL_MEAN_DRY_SURFACE_PRESSURE` (98325 Pa). All native
+and global sums are compensated Float64 reductions; the small target difference
+retains the low parts. Accumulators are local and no scratch is allocated.
 """
 function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
                                       area::AbstractArray{<:Real},
@@ -855,30 +892,30 @@ function pin_global_mean_ps_using_qv!(sp::AbstractArray{<:Real},
     length(dB) == Nz || error("length(dB)=$(length(dB)) does not match qv levels $Nz")
     size(qv) == (size(sp)..., Nz) || error("sp shape $(size(sp)) does not match qv horizontal shape $(size(qv)[1:end-1])")
     size(area) == size(sp) || error("area shape $(size(area)) does not match sp shape $(size(sp))")
-    qv_columns = reshape(qv, length(sp), Nz)
+    ncolumns = length(sp)
 
-    sum_dry_ps_area = 0.0
-    sum_alpha_area = 0.0
-    sum_area = 0.0
-
-    @inbounds for c in eachindex(IndexLinear(), sp, area)
-        ps_c = sp[c]
-        dry_ps_col = 0.0
-        alpha_col = 0.0
-        for k in 1:Nz
-            q = clamp(qv_columns[c, k], 0.0, MAX_SPECIFIC_HUMIDITY)
-            dry_ps_col += (Float64(dA[k]) + Float64(dB[k]) * ps_c) * (1.0 - q)
-            alpha_col += Float64(dB[k]) * (1.0 - q)
+    columns = eachindex(IndexLinear(), sp, area)
+    # Compensate both the native-layer and the global reductions. Keep the
+    # global low parts until forming the small target-minus-current numerator.
+    dry, dry_low = _neumaier_sum(columns, Float64) do c
+        ps_c = Float64(sp[c])
+        col = _neumaier_sum(1:Nz, Float64) do k
+            q = clamp(Float64(qv[c + (k - 1) * ncolumns]), 0.0, MAX_SPECIFIC_HUMIDITY)
+            (Float64(dA[k]) + Float64(dB[k]) * ps_c) * (1.0 - q)
         end
-        a = area[c]
-        sum_dry_ps_area += dry_ps_col * a
-        sum_alpha_area += alpha_col * a
-        sum_area += a
+        +(col...) * Float64(area[c])
     end
-
-    mean_dry_ps_current = sum_dry_ps_area / sum_area
-    mean_alpha = sum_alpha_area / sum_area
-    offset = mass_target_offset(target_ps_dry_pa, mean_dry_ps_current, mean_alpha)
+    alpha, alpha_low = _neumaier_sum(columns, Float64) do c
+        col = _neumaier_sum(1:Nz, Float64) do k
+            q = clamp(Float64(qv[c + (k - 1) * ncolumns]), 0.0, MAX_SPECIFIC_HUMIDITY)
+            Float64(dB[k]) * (1.0 - q)
+        end
+        +(col...) * Float64(area[c])
+    end
+    area_sum, area_low = _neumaier_sum(c -> Float64(area[c]), columns, Float64)
+    target = Float64(target_ps_dry_pa)
+    gap = fma(target, area_sum, -dry) + (target * area_low - dry_low)
+    offset = mass_target_offset(gap, 0.0, alpha + alpha_low)
     @. sp += offset
     return offset
 end

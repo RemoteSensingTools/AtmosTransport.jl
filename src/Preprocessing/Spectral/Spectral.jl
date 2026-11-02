@@ -4,7 +4,7 @@ export era5_thermo_path
 
 import KernelAbstractions
 using KernelAbstractions: @kernel, @index, @localmem, @synchronize, get_backend, synchronize
-using ..Common: AbstractSpectralSynthesis
+using ..Common: check_fixed_global_mass, AbstractSpectralSynthesis
 using Dates
 using Logging
 using Printf
@@ -14,6 +14,7 @@ using SHA: sha1
 using JLD2
 using NCDatasets
 using ...AtomicFiles: atomic_publish
+using ...Architectures: _neumaier_sum
 using ...Parameters: IFS_EARTH_RADIUS, STANDARD_GRAVITY, GLOBAL_MEAN_DRY_SURFACE_PRESSURE,
     GLOBAL_MEAN_SPECIFIC_HUMIDITY, ERA5_NATIVE_LEVEL_COUNT, ERA5_MET_INTERVAL_SECONDS
 using ...Grids: HybridSigmaPressure, ncells, nrings, nlevels, n_levels

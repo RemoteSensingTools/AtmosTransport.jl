@@ -182,7 +182,8 @@ end
 
 function _finish_reduced_window!(workspace::ReducedGaussianSpectralWindowWorkspace{FT},
                                   contract, win_idx::Int, m_next;
-                                  write_replay_on::Bool, substep_policy) where FT
+                                  write_replay_on::Bool, substep_policy,
+                                  fixed_global_mass::Bool=false) where FT
     steps = initial_substeps(substep_policy, workspace.steps_schedule[win_idx])
     old_steps = workspace.steps_schedule[win_idx]
     source_steps = old_steps
@@ -203,7 +204,7 @@ function _finish_reduced_window!(workspace::ReducedGaussianSpectralWindowWorkspa
                                workspace.div_scratch, workspace.dm_target_work,
                                workspace.buf, workspace.cur, m_next,
                                workspace.work, workspace.cL, steps;
-                               weights = workspace.balance_weights)
+                               weights = workspace.balance_weights, fixed_global_mass)
         contract_diag = _verify_rg_stored_window!(
             contract, workspace, m_next, win_idx;
             write_replay_on = write_replay_on, accumulate = false)
@@ -236,10 +237,11 @@ end
 
 function drain_ready_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
                               contract, win_idx::Int, steps_per_window::Int;
-                              write_replay_on::Bool, substep_policy)
+                              write_replay_on::Bool, substep_policy,
+                              fixed_global_mass::Bool=false)
     result = _finish_reduced_window!(workspace, contract, win_idx,
                                      workspace.buf.m[workspace.nxt];
-                                     write_replay_on, substep_policy)
+                                     write_replay_on, substep_policy, fixed_global_mass)
     workspace.cur, workspace.nxt = workspace.nxt, workspace.cur
     return result
 end
@@ -247,7 +249,8 @@ end
 function flush_final_windows!(workspace::ReducedGaussianSpectralWindowWorkspace,
                               contract, win_idx::Int, steps_per_window::Int;
                               write_replay_on::Bool, substep_policy,
+                              fixed_global_mass::Bool=false,
                               m_next=workspace.buf.m[workspace.cur])
     return _finish_reduced_window!(workspace, contract, win_idx, m_next;
-                                   write_replay_on, substep_policy)
+                                   write_replay_on, substep_policy, fixed_global_mass)
 end
