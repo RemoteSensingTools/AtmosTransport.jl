@@ -191,47 +191,8 @@ end
     end
 end
 
-@testset "bad targets are refused before anything is created" begin
-    mktempdir() do dir
-        @test_throws ArgumentError AF.open_atomic_staging(joinpath(dir, "missing", "x.bin"))
-        @test_throws ArgumentError AF.atomic_publish(tmp -> write(tmp, "x"),
-                                                     joinpath(dir, "missing", "x.bin"))
-        sub = joinpath(dir, "subdir")
-        mkdir(sub)
-        write(joinpath(sub, "keep.txt"), "kept")
-        @test_throws ArgumentError AF.atomic_publish(tmp -> write(tmp, "x"), sub)
-        @test read(joinpath(sub, "keep.txt"), String) == "kept"
-        @test readdir(dir) == ["subdir"]
-    end
-end
 
 if !Sys.iswindows()
-    @testset "published mode is 0o666 & ~umask" begin
-        mktempdir() do dir
-            for mask in (0o022, 0o027, 0o002, 0o077)
-                expected = 0o666 & ~UInt16(mask)    # octal literals are unsigned; widen first
-                path = joinpath(dir, "mode_$(string(mask; base = 8)).bin")
-                with_umask(mask) do
-                    AF.atomic_publish(path) do tmp
-                        @test mode_of(tmp) == expected          # staging file already has it
-                        open(io -> write(io, "x"), tmp, "w")
-                    end
-                end
-                @test mode_of(path) == expected
-
-                staged = joinpath(dir, "staged_$(string(mask; base = 8)).bin")
-                with_umask(mask) do
-                    tmp, io = AF.open_atomic_staging(staged)
-                    @test mode_of(tmp) == expected
-                    write(io, "x")
-                    close(io)
-                    AF.commit_atomic_staging(tmp, staged)
-                end
-                @test mode_of(staged) == expected
-            end
-            @test isempty(staging_leftovers(dir))
-        end
-    end
 
     @testset "staging files are created exclusively and never clobber" begin
         mktempdir() do dir

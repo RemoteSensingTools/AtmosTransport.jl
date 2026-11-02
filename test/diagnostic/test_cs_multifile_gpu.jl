@@ -1,7 +1,7 @@
 # Opt-in GPU integration test. Default A100; explicitly authorized V100 runs:
 # CUDA_VISIBLE_DEVICES=0 ATMOSTR_RUN_CS_MULTIFILE_GPU_TESTS=1 \
 # ATMOSTR_MULTIFILE_GPU_NAME=V100 julia --project=. test/diagnostic/test_cs_multifile_gpu.jl
-using Test, Serialization
+using Test
 if get(ENV,"ATMOSTR_RUN_CS_MULTIFILE_GPU_TESTS","0") != "1"
     @info "Skipping opt-in CS multifile GPU tests"
 else
@@ -12,7 +12,6 @@ else
     CUDA.allowscalar(false)
     include(joinpath(@__DIR__,"..","fixtures","cs_multifile.jl"))
     using .CSDriverHandoffFixtures
-    outputs = Dict{Tuple{String,String,Int},Any}()
     @testset "CS multifile GPU physics and CPU reference" begin
         mktempdir() do dir
             paths = joinpath.(dir,["combined.bin","first.bin","second.bin"])
@@ -34,13 +33,10 @@ else
                     # Existing GPU file handoff rounds at Float32 precision:
                     # baseline max-relative differences reach 1.74e-7 on V100.
                     @test max_rel <= 4eps(Float32)
-                    outputs[(adv,conv,p)] = (;split=actual,continuous=same_run)
                     @test actual ≈ reference.state.tracers_raw[p] rtol=5e-5
                     @test all(isfinite,actual)
                 end
             end
         end
     end
-    artifact = get(ENV,"ATMOSTR_MULTIFILE_GPU_OUTPUT","")
-    isempty(artifact) || serialize(artifact,outputs)
 end

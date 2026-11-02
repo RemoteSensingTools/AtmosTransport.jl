@@ -181,3 +181,19 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
             replay_scratch = bad_scratch)
     end
 end
+
+@testset "generation fingerprints cover source and preprocessing settings" begin
+    provenance = (script_path="preprocess.jl", script_mtime=1.0,
+                  git_commit="abc123", git_dirty=false,
+                  creation_time="ignored")
+    kwargs = (spectral_resolution=127, source_paths=String[],
+              next_day_hour0=nothing, provenance=provenance)
+    base = AtmosTransport.Preprocessing.generation_fingerprint(
+        ; settings=(T_target=127, source_dir="a"), kwargs...)
+    changed_resolution = AtmosTransport.Preprocessing.generation_fingerprint(
+        ; settings=(T_target=255, source_dir="a"), kwargs...)
+    changed_source = AtmosTransport.Preprocessing.generation_fingerprint(
+        ; settings=(T_target=127, source_dir="b"), kwargs...)
+    @test base != changed_resolution
+    @test base != changed_source
+end

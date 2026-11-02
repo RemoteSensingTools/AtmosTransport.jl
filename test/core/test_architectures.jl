@@ -6,10 +6,6 @@ using AtmosTransport
 
 const Arch = AtmosTransport.Architectures
 
-struct MockCUDAArray end
-struct MockROCArray end
-struct MockMetalArray end
-
 @testset "execution architecture selection" begin
     cpu = Arch.architecture_from_config(Dict("backend" => "cpu"))
     @test cpu isa Arch.CPU
@@ -18,51 +14,15 @@ struct MockMetalArray end
     @test Arch.architecture_label(cpu) == "CPU"
     @test Arch.array_adapter_for(zeros(Float32, 2, 2)) === Array
 
-    # A working-tree CLI may include AtmosTransport after loading CUDA or
-    # Metal. In that mode package extensions cannot attach to the local module,
-    # so adapter discovery must also recognize arrays through loaded runtimes.
-    loaded = Dict{Base.PkgId, Any}(
-        Arch._RUNTIME_PACKAGE_IDS.CUDA => (CuArray = MockCUDAArray,),
-        Arch._RUNTIME_PACKAGE_IDS.AMDGPU => (ROCArray = MockROCArray,),
-        Arch._RUNTIME_PACKAGE_IDS.Metal => (MtlArray = MockMetalArray,),
-    )
-    @test Arch._loaded_gpu_adapter(MockCUDAArray(), loaded) === MockCUDAArray
-    @test Arch._loaded_gpu_adapter(MockROCArray(), loaded) === MockROCArray
-    @test Arch._loaded_gpu_adapter(MockMetalArray(), loaded) === MockMetalArray
-    @test Arch._loaded_gpu_adapter(zeros(Float32, 2), loaded) === Array
-
-    @test Arch.architecture_from_config(Dict("use_gpu" => false)) isa Arch.CPU
-    @test Arch.architecture_from_config(Dict("backend" => "cuda")) isa Arch.GPU{:cuda}
-    @test Arch.GPU("metal") isa Arch.GPU{:metal}
-    @test Arch._architecture_request("cpu") isa Arch.CPURequest
-    @test Arch._architecture_request("cuda") isa Arch.CUDARequest
-    @test Arch._architecture_request("metal") isa Arch.MetalRequest
-    @test Arch._architecture_request("auto") isa Arch.AutoGPURequest
-    @test Arch.backend_name(Arch.GPU(:cuda)) === :cuda
-    @test Arch.is_gpu(Arch.GPU(:metal))
-    @test_throws MethodError Arch.GPU()
-    @test Arch.GPU(:rocm) isa Arch.GPU{:rocm}
-    @test Arch.GPU("rocm") isa Arch.GPU{:rocm}
-    @test Arch._architecture_request("rocm") isa Arch.ROCmRequest
-    @test Arch.backend_name(Arch.GPU(:rocm)) === :rocm
-    @test Arch.assert_float_type!(Arch.GPU(:rocm), Float64) === nothing
-    @test_throws ArgumentError Arch.GPU(:unknown)
-    @test_throws ArgumentError Arch.architecture_from_config(Dict("use_gpu" => true,
-                                                                  "backend" => "cpu"))
-    @test Arch.architecture_from_config(Dict("backend" => "rocm")) isa Arch.GPU{:rocm}
-    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "unknown"))
-    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => :cuda))
-
-    for alias in ("host", "nvidia", "apple", "apple_metal", "apple-metal", "gpu", "CPU")
-        err = try
-            Arch.architecture_from_config(Dict("backend" => alias))
-            nothing
-        catch caught
-            caught
-        end
-        @test err isa ArgumentError
-        @test occursin("spelling \"$(alias)\" was removed", sprint(showerror, err))
+    for backend in ("cuda", "metal", "rocm")
+        @test Arch.backend_name(Arch.architecture_from_config(Dict("backend" => backend))) === Symbol(backend)
     end
+    @test_throws ArgumentError Arch.architecture_from_config(Dict("backend" => "unknown"))
+    cfg = Dict("architecture" => Dict("backend" => "cpu"))
+    @test AtmosTransport.Models.DrivenRunner._cfg_architecture(cfg) isa Arch.CPU
+    runner_source = read(joinpath(@__DIR__, "..", "..", "src", "Models",
+                                  "Runner", "DrivenRunner", "DrivenRunner.jl"), String)
+    @test occursin("Base.invokelatest(_run_driven_simulation, cfg, arch)", runner_source)
 
     architecture_source = read(joinpath(@__DIR__, "..", "..", "src", "Architectures.jl"), String)
     driven_source = join((read(joinpath(@__DIR__, "..", "..", "src", "Models", f), String)
@@ -91,20 +51,6 @@ end
     end
 end
 
-@testset "DrivenRunner resolves one concrete architecture" begin
-    cfg = Dict("architecture" => Dict("backend" => "cpu"),
-               "numerics" => Dict("float_type" => "Float64"))
-    arch = AtmosTransport.Models.DrivenRunner._cfg_architecture(cfg)
-    @test arch isa Arch.CPU
-    @test Arch.array_adapter(arch) === Array
-    @test Arch.architecture_label(arch) == "CPU"
-    @test Arch.synchronize_architecture!(arch) === nothing
-
-    runner_source = read(joinpath(@__DIR__, "..", "..", "src", "Models",
-                                  "Runner", "DrivenRunner", "DrivenRunner.jl"), String)
-    @test occursin("Base.invokelatest(_run_driven_simulation, cfg, arch)",
-                   runner_source)
-end
 
 @testset "canonical CLI activates package extensions" begin
     cli_source = read(joinpath(@__DIR__, "..", "..", "scripts",

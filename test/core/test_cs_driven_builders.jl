@@ -489,3 +489,15 @@ end
         @test M.build_runtime_advection(cfg, style) isa NoAdvection
     end
 end
+
+@testset "geoschem_nonlocal_vdiff config" begin
+    spec(d) = AtmosTransport.Models.diffusion_spec(d)
+    @test spec(Dict("kind" => "geoschem_nonlocal_vdiff")) isa
+          AtmosTransport.Models.GCHPNonlocalVdiffDiffusionSpec
+    @test_throws ArgumentError spec(Dict("kind" => "geoschem_nonlocal_vdiff",
+                                         "surface_flux_boundary" => false))
+    conv = AtmosTransport.Models.convection_spec(Dict("kind" => "cmfmc", "cloud_base" => "dqrcu"))
+    @test conv.cloud_base isa AtmosTransport.Operators.Convection.ArchivedCloudBase
+    @test_throws ArgumentError AtmosTransport.Models.convection_spec(
+        Dict("kind" => "cmfmc", "cloud_base" => "lcl"))
+end

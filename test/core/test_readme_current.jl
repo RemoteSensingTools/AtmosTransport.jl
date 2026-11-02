@@ -2,7 +2,7 @@
 """
 Module README freshness check (plan 21 Phase 6D).
 
-For each tracked module directory, verifies that its README.md
+For each source directory with a README, verifies that its README.md
 mentions every `.jl` file in that directory. Catches the most common
 README decay mode: adding a `.jl` file without updating the File Map
 section.
@@ -18,8 +18,7 @@ invariant that matters is mere presence.
 
 ## Adding new directories
 
-Append to `README_DIRS` when adding a new module-level directory
-that should have a File Map.
+Source directories with a README are discovered recursively under `src/`.
 
 ## Bypass
 
@@ -31,42 +30,9 @@ a comment explaining why.
 
 using Test
 
-const README_DIRS = [
-    # Root operators
-    "src/Operators",
-    # Operator submodules
-    "src/Operators/Advection",
-    "src/Operators/Advection/Reconstruction",
-    "src/Operators/Advection/Structured",
-    "src/Operators/Advection/CubedSphere",
-    "src/Operators/Diffusion",
-    "src/Operators/StepPlan",
-    "src/Operators/SurfaceFlux",
-    "src/Operators/Convection",
-    "src/Operators/Convection/CMFMC",
-    "src/Operators/Convection/TM5",
-    "src/Operators/Chemistry",
-    # State and its sub-tree
-    "src/State",
-    "src/State/Fields",
-    # Models and drivers
-    "src/Models", "src/Models/Core", "src/Models/Physics",
-    "src/MetDrivers",
-    # Grids
-    "src/Grids",
-    # Remaining modules and subfolders with READMEs
-    "src/Extras", "src/Adjoints", "src/Extras/Analysis", "src/Diagnostics", "src/Extras/Downloads", "src/Adjoints/Footprint",
-    "src/Adjoints/Inversion", "src/Adjoints/Inversion/ObservationBinding", "src/Adjoints/Inversion/Solver", "src/MetDrivers/BinaryFormat", "src/MetDrivers/BinaryReaders",
-    "src/Models/InitialConditions", "src/Models/Runner", "src/Models/Runner/DrivenRunner", "src/Output",
-    "src/Observations", "src/Observations/Retrievals", "src/Observations/Sources", "src/Observations/Sampling", "src/Parameters", "src/Preprocessing",
-    "src/Preprocessing/Core", "src/Preprocessing/Vertical", "src/Preprocessing/Spectral",
-    "src/Preprocessing/MassClosure", "src/Preprocessing/PhysicsInputs",
-    "src/Preprocessing/TransportBinary", "src/Preprocessing/Targets/LatLon",
-    "src/Preprocessing/Targets/ReducedGaussian", "src/Preprocessing/Targets/CubedSphere",
-    "src/Preprocessing/Sources/GEOS", "src/Preprocessing/Sources/ERA5",
-    "src/Preprocessing/Sources/MERRA2",
-    "src/Quantities", "src/Regridding", "src/GriddedIO", "src/Tape", "src/Extras/Visualization",
-]
+const REPO_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+const README_DIRS = [relpath(dir, REPO_ROOT) for (dir, _, _) in
+                     walkdir(joinpath(REPO_ROOT, "src")) if isfile(joinpath(dir, "README.md"))]
 
 # Per-directory exclusions — keep this empty by default. Populate only
 # when a specific .jl file has a documented reason not to appear in

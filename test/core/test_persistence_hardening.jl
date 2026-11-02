@@ -52,21 +52,6 @@ function _ll_fixture(::Type{FT}=Float32) where FT
     return grid, window
 end
 
-@testset "generation fingerprints cover source and preprocessing settings" begin
-    provenance = (script_path="preprocess.jl", script_mtime=1.0,
-                  git_commit="abc123", git_dirty=false,
-                  creation_time="ignored")
-    kwargs = (spectral_resolution=127, source_paths=String[],
-              next_day_hour0=nothing, provenance=provenance)
-    base = PP.generation_fingerprint(
-        ; settings=(T_target=127, source_dir="a"), kwargs...)
-    changed_resolution = PP.generation_fingerprint(
-        ; settings=(T_target=255, source_dir="a"), kwargs...)
-    changed_source = PP.generation_fingerprint(
-        ; settings=(T_target=127, source_dir="b"), kwargs...)
-    @test base != changed_resolution
-    @test base != changed_source
-end
 
 @testset "streaming binary writes fail closed" begin
     mktempdir() do dir
@@ -164,6 +149,15 @@ end
                 mass_basis=:dry,
                 surface_pressure_basis=TotalSurfacePressure(),
             )
+            for key in ("panel_convention", "cs_definition", "cs_coordinate_law",
+                        "cs_center_law", "longitude_offset_deg")
+                broken = deepcopy(empty_writer.header)
+                delete!(broken, key)
+                @test_throws ArgumentError MD.validate_transport_contract!(broken)
+            end
+            obsolete = deepcopy(empty_writer.header)
+            obsolete["format_version"] = 1
+            @test_throws ArgumentError MD.validate_transport_contract!(obsolete)
             empty_optionals = (
                 cmfmc=nothing, dtrain=nothing, dkg=nothing,
                 surface=nothing, vdiff=nothing,
@@ -212,7 +206,7 @@ end
             path = joinpath(dir, "header-contract.bin")
             writer, window = _open_rg(path)
             header = deepcopy(writer.header)
-            for (key, value) in (("float_type", "Float128"),
+            for (key, value) in (("format_version", 1), ("float_type", "Float128"),
                                  ("mass_basis", "unknown"),
                                  ("surface_pressure_basis", "unknown"),
                                  ("elems_per_window", header["elems_per_window"] + 1),

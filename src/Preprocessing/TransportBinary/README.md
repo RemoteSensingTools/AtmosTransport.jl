@@ -55,3 +55,6 @@ existing optional-section stream packing.
 storage and adaptive rescaling rechecks, so pinned dry windows use mass-weighted
 projected diagnostics while moist/unpinned windows retain uniform projection.
 The four-value constructor retains the uniform default.
+
+The day driver consumes `PreverifiedWindow` events from topology hooks. Writers
+read `ReadyWindow.payload` explicitly; verification happens before publication.

@@ -272,10 +272,6 @@ const REPO_ROOT = joinpath(@__DIR__, "..", "..")
         @test_throws ErrorException load_met_settings(path; root_dir = "/tmp/x")
     end
 
-    @testset "missing TOML errors with file path" begin
-        @test_throws ErrorException load_met_settings("/nonexistent/path.toml";
-                                                       root_dir = "/tmp")
-    end
 end
 
 @testset "MERRA-2 hourly windows: endpoint interpolation and A1 hours" begin

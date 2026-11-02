@@ -36,14 +36,19 @@ end
 # for chemistry).
 # =========================================================================
 
-"Build a small CellState with two tracers at known initial mass densities."
-function _make_state(FT; Nx = 4, Ny = 3, Nz = 2,
-                     co2_init = FT(1.0), rn_init = FT(2.0))
-    m = ones(FT, Nx, Ny, Nz)
-    rm_co2 = fill(co2_init, Nx, Ny, Nz)
-    rm_rn  = fill(rn_init,  Nx, Ny, Nz)
-    return CellState(m; CO2 = rm_co2, Rn222 = rm_rn)
+function chemistry_state(FT, topology, adapter, names, values)
+    shape = topology === :cubed_sphere ? (6, 6, 2) : (4, 3, 2)
+    array(v) = adapter(fill(FT(v), shape))
+    if topology === :cubed_sphere
+        mesh = CubedSphereMesh(; FT, Nc=4, Hp=1)
+        return CubedSphereState(DryBasis, mesh, ntuple(_ -> array(1), 6);
+            (name => ntuple(_ -> array(v), 6) for (name, v) in zip(names, values))...)
+    end
+    return CellState(array(1); (name => array(v) for (name, v) in zip(names, values))...)
 end
+_make_state(FT; topology=:latlon) = chemistry_state(FT, topology, Array, (:CO2, :Rn222), (1, 2))
+chemistry_values(state, name) = state isa CubedSphereState ?
+    reduce(vcat, map(vec, get_tracer(state, name))) : vec(get_tracer(state, name))
 
 """
 Tracers `t1 … t44` holding `n`, of which the 40 with `n % 11 != 0` decay with
@@ -51,8 +56,8 @@ distinct half-lives (more than one decay launch carries); `t11, t22, t33, t44`
 sit between them and do not decay. Returns the state, the operator and each
 tracer's value after one `dt = 3600` step from the mathematical exponential.
 """
-function _make_many_decay_case(FT, AT)
-    state = CellState(AT(ones(FT, 4, 3, 2)); (Symbol(:t, n) => AT(fill(FT(n), 4, 3, 2)) for n in 1:44)...)
+function _make_many_decay_case(FT, AT; topology=:latlon)
+    state = chemistry_state(FT, topology, AT, Symbol.(:t, 1:44), 1:44)
     decaying = filter(n -> n % 11 != 0, 1:44)
     op = ExponentialDecay(FT; (Symbol(:t, n) => 3_600.0 * n for n in decaying)...)
     expected = FT.(1:44)
@@ -78,29 +83,29 @@ const RN222_LAMBDA    = log(2) / RN222_HALF_LIFE
 
 @testset "Chemistry operators (plan 15)" begin
 
-for FT in (Float64, Float32)
-    precision_tag = FT === Float64 ? "F64" : "F32"
+for FT in (Float64, Float32), topology in (:latlon, :cubed_sphere)
+    precision_tag = "$FT $topology"
 
     # -------------------------------------------------------------------
     # ExponentialDecay: single decaying tracer
     # -------------------------------------------------------------------
     @testset "CPU $precision_tag: Rn-222 decays by exp(-λ·dt) exactly" for dt in FT.((3600, 86400))
-        state = _make_state(FT)
+        state = _make_state(FT; topology)
         op    = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
         # decay_rates are AbstractTimeVaryingField{FT, 0} (ConstantField)
         # after plan 16a retrofit — observe via field_value, not struct equality.
         @test field_value(op.decay_rates[1], ()) ≈ FT(RN222_LAMBDA)
         @test op.tracer_names == (:Rn222,)
 
-        sum_before = sum(get_tracer(state, :Rn222))
+        co2_before = copy(chemistry_values(state, :CO2))
+        sum_before = sum(chemistry_values(state, :Rn222))
         apply!(state, nothing, nothing, op, dt)
 
         expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * dt)
         # Access through accessor API per plan-14 discipline
-        rn_after = get_tracer(state, :Rn222)
+        rn_after = chemistry_values(state, :Rn222)
         @test all(rn_after .≈ expected)
-        # Property-syntax access gives the same thing
-        @test all(state.tracers.Rn222 .≈ expected)
+        @test chemistry_values(state, :CO2) == co2_before
         tolerance = FT === Float64 ? 1e-12 : FT(1e-5)
         @test sum(rn_after) ≈ sum_before * exp(-FT(RN222_LAMBDA) * dt) rtol=tolerance
     end
@@ -109,7 +114,7 @@ for FT in (Float64, Float32)
     # Name-not-in-state throws
     # -------------------------------------------------------------------
     @testset "CPU $precision_tag: unknown tracer throws" begin
-        state = _make_state(FT)
+        state = _make_state(FT; topology)
         op = ExponentialDecay(FT; NotInState = 1.0)
         @test_throws ArgumentError apply!(state, nothing, nothing, op, FT(3600))
     end
@@ -118,29 +123,29 @@ for FT in (Float64, Float32)
     # CompositeChemistry: sequential application
     # -------------------------------------------------------------------
     @testset "CPU $precision_tag: CompositeChemistry composes" begin
-        state = _make_state(FT)
+        state = _make_state(FT; topology)
         op1 = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
-        op2 = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)  # apply twice
+        op2 = ExponentialDecay(FT; Rn222 = 2RN222_HALF_LIFE)
         comp = CompositeChemistry(op1, op2)
         dt = FT(3600)
         apply!(state, nothing, nothing, comp, dt)
-        expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * 2 * dt)  # two decay steps
-        @test all(state.tracers.Rn222 .≈ expected)
+        expected = FT(2.0) * exp(-(FT(RN222_LAMBDA) + FT(RN222_LAMBDA / 2)) * dt)  # two decay steps
+        @test all(chemistry_values(state, :Rn222) .≈ expected)
     end
 
     # -------------------------------------------------------------------
     # More decaying tracers than one launch carries: each decays exactly once
     # -------------------------------------------------------------------
     @testset "CPU $precision_tag: 40 decaying tracers" begin
-        state, op, expected = _make_many_decay_case(FT, Array)
+        state, op, expected = _make_many_decay_case(FT, Array; topology)
         apply!(state, nothing, nothing, op, FT(3600))
-        @test _matches_many_decay(name -> get_tracer(state, name), expected, FT)
+        @test _matches_many_decay(name -> chemistry_values(state, name), expected, FT)
     end
 
     # -------------------------------------------------------------------
     # GPU agreement (F32 only on L40S / F64 only on A100)
     # -------------------------------------------------------------------
-    if HAS_GPU_CHEM
+    if HAS_GPU_CHEM && topology === :latlon
         @testset "GPU $precision_tag: 40 decaying tracers" begin
             state, op, expected = _make_many_decay_case(FT, CUDA.CuArray)
             apply!(state, nothing, nothing, op, FT(3600))

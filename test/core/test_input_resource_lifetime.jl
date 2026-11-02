@@ -40,7 +40,6 @@ function input_lifetime_open_handles(path)
 end
 
 
-
 @testset "Runner drains prefetch before closing input" begin
     mktempdir() do dir
         path = joinpath(dir,"transport.bin")
@@ -86,6 +85,27 @@ end
         @test !isopen(driver.reader.io)
         @test sim.prefetch_window_index == 0
         @test close(input) === nothing
+
+        driver, sim = input_lifetime_sim(path,grid)
+        input = R.RunInputResources(driver,sim)
+        active = sim.window
+        sim.prefetch_window_index = 2
+        failed_task = sim.prefetch_task = Threads.@spawn error("prefetch input failed")
+        failure = try
+            R._with_run_resource(input) do
+                M.Runner._take_prefetched_window!(sim,2)
+            end
+        catch err
+            err
+        end
+        @test failure isa TaskFailedException && failure.task === failed_task
+        @test sim.window === active
+        @test input.driver === input.simulation === nothing
+        @test !isopen(driver.reader.io)
+        @test sim.prefetch_window_index == 0
+        @test !istaskstarted(sim.prefetch_task)
+        @test M.Runner._finish_window_prefetch!(sim) === nothing
+        @test istaskfailed(failed_task)
 
         # No scheduled prefetch: closing must not wait on the placeholder Task.
         driver, sim = input_lifetime_sim(path,grid)

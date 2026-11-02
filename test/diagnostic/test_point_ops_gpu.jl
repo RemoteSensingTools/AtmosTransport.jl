@@ -19,4 +19,9 @@ else
         @test PointArch.fusion_policy(CUDA.CUDABackend()) === PointArch.FuseLaunches()
         check_point_ops_on_device(CuArray)
     end
+    include(joinpath(@__DIR__, "..", "helpers", "backend_smoke.jl"))
+    @testset "cuda forward smoke: CPU parity, mass, uniform tracer" begin
+        BackendSmoke.check_backend_smoke(CuArray; backend = "cuda", float_types = (Float32, Float64))
+    end
+
 end

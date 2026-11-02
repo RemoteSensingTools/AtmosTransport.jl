@@ -43,6 +43,7 @@ Geometry and topology decisions come from
   `Fused`, `Sequence`: a kernel body written once, fused by dispatch;
   `copy_arrays!`: a set of device copies as one queued launch). The declared shared
   `_neumaier_sum(f, ks, T)` helper provides compensated sums in `ks` order
+- `LogLevels.jl` — shared runtime logging levels
 - `SectionTimer.jl` — foundation timing and optional NVTX instrumentation,
   loaded before operators and models
 - `ConfigChecks.jl` — strict TOML Booleans, integers (`config_int`), reals

@@ -16,48 +16,22 @@ Prep = AtmosTransport.Preprocessing
 
 @testset "LL FFT Poisson balance" begin
 
-    @testset "Uniform divergence → corrected to match dm_dt" begin
-        Nx, Ny, Nz = 36, 18, 4
-        # Create fluxes with known divergence
-        am = zeros(Float64, Nx+1, Ny, Nz)
-        bm = zeros(Float64, Nx, Ny+1, Nz)
-        dm_dt = zeros(Float64, Nx, Ny, Nz)
 
-        # Put some divergence in the fluxes
-        for k in 1:Nz, j in 1:Ny, i in 1:Nx+1
-            am[i, j, k] = 0.01 * sin(2π * i / Nx) * cos(2π * j / Ny)
-        end
-        for k in 1:Nz, j in 1:Ny+1, i in 1:Nx
-            bm[i, j, k] = 0.01 * cos(2π * i / Nx) * sin(2π * j / Ny)
-        end
-
-        # Target: zero mass tendency
-        fill!(dm_dt, 0.0)
-
-        ws = Prep.LLPoissonWorkspace(Nx, Ny)
-        Prep.balance_mass_fluxes!(am, bm, dm_dt, ws)
-
-        # After balance, convergence should match dm_dt at each cell
-        max_residual = 0.0
-        for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            conv = (am[i,j,k] - am[i+1,j,k]) + (bm[i,j,k] - bm[i,j+1,k])
-            residual = abs(conv - dm_dt[i,j,k])
-            max_residual = max(max_residual, residual)
-        end
-
-        # Should be at machine precision
-        @test max_residual < 1e-12
-    end
-
-    @testset "Non-zero dm_dt → convergence matches target" begin
+    @testset "Zero and nonzero targets match corrected convergence" for amplitude in (0.0, 1e-3)
         Nx, Ny, Nz = 48, 24, 2
         am = zeros(Float64, Nx+1, Ny, Nz)
         bm = zeros(Float64, Nx, Ny+1, Nz)
         dm_dt = zeros(Float64, Nx, Ny, Nz)
 
-        # Non-zero mass tendency pattern
+        for k in 1:Nz, j in 1:Ny, i in 1:Nx+1
+            am[i,j,k] = 0.01sin(2π*i/Nx)*cos(2π*j/Ny)
+        end
+        for k in 1:Nz, j in 1:Ny+1, i in 1:Nx
+            bm[i,j,k] = 0.01cos(2π*i/Nx)*sin(2π*j/Ny)
+        end
+        # Independent target mass tendency pattern
         for k in 1:Nz, j in 1:Ny, i in 1:Nx
-            dm_dt[i,j,k] = 1e-3 * sin(4π * i / Nx) * sin(2π * j / Ny)
+            dm_dt[i,j,k] = amplitude * sin(4π * i / Nx) * sin(2π * j / Ny)
         end
         # Subtract global mean (Poisson can't fix the mean)
         for k in 1:Nz

@@ -96,8 +96,6 @@ All in [`../SectionTimer.jl`](../SectionTimer.jl):
 
 ## Tests And Docs
 
-- [`../../test/core/test_section_timer.jl`](../../test/core/test_section_timer.jl):
-  concurrent recording, report and CSV output, epoch rejection
 - [`../../test/core/test_input_resource_lifetime.jl`](../../test/core/test_input_resource_lifetime.jl):
   runner input cleanup, prefetch drain and partial-file forcing guards
 - API page: [`../../docs/src/api/infrastructure.md`](../../docs/src/api/infrastructure.md)

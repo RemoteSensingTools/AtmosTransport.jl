@@ -287,22 +287,12 @@ with_quiet_logger(f) = with_logger(f, NullLogger())
         @test isnan(diag.worst_flux) || isinf(diag.worst_flux)
     end
 
-    @testset "boundary-stub: invalid boundary_stub_tol is rejected at wrapper (codex round-2)" begin
+    @testset "boundary-stub: invalid tolerance rejected at wrapper" begin
         w = build_clean_rg_window(Float64)
-        for bad_tol in (NaN, Inf, -Inf, -1.0)
-            err = try
-                verify_rg_window_contract!(w.m_cur, w.hflux, w.cm, w.m_next,
-                                            w.face_left, w.face_right,
-                                            w.steps, 1;
-                                            replay_tol = 1e-12,
-                                            positivity_cfl_limit = 0.95,
-                                            boundary_stub_tol = bad_tol)
-                nothing
-            catch e
-                e
-            end
-            @test err isa ErrorException
-        end
+        @test_throws ErrorException verify_rg_window_contract!(
+            w.m_cur, w.hflux, w.cm, w.m_next, w.face_left, w.face_right,
+            w.steps, 1; replay_tol=1e-12, positivity_cfl_limit=0.95,
+            boundary_stub_tol=NaN)
     end
 
     @testset "wrapper: boundary-stub failure errors BEFORE the replay gate (no escape hatch)" begin

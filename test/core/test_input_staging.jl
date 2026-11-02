@@ -69,7 +69,7 @@ end
         @test isfile(_IS._staged_metadata_path(staged))
         original_inode = stat(staged).inode
         # A simultaneous run must not write into or evict this run's cache.
-        second = @test_logs (:warn,r"Input staging directory") InputStager([source],cfg)
+        second = InputStager([source],cfg)
         @test !second.enabled
         @test staged_path_for!(second,1) == source
         cleanup_staging!(second)

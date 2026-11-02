@@ -222,19 +222,20 @@ end
         # Interior + east boundary: am_v4[i+1, j, k] = MFXC[i, j, k] * scale.
         # West-boundary halo (i=1) is filled from a neighbour's canonical
         # edge by `sync_all_cs_boundary_mirrors!` and has magnitude 42*scale
-        # too (sign may flip per panel orientation, hence the abs check).
+        # too: each west/south edge is paired with a canonical east/north edge,
+        # so both describe positive flux in the same transfer direction.
         for p in 1:6
             for k in 1:NZ, j in 1:NC, i in 1:NC
                 @test am_v4[p][i + 1, j, k] ≈ K * scale
             end
             for k in 1:NZ, j in 1:NC
-                @test abs(am_v4[p][1, j, k]) ≈ K * scale
+                @test am_v4[p][1, j, k] ≈ K * scale
             end
             for k in 1:NZ, i in 1:NC, j in 1:NC
                 @test bm_v4[p][i, j + 1, k] ≈ K * scale
             end
             for k in 1:NZ, i in 1:NC
-                @test abs(bm_v4[p][i, 1, k]) ≈ K * scale
+                @test bm_v4[p][i, 1, k] ≈ K * scale
             end
         end
     end

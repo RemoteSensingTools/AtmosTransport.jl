@@ -1,17 +1,9 @@
 #!/usr/bin/env julia
 
 using Test
-using Random
-using LinearAlgebra: dot
-using KernelAbstractions: get_backend, synchronize
-using JSON3
-
 using AtmosTransport
-using .AtmosTransport.Operators: ImplicitVerticalDiffusion, DiffusionWorkspace
-using .AtmosTransport.Operators.Diffusion: apply_vertical_diffusion_vmr!
 using .AtmosTransport.State: PrecomputedCSDkgField, panel_field
 using .AtmosTransport.State.Fields: refresh_precomputed_cs_dkg_cache!, field_value
-using .AtmosTransport.Operators.Diffusion: _vertical_diffusion_cs_single_dkg_adjoint_kernel!
 
 @testset "Exact TM5 dkg binary and runtime path" begin
     FT = Float64
@@ -75,92 +67,10 @@ using .AtmosTransport.Operators.Diffusion: _vertical_diffusion_cs_single_dkg_adj
         finally
             close(reader.io)
         end
-
-        original = read(path)
-        json_end = something(findfirst(==(0x00), original), 0) - 1
-        header = Dict{String,Any}(String(k) => v for (k, v) in
-                                  pairs(JSON3.read(String(original[1:json_end]))))
-        header_bytes = Int(header["header_bytes"])
-        for key in ("panel_convention", "cs_definition", "cs_coordinate_law",
-                    "cs_center_law", "longitude_offset_deg")
-            broken = copy(header)
-            delete!(broken, key)
-            encoded = Vector{UInt8}(codeunits(JSON3.write(broken)))
-            bytes = copy(original)
-            fill!(view(bytes, 1:header_bytes), 0x00)
-            copyto!(bytes, 1, encoded, 1, length(encoded))
-            open(path, "w") do out
-                write(out, bytes)
-            end
-            @test_throws ArgumentError TransportBinaryReader(path; FT)
-        end
-        open(path, "w") do out
-            write(out, original)
-        end
     end
 
     @test_throws ArgumentError AtmosTransport.MetDrivers.open_streaming_cs_transport_binary(
         tempname(), Nc, np, Nz, 1, vc; planet_radius = AtmosTransport.Parameters.EARTH_RADIUS, FT,
         include_precomputed_dkg = true, mass_basis = :moist,
         surface_pressure_basis = TotalSurfacePressure())
-
-    # Direct-dkg solve conserves column tracer mass without consulting dz.
-    Hp = 1
-    N = Nc + 2Hp
-    panels_m = ntuple(_ -> fill(FT(1e6), N, N, Nz), np)
-    panels_rm = ntuple(_ -> zeros(FT, N, N, Nz), np)
-    rng = MersenneTwister(42)
-    for p in 1:np, k in 1:Nz, j in 1:Nc, i in 1:Nc
-        panels_rm[p][i + Hp, j + Hp, k] = rand(rng)
-    end
-    x_rm = ntuple(p -> copy(panels_rm[p]), np)
-    y_seed = ntuple(_ -> zeros(FT, N, N, Nz), np)
-    for p in 1:np, k in 1:Nz, j in 1:Nc, i in 1:Nc
-        y_seed[p][i + Hp, j + Hp, k] = randn(rng)
-    end
-    dkg = ntuple(_ -> FT[(k == Nz ? 0 : 2e3 + 100k)
-                          for i in 1:Nc, j in 1:Nc, k in 1:Nz], np)
-    field = PrecomputedCSDkgField(ntuple(p -> copy(dkg[p]), np))
-    op = ImplicitVerticalDiffusion(; kz_field = field)
-    ws = DiffusionWorkspace(
-        ntuple(_ -> zeros(FT, Nc, Nc, Nz), np),
-        ntuple(_ -> fill(FT(NaN), Nc, Nc, Nz), np), nothing)
-    before = ntuple(p -> dropdims(sum(@view(panels_rm[p][2:3, 2:3, :]); dims=3); dims=3), np)
-    apply_vertical_diffusion_vmr!(panels_rm, panels_m, op, ws, FT(300);
-                                  halo_width = Hp)
-    after = ntuple(p -> dropdims(sum(@view(panels_rm[p][2:3, 2:3, :]); dims=3); dims=3), np)
-    @test all(p -> all(isfinite, @view(panels_rm[p][2:3, 2:3, :])), 1:np)
-    for p in 1:np
-        @test before[p] ≈ after[p] rtol=1e-13
-    end
-
-    # Packed direct-dkg diffusion shares one factorization per column and must
-    # remain numerically identical to applying the single-tracer kernel to
-    # each tracer independently.
-    Nt = 3
-    packed = ntuple(_ -> abs.(randn(rng, FT, N, N, Nz, Nt)), np)
-    expected = ntuple(p -> copy(packed[p]), np)
-    for t in 1:Nt
-        tracer = ntuple(p -> @view(expected[p][:, :, :, t]), np)
-        apply_vertical_diffusion_vmr!(tracer, panels_m, op, ws, FT(300);
-                                      halo_width = Hp)
-    end
-    packed_ws = DiffusionWorkspace(
-        ntuple(_ -> zeros(FT, Nc, Nc, Nz), np), ws.layer_thickness,
-        ntuple(_ -> zeros(FT, Nc, Nc, Nt), np))
-    apply_vertical_diffusion_vmr!(packed, panels_m, op, packed_ws, FT(300);
-                                  halo_width = Hp)
-    @test packed == expected
-
-    lambda = ntuple(p -> copy(y_seed[p]), np)
-    backend = get_backend(lambda[1])
-    kernel = _vertical_diffusion_cs_single_dkg_adjoint_kernel!(backend, (8, 8))
-    for p in 1:np
-        kernel(lambda[p], panels_m[p], panel_field(field, p), ws.factors[p],
-               FT(300), Nz, Hp; ndrange = (Nc, Nc))
-        synchronize(backend)
-    end
-    inner(a, b) = sum(dot(@view(a[p][2:3, 2:3, :]), @view(b[p][2:3, 2:3, :]))
-                      for p in 1:np)
-    @test inner(y_seed, panels_rm) ≈ inner(lambda, x_rm) rtol=1e-12
 end

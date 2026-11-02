@@ -12,20 +12,16 @@ else
     isempty(expected_device) && error("ATMOSTR_ADJOINT_GPU_NAME must identify the selected device")
     @assert occursin(expected_device, CUDA.name(CUDA.device())) "Wrong device for adjoint tests"
     CUDA.allowscalar(false)
-    include(joinpath(@__DIR__, "..", "core", "test_cs_ppm_adjoint_footprint.jl"))
-
-    function _to_gpu_steps(steps)
-        [ntuple(p -> CUDA.CuArray(step[p]), 6) for step in steps]
-    end
+    include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
 
     @testset "GPU execution keeps footprint arrays on device" begin
         mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
             _constant_cs_problem(Nc=3, Nz=3, nsteps=1, FT=Float32)
         panels_m_g = ntuple(p -> CUDA.CuArray(panels_m[p]), 6)
         panels_rm_g = ntuple(p -> CUDA.CuArray(panels_rm[p]), 6)
-        panels_am_g = _to_gpu_steps(panels_am)
-        panels_bm_g = _to_gpu_steps(panels_bm)
-        panels_cm_g = _to_gpu_steps(panels_cm)
+        panels_am_g = _to_gpu_steps(panels_am; adapter=CUDA.CuArray)
+        panels_bm_g = _to_gpu_steps(panels_bm; adapter=CUDA.CuArray)
+        panels_cm_g = _to_gpu_steps(panels_cm; adapter=CUDA.CuArray)
 
         result = AT.cs_surface_emission_footprint(
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
@@ -233,7 +229,8 @@ else
                      for i in 1:mesh.Nc, j in 1:mesh.Nc]
                 end for s in 1:3]
                 gm, grm = map(CuArray, m), map(CuArray, rm)
-                gam, gbm, gcm, grates = map(_to_gpu_steps, (am, bm, cm, rates))
+                gam, gbm, gcm, grates = map(steps -> _to_gpu_steps(steps; adapter=CUDA.CuArray),
+                                           (am, bm, cm, rates))
                 obj = AT.CSColumnMeanObjective(1, 1, 1)
                 dt = FT(1.5)
                 cpu = AT.cs_surface_emission_footprint(rm, m, am, bm, cm, mesh, obj; scheme, dt)

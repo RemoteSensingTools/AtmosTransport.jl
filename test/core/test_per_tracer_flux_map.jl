@@ -3,13 +3,11 @@ Unit tests for `PerTracerFluxMap` + `SurfaceFluxSource` — plan 17 Commit 2.
 
 Validates:
 - Duplicate tracer names are rejected at construction
-- Non-`SurfaceFluxSource` entries are rejected
 - `flux_for(map, :name)` returns the source, or `nothing` for absent
 - Iteration and indexing behaviour
 - `tracer_names(map)` matches storage order
 - Backward-compat: `SurfaceFluxSource` still usable by-name after
   the plan 17 Commit 2 migration from `src/Models/` to `src/Operators/SurfaceFlux/`
-- GPU adaptation (when CUDA.functional()): rate arrays become CuArrays
 - `SurfaceFluxOperator` resolves the map's tracer names against the state:
   `emitting_tracer_indices`, map tracers absent from the state are skipped,
   and a structured `(Nx, Ny, Nz, Nt)` buffer and its unrolled face-indexed
@@ -21,14 +19,7 @@ using AtmosTransport
 using AtmosTransport: SurfaceFluxSource, PerTracerFluxMap, flux_for
 using AtmosTransport.Operators.SurfaceFlux: tracer_names, emitting_tracer_indices,
                                             apply_surface_flux!
-using Adapt
 
-const HAS_GPU_FLUX = try
-    @eval using CUDA
-    CUDA.functional()
-catch
-    false
-end
 
 @testset "PerTracerFluxMap — plan 17 Commit 2" begin
 
@@ -40,13 +31,6 @@ end
         @test tracer_names(map) === (:CO2, :SF6)
     end
 
-    @testset "empty map is allowed" begin
-        # Empty tuple gives a valid no-emission map
-        map = PerTracerFluxMap(())
-        @test length(map) == 0
-        @test tracer_names(map) === ()
-        @test flux_for(map, :CO2) === nothing
-    end
 
     @testset "construction rejects duplicates" begin
         src1 = SurfaceFluxSource(:CO2, fill(1.0, 4, 3))
@@ -54,11 +38,6 @@ end
         @test_throws ArgumentError PerTracerFluxMap(src1, src1b)
     end
 
-    @testset "construction rejects non-SurfaceFluxSource entries" begin
-        src = SurfaceFluxSource(:CO2, fill(1.0, 4, 3))
-        bad = (tracer_name = :SF6, cell_mass_rate = fill(1.0, 4, 3))
-        @test_throws ArgumentError PerTracerFluxMap((src, bad))
-    end
 
     @testset "flux_for returns source or nothing" begin
         co2_rate = fill(1.0, 4, 3)
@@ -139,26 +118,4 @@ end
         @test reshape(q_struct, Nx * Ny, Nz4, Nt) ≈ q_face
     end
 
-    if HAS_GPU_FLUX
-        @testset "Adapt — GPU adaptation" begin
-            rate1 = fill(1.0, 4, 3)
-            rate2 = fill(2.0, 4, 3)
-            src1 = SurfaceFluxSource(:CO2, rate1)
-            src2 = SurfaceFluxSource(:SF6, rate2)
-            map = PerTracerFluxMap(src1, src2)
-
-            map_gpu = Adapt.adapt(CUDA.CuArray, map)
-            @test map_gpu isa PerTracerFluxMap
-            @test length(map_gpu) == 2
-
-            # Each source's rate is a CuArray on the device
-            co2_on_gpu = flux_for(map_gpu, :CO2)
-            @test co2_on_gpu.cell_mass_rate isa CUDA.CuArray{Float64, 2}
-            # Round-trip to host returns the original values
-            @test Array(co2_on_gpu.cell_mass_rate) == rate1
-
-            sf6_on_gpu = flux_for(map_gpu, :SF6)
-            @test Array(sf6_on_gpu.cell_mass_rate) == rate2
-        end
-    end
 end

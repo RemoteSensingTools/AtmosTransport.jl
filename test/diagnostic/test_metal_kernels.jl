@@ -105,4 +105,9 @@ else
             @test staged == expected
         end
     end
+    include(joinpath(@__DIR__, "..", "helpers", "backend_smoke.jl"))
+    @testset "metal forward smoke: CPU parity, mass, uniform tracer" begin
+        BackendSmoke.check_backend_smoke(MtlArray; backend = "metal", float_types = (Float32,))
+    end
+
 end

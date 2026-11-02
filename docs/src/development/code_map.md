@@ -1157,7 +1157,7 @@ None recorded.
 
 ## `src/Preprocessing/TransportBinary`
 
-Size: **140777 bytes / 40222.0 tokens**. Public names: **122**.
+Size: **139844 bytes / 39955.4 tokens**. Public names: **122**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Vertical`, `src/State`.
 
@@ -1167,13 +1167,13 @@ Files:
 
 - `TransportBinary.jl` (6450 bytes)
 - `core.jl` (21506 bytes)
-- `driver.jl` (6704 bytes)
+- `driver.jl` (6435 bytes)
 - `flux_fidelity.jl` (65739 bytes)
 - `positivity_status.jl` (3385 bytes)
 - `structured_positivity.jl` (5716 bytes)
 - `tm5_spectral_metadata.jl` (965 bytes)
 - `topology_dispatch.jl` (2392 bytes)
-- `window_contracts.jl` (19448 bytes)
+- `window_contracts.jl` (18784 bytes)
 - `writer_adapters.jl` (8472 bytes)
 
 Forward ↔ adjoint mirrors:

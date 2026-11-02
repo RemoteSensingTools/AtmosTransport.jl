@@ -217,10 +217,8 @@ end
 #
 # These are additive nominals for the unified driver cutover. Existing
 # preprocessors still own their control flow, but they can now hand a typed
-# `ReadyWindow{G, FT}` to the same `verify_window!` contract surface the
-# NamedTuple payloads used. `ReadyWindow` deliberately forwards unknown
-# property access to its payload so the existing contract methods do not
-# need duplicate overloads while the drivers migrate.
+# `ReadyWindow{G, FT}` to writers after checking its explicit payload.
+# The generic day driver accepts only PreverifiedWindow events.
 # ---------------------------------------------------------------------------
 
 """
@@ -232,9 +230,8 @@ type, `payload` is the existing topology NamedTuple (`m_cur`/`am`/... for
 LL/CS, `m_cur`/`hflux`/... for RG), and `fidelity` is the window's explicit
 flux-fidelity evidence (there is no default evidence).
 
-Unknown property access is forwarded to `payload`, so existing
-`verify_window!(window, contract, win_idx)` methods can accept either a raw
-NamedTuple or a `ReadyWindow`.
+The checked data is accessed explicitly through `payload`; the day driver
+receives this window inside a `PreverifiedWindow`.
 """
 struct ReadyWindow{G <: AbstractTargetGeometry, FT, P <: NamedTuple, F}
     index   :: Int
@@ -277,18 +274,7 @@ function PreverifiedWindow(ready::ReadyWindow{G, FT, P, F},
         ready, contract_diag, accumulated)
 end
 
-@inline function Base.getproperty(window::ReadyWindow, name::Symbol)
-    if name === :index || name === :payload || name === :fidelity
-        return getfield(window, name)
-    end
-    return getproperty(getfield(window, :payload), name)
-end
 
-function Base.propertynames(window::ReadyWindow, private::Bool = false)
-    payload_names = propertynames(getfield(window, :payload), private)
-    return private ? (:index, :payload, :fidelity, payload_names...) :
-                     (:index, :fidelity, payload_names...)
-end
 
 """
     PreprocessorRunCache{G, FT}()
@@ -338,8 +324,8 @@ replay gate throws on violation; the positivity gate is non-fatal at
 this layer (the run-level accumulator + `summarize_status!` decides
 fatal-vs-warn based on `require_substep_positivity`).
 
-`window` is the topology's per-window payload (a NamedTuple today, a
-typed `ReadyWindow{G, FT}` later).
+`window` is the topology's per-window NamedTuple payload. Topology hooks
+verify it before returning a `PreverifiedWindow` to the day driver.
 """
 function verify_window! end
 

@@ -42,8 +42,7 @@ driver_ingest_window!(workspace, reader, win::Int, _context) =
     driver_drain_ready_windows!(workspace, contract, win, context)
 
 Return ready windows produced by the most recent ingest. A hook may return a
-single `ReadyWindow`, a single `PreverifiedWindow`, or any iterator of either
-shape.
+single `PreverifiedWindow` or an iterator of preverified events.
 """
 driver_drain_ready_windows!(workspace, _contract, _win::Int, _context) =
     drain_ready_windows!(workspace)
@@ -77,15 +76,8 @@ validate_staged_binary!(_writer) = nothing
 
 function _ready_events(result)
     result === nothing && return ()
-    result isa ReadyWindow && return (result,)
     result isa PreverifiedWindow && return (result,)
     return result
-end
-
-function _verify_ready_event!(ready::ReadyWindow, contract)
-    diag = verify_window!(ready, contract, ready.index)
-    update_accumulator!(contract, diag.positivity, ready.index)
-    return ready
 end
 
 function _verify_ready_event!(event::PreverifiedWindow, contract)

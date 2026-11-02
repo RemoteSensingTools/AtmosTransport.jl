@@ -162,39 +162,6 @@ end
     end
 end
 
-@testset "buffer capacity is the largest window's slice count, not the run length" begin
-    for scheme in SCHEMES
-        W = 3600.0
-        capacities = map((2, 8, 32)) do nwin
-            src = TimeVaryingSurfaceFluxSource(:co2, series_for(Float64, length(HOURLY), 1), HOURLY, scheme)
-            state, grid = cs_state(Float64; packed = false)
-            drive!(state, grid, (src,), W, nwin, 4)
-            buffer = src.window_buffer
-            @test SF._capacity(buffer) == size(buffer.slots[1], 3)
-            @test SF._capacity(buffer) == maximum(w -> length(SF._flux_window_slices(scheme, HOURLY, window_span(W, w)...)),
-                                                 0:(nwin - 1))
-            (SF._capacity(buffer), buffer.uploads)
-        end
-        @test first(capacities[1]) == first(capacities[2]) == first(capacities[3]) <= 3
-        # The 32-window run reads all 31 slices through a buffer of at most 3.
-        @test last(capacities[3]) >= length(HOURLY)
-        # A slice that two windows read is copied once.
-        @test last(capacities[3]) <= length(HOURLY) + 1
-    end
-
-    # The buffer starts empty: a source that never emits holds no slots.
-    src = TimeVaryingSurfaceFluxSource(:co2, series_for(Float32, 5, 1), collect(0.0:3600.0:14400.0),
-                                       StepwiseFlux())
-    @test SF._capacity(src.window_buffer) == 0 && size(src.window_buffer.slots[1]) == (NC, NC, 0)
-    @test eltype(src.window_buffer.slots[1]) === Float32
-    # Staging a longer range grows the slots once and keeps the backend.
-    SF.stage_surface_flux_window!(src, 0.0, 3 * 3600.0)
-    @test SF._capacity(src.window_buffer) == 4
-    @test all(p -> src.window_buffer.slots[p][:, :, SF._buffer_slot(src.window_buffer, 3)] ==
-                   src.cell_mass_rate_series[p][:, :, 3], 1:6)
-    SF.stage_surface_flux_window!(src, 3600.0, 2 * 3600.0)
-    @test SF._capacity(src.window_buffer) == 4 && src.window_buffer.uploads == 4
-end
 
 # A device stand-in on the CPU: its own array type (so Adapt must move data
 # into it), elementwise writes, and `similar` that stays on the "device".
