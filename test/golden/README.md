@@ -312,3 +312,9 @@ CS live Calc_Kzz cases: `pre_c24_tm5pbl`, `run_c24_tm5pbl_cpu_f64`,
 uses the frozen spectral/thermo/surface inputs and tropo34a; runtime uses PPM.
 The GPU case is a definition only in CPU-only validation sessions. Reference
 recording is separate from implementation.
+
+Direct CS TM5 definitions are `pre_c24_tm5`, `pre_c24_tm5_tm5pbl` (both
+`slow`, since retained T639 synthesis is target-independent) and
+`run_c24_tm5_cpu_f64`. They select window means and `ml137_tropo34a`.
+Reference outputs are recorded separately by the owner; adding a definition
+does not establish a validated reference.

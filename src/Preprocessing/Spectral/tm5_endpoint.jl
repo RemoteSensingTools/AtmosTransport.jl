@@ -16,7 +16,7 @@ The dry-mass pin shifts PS after the flux integrals. Pinned PS sets moist
 layer masses and the humidity merge weights; retained native W interfaces
 remain independent of the later endpoint layer balance.
 """
-function construct_tm5_endpoint(ws::SpectralIntegralWorkspace, H, vo, d, T, q_native, endpoint_plan, settings)
+function construct_tm5_endpoint(ws::Union{SpectralIntegralWorkspace, CSSpectralIntegralWorkspace}, H, vo, d, T, q_native, endpoint_plan, settings)
     vertical = endpoint_plan.vertical
     c = spectral_construction(settings)
     nz = vertical.Nz_native

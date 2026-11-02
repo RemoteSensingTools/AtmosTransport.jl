@@ -144,7 +144,7 @@ the PP2 handoff for their owning PRs.
 
 # shared: DirectRingPoisson, solve_compressed_poisson_direct!, balance_compressed_level!
 
-`tm5_target_balance.jl` contains only the reusable compressed direct solver.
+`tm5_target_balance.jl` contains reusable RG and CS direct graph solvers.
 Spectral owns quadrature and endpoint construction; Targets owns layer
 orchestration, dry conversion and endpoint averaging. MassClosure imports
 neither Spectral nor Vertical. The direct solver is reused for RG layer and
@@ -177,3 +177,14 @@ for Float64; lower precision allows two-endpoint storage rounding). Moist and
 unpinned paths retain their uniform global mode and original endpoint tendency.
 TM5 LL/RG layer solves and standalone CS per-level solves retain original
 projection arithmetic; only column calls select compensated projection dispatch.
+
+`DirectCSPoisson` factors a pinned CS graph principal minor once; the explicit
+`_ArrayTarget` layer method corrects all canonical faces and seam mirrors.
+`_EndpointTarget` preserves the historical endpoint subtraction, scaling and
+projection arithmetic for existing PCG layer/column callers. Targets supply
+outward divergence; TM5 convergence is negated in the CS target adapter.
+`line_integral_face_matrix` builds only the geometry map used by both the
+existing `LineIntegralFaceFluxes` constructor and direct spectral CS; it
+allocates no source-field or per-thread scratch.
+
+# shared: DirectCSPoisson, _ArrayTarget, line_integral_face_matrix

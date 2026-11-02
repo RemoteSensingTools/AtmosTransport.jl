@@ -924,7 +924,7 @@ None recorded.
 
 ## `src/Preprocessing/Core`
 
-Size: **68973 bytes / 19706.6 tokens**. Public names: **89**.
+Size: **68994 bytes / 19712.6 tokens**. Public names: **89**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Regridding`.
 
@@ -939,7 +939,7 @@ Files:
 - `met_readers.jl` (5960 bytes)
 - `met_sources.jl` (8642 bytes)
 - `source_factory.jl` (4741 bytes)
-- `spectral_construction.jl` (5784 bytes)
+- `spectral_construction.jl` (5805 bytes)
 - `target_geometry.jl` (17683 bytes)
 
 Forward ↔ adjoint mirrors:
@@ -948,7 +948,7 @@ None recorded.
 
 ## `src/Preprocessing/MassClosure`
 
-Size: **129077 bytes / 36879.1 tokens**. Public names: **41**.
+Size: **131292 bytes / 37512.0 tokens**. Public names: **42**.
 
 Depends on: `src`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`.
 
@@ -956,18 +956,18 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessi
 
 Files:
 
-- `MassClosure.jl` (2726 bytes)
+- `MassClosure.jl` (2743 bytes)
 - `column_weights.jl` (6371 bytes)
 - `cs_flux_reconstruction.jl` (21384 bytes)
 - `cs_native_fluxes.jl` (7346 bytes)
-- `cs_poisson_balance.jl` (33303 bytes)
+- `cs_poisson_balance.jl` (33967 bytes)
 - `cs_poisson_solver.jl` (12179 bytes)
 - `cs_wind_rotation.jl` (5250 bytes)
-- `face_line_integrals.jl` (11133 bytes)
+- `face_line_integrals.jl` (11494 bytes)
 - `flux_construction.jl` (11608 bytes)
 - `ring_closure.jl` (713 bytes)
 - `ring_poisson_balance.jl` (15565 bytes)
-- `tm5_target_balance.jl` (1499 bytes)
+- `tm5_target_balance.jl` (2672 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **125349 bytes / 35814.0 tokens**. Public names: **52**.
+Size: **132328 bytes / 37808.0 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1072,7 +1072,8 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 
 Files:
 
-- `Spectral.jl` (2919 bytes)
+- `Spectral.jl` (3094 bytes)
+- `cs_spectral_integrals.jl` (6768 bytes)
 - `device_spectral_synthesis.jl` (7227 bytes)
 - `discovery.jl` (1527 bytes)
 - `mass_support.jl` (41507 bytes)
@@ -1084,7 +1085,7 @@ Files:
 - `spectral_synthesis.jl` (24175 bytes)
 - `synthesis_kernels.jl` (2452 bytes)
 - `synthesis_rings.jl` (2531 bytes)
-- `tm5_endpoint.jl` (2457 bytes)
+- `tm5_endpoint.jl` (2493 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1092,7 +1093,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/CubedSphere`
 
-Size: **133931 bytes / 38266.0 tokens**. Public names: **29**.
+Size: **147713 bytes / 42203.7 tokens**. Public names: **29**.
 
 Depends on: `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/TransportBinary`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -1100,13 +1101,14 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Sources/ERA5`, `src/Preprocessi
 
 Files:
 
-- `CubedSphere.jl` (6414 bytes)
+- `CubedSphere.jl` (7391 bytes)
 - `cs_transport_helpers.jl` (7512 bytes)
 - `cubed_sphere_coarsen.jl` (16852 bytes)
 - `cubed_sphere_contracts.jl` (16301 bytes)
 - `cubed_sphere_regrid.jl` (40164 bytes)
-- `cubed_sphere_spectral.jl` (38214 bytes)
+- `cubed_sphere_spectral.jl` (38244 bytes)
 - `mass_helpers.jl` (8474 bytes)
+- `tm5_spectral_day.jl` (12775 bytes)
 
 Forward ↔ adjoint mirrors:
 

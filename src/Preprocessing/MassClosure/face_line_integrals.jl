@@ -72,7 +72,8 @@ struct LineIntegralFaceFluxes{S,T}
     target_mesh :: T
 end
 
-function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
+"""Geometry-only great-circle midpoint map; no field or per-thread scratch."""
+function line_integral_face_matrix(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
                                 ft::CSGlobalFaceTable; samples_per_face::Integer = 16)
     samples_per_face >= 1 || throw(ArgumentError("samples_per_face must be ≥ 1, got $samples_per_face"))
     R = Float64(target.radius)
@@ -92,9 +93,16 @@ function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, 
             end
         end
     end
+    return sparse(I, J, V, ft.nf, 3nsrc)
+end
+
+function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
+                                ft::CSGlobalFaceTable; samples_per_face::Integer = 16)
+    matrix = line_integral_face_matrix(source, target, ft; samples_per_face)
+    nsrc = ncells(source)
     lon, lat = source_cell_centers(source)
     nt = Threads.maxthreadid()
-    return LineIntegralFaceFluxes(sparse(I, J, V, ft.nf, 3nsrc),   # repeated (face, cell) pairs add up
+    return LineIntegralFaceFluxes(matrix,
                                   ft, wind_basis_trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
                                   [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt],
                                   Int(samples_per_face), source, target)

@@ -1,6 +1,6 @@
 module MassClosure
 
-export balance_cs_level!, cs_level_scratches, cs_column_convergence
+export DirectCSPoisson, balance_cs_level!, cs_level_scratches, cs_column_convergence
 
 using ...Architectures: _neumaier_sum
 

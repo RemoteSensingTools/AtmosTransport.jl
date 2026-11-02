@@ -44,16 +44,40 @@ end
 # High-level balance entry point
 # ---------------------------------------------------------------------------
 
+# Targets return outward flux divergence in kg per flux application.
+struct _EndpointTarget{M, N}
+    m::M
+    m_next::N
+    inv_scale::Float64
+end
+@inline function (t::_EndpointTarget)(i, j, p, k, c)
+    return (Float64(t.m[p][i, j, k]) - Float64(t.m_next[p][i, j, k])) * t.inv_scale
+end
+struct _ArrayTarget{A}
+    values::A
+end
+@inline (t::_ArrayTarget)(i, j, p, k, c) = t.values[c, k]
+
+function balance_cs_level!(k::Int, panels_am::NTuple{6, Array{FT, 3}},
+                           panels_bm::NTuple{6, Array{FT, 3}},
+                           panels_m::NTuple{6, Array{FT, 3}},
+                           panels_m_next::NTuple{6, Array{FT, 3}},
+                           ft::CSGlobalFaceTable, degree::Vector{Int},
+                           scratch::CSPoissonScratch, inv_scale::Float64; kwargs...) where FT
+    return balance_cs_level!(k, panels_am, panels_bm,
+        _EndpointTarget(panels_m, panels_m_next, inv_scale), panels_m,
+        ft, degree, scratch; kwargs...)
+end
+
 function balance_cs_level!(
     k::Int,
     panels_am::NTuple{6, Array{FT, 3}},
     panels_bm::NTuple{6, Array{FT, 3}},
+    target_at,
     panels_m::NTuple{6, Array{FT, 3}},
-    panels_m_next::NTuple{6, Array{FT, 3}},
     ft::CSGlobalFaceTable,
     degree::Vector{Int},
-    scratch::CSPoissonScratch,
-    inv_scale::Float64;
+    scratch::CSPoissonScratch;
     tol::Float64,
     max_iter::Int,
     project_every::Int,
@@ -73,8 +97,7 @@ function balance_cs_level!(
     rhs_sum = 0.0
     @inbounds for c in 1:nc
         i_local, j_local, p_idx = cs_panel_ij(c, Nc)
-        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        target = target_at(i_local, j_local, p_idx, k, c)
         rc = div[c] - target
         rhs[c] = rc
         rhs_sum += rc
@@ -119,8 +142,7 @@ function balance_cs_level!(
     cs_face_divergence!(div, panels_am, panels_bm, ft, k)
     @inbounds for c in 1:nc
         i_local, j_local, p_idx = cs_panel_ij(c, Nc)
-        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        target = target_at(i_local, j_local, p_idx, k, c)
         q = mass_weighted_global_mode ? Float64(panels_m[p_idx][i_local, j_local, k]) / mean_mass : 1.0
         rhs[c] = (div[c] - target) - rhs_mean * q
     end
@@ -138,8 +160,7 @@ function balance_cs_level!(
     post_raw = 0.0
     @inbounds for c in 1:nc
         i_local, j_local, p_idx = cs_panel_ij(c, Nc)
-        target = (Float64(panels_m[p_idx][i_local, j_local, k]) -
-                  Float64(panels_m_next[p_idx][i_local, j_local, k])) * inv_scale
+        target = target_at(i_local, j_local, p_idx, k, c)
         r = abs(div[c] - target)
         post_raw = ifelse(r > post_raw, r, post_raw)
     end

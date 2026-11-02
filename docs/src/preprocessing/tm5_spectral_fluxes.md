@@ -1,7 +1,8 @@
 # TM5-style spectral mass fluxes
 
 This page specifies `TM5SpectralFluxes`, a second construction of the ERA5
-spectral mass fluxes for lat-lon (LL) and reduced-Gaussian (RG) targets. It
+spectral mass fluxes for lat-lon (LL), reduced-Gaussian (RG) and direct
+cubed-sphere (CS) targets. It
 follows the TM5 meteorological preprocessor (`tmm`): the face fluxes are
 quadratures of the retained spectral winds and surface pressure along the
 target faces, an independent vertical flux is integrated from the spectral
@@ -10,7 +11,7 @@ hybrid mass tendency. The existing construction (face- and centre-sampled
 winds times a face pressure thickness, see [ERA5 spectral path](spectral_era5.md))
 stays the default; the design calls it `PointSampledSpectralFluxes`.
 
-LL and RG are implemented by TM5-FLUX-1. The point-sampled construction stays
+LL and RG are implemented by TM5-FLUX-1; direct CS is implemented by TM5-FLUX-2b. The point-sampled construction stays
 the default. Select the new route explicitly:
 
 ```toml
@@ -28,8 +29,8 @@ The selector is `spectral_flux_construction`, since the existing
 `flux_construction` settings describe the face-method family. Existing configs
 keep their interpretation and default arithmetic. The new route requires a global target, the hourly ERA5 interval and dry
 basis, a next-day 00 UTC spectral and humidity endpoint, and retained native
-interfaces (`echlevs` or layer merging). Cubed-sphere direct integration and
-pressure-overlap vertical remapping are outside this construction. The hybrid-B
+interfaces (`echlevs` or layer merging). Pressure-overlap vertical remapping
+is outside this construction. The hybrid-B
 extent must run from 0 to 1, with `level_top=1` and zero top A. These contracts are checked during configuration planning, before reading meteorology. GPU selection on the legacy point-sampled route
 is rejected explicitly; its opt-in is deferred.
 
@@ -310,6 +311,31 @@ Our dry-pin route first makes the target solvable: for cell c, solve against
 ``H^*_{c,k} - (S_c/\sum S)\sum_{c'}H^*_{c',k}``. The pressure guard removes
 only the known global water tendency (§9); final dry repair imposes the dry budget.
 
+**CS solver.** The direct target uses the same ``H_k^*`` and area-weighted
+removal of its global mode. The CS face table stores outward-positive flux,
+so its explicit target is ``-H_k^*``. `DirectCSPoisson` factors a pinned
+principal minor of the global degree-four graph Laplacian once per serial run and
+reuses it for both endpoint sets, every layer and every window. Corrections
+update canonical and mirror entries with the face table's seam signs.
+This is TM5's layer equation on our CS graph, rather than TM5's periodic
+FFT five-point solver. The existing CS PCG endpoint target keeps its
+historical arithmetic through a neutral target-functor split.
+
+A one-thread CPU synthetic solver benchmark gives the following stage times
+(68 right-hand sides, graph built independently of meteorology):
+
+| Grid | Cells | Factorization | 68 direct solves | One PCG solve |
+|---|---:|---:|---:|---:|
+| C90 | 48,600 | 1.01 s | 0.46 s | 0.30 s (705 iterations) |
+| C180 | 194,400 | 0.72 s | 1.56 s | 1.59 s (1433 iterations) |
+
+The first factorization includes compilation. Process peak RSS was 0.77 GB
+at C90 and 1.06 GB after C180; these are process peaks, not factor sizes.
+The smooth synthetic RHS leaves maximum relative direct residuals
+``5.15×10^{-9}`` and ``2.49×10^{-8}``, respectively, from conditioning of the
+pinned graph. Acceptance uses the physical pressure-normalized guards below;
+these timings are neither full-day performance nor GPU measurements.
+
 **Guards.** `CheckMassBalance` compares the column convergence with the
 surface-pressure tendency, relative to the mean surface pressure [s⁻¹]
 (`GTS:2864–2936`):
@@ -369,7 +395,7 @@ has no separate closure type.
 `recompute_cm_from_divergence!` is already the ``ΔB \times`` pit form and stays a
 staging helper.
 
-## 8. Pipeline on LL and RG targets
+## 8. Pipeline on LL, RG and CS targets
 
 E marks a shared existing function, N a new implemented function.
 
@@ -387,6 +413,34 @@ E marks a shared existing function, N a new implemented function.
 | 10 | Window flux: mean of the two dry endpoint sets (Q2) | `balance_window_layers!` | `Targets/LatLon/tm5_layer_balance.jl` |
 | 11 | Substep schedule, amounts, column balance, `cm`, replay gates | E schedule; amounts via `MetDrivers.flux_application_seconds`; `apply_poisson_balance!` → `balance_column_mass_fluxes!` (LL), `balance_compressed_column_fluxes!` (RG); `recompute_cm_from_dm_target!` with the dry endpoint ``Δm`` | `Targets/`, `MassClosure/`, `MetDrivers/` |
 | 12 | Write | E writers; version-5 header with the construction identity | `TransportBinary/`, `MetDrivers/BinaryFormat/` |
+
+For CS, `Spectral/cs_spectral_integrals.jl` implements stages 3–4 on regular
+cell-centred rings without pole nodes. The CS target prepares the shared
+`line_integral_face_matrix` geometry and conservative box overlaps once,
+then supplies them to Spectral without a reverse dependency on MassClosure.
+`CSSpectralIntegralWorkspace` applies face and overlap maps on the synthesis
+backend with portable KernelAbstractions gathers. Refined three-dimensional
+samples remain there through integration; only reduced target fields return
+per batch. Surface PS uses Float64; the CS three-dimensional kernels use the
+selected synthesis precision with typed constants, without Float64 promotion.
+
+`Targets/CubedSphere/tm5_spectral_day.jl` orchestrates the shared post-integral
+pin and moist merge, per-layer CS balance, adjacent-cell face humidity,
+endpoint drying and mean. Final dry amounts use the existing CS column
+balance, `diagnose_balanced_cs_cm!`, replay and positivity contracts and
+streaming writer. After residual booking, the direct CS route explicitly zeros
+the rounded surface-interface remainder before replay, enforcing the closed
+physical boundary. Positivity retries rebuild amounts from pristine dry rates.
+The mandatory next-day endpoint closes the final window; no held-endpoint
+fallback is used. The optional live Calc_Kzz group is assembled through the
+shared CS PBL writer. Two moist endpoints and one output window are retained.
+
+CS writes `TM5SpectralFluxesHeader` with unchanged v5 identity fields and no
+new payload sections. Ordinary provenance keys are
+`cs_face_quadrature = "great_circle_midpoint_bilinear_v1"`,
+`samples_per_face`, `refined_nlon`, `refined_nlat` and
+`cs_cell_quadrature = "conservative_refined_box_mean_v1"`, plus the actual
+synthesis backend/precision. Existing v5 LL/RG files require no new keys.
 
 Folders are under `src/Preprocessing/` unless they start with `MetDrivers/`.
 The order differs on purpose from the existing route:
@@ -450,7 +504,7 @@ additively so that the global dry mass implied by the native humidity equals
 - **``q = 0`` limit.** After the column balance, the dry route's `cm` equals the
   hybrid-B closure in exact arithmetic (covered by the closure and dry-limit tests).
 
-## 10. Reduced Gaussian specifics
+## 10. Reduced Gaussian and direct cubed-sphere specifics
 
 Owner decision Q11: RG ships with LL from the first flux pull request.
 
@@ -476,6 +530,50 @@ The direct RG spectral path already shares the LL primitives
 `compute_reduced_horizontal_fluxes!` in
 `src/Preprocessing/Targets/ReducedGaussian/reduced_transport_helpers.jl`).
 
+**Direct CS quadrature.** Let ``Δ_{min}`` be the smallest target face length
+in degrees and ``r = quadrature_refinement(T, Δ_{min}, nstep)``. A regular
+cell-centred source mesh has latitude spacing at most ``Δ_{min}/r`` and
+longitude spacing no larger, with at least ``2(T+1)+1`` longitudes to retain
+the wind and gradient edge row. There are no pole samples. Each target face
+uses at least 16 great-circle midpoint samples (at least ``4r`` when larger).
+The run cache reuses the synthesis plans, face/overlap maps and graph factor
+across days with matching geometry, truncation, refinement, backend, precision
+and level-batch size.
+
+For the constant Cartesian normal ``N_f`` directed left to right,
+
+```math
+F_{f,k}=\frac{1}{g}\int_f
+    (\mathbf v_k\cdot N_f)(ΔA_k+ΔB_k e^H)\,dl.
+```
+
+The bilinear interpolant is formed from the **Cartesian mass-flux product**
+at refined nodes, preserving sampled wind–pressure covariance. PS is the
+conservative overlap mean of ``e^H`` box values. Independent ``C_k`` uses the
+same overlap on the spectral forcing of §5 divided by ``R^2\cos φ``;
+its density contains ``R_v/(Rg) D_k Δp_k`` and
+``p_s ΔB_k(U_k H_λ+V_k H_φ)/(Rg\cos^2 φ)``. The integrated forcing is
+multiplied by the target cell area before the common W construction.
+
+This is a generalization of TM5's LL rule: great-circle midpoint sampling
+of a Cartesian bilinear interpolant, with conservative box means for cell
+integrals. It is not TM5's exact meridian/parallel integration of its linear
+interpolant. The independent Gauss residual converges with refinement and
+the layer solve removes the remaining local mismatch.
+
+On the C2/T3 analytic probe, refinement steps 16, 32 and 64 give degree-one
+Gauss residuals ``7.08×10^{-4}``, ``1.57×10^{-4}``, ``4.13×10^{-5}`` and
+meridian errors against the solid-rotation closed form
+``4.49×10^{-4}``, ``1.14×10^{-4}``, ``2.96×10^{-5}``. Against production LL
+quadrature on the coincident meridian, relative differences are
+``2.48×10^{-4}``, ``6.36×10^{-5}``, ``1.70×10^{-5}``.
+Variable-LNSP forcing residuals are ``5.19×10^{-3}``, ``1.32×10^{-3}``,
+``3.40×10^{-4}``, approaching second order. Coarser interpolation and midpoint
+errors can cancel, so asymptotic convergence is tested separately from the
+coarse resolutions. Constant LNSP gives uniform PS to integration roundoff
+and exactly zero C/W for solid rotation. Focused tests also check exact seam
+mirrors, three-pass failure/recovery, the q=0 hybrid-B closure and dry replay.
+
 ## 11. Types, dispatch and configuration
 
 ```julia
@@ -498,20 +596,19 @@ end
 - `InterfaceMassFluxField <: AbstractFieldKind`
   (a kg s⁻¹ interface flux is not a convective flux, even where the selection
   body is the same).
-- In S8 the cubed-sphere method `SpectralIntegralFaceFluxes` joins the
-  `face_fluxes` family (`face_flux_method`, with a new `AbstractFaceFluxMethod`
-  over `PanelAverageFluxes`, `VectorFaceFluxes` and `LineIntegralFaceFluxes`).
+- Direct CS dispatches on `TM5SpectralFluxes` and uses
+  `CSSpectralIntegralWorkspace`; legacy face-method choices retain their meaning.
 - `[preprocessing].spectral_flux_construction` is parsed once with
   `ConfigChecks.parse_choice`; absence adds no fields to historical settings,
   preserving their fingerprint representation. `flux_construction` and the
   existing face-method keys retain their meaning. `TM5SpectralFluxes` has the
   fixed IFS radius and a positive `quadrature_refinement_steps` (default 2).
 - `ConfigChecks.check_known_keys` rejects unknown preprocessing keys, and native
-  sources reject all four spectral-only keys. Planning rejects cubed sphere, moist basis and sampling other than
+  sources reject all four spectral-only keys. Planning rejects moist basis and sampling other than
   `window_mean`. The day driver requires next-day 00 UTC. The new route
   requires retained native interfaces, rather than pressure-overlap remapping.
 - `[preprocessing] include_tm5_pbl = true` can be combined with this construction
-  on LL and RG. The v5 binary retains the `tm5_spectral` construction identity
+  on LL, RG and CS. The v5 binary retains the `tm5_spectral` construction identity
   and includes the complete live Calc_Kzz input group. Set `input.surface_dir`
   and `input.thermo_dir`, then select `[diffusion] kind = "tm5_calc_kzz"` at
   runtime (see [TM5 boundary layer](../theory/tm5_boundary_layer.md)).
@@ -666,7 +763,7 @@ with attributable deltas, S8 cubed-sphere direct target).
 | Per-layer balance, TM5 guards, RG factor-once solve (S6a) | Implemented (TM5-FLUX-1) |
 | End to end for LL and RG, new cases `pre_ll72_tm5`, `pre_o24_tm5` (S6b) | Implemented; golden definitions only, references generated separately |
 | First real day and attributable deltas (S7) | [Real-day comparison memo](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/docs/memos/2026-11-01_tm5_flux_real_day.md) and `scripts/diagnostics/compare_flux_constructions.jl` (TM5-FLUX-2a) |
-| Cubed-sphere direct target (S8) | Planned (TM5-FLUX-2) |
+| Cubed-sphere direct target (S8) | Implemented (TM5-FLUX-2b): refined rings, portable face/overlap gathers, independent W, direct per-layer graph solve, dry endpoint mean and shared CS write gates. Focused synthetic tests; `pre_c24_tm5`, `pre_c24_tm5_tm5pbl`, `run_c24_tm5_cpu_f64` definitions added. Reference recording and GPU measurements remain separate. |
 
 ## 17. Synthesis backends and measurements
 
