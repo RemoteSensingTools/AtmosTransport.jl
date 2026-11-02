@@ -580,22 +580,54 @@ interpolate with them.
 function read_qv_from_thermo(thermo_path::String, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int;
                              FT::Type{<:AbstractFloat}=Float32, variable::AbstractString="q")
     NCDataset(thermo_path) do ds
-        q_var = ds[variable]
-        dims = dimnames(q_var)
-        if dims[1] == "longitude"
-            q = FT.(q_var[:, :, :, hour_idx])
-        else
-            q_raw = FT.(q_var[hour_idx, :, :, :])
-            q = permutedims(q_raw, (3, 2, 1))
-        end
-        lon, lat = _thermo_file_coordinates(ds)
-        if size(q, 2) == Ny && lat[1] > lat[end]
-            q = q[:, end:-1:1, :]
-        end
-        q = normalize_lon_to_centered(q, lon)
-        return q
+        return read_qv_from_thermo(ds, hour_idx, Nx, Ny, Nz; FT, variable)
     end
 end
+
+function read_qv_from_thermo(ds::NCDataset, hour_idx::Int, Nx::Int, Ny::Int, Nz::Int;
+                             FT::Type{<:AbstractFloat}=Float32, variable::AbstractString="q")
+    q_var = ds[variable]
+    dims = dimnames(q_var)
+    if dims[1] == "longitude"
+        q = FT.(q_var[:, :, :, hour_idx])
+    else
+        q_raw = FT.(q_var[hour_idx, :, :, :])
+        q = permutedims(q_raw, (3, 2, 1))
+    end
+    lon, lat = _thermo_file_coordinates(ds)
+    return _normalize_thermo_field(q, lon, lat, Ny)
+end
+
+function _normalize_thermo_field(q, lon, lat, Ny)
+    if size(q, 2) == Ny && lat[1] > lat[end]
+        q = q[:, end:-1:1, :]
+    end
+    return normalize_lon_to_centered(q, lon)
+end
+
+"""
+    foreach_thermo_record(f, ds, records, Ny; FT=Float64, variable="q")
+
+Read a bounded block of consecutive thermo records once, calling `f(field, record)`
+with each normalized `(longitude, south_to_north_latitude, level)` field.
+Temporal chunk alignment avoids decompressing the same NetCDF chunks for each
+hour. Conversion and orientation match the scalar reader, one record at a time.
+The callback can retain only interpolated target values rather than a native day.
+"""
+function foreach_thermo_record(f, ds::NCDataset, records::AbstractUnitRange, Ny::Int;
+                              FT::Type{<:AbstractFloat}=Float64, variable::AbstractString="q")
+    q_var = ds[variable]
+    longitude_first = first(dimnames(q_var)) == "longitude"
+    raw = longitude_first ? q_var[:, :, :, records] : q_var[records, :, :, :]
+    lon, lat = _thermo_file_coordinates(ds)
+    for (i, record) in enumerate(records)
+        q = longitude_first ? FT.(view(raw, :, :, :, i)) :
+            permutedims(FT.(view(raw, i, :, :, :)), (3, 2, 1))
+        f(_normalize_thermo_field(q, lon, lat, Ny), record)
+    end
+    return nothing
+end
+export foreach_thermo_record
 
 """
     read_thermo_coordinates(thermo_path) -> (lon, lat)
@@ -610,13 +642,17 @@ north; a `0 … 360` longitude axis rolled by `Nx ÷ 2`) and written in
 """
 function read_thermo_coordinates(thermo_path::String)
     NCDataset(thermo_path) do ds
-        lon_raw, lat_raw = _thermo_file_coordinates(ds)
-        lon_file = _coordinate_values(lon_raw, "longitude")
-        lat = _coordinate_values(lat_raw, "latitude")
-        lat[1] > lat[end] && reverse!(lat)
-        lon = vec(normalize_lon_to_centered(reshape(lon_file, :, 1, 1), lon_file))
-        return mod.(lon .+ 180, 360) .- 180, lat
+        return read_thermo_coordinates(ds)
     end
+end
+
+function read_thermo_coordinates(ds::NCDataset)
+    lon_raw, lat_raw = _thermo_file_coordinates(ds)
+    lon_file = _coordinate_values(lon_raw, "longitude")
+    lat = _coordinate_values(lat_raw, "latitude")
+    lat[1] > lat[end] && reverse!(lat)
+    lon = vec(normalize_lon_to_centered(reshape(lon_file, :, 1, 1), lon_file))
+    return mod.(lon .+ 180, 360) .- 180, lat
 end
 
 function _coordinate_values(values::AbstractVector, name::AbstractString)

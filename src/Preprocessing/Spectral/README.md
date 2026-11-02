@@ -63,6 +63,14 @@ policy applies only to offline spectral preprocessing.
 
 `read_qv_from_thermo` accepts `variable="t"` for the opt-in live-Calc_Kzz
 input writer; the default `variable="q"` retains the original humidity path.
+The scalar reader and coordinate reader also accept an open `NCDataset`.
+`foreach_thermo_record` reads a bounded consecutive block and delivers each
+normalized record to a callback, preserving scalar conversion/orientation.
+The live PBL writer uses this to decode each temporal chunk once during a
+sequential day traversal of the measured three-hour chunk layout, retaining
+only interpolated target endpoints. The three-record cap can cause overlapping
+chunk reads for other layouts, such as four-hour chunks; skipped or revisited
+windows can also reread chunks.
 
 ## Dry-mass rounding and column closure
 

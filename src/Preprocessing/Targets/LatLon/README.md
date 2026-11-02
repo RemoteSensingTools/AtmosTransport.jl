@@ -49,7 +49,22 @@ the historical delta payload. The optional spectral cache is per hour.
   paired points). All surface primitives use `Common.target_surface_means`
   and the shared conservative regridder on the actual LL/RG mesh.
   `TM5PBLInputCache` owns day-local surface readers, remap weights and the shared
-  thermo endpoint; day drivers close it even on failure.
+  thermo endpoint; day drivers close it even on failure. It also retains open
+  thermo files and their bilinear weights. Thermo reads follow temporal chunks
+  in blocks of at most three records, then retain only sampled target values;
+  the next-day file supplies only the midnight endpoint. Scalar interpolation,
+  endpoint averaging and pressure-dependent vertical merge order are unchanged.
+
+Per-day retention is bounded by three same-day T/q endpoint pairs plus one
+midnight pair, two thermo readers and bilinear weight sets, up to two surface
+readers, and one conservative regridder. At 137 native levels, the Float64
+endpoint arrays alone occupy approximately the amounts below; block refill can temporarily
+retain six pairs, in addition to native decoding scratch, merge arrays and weights.
+
+| Target | Maximum between calls | During block refill |
+|---|---:|---:|
+| 360×181 | 545 MiB | 817 MiB |
+| Classical N320, 542,080 cells | 4.43 GiB | 6.64 GiB |
 
 `tm5_spectral` can be combined with `include_tm5_pbl=true`: the v5 binary
 retains the TM5 construction identity and appends the complete live Calc_Kzz

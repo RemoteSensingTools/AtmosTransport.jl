@@ -8,7 +8,7 @@ import ...Parameters: STANDARD_GRAVITY
 import ..Spectral: read_day_spectral_streaming
 import ..TransportBinary: tm5_construction_metadata, tm5_flux_evidence, quarantine_streaming_binary!
 
-import ..Spectral: era5_thermo_path
+import ..Spectral: era5_thermo_path, foreach_thermo_record
 
 import ...State
 import ...AtomicFiles: commit_atomic_staging
@@ -66,7 +66,7 @@ import GRIB: GRIB
 import JSON3: JSON3
 import ..Common: ReducedGaussianTargetGeometry, target_surface_means
 import ..PhysicsInputs: era5_surface_source_mesh
-import NCDatasets: NCDataset
+import NCDatasets: NCDataset, chunking, dimnames
 import ..PhysicsInputs: load_tm5_pbl_window, open_tm5_pbl_surface_reader
 import ...MetDrivers.BinaryFormat: TM5_PBL_PAYLOAD_SECTIONS, TM5_PBL_FIELD_NAMES,
     PointSampledSpectralFluxesHeader, flux_construction_header_entries
