@@ -313,6 +313,9 @@ _column_workspace_arrays(workspace, ::DkgExchange) =
 _exchange_source(op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField},workspace) where FT =
     DkgExchange(op.kz_field.dkg)
 
+_panel_exchange_sources(op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},workspace) where FT =
+    ntuple(p -> DkgExchange(op.kz_field.dkg[p]),6)
+
 # Structured lat-lon, packed tracers (Nx, Ny, Nz, Nt).
 function _diffuse_columns!(form, q_raw::AbstractArray{FT, 4}, air_mass::AbstractArray{FT, 3},
                            op::ImplicitVerticalDiffusion, workspace::DiffusionWorkspace,

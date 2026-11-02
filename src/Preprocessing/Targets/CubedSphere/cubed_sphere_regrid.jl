@@ -128,6 +128,39 @@ function carried_tm5_convection_record(source_header::AbstractDict, source_has_t
     return record
 end
 
+# T/q are intensive layer-centre fields weighted by source moist mass.
+# Surface primitives remain intensive area means. Read the emitted window,
+# not the sliding buffer (which already contains the next window).
+function _regrid_tm5_pbl_to_cs(reader,win,regridder,ws,Nc,::Type{FT}) where FT
+    shape=(reader.header.geometry.Nx,reader.header.geometry.Ny,reader.header.nlevel)
+    input=NamedTuple{TM5_PBL_FIELD_NAMES}(map(TM5_PBL_PAYLOAD_SECTIONS) do section
+        reshape(Float64.(section_view(reader,win,section)),section in (:tm5_t,:tm5_q) ? shape : shape[1:2])
+    end)
+    # Average in Float64, including when the transport workspace/output is
+    # Float32. Otherwise all-land means can exceed the 1e-12 snap tolerance.
+    moist=reshape(Float64.(section_view(reader,win,:m)),:,shape[3])./(1 .- reshape(input.q,:,shape[3]))
+    denominator=zeros(Float64,6Nc*Nc,shape[3])
+    density_scratch=zeros(Float64,prod(shape[1:2]))
+    apply_regridder!(denominator,regridder,moist,ExtensiveCellField();scratch=density_scratch)
+    return NamedTuple{TM5_PBL_FIELD_NAMES}(map(TM5_PBL_FIELD_NAMES) do name
+        a=getproperty(input,name)
+        if name in (:t,:q)
+            mean=zeros(Float64,size(denominator))
+            apply_regridder!(mean,regridder,reshape(a,:,shape[3]).*moist,
+                ExtensiveCellField();scratch=density_scratch)
+            mean ./= denominator
+            ntuple(p->reshape(FT.(mean[(p-1)*Nc*Nc+1:p*Nc*Nc,:]),Nc,Nc,shape[3]),6)
+        else
+            mean=zeros(Float64,6Nc*Nc)
+            apply_regridder!(mean,regridder,vec(a),IntensiveCellField())
+            if name === :lsm
+                mean .= map(x-> -1e-12<=x<=1+1e-12 ? clamp(x,0,1) : x,mean)
+            end
+            ntuple(p->reshape(FT.(mean[(p-1)*Nc*Nc+1:p*Nc*Nc]),Nc,Nc),6)
+        end
+    end)
+end
+
 """
     regrid_ll_binary_to_cs(ll_binary_path, cs_grid, out_path; FT=Float64, mass_basis=nothing)
 
@@ -243,6 +276,7 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         "to load `qv` from the source and apply `apply_dry_basis_native!` " *
         "to m/am/bm). Regenerate the source on the desired basis, or omit " *
         "the `mass_basis` kwarg to match the source."))
+    source_has_pbl = all(s in h.payload_sections for s in TM5_PBL_PAYLOAD_SECTIONS)
     source_has_tm5 = has_tm5_convection(reader)
     source_has_surface = all(s in h.payload_sections for s in (:pblh, :ustar, :pbl_hflux, :t2m))
     source_surface_partial = any(s in h.payload_sections for s in (:pblh, :ustar, :pbl_hflux, :t2m)) &&
@@ -376,6 +410,9 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
         include_flux_delta=true,
         include_surface=source_has_surface,
         include_tm5conv=source_has_tm5,
+        include_tm5_pbl=source_has_pbl,
+        flux_construction=source_has_pbl ? RegriddedTransportBinaryHeader(
+            get(h.raw_header,"flux_construction","unrecorded")) : NoFluxConstructionHeader(),
         mass_basis=output_basis,
         surface_pressure_basis=surface_pressure_basis(reader),
         # The regrid copies the source's TM5 sections and their basis record;
@@ -562,6 +599,10 @@ function regrid_ll_binary_to_cs(ll_binary_path::String,
             window_nt = merge(window_nt,
                               (tm5_fields=(entu=cur_entu, detu=cur_detu,
                                            entd=cur_entd, detd=cur_detd),))
+        end
+        if source_has_pbl
+            window_nt = merge(window_nt,(;tm5_pbl=_regrid_tm5_pbl_to_cs(reader,
+                win_idx,regridder,cs_ws,Nc,FT)))
         end
         write_window!(writer, ReadyWindow{CubedSphereTargetGeometry, FT}(
             win_idx, window_nt, _regrid_window_evidence(FT, closure)))

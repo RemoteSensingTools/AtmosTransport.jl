@@ -108,6 +108,25 @@ end
     end
 end
 
+@testset "TM5 LL/RG chunking is bitwise" begin
+    for FT in (Float64,Float32), mesh in (LatLonMesh(;Nx=72,Ny=36),ReducedGaussianMesh([-60.,0.,60.],[24,48,24]))
+        f=pbl_runtime_fixture(mesh,FT)
+        arrays = mesh isa LatLonMesh ? (f.fluxes.am,f.fluxes.bm) : (f.fluxes.horizontal_flux,)
+        for a in arrays
+            a .= reshape(FT.(sin.(eachindex(a)).*1e12),size(a))
+        end
+        nc=prod(f.shape[1:end-1])
+        fields=map((7,nc,2nc)) do chunk
+            field=TM5CalcKzzField(zeros(FT,f.shape),PH._tm5_metrics(mesh,FT),f.grid.vertical;chunk_columns=chunk)
+            @test length(field.scratch.guarded)==min(nc,chunk)
+            refresh_tm5_calc_kzz!(field,f.input,f.mass,f.fluxes,f.grid.vertical,900.,DryBasis())
+        end
+        @test isequal(fields[1].dkg,fields[2].dkg)
+        @test isequal(fields[2].dkg,fields[3].dkg)
+        @test_throws ArgumentError TM5CalcKzzField(zeros(FT,f.shape),fields[1].metrics,f.grid.vertical;chunk_columns=0)
+    end
+end
+
 @testset "TM5 v5 LL/RG input round trip and runtime recipe" begin
     mktempdir() do dir
         for mesh in (LatLonMesh(;Nx=4,Ny=3),ReducedGaussianMesh([-60.,0.,60.],[4,8,4]))

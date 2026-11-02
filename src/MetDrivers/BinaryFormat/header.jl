@@ -264,10 +264,11 @@ abstract type AbstractFluxConstructionHeader end
 struct NoFluxConstructionHeader <: AbstractFluxConstructionHeader end
 
 """
-`flux_construction = "point_sampled_spectral"`: the ERA5 spectral lat-lon and
-reduced-Gaussian construction (winds synthesized at the target truncation and
-sampled on faces and centres, times the face pressure thickness). It has no
-further keys.
+`flux_construction = "point_sampled_spectral"`: ERA5 spectral winds synthesized
+at the target truncation and sampled on lat-lon or reduced-Gaussian faces and
+centres, times the face pressure thickness. Also covers cubed-sphere construction
+via a lat-lon staging grid, with vector or line-integral face fluxes distinguished
+by the version-4 CS face metadata. The identity itself has no further keys.
 """
 struct PointSampledSpectralFluxesHeader <: AbstractFluxConstructionHeader end
 
@@ -310,17 +311,32 @@ struct TM5SpectralFluxesHeader <: AbstractFluxConstructionHeader
     end
 end
 
+"""
+A transport binary remapped onto a new mesh. Keeps only the source construction
+string, not its construction-specific keys (such as tm5_spectral revision and
+truncation). Inspect the source binary for that metadata.
+"""
+struct RegriddedTransportBinaryHeader <: AbstractFluxConstructionHeader
+    source_flux_construction::String
+    function RegriddedTransportBinaryHeader(source_flux_construction::AbstractString)
+        isempty(source_flux_construction) && throw(ArgumentError("source_flux_construction must be nonempty"))
+        new(String(source_flux_construction))
+    end
+end
+
 """On-disk spelling (`flux_construction` value) of a flux-construction identity."""
+flux_construction_tag(::Type{RegriddedTransportBinaryHeader}) = "regridded_transport_binary"
 flux_construction_tag(::Type{PointSampledSpectralFluxesHeader}) = "point_sampled_spectral"
 flux_construction_tag(::Type{TM5SpectralFluxesHeader}) = "tm5_spectral"
 flux_construction_tag(construction::AbstractFluxConstructionHeader) =
     flux_construction_tag(typeof(construction))
 
 const _FLUX_CONSTRUCTION_KEY = "flux_construction"
-const _FLUX_CONSTRUCTION_TYPES = (PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader)
+const _FLUX_CONSTRUCTION_TYPES = (PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader, RegriddedTransportBinaryHeader)
 
 # The header keys of a construction, one per field and in field order: the one
 # list from which writers record, readers decode and validators reject keys.
+_flux_construction_keys(::Type{RegriddedTransportBinaryHeader}) = ("source_flux_construction",)
 _flux_construction_keys(::Type{PointSampledSpectralFluxesHeader}) = ()
 _flux_construction_keys(::Type{TM5SpectralFluxesHeader}) =
     ("flux_construction_revision", "spectral_truncation_used",
@@ -351,6 +367,12 @@ function _construction_value(header::AbstractDict, key::String, ::Type{Float64})
     value isa Real && !(value isa Bool) || throw(ArgumentError(
         "flux-construction key `$key` must be a number; got $(repr(value))"))
     return Float64(value)
+end
+
+function _construction_value(header::AbstractDict,key::String,::Type{String})
+    value=header[key]
+    value isa AbstractString || throw(ArgumentError("flux-construction key `$key` must be a string"))
+    return String(value)
 end
 
 _flux_construction_from_header(::Type{T}, header) where {T <: AbstractFluxConstructionHeader} =
@@ -412,6 +434,8 @@ function _set_flux_construction!(header::Dict{String, Any},
 end
 
 """One-line description of a flux-construction identity for reports."""
+flux_construction_summary(c::RegriddedTransportBinaryHeader) =
+    "regridded_transport_binary (source: $(c.source_flux_construction))"
 flux_construction_summary(::NoFluxConstructionHeader) = "not recorded (format v4)"
 flux_construction_summary(::PointSampledSpectralFluxesHeader) =
     flux_construction_tag(PointSampledSpectralFluxesHeader)

@@ -311,8 +311,8 @@ function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
 end
 
 @inline _refresh_dz_for_window!(_sim::DrivenSimulation,
-    ::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzField}) where FT = nothing
-function _refresh_pbl_kz_for_window!(field::TM5CalcKzzField,sim::DrivenSimulation)
+    ::ImplicitVerticalDiffusion{FT,<:Union{TM5CalcKzzField,TM5CalcKzzCSField}}) where FT = nothing
+function _refresh_pbl_kz_for_window!(field::Union{TM5CalcKzzField,TM5CalcKzzCSField},sim::DrivenSimulation)
     seconds = flux_application_seconds(sim.window_dt,sim.steps_per_window,flux_kind(sim.driver))
     refresh_tm5_calc_kzz!(field,sim.window.tm5_pbl,sim.model.state.air_mass,
         sim.window.fluxes,sim.model.grid.vertical,seconds,mass_basis(sim.model.state))

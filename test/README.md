@@ -372,3 +372,10 @@ TM5-PBL input tests include coastal area means on LL/RG, varying N→S/0–360
 thermo fields and shared-endpoint ownership. Column parity reports measured
 Float32 K/D error separately from crossing/guard changes and checks the finite
 BL/free K retained at singular entrainment interfaces.
+
+Live CS Calc_Kzz is covered by `core/test_tm5_pbl_cs.jl` (chunking, column
+parity, face-normal winds and frame invariance, direct-D solves and transpose),
+`core/test_tm5_pbl_inputs.jl` (spectral→CS and LL→CS, coastal surface means),
+and `core/test_cs_adjoint_step_plan_parity.jl` (frozen per-window capture,
+production replay, Full/Stride and footprint finite differences).
+The LL/RG chunk-size test compares 7, nc and 2nc columns bit for bit.

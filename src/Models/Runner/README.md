@@ -68,3 +68,7 @@ handoffs, through the existing optional NamedTuple storage copier.
 Storage allocation delegates to Architectures.similar_arrays with the existing
 `Base.invokelatest(similar, array)` allocator at every leaf. Flux scaling uses
 `scale_arrays!`, retaining one broadcast per panel in the original order.
+
+TM5 live CS diffusion captures a frozen copy of D per window, without scratch
+or metrics. Its windows share one diffusion workspace because D needs no dz.
+The default capture for existing Kz operators retains the deepcopy behavior.

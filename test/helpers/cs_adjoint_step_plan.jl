@@ -63,7 +63,16 @@ function _cmfmc_forcing(w)
     return AT.ConvectionForcing(cmfmc, dtrain, nothing)
 end
 
-function _window(w, conv; vary_ps = false)
+function _live_tm5_inputs(w)
+    BF=AT.MetDrivers.BinaryFormat
+    return NamedTuple{BF.TM5_PBL_FIELD_NAMES}(map(BF.TM5_PBL_FIELD_NAMES) do name
+        value=get((;t=280+2w,q=.005,lsm=.4,sr=.03,fsr=.1,u10=6+w,v10=2,
+            ewss=.1,nsss=.05,sshf=-100,slhf=-30,oro=0),name,0)
+        ntuple(_->fill(value,name in (:t,:q) ? (NC,NC,NZ) : (NC,NC)),6)
+    end)
+end
+
+function _window(w, conv; vary_ps = false,live_tm5=false)
     m = ntuple(p -> [S * (2.0 + 0.25k + 0.01p + 0.02w + 0.03sin(0.7i + 0.3j + p + w))
                      for i in 1:NP, j in 1:NP, k in 1:NZ], 6)
     dm = ntuple(p -> [S * 0.002cos(0.4i + 0.2j + 0.3k + p + w) for i in 1:NP, j in 1:NP, k in 1:NZ], 6)
@@ -85,12 +94,13 @@ function _window(w, conv; vary_ps = false)
     return AT.TransportWindow(m, ntuple(_ -> fill(ps, NC, NC), 6),
                               AT.CubedSphereFaceFluxState{AT.DryBasis}(am, bm, cm);
                               deltas = AT.MetDrivers.CubedSphereFluxDeltas(dm), convection = forcing,
+                              tm5_pbl = live_tm5 ? _live_tm5_inputs(w) : nothing,
                               dkg = ntuple(_ -> fill(S * 1e-5, NC, NC, NZ), 6))
 end
 
 _driver(; conv = :none, contract = true, steps = [2, 3, 2], vary_ps = false,
-        flux_kind = :substep_mass_amount) =
-    (ws = [_window(w, conv; vary_ps) for w in eachindex(steps)];
+        flux_kind = :substep_mass_amount,live_tm5=false) =
+    (ws = [_window(w, conv; vary_ps,live_tm5) for w in eachindex(steps)];
      _PlanDriver{Float64, typeof(GRID), eltype(ws)}(GRID, ws, WINDOW_DT, steps, contract, flux_kind))
 
 const RATES = ntuple(p -> [S * 1e-6 * (1 + 0.3sin(i + 2j + p)) for i in 1:NC, j in 1:NC], 6)
@@ -101,7 +111,16 @@ _convection_op(conv) = conv === :tm5 ? AT.TM5Convection() :
 
 # Kz [m² s⁻¹] = kz / k on level k. The hydrostatic layers of the mock grid are
 # kilometres thick: `kz = 30` diffuses weakly, `kz = 3e4` strongly.
+function _live_tm5_diffusion(d)
+    TD=AT.Operators.Diffusion
+    field=TD.TM5CalcKzzCSField(ntuple(_->zeros(NC,NC,NZ),6),
+        AT.Models.Physics._tm5_metrics(MESH,Float64),GRID.vertical;chunk_columns=7)
+    return AT.ImplicitVerticalDiffusion(;kz_field=field,
+        surface_flux_coupling=d===:tm5_calc_kzz ? AT.SplitSurfaceFluxCoupling() : AT.DiffusiveSurfaceFluxBoundary())
+end
+
 _diffusion_op(d, kz = 30.0) = d === :none ? AT.NoDiffusion() :
+    d in (:tm5_calc_kzz,:tm5_calc_kzz_boundary) ? _live_tm5_diffusion(d) :
     d === :dkg ? AT.ImplicitVerticalDiffusion(;
         kz_field = AT.PrecomputedCSDkgField(ntuple(_ -> fill(S * 1e-5, NC, NC, NZ), 6))) :
     AT.ImplicitVerticalDiffusion(;
@@ -135,7 +154,8 @@ _label(c::Case) = "$(nameof(typeof(c.scheme))) $(something(c.cadence, :window)) 
 # `kw` goes to `DrivenSimulation`.
 function _simulation(c::Case; rate_scale = 1.0, rm_perturbation = nothing, kw...)
     driver = _driver(; conv = c.conv, contract = c.contract, steps = c.steps,
-                     vary_ps = c.vary_ps, flux_kind = c.flux_kind)
+                     vary_ps = c.vary_ps, flux_kind = c.flux_kind,
+                     live_tm5=c.diffusion in (:tm5_calc_kzz,:tm5_calc_kzz_boundary))
     air = ntuple(p -> copy(driver.windows[1].air_mass[p]), 6)
     rm = _initial_rm(air)
     rm_perturbation === nothing || (rm = ntuple(p -> rm[p] .+ rm_perturbation[p], 6))

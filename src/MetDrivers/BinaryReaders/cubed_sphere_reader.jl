@@ -55,6 +55,10 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
     panels_entd = tm5_present ? _transport_allocate(reader, :entd) : nothing
     panels_detd = tm5_present ? _transport_allocate(reader, :detd) : nothing
 
+    pbl_present = all(s in h.payload_sections for s in TM5_PBL_PAYLOAD_SECTIONS)
+    tm5_pbl = pbl_present ? NamedTuple{TM5_PBL_FIELD_NAMES}(
+        map(s->_transport_allocate(reader,s),TM5_PBL_PAYLOAD_SECTIONS)) : nothing
+    pbl_destinations = pbl_present ? NamedTuple{TM5_PBL_PAYLOAD_SECTIONS}(values(tm5_pbl)) : (;)
     destinations = (m=panels_m, am=panels_am, bm=panels_bm, cm=panels_cm,
                     ps=panels_ps, pblh=panels_pblh, ustar=panels_ustar,
                     pbl_hflux=panels_hflux, t2m=panels_t2m,
@@ -64,7 +68,7 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
                     vdiff_t=panels_vdiff_t, vdiff_qv=panels_vdiff_qv, dkg=panels_dkg)
     o = win_offset
     for section in h.payload_sections
-        panels = get(destinations, section, get(optional_2d, section, nothing))
+        panels = get(destinations, section, get(optional_2d, section, get(pbl_destinations,section,nothing)))
         n = prod(section_shape(h, section))
         if panels !== nothing
             for p in 1:np
@@ -100,6 +104,7 @@ function load_window!(reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinar
         cmfmc = panels_cmfmc,
         dtrain = panels_dtrain,
         tm5_fields = tm5_fields,
+        tm5_pbl = tm5_pbl,
         vdiff = vdiff,
         dkg = dkg_present ? panels_dkg : nothing,
         cmfmc_cloud_base = get(optional_2d, :cmfmc_cloud_base, nothing),

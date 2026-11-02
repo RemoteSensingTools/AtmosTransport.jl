@@ -120,6 +120,40 @@
     end
 end
 
+# TM5 live D transposes the flux-form BE matrix directly. Keep the Kz kernel
+# above unchanged so existing adjoint replay remains bitwise identical.
+@kernel function _vertical_diffusion_cs_single_direct_dkg_adjoint_kernel!(
+    lambda, @Const(air_mass), @Const(dkg), w_scratch,
+    dt, Nz::Int, Hp::Int)
+    ii,jj = @index(Global, NTuple)
+    FT = eltype(lambda)
+    i,j = ii+Hp,jj+Hp
+    @inbounds begin
+        w_prev,g_prev = zero(FT),zero(FT)
+        for k in 1:Nz
+            above = k > 1 ? dkg[ii,jj,k-1] : zero(FT)
+            below = k < Nz ? dkg[ii,jj,k] : zero(FT)
+            a = k > 1 ? -dt*above*_safe_inverse_mass(air_mass[i,j,k-1]) : zero(FT)
+            c = k < Nz ? -dt*below*_safe_inverse_mass(air_mass[i,j,k+1]) : zero(FT)
+            m = air_mass[i,j,k]
+            b = one(FT)+dt*(above+below)*_safe_inverse_mass(m)
+            rhs = m > zero(FT) ? m*lambda[i,j,k] : zero(FT)
+            denom = b-a*w_prev
+            w_prev = c/denom
+            g_prev = (rhs-a*g_prev)/denom
+            w_scratch[ii,jj,k] = w_prev
+            lambda[i,j,k] = g_prev
+        end
+        for k in Nz-1:-1:1
+            lambda[i,j,k] -= w_scratch[ii,jj,k]*lambda[i,j,k+1]
+        end
+        for k in 1:Nz
+            m = air_mass[i,j,k]
+            lambda[i,j,k] = m > zero(FT) ? lambda[i,j,k]/m : zero(FT)
+        end
+    end
+end
+
 # Transpose each partition using its smaller weight directly. This preserves
 # both constant mass-objective seeds and weak recipient sensitivities.
 @inline function _dkg_transpose_partition(seed, neighbor_seed, ratio)

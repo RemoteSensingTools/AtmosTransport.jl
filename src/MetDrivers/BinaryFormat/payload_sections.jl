@@ -19,7 +19,7 @@ const _STRUCTURED_SECTIONS = (TM5_PBL_PAYLOAD_SECTIONS...,:m, :dm, :qv_start, :q
 const _FACEINDEXED_SECTIONS = (TM5_PBL_PAYLOAD_SECTIONS...,:m, :dm, :qv_start, :qv_end, :hflux,
     :dhflux, :cm, :dcm, :ps, :pblh, :ustar, :pbl_hflux, :t2m,
     :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv)
-const _CS_SECTIONS = (:m, :dm, :am, :dam, :bm, :dbm, :cm, :dcm, :ps,
+const _CS_SECTIONS = (TM5_PBL_PAYLOAD_SECTIONS...,:m, :dm, :am, :dam, :bm, :dbm, :cm, :dcm, :ps,
     :pblh, :ustar, :pbl_hflux, :t2m, :pbl_eflux, :cmfmc_cloud_base,
     :entu, :detu, :entd, :detd, :vdiff_u, :vdiff_v, :vdiff_t, :vdiff_qv,
     :dkg, :dtrain, :cmfmc)

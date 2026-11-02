@@ -37,3 +37,12 @@ No adjoint. Window replay mirrors MetDrivers continuity. The shared palindrome s
 ## Experimental coarsening
 
 Nested coarsening restricts an existing operator with block sums; it still requires direct-target scientific validation. It retains its source schedule, replay and positivity gates.
+
+ERA5 spectral `include_tm5_pbl=true` writes v5 with the point-sampled spectral
+identity. It uses LatLonTarget's shared T/q sampler and moist layer merging,
+panel-major cell centres, conservative surface means and a day-local input
+cache. LL binary regridding passes the group through, with source moist-mass
+weights for T/q and area means for surface fields. These means accumulate in
+Float64, snap land fractions within 1e-12 to [0,1], then convert to the output
+precision. The pass-through records a regridded
+construction identity. N320→CS support is deferred pending archive coverage.

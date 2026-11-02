@@ -64,7 +64,7 @@ choices are parsed into `CPUSynthesis`, `GPUSynthesis`, `AutoSynthesisPrecision`
 # shared: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, validate_spectral_vertical
 
 `configuration.jl` parses `[preprocessing] include_tm5_pbl` with ConfigChecks
-and requires `input.surface_dir` for the optional LL/RG live-Calc_Kzz inputs.
+and requires `input.surface_dir` for the optional LL/RG/CS live-Calc_Kzz inputs.
 `validate_tm5_pbl_target` rejects unsupported vertical mapping, truncated top
 levels, non-hourly windows and fewer than two output layers before synthesis.
 `target_surface_means` adapts target geometry to the existing conservative

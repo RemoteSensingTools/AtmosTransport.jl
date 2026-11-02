@@ -444,6 +444,11 @@ function validate_runtime_diffusion(style::ReducedGaussianRuntimeRecipeStyle,
     _require_tm5_pbl(context)
     return nothing
 end
+function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
+                                    ::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},context) where FT
+    _require_tm5_pbl(context)
+    return nothing
+end
 function _require_tm5_pbl(context)
     reader = _tm5_pbl_reader(context)
     all(s -> s in reader.header.payload_sections, TM5_PBL_PAYLOAD_SECTIONS) || throw(ArgumentError(

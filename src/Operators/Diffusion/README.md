@@ -191,7 +191,7 @@ Models (runtime recipes and window refresh), and Adjoints (transpose kernels).
 - The following numerical kernels are explicitly shared with Adjoints;
   CUDA's tile hooks remain shared with its extension.
 
-# shared: _vertical_diffusion_cs_single_adjoint_kernel!, _vertical_diffusion_cs_single_dkg_adjoint_kernel!, _cs_dkg_mass_workgroupsize, _cs_dkg_tracer_workgroupsize
+# shared: _vertical_diffusion_cs_single_direct_dkg_adjoint_kernel!, _vertical_diffusion_cs_single_adjoint_kernel!, _vertical_diffusion_cs_single_dkg_adjoint_kernel!, _cs_dkg_mass_workgroupsize, _cs_dkg_tracer_workgroupsize
 
 ## Forward<->adjoint mirrors
 
@@ -218,20 +218,24 @@ retains its absorbing `m <= 0` convention; Advection and diagnostics keep
 their respective policies.
 
 Live TM5 Calc_Kzz uses `TM5CalcKzzField` inside `ImplicitVerticalDiffusion`
-on LL and RG. `tm5_calc_kzz.jl` owns the pure bottom-up column physics,
-`TM5CalcKzzField.jl` the cached D, scratch, Adapt and KA refresh. `DkgExchange`
+on LL and RG, and `TM5CalcKzzCSField` on CS. `tm5_calc_kzz.jl` owns the pure bottom-up column physics,
+`TM5CalcKzzField.jl` the shared chunked column refresh and LL/RG cache;
+`TM5CalcKzzCSField.jl` the six-panel D cache, CS metrics and halo accessors.
+The CS type deliberately has no `panel_field`: D is never Kz. `DkgExchange`
 supplies D directly to the existing column solver without reading dz.
 Models.Physics constructs the metric containers from mesh geometry.
 
-# shared: TM5LLMetrics, TM5RGMetrics
+# shared: TM5LLMetrics, TM5RGMetrics, TM5CSMetrics
 
 Live Calc_Kzz keeps only active entrainment guards in its runtime warning count
 and warns once per field/run; unused singular branches remain counted in the
 column result. Its guard retains the finite BL/free K. The refresh stores no
 PBL-height diagnostic and `update_field!` returns the field, as required by the
-field interface. Scratch is approximately 16 floating values per cell/layer,
-plus D and one integer guard count per cell; large RG meshes can require about
-1.2 GB of Float32 scratch.
+field interface. Scratch is approximately 16 floating values per chunk column/layer,
+with at most 65,536 columns by default, plus D and one integer count per
+chunk column. All topologies reuse one scratch across chunks; CS also shares
+it across panels. The CS transpose reads D directly; adjoint capture freezes
+only the per-window D, with neither refresh scratch nor metrics.
 
 Float32 Calc_Kzz never subtracts two rounded θv values. Δθv, the
 bulk-Richardson numerator, the geopotential log-pressure ratio and the

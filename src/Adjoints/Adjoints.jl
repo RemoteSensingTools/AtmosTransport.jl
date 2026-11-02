@@ -9,7 +9,8 @@ using ..Operators.Advection: AbstractLimiter, CSAdjointFV3Vertical, CSAdjointLin
     PPMScheme, SlopesScheme, UpwindScheme, _accumulate_linrood_halo_adjoint!,
     _adjoint_fill_panel_halos!, _share_lr_seam_faces!,
     apply_linrood_horizontal_adjoint_single_panel!, apply_linrood_update_adjoint!
-using ..Operators.Diffusion: ImplicitVerticalDiffusion, LocalHoltslagBovilleKzField, NoDiffusion,
+using ..Operators.Diffusion: ImplicitVerticalDiffusion, LocalHoltslagBovilleKzField, TM5CalcKzzCSField, NoDiffusion,
+    _vertical_diffusion_cs_single_direct_dkg_adjoint_kernel!,
     _vertical_diffusion_cs_single_adjoint_kernel!,
     _vertical_diffusion_cs_single_dkg_adjoint_kernel!, check_diffusion_workspace
 using ..Operators.Convection.CMFMC: CMFMCConvection, CMFMCEdgeCloudBase, CMFMCMatrixConvection,

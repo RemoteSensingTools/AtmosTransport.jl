@@ -1,3 +1,18 @@
+# Panel-major coordinate/output adapter for the shared LL/RG input assembler.
+function tm5_target_coordinates(grid::CubedSphereTargetGeometry)
+    coordinates = map(p->panel_cell_center_lonlat(grid.mesh,p),1:CS_PANEL_COUNT)
+    return reduce(vcat,map(x->vec(x[1]),coordinates)),reduce(vcat,map(x->vec(x[2]),coordinates))
+end
+function _cs_tm5_pbl_inputs(date,win,settings,vertical,ps,grid,cache)
+    Nc,Nz = grid.Nc,vertical.Nz
+    flat = load_tm5_pbl_target_window(date,win,settings,vertical,
+        reduce(vcat,map(vec,ps)),grid,(6Nc*Nc,Nz);cache)
+    return map(flat) do a
+        panels = ndims(a)==2 ? reshape(a,Nc,Nc,6,Nz) : reshape(a,Nc,Nc,6)
+        ntuple(p->ndims(a)==2 ? copy(view(panels,:,:,p,:)) : copy(view(panels,:,:,p)),6)
+    end
+end
+
 # Spectral ERA5 to cubed-sphere transport-binary preprocessing path.
 
 mutable struct CubedSphereSpectralWindowWorkspace{FT, SG, R, TW, MW, QW, CSW, FM, WR} <:
@@ -318,6 +333,7 @@ mutable struct CSSpectralUnifiedDriverContext{G, S, V, SP, N, W}
     # Window-mean sampling whose final window had no right endpoint (archive
     # boundary): that window's effective sampling is the start-flux fallback.
     final_boundary_fallback    :: Bool
+    pbl_cache                  :: Union{Nothing,TM5PBLInputCache}
 end
 
 function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
@@ -336,7 +352,8 @@ function CSSpectralUnifiedDriverContext(grid, settings, vertical, spec,
             date, substep_policy, Int(steps_per_met), Float64(cs_balance_tol),
             Int(cs_balance_project_every), write_replay_on,
             balance_weights, 0.0, 0.0, 0, 0.0, 0.0, 0,
-            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0, false)
+            (0, 0, 0, 0), 0.0, 0.0, 0.0, 0.0, false,
+            get(settings,:include_tm5_pbl,false) ? TM5PBLInputCache() : nothing)
 end
 
 driver_windows_per_day(::Nothing, ctx::CSSpectralUnifiedDriverContext) =
@@ -439,6 +456,10 @@ function cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspac
     convert_cs_mass_target_to_delta!(cs_ws.m_next_panels, cur_m)
     payload = (m = cur_m, am = cur_am, bm = cur_bm, cm = cur_cm,
                ps = workspace.cur_ps, dm = cs_ws.m_next_panels)
+    if ctx.pbl_cache !== nothing
+        payload = merge(payload,(;tm5_pbl=_cs_tm5_pbl_inputs(ctx.date,win,ctx.settings,
+            ctx.vertical,workspace.cur_ps,grid,ctx.pbl_cache)))
+    end
     flux_evidence = wind_derived_evidence(
         CubedSphereTargetGeometry, workspace.window_fidelity_capture[],
         cur_am, cur_bm, grid.face_table;
@@ -569,6 +590,7 @@ function process_day(date::Date,
                      run_cache = nothing)
     FT = settings.output_float_type
     validate_flux_construction(settings, "ERA5 spectral")
+    validate_tm5_pbl_target(grid,settings,vertical)
     Nc = grid.Nc
     Nz = vertical.Nz
     steps_per_met = exact_steps_per_window(settings.met_interval, settings.dt)
@@ -638,6 +660,7 @@ function process_day(date::Date,
     end
 
         writer = nothing
+        ctx = nothing
         driver_started = false
         try
             writer = open_streaming_cs_transport_binary(
@@ -647,6 +670,9 @@ function process_day(date::Date,
                 half_dt_seconds=settings.half_dt,
                 steps_per_window=steps_per_met,
                 include_flux_delta=true,
+                include_tm5_pbl=get(settings,:include_tm5_pbl,false),
+                flux_construction=get(settings,:include_tm5_pbl,false) ?
+                    PointSampledSpectralFluxesHeader() : NoFluxConstructionHeader(),
                 mass_basis=Symbol(settings.mass_basis),
                 surface_pressure_basis=TotalSurfacePressure(),
                 cs_geometry_tags(grid.mesh)...,
@@ -745,6 +771,7 @@ function process_day(date::Date,
 
             return driver_result.out_path
         finally
+            ctx === nothing || ctx.pbl_cache === nothing || close(ctx.pbl_cache)
             if !driver_started
                 if writer !== nothing
                     try

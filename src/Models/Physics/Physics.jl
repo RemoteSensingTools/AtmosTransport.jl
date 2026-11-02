@@ -8,8 +8,9 @@ module Physics
 
 using ...State
 using ...Grids
+using ...Grids: cs_definition, cs_face_edge_lengths, panel_cell_local_tangent_basis
 using ...Operators
-using ...Operators.Diffusion: TM5CalcKzzField, TM5LLMetrics, TM5RGMetrics
+using ...Operators.Diffusion: TM5CalcKzzField, TM5CalcKzzCSField, TM5LLMetrics, TM5RGMetrics, TM5CSMetrics
 using ...MetDrivers.BinaryFormat: TM5_PBL_PAYLOAD_SECTIONS, section_shape
 using ...MetDrivers
 using ...ConfigChecks: config_bool as _config_bool, config_int, config_float, parse_choice

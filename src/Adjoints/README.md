@@ -63,3 +63,8 @@ one concrete tape, sized and reserved before recording. An explicit
 `AdjointTape` is reserved without replacement. A runtime (one per optimization)
 caches CFL counts and pool reservations across evaluations; resident-tail
 and pinned-host-snapshot Stride choices preserve the same reverse order.
+
+Live CS TM5 Calc_Kzz uses a direct-D transpose in Diffusion, validated for
+finite nonnegative D and zero inactive/terminal planes. The runner freezes
+D per window as meteorological forcing; no refresh scratch or tape slots
+are retained. LL/RG Calc_Kzz adjoints remain unsupported.

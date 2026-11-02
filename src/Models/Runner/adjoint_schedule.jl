@@ -56,8 +56,9 @@ adjoint only reads these arrays; do not modify them before the reverse pass
 ends (a change to one step's arrays changes every step of its window).
 
 `require_adjoint_support(sim)` runs first. The capture runs the simulation's
-met refresh through every window (not its tracer transport, which it leaves
-in an unspecified state), so `sim` cannot be run afterwards: build a second,
+met refresh through every window (and production advection for live TM5
+with no mass reset, to advance its carrier mass); it leaves tracers in an
+unspecified state, so `sim` cannot be run afterwards: build a second,
 identical simulation for the production run. Memory grows with the run: one
 set of face fluxes per met window (per step when interpolated), and the
 per-window convection forcing and diffusion operator and workspace. A
@@ -113,15 +114,14 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
             if substep == 1
                 has_convection && (window_forcing = deepcopy(model.convection_forcing))
                 if has_diffusion
-                    window_op = deepcopy(model.diffusion)
-                    window_ws = DiffusionWorkspace(model.state.air_mass, model.state.halo_width, 0)
-                    foreach(copyto!, window_ws.layer_thickness,
-                            model.workspace.diffusion_ws.layer_thickness)
+                    window_op = _adjoint_window_operator(model.diffusion)
+                    window_ws = _adjoint_window_workspace(model.diffusion,model,window_ws)
                 end
             end
             push!(forcing, window_forcing)
             push!(diffusion_op, window_op)
             push!(diffusion_workspace, window_ws)
+            _advance_adjoint_carrier!(model.diffusion,sim)
             _advance_clock!(sim)
         end
     finally
@@ -137,6 +137,35 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
                                                                model.grid))
     return (; panels_rm0, panels_m0, panels_am_steps = [am...], panels_bm_steps = [bm...],
             panels_cm_steps = [cm...], mesh = model.grid.horizontal, kwargs)
+end
+
+# With no mass reset, the next window's live D reads prognostic air mass.
+# Advance it with production advection (including its sweep order/rounding),
+# without physics at the midpoint. Tracers are disposable during capture.
+_advance_adjoint_carrier!(_op,_sim) = nothing
+function _advance_adjoint_carrier!(::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},sim) where FT
+    sim.air_mass_reset_mode === :none || return nothing
+    m = sim.model
+    Operators.apply!(m.state,m.fluxes,m.grid,m.advection,sim.Δt;
+        workspace=m.workspace.advection_ws,meteo=sim)
+    return nothing
+end
+
+# D is met-only in every reset mode. Capture just the immutable per-window
+# coefficients; refresh scratch and geometry are never needed during replay.
+_adjoint_window_operator(op) = deepcopy(op)
+function _adjoint_window_operator(op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField}) where FT
+    f = op.kz_field
+    frozen = TM5CalcKzzCSField(map(copy,f.dkg),nothing,f.params,nothing,Ref(true))
+    return ImplicitVerticalDiffusion(;kz_field=frozen,surface_flux_coupling=op.surface_flux_coupling)
+end
+function _adjoint_window_workspace(op,model,previous)
+    ws = DiffusionWorkspace(model.state.air_mass,model.state.halo_width,0)
+    foreach(copyto!,ws.layer_thickness,model.workspace.diffusion_ws.layer_thickness)
+    return ws
+end
+function _adjoint_window_workspace(::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},model,previous) where FT
+    return previous === nothing ? DiffusionWorkspace(model.state.air_mass,model.state.halo_width,0) : previous
 end
 
 # Capture currently supports fresh operator state only. Iteration zero alone

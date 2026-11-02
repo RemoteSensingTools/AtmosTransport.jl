@@ -120,6 +120,10 @@ const PATTERNS = (
 )
 
 const EXTRA_CASES = (
+    Case(diffusion=:tm5_calc_kzz),
+    Case(diffusion=:tm5_calc_kzz_boundary),
+    Case(diffusion=:tm5_calc_kzz,reset=:none),
+    Case(diffusion=:tm5_calc_kzz_boundary,reset=:none),
     Case(conv = :tm5, diffusion = :dkg),                                    # conservative Dkg ledger
     Case(conv = :cmfmc_matrix, diffusion = :boundary),                       # CMFMC-matrix, :window
     Case(conv = :tm5, diffusion = :split, contract = false),                 # no window contract
@@ -210,7 +214,9 @@ _unshared(v) = [map(copy, x) for x in v]
 end
 
 @testset "Full and Stride footprints agree across met windows" begin
-    for c in (Case(conv = :tm5, diffusion = :split),
+    for c in (Case(diffusion=:tm5_calc_kzz),
+              Case(diffusion=:tm5_calc_kzz_boundary,reset=:none),
+              Case(conv = :tm5, diffusion = :split),
               Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :boundary,
                    reset = :preserve_vmr),
               Case(scheme = AT.LinRoodPPMScheme(), conv = :tm5, diffusion = :split, cadence = :substep),
@@ -227,6 +233,27 @@ end
                       for s in eachindex(full.footprints), p in 1:6)
             @test all(exact(other.initial_adjoint[p], full.initial_adjoint[p]) for p in 1:6)
         end
+    end
+end
+
+@testset "TM5 frozen window D equals production" begin
+    for d in (:tm5_calc_kzz,:tm5_calc_kzz_boundary),reset in (:preserve_tracer_mass,:none)
+        c=Case(;diffusion=d,reset)
+        sim=_simulation(c)
+        inp=_adjoint_inputs(c)
+        ops=inp.kw.diffusion_op
+        for step in eachindex(ops)
+            AT.step!(sim)
+            field=ops[step].kz_field
+            @test isequal(field.dkg,sim.model.diffusion.kz_field.dkg)
+            @test field.scratch === nothing && field.metrics === nothing
+            # C4 arrays have appreciable fixed object headers. The strict
+            # 10% bound at C8 is checked in test_tm5_pbl_cs.jl.
+            @test Base.summarysize(field) <= sum(sizeof,field.dkg)+1024
+        end
+        first_steps=cumsum([1;c.steps[1:end-1]])
+        @test all((ops[s]===ops[s-1])==!(s in first_steps) for s in 2:length(ops))
+        @test all(ws===first(inp.kw.diffusion_workspace) for ws in inp.kw.diffusion_workspace)
     end
 end
 
@@ -401,7 +428,9 @@ end
 @testset "gradient == finite differences of production" begin
     objective = AT.CSLayerMeanObjective(3, 2, 2, NZ)
     J(sim) = (AT.run!(sim); ADJ.evaluate_objective(objective, _rm(sim), sim.model.state.air_mass, MESH))
-    for (c, h, tol) in ((Case(conv = :tm5, diffusion = :split), 0.5, 1e-9),
+    for (c, h, tol) in ((Case(diffusion=:tm5_calc_kzz),0.1,1e-10),
+                        (Case(diffusion=:tm5_calc_kzz_boundary,reset=:none),0.1,1e-10),
+                        (Case(conv = :tm5, diffusion = :split), 0.5, 1e-9),
                         (Case(conv = :tm5, diffusion = :boundary), 0.5, 1e-9),
                         (Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc,
                               diffusion = :boundary), 1e-4, 1e-7),
