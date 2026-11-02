@@ -204,7 +204,7 @@ end
 # ---------------------------------------------------------------------------
 
 @testset "4D-Var result -> departures -> NetCDF, bit for bit" begin
-    P = hydrostatic_cs_problem(; nsteps = 3)
+    P = hydrostatic_cs_problem(; nsteps = 3, flux_fraction = 0.0)
     t0, dt = T0_TEST, 600.0
     lons, lats = AT.panel_cell_center_lonlat(P.mesh, 2)
     at(s) = (t = t0 + Second(round(Int, s)); (year(t), month(t), day(t), hour(t), minute(t), second(t)))
@@ -213,21 +213,46 @@ end
     records = [rec(42, "point"; intake_height_m = 10.0), rec(7, "point"; altitude_m = 5000.0, elevation_m = 0.0),
                rec(9, "point"; pressure_pa = 50000.0, time_window_s = 1200.0, model_sigma = 0.5e-6),
                rec(3, "column"; time_window_s = 1500.0)]
+    # Accepted and screened averaging-kernel rows share this format roundtrip.
+    ps = COLUMN_P_HALF[end]
+    function retrieval(surface; sigma=Float64[])
+        edges = collect(range(surface, 0.0; length=7))
+        AT.Observations.RetrievalColumn(; pressure_pa=edges,
+            pressure_weight=-diff(edges) ./ surface,
+            averaging_kernel=collect(range(0.7, 1.1; length=6)),
+            prior_profile=collect(range(4.05e-4, 3.95e-4; length=6)), profile_sigma=sigma)
+    end
+    push!(records, rec(51, "column"; retrieval=retrieval(ps-3000)))
+    push!(records, rec(52, "column"; retrieval=retrieval(ps+500; sigma=fill(2e-6,6)), model_sigma=0.2e-6))
     set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
-    obs = AT.bind_to_mesh(set, P.mesh, t0, dt; nsteps = P.nsteps)
+    obs = AT.bind_to_mesh(set, P.mesh, t0, dt; nsteps = P.nsteps,
+                          max_surface_pressure_mismatch_pa=2000.0,
+                          placement=AT.Observations.VerticalPlacementSpec(;
+                              unplaced=AT.Observations.SkipUnplaced()))
     control = AT.CSSurfaceFluxControl(AT.CSSurfaceFluxWindow(:all, 1:P.nsteps), ntuple(_ -> fill(1e3, P.Nc, P.Nc), 6))
     result = AT.cs_surface_flux_4dvar(P.rm, P.m, P.am, P.bm, P.cm, P.mesh, obs, [control];
                                       scheme = AT.UpwindScheme(), dt, column_met = column_met(P))
     dep = AT.build_departure_set(set, result, P.mesh, "2024-06-15 00:00:00", dt, P.nsteps;
                                  run_id = "run-A", iteration = 3)
-    @test [r.id for r in dep] == [42, 7, 9, 3]
+    @test [r.id for r in dep] == [42, 7, 9, 3, 51, 52]
     @test [r.vertical_placement for r in dep] ==
-          [CODES.record_height, CODES.record_height, CODES.pressure, AT.COLUMN_MEAN_PLACEMENT_CODE]
+          [CODES.record_height, CODES.record_height, CODES.pressure, AT.COLUMN_MEAN_PLACEMENT_CODE,
+           AT.RETRIEVAL_COLUMN_PLACEMENT_CODE, AT.RETRIEVAL_COLUMN_PLACEMENT_CODE]
     @test [r.levels for r in dep] == [s.levels for s in result.stencils]
     @test dep[1].levels != dep[2].levels                          # surface intake vs 5 km aircraft
     @test dep[3].steps == [1, 2, 3] && sum(dep[3].weights) ≈ 1
     @test dep[3].normalized_departure ≈ result.residuals[3] / hypot(1e-6, 0.5e-6) rtol = 1e-12
-    @test [r.simulated_value for r in dep] == result.simulated
+    @test isequal([r.simulated_value for r in dep], result.simulated)
+    @test [r.assimilated for r in dep] == [true, true, true, true, false, true]
+    @test dep[5].surface_pressure_mismatch_pa ≈ 3000 rtol=1e-9
+    @test dep[6].surface_pressure_mismatch_pa ≈ -500 rtol=1e-9
+    @test dep[6].retrieval_profile == result.stencils[6].retrieval_profile
+    @test length(dep[6].retrieval_profile) == 6
+    @test all(r -> isnan(r.surface_pressure_mismatch_pa) && isempty(r.retrieval_profile), dep.records[1:4])
+    column = records[6].retrieval
+    profile_sigma = sqrt(sum((column.pressure_weight .* column.averaging_kernel .* column.profile_sigma).^2))
+    @test dep[6].profile_model_sigma ≈ profile_sigma
+    @test dep[6].normalized_departure ≈ dep[6].departure / sqrt(1e-12 + 0.04e-12 + profile_sigma^2)
     mktempdir() do dir
         path = joinpath(dir, "dep_v2.nc")
         AT.write_departures(path, dep)
@@ -235,7 +260,7 @@ end
         @test (back.run_id, back.iteration, back.nsteps, back.dt_seconds) == ("run-A", 3, P.nsteps, dt)
         for (a, b) in zip(dep, back), field in fieldnames(AT.CSDepartureRecord)
             x, y = getfield(a, field), getfield(b, field)
-            @test x == y || (x isa Float64 && isnan(x) && isnan(y))
+            @test isequal(x, y)
         end
     end
 end

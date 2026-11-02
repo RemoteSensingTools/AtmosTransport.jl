@@ -560,3 +560,40 @@ else
     # alternative would print a one-line "skipping" message; the gate
     # is documented in the file header.
 end
+
+@testset "CMFMC convection with GEOS-Chem's archived cloud base" begin
+    FT = Float64
+    Nc_, Hp_, Nz_ = 2, 1, 8
+    N = Nc_ + 2Hp_
+    mesh = CubedSphereMesh(; Nc = Nc_, Hp = Hp_, FT = FT)
+    vc = HybridSigmaPressure(collect(range(0.0, 0.0; length = Nz_ + 1)), collect(range(0.0, 1.0; length = Nz_ + 1)))
+    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
+    air = ntuple(_ -> fill(FT(1e15), N, N, Nz_), 6)
+    areas = ntuple(_ -> fill(FT(1e12), Nc_, Nc_), 6)
+    cmfmc = ntuple(_ -> zeros(FT, Nc_, Nc_, Nz_ + 1), 6)
+    for p in 1:6
+        cmfmc[p][:, :, 3:8] .= 0.02                 # updraft through edges 3…8; edge 8 = bottom of layer 7
+    end
+    dtrain = ntuple(_ -> zeros(FT, Nc_, Nc_, Nz_), 6)
+    for p in 1:6
+        dtrain[p][:, :, 2] .= 0.02                  # detrain at cloud top
+    end
+    archived = ntuple(_ -> fill(FT(5), Nc_, Nc_), 6)  # DQRCU cloud base at layer 5
+    profile = FT[400, 400, 400, 400, 401, 402, 405, 410]
+    function run(op)
+        q = ntuple(_ -> repeat(reshape(profile .* 1e15, 1, 1, Nz_, 1), N, N, 1, 1), 6)
+        ws = CMFMCWorkspace(q; cell_metrics = areas)
+        apply_convection!(q, air, ConvectionForcing(cmfmc, dtrain, nothing, archived), op, FT(600), ws, grid)
+        return q[1][1 + Hp_, 1 + Hp_, :, 1] ./ 1e15
+    end
+    q_edge = run(CMFMCConvection())
+    q_arch = run(CMFMCConvection(cloud_base = AtmosTransport.Operators.Convection.ArchivedCloudBase()))
+    @test sum(q_arch) ≈ sum(profile) rtol = 1e-14          # column mass conserved
+    @test q_arch[6] ≈ q_arch[7] ≈ q_arch[8]                # layers below layer 5 well mixed
+    @test !(q_edge[6] ≈ q_edge[8])                         # edge base (layer 7) leaves layer 6 alone
+    # The archived rule needs the cloud base in the forcing.
+    q0 = ntuple(_ -> zeros(FT, N, N, Nz_, 1), 6)
+    @test_throws ArgumentError apply_convection!(q0, air, ConvectionForcing(cmfmc, dtrain, nothing),
+                                                 CMFMCConvection(cloud_base = AtmosTransport.Operators.Convection.ArchivedCloudBase()), FT(600),
+                                                 CMFMCWorkspace(q0; cell_metrics = areas), grid)
+end

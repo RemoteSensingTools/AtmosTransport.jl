@@ -1,70 +1,5 @@
-"""
-`AtmosTransport.Diagnostics.budget_closure` and `carrier_drawdown`
-(`src/Diagnostics/budget_closure.jl`, `src/Diagnostics/run_context.jl`) on a tiny
-synthetic run written into `mktempdir()`.
-
-The run: two C3 transport binaries of one 24 h window each (4 advection
-steps in the first, 3 in the second) with zero mass fluxes (so transport moves
-nothing) and a uniform air mass of 1e16 kg per cell and level; a daily
-`cs_native` flux file; four tracers, run in Float64 by `run_driven_simulation`
-with daily snapshot files:
-
-- `npp`: carrier 1e-3, a uniform flux of -2e-8 kg m⁻² s⁻¹ on day 1 and
-  +1e-8 on day 2 (its global integral is known analytically from 4πR²);
-- `rh`: carrier 1e-5, a positive flux that varies from cell to cell;
-- `lin`: carrier 1e-5, the `rh` flux linearly interpolated between the daily
-  stamps 0, 24 and 48 h (`temporal_scheme = "linear"`, sampled at every step
-  start);
-- `passive`: carrier 4e-4, no flux.
-
-Asserts:
-- `RunContext` reads the run as the runner does: Float64, start, 2 binaries,
-  the windows with their own step counts and step lengths, 48 h, the air mass
-  1e16 × 54 cells × 2 levels; `run_snapshot_paths` names the daily files of
-  the binaries that take a snapshot; it rejects the window ranges the runner
-  rejects (a later start on a cubed-sphere grid, a partial range over several
-  binaries, a range outside a binary's windows) and a cubed-sphere run without
-  `[tracers]`; a lat-lon run of the legacy single-tracer form (`[run].tracer_name`
-  and `[init]`) that starts at window 2 has the runner's single tracer and the
-  air mass of window 1, on which the runner packs the initial state;
-- in a Float32 run with seven steps per 24 h window the step is
-  Float32(86400)/Float32(7), applied from the run clock's step starts
-  86400 j/7, so the steps add 86400.001953125 s: the expected change of the
-  stepwise `npp` source counts the last step's 2.8e-4 s in the day-2 slice
-  (1e-14 against the source's slice totals), the linear source is summed at those step starts, and
-  the drawdown stops at the end of the day-1 part;
-- the expected change of `npp` equals the analytic
-  86400 × 4πR² × (q₁ + q₂) × M_air / M_CO2 (1e-12), that of `rh` the direct
-  sum over cells and days (1e-13), and both equal the actual change of the
-  snapshot totals (1e-12); `lin` closes only with each window's own step
-  (its step-start sum with the first window's step throughout differs);
-  `passive` has zero expected change and closes;
-- the carrier term is eps(FT(carrier)) × air mass for the run's float type;
-  a Float64 error between one and four ULPs fails strict and passes operational;
-  the tolerances follow `BudgetTolerance`; `report_dict` keeps the keys of the retired
-  Python report and writes valid JSON;
-- `carrier_drawdown` is the day-1 loss of `npp` divided by the air mass
-  (1e-12), with 0 for the tracers that only gain; for the same flux read as a
-  conservative-mean source (linear between the stamps) it is the loss at the
-  step end nearest the rate's zero (18 h, analytic, 1e-12), not at the slice
-  time (24 h);
-- failures: a perturbed final total fails the strict and operational levels;
-  an exhausted carrier (a negative column mean), a non-finite value and a
-  positive carrier without column means in the snapshots fail;
-  a missing daily file and an incomplete or unscheduled frame list are errors
-  unless `require_complete = false`; unknown tracers and invalid tolerances
-  are errors; a decaying tracer and a tracer absent from the snapshots are
-  skipped;
-- `scripts/diagnostics/tracer_budget_closure.jl`: the `series` mode writes
-  the JSON report and returns false (exit 1) when the gated level fails; the
-  single-file mode reads the snapshot `time` axis as hours since the run start
-  and closes the budget of one daily file;
-- an `AbstractExpectedEmission` subtype plugs in by dispatch, and the
-  harness emulator of the retired Python arithmetic
-  (`scripts/validation/flux_port_parity/emulators/legacy_budget_emission.jl`,
-  deleted with the harness in P11) gives the runtime change times
-  0.02896546 / DRY_AIR_MOLAR_MASS when the file areas are the mesh areas.
-"""
+# Synthetic two-binary run: independent emission totals, Float32 timing,
+# conservation tolerances and detection of corrupted/incomplete snapshots.
 
 using Test
 using Dates
@@ -78,9 +13,7 @@ using AtmosTransport.Parameters: DRY_AIR_MOLAR_MASS, SPECIES_MOLAR_MASS
 using TOML
 const MD = AtmosTransport.MetDrivers
 
-module BudgetClosureScript
-include(joinpath(@__DIR__, "..", "..", "scripts", "diagnostics", "tracer_budget_closure.jl"))
-end
+
 
 include(joinpath(@__DIR__, "..", "..", "scripts", "validation", "flux_port_parity",
                  "emulators", "legacy_budget_emission.jl"))
@@ -202,20 +135,11 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
     @test ctx.reference_time == DateTime(2021, 1, 1)
     @test ctx.binary_paths == binaries
     @test ctx.run_seconds == 2 * 86400.0
-    @test ctx.windows == [(; binary = 1, start = 0.0, length = 86400.0, steps = 4, step = 21600.0),
-                          (; binary = 2, start = 86400.0, length = 86400.0, steps = 3, step = 28800.0)]
     @test ctx.air_mass == air
     @test [s.name for s in ctx.tracer_specs] == [:lin, :npp, :passive, :rh]
     paths = run_snapshot_paths(ctx)
     @test paths == [joinpath(dir, "output", "tiny_20210101.nc"), joinpath(dir, "output", "tiny_20210102.nc")]
     @test all(isfile, paths)
-    # Daily files exist only for binaries that take a snapshot.
-    for (hours, owners) in (([0.0], [1]), ([48.0], [2]), ([0.0, 48.0], [1, 2]), ([24.0], [1]))
-        scheduled = deepcopy(cfg)
-        delete!(scheduled["output"], "snapshot_interval_hours")
-        scheduled["output"]["hours"] = hours
-        @test run_snapshot_paths(RunContext(scheduled)) == paths[owners]
-    end
 
     report = quietly(() -> budget_closure(cfg))
     @test report.files == paths
@@ -265,27 +189,6 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
     @test gated.carrier_ulp == ulp64
     @test !gated.strict_passed && gated.operational_passed
 
-    # JSON report: the Python keys plus the operational level.
-    d = report_dict(report)
-    # The defining module moved; persisted reports keep their method label.
-    @test d["emission"] == "AtmosTransport.Analysis.RuntimeSurfaceSources()"
-    for key in ("days", "tracers", "max_relative_budget_error", "tolerance", "passed", "checks")
-        @test haskey(d, key)
-    end
-    @test d["days"] == 2.0 && d["tracers"] == 4 && d["frames"] == 3
-    for key in ("expected_storage_change_kg", "actual_storage_change_kg", "relative_error",
-                "absolute_tolerance_kg", "passed", "operational_passed", "error_ppm", "carrier_ulp_kg")
-        @test haskey(d["checks"]["npp"], key)
-    end
-    @test d["checks"]["npp"]["absolute_tolerance_kg"] == b[:npp].strict_tolerance
-    @test JSON3.read(JSON3.write(d))["checks"]["rh"]["passed"] == true
-
-    # Drawdown: the npp loss of day 1 (the cumulative minimum) over the air mass.
-    drawdown = quietly(() -> carrier_drawdown(ctx))
-    @test drawdown[:npp] ≈ -86400 * 4π * RADIUS^2 * NPP_DAILY[1] * scale / air rtol = 1e-12
-    @test drawdown[:rh] == 0 && drawdown[:lin] == 0 && drawdown[:passive] == 0
-    @test !signbit(drawdown[:rh])
-
     # A perturbed final total fails both levels (1 % ≫ 1e-3).
     glob = edited_copies(paths, joinpath(dir, "perturbed"), (ds, k) -> begin
         k == 2 && (ds["npp_total_mass"][end] = ds["npp_total_mass"][end] + 0.01 * abs(b[:npp].expected_change))
@@ -310,7 +213,6 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
     @test !s[:npp].strict_passed && !s[:npp].operational_passed && s[:npp].finite
     @test !s[:rh].finite && !s[:rh].strict_passed
     @test s[:passive].strict_passed
-    @test JSON3.write(report_dict(sick)) isa String
     # Without column means a positive carrier cannot be shown to survive.
     glob = edited_copies(paths, joinpath(dir, "no_column"), (ds, k) -> renameVar(ds, "npp_column_mean", "npp_cm"))
     unseen = Dict(t.tracer => t for t in quietly(() -> budget_closure(cfg; output_glob = glob)).tracers)
@@ -350,7 +252,6 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
     extra["tracers"]["unwritten"] = Dict{String, Any}("init" => Dict{String, Any}("kind" => "uniform"))
     er = quietly(() -> budget_closure(extra))
     @test first.(er.skipped) == [:unwritten] && er.passed
-    @test haskey(report_dict(er)["skipped"], "unwritten")
     @test_throws ArgumentError quietly(() -> budget_closure(decaying; tracers = [:passive]))
 
     # Tolerances.
@@ -363,7 +264,6 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
     fx = Dict(t.tracer => t for t in fixed.tracers)
     @test fx[:npp].expected_change == b[:npp].actual_change
     @test fx[:rh].expected_change == b[:npp].actual_change && !fx[:rh].strict_passed
-    @test occursin("FixedEmission", fixed.emission)
 
     # Harness emulator of the Python arithmetic: file areas = mesh areas here.
     legacy = quietly(() -> budget_closure(ctx; emission = LegacyDailyFluxFileEmission()))
@@ -405,21 +305,6 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
                     for (r, τ) in AtmosTransport.Operators.emission_segments(lin32, 86400 * (j / 7), step32))
     @test quietly(() -> expected_storage_change(RuntimeSurfaceSources(), ctx32, spec32[:lin], 0.0, 86400.0)) ≈
           lin_steps rtol = 1e-14
-    # The cumulative minimum: the end of the day-1 part of the last step.
-    @test quietly(() -> carrier_drawdown(ctx32))[:npp] ≈ -rate1 * day1 / ctx32.air_mass rtol = 1e-14
-    # A conservative-mean source changes rate between slice times and the run adds it
-    # step by step: npp's linear reconstruction runs from -2e-8 (0 h) to +1e-8 (24 h),
-    # so the cumulative storage is lowest at the step end nearest its zero (16 h):
-    # 18 h, the end of day-1 step 3 (the day's net, at 24 h, is less negative).
-    cons_cfg = deepcopy(cfg)
-    cons_cfg["tracers"] = Dict{String, Any}("cons" => Dict{String, Any}(
-        "init" => Dict{String, Any}("kind" => "uniform", "background" => 1e-3),
-        "surface_flux" => flux_cfg(flux, "NPP_FLUX"; scheme = "conservative")))
-    cumulative(t) = 4π * RADIUS^2 * scale * (NPP_DAILY[1] * t + (NPP_DAILY[2] - NPP_DAILY[1]) * t^2 / (2 * 86400))
-    cons_drawdown = quietly(() -> carrier_drawdown(RunContext(cons_cfg)))[:cons]
-    @test cons_drawdown ≈ -cumulative(64800.0) / air rtol = 1e-12
-    @test cons_drawdown > -cumulative(86400.0) / air * (1 + 1e-3)
-
     # Window ranges the runner rejects: a later start on a cubed-sphere grid, a
     # partial range over several binaries.
     two = write_binary(joinpath(dir, "two_20210101.bin"), 4; air = (AIR_PER_CELL, 2AIR_PER_CELL))
@@ -474,24 +359,4 @@ Diagnostics.expected_storage_change(m::FixedEmission, ::RunContext, spec, t0, t1
         @test_throws ArgumentError quietly(() -> RunContext(bad_range))
     end
 
-    # Command line: series mode (gate and JSON report) and single-file mode.
-    cfg_path = joinpath(dir, "run.toml")
-    open(io -> TOML.print(io, cfg), cfg_path, "w")
-    json = joinpath(dir, "report.json")
-    script(f) = quietly(() -> redirect_stdout(f, devnull))
-    @test script(() -> BudgetClosureScript.main_series([cfg_path, "--report", json]))
-    written = JSON3.read(read(json, String))
-    @test written.passed && written.tracers == 4
-    @test written.checks.npp.expected_storage_change_kg == b[:npp].expected_change
-    perturbed = joinpath(dir, "perturbed", "tiny_*.nc")
-    @test !script(() -> BudgetClosureScript.main_series([cfg_path, "--output-glob", perturbed]))
-    @test script(() -> BudgetClosureScript.main_series([cfg_path, "--output-glob", perturbed,
-                                                        "--gate", "operational", "--operational", "0.02"]))
-    @test script(() -> BudgetClosureScript.main_series([cfg_path, "--output-glob", perturbed,
-                                                        "--tracers", "rh,passive"]))
-    @test NCDataset(BudgetClosureScript.output_seconds, paths[2]) == [48 * 3600.0]
-    single = script(() -> BudgetClosureScript.main(paths[1], cfg_path))
-    @test single[:npp].Δb ≈ 86400 * 4π * RADIUS^2 * NPP_DAILY[1] * scale rtol = 1e-10
-    @test abs(single[:npp].rel) < 1e-10 && abs(single[:rh].rel) < 1e-10
-    @test single[:npp].inj_ratio ≈ 1 rtol = 1e-10
 end

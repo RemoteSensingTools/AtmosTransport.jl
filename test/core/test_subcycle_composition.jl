@@ -566,3 +566,48 @@ _bit_equal(a, b) = reinterpret(UInt8, vec(a)) == reinterpret(UInt8, vec(b))
         @test _bit_equal(states[1].air_mass, states[2].air_mass)
     end
 end
+
+@testset "Structured static palindrome CFL pilot" begin
+    FT = Float64
+    Nx, Ny, Nz = 4, 1, 1
+    m = reshape(FT[2, 1, 1, 3], Nx, Ny, Nz)
+    rm = copy(m) .* FT(400e-6)
+    am = zeros(FT, Nx + 1, Ny, Nz)
+    bm = zeros(FT, Nx, Ny + 1, Nz)
+    cm = zeros(FT, Nx, Ny, Nz + 1)
+
+    # Periodic inflow through face 1 / Nx+1 plus stronger outflow through face 2.
+    # Static palindrome budget: cell 1 loses max(am[2],0)=1.5 per application and
+    # the palindrome applies x twice, so it ends the step with 2 + 2(1 − 1.5) = 1
+    # and 2·1.5/min(2, 1) = 3.0 → n_sub = ceil(3.0/1.0) = 3 (cell 4: 2·1/min(3, 1) = 2):
+    # the static pilot accepts a ratio equal to cfl_limit (the pre-plan-13
+    # evolving-mass pilot flagged that equality as a violation).
+    am[1, 1, 1] = FT(1.0)
+    am[2, 1, 1] = FT(1.5)
+    am[Nx + 1, 1, 1] = FT(1.0)
+
+    ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(m)
+    count(limit) = AtmosTransport.Operators.Advection._structured_palindrome_subcycle_count(
+        am, bm, cm, m, FT(limit))
+    nsub = count(1)
+    @test nsub == 3
+    @test count(0.95) == 4
+    @test count(Inf) == 1
+
+    # Two consecutive passes carry one palindrome's worth of flux: the budget
+    # keeps every cell's mass non-negative over them.
+    m0 = sum(m)
+    rm0 = sum(rm)
+    flux_scale = inv(FT(nsub))
+    for _ in 1:2
+        AtmosTransport.Operators.Advection.sweep_x_mt!(reshape(rm, size(rm)..., 1),
+            reshape(ws.rm_B, size(rm)..., 1), m, ws.m_B, am, UpwindScheme(), ws, flux_scale)
+        copyto!(rm, ws.rm_B); copyto!(m, ws.m_B)
+    end
+
+    @test minimum(m) ≥ -eps(FT) * 10
+    @test sum(m) ≈ m0 atol=eps(FT) * m0 * 10
+    @test sum(rm) ≈ rm0 atol=eps(FT) * rm0 * 10
+    @test all(isfinite, m)
+    @test all(isfinite, rm)
+end

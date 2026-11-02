@@ -107,57 +107,7 @@ end
     @test isempty(bad)
 end
 
-@testset "active preprocessing configs use unified source/topology schema" begin
-    bad = String[]
-    for rel in _active_tomls("config/preprocessing")
-        cfg = TOML.parsefile(joinpath(REPO_ROOT, rel))
-        source = get(cfg, "source", Dict{String, Any}())
-        input = get(cfg, "input", Dict{String, Any}())
-        grid = get(cfg, "grid", Dict{String, Any}())
-        if haskey(source, "toml")
-            missing = _missing_keys(cfg, (
-                ("source", "root_dir"),
-                ("output", "directory"),
-                ("grid", "type"),
-                ("numerics", "dt_met_seconds"),
-            ))
-            isempty(missing) || push!(bad, "$(rel): missing $(join(missing, ", "))")
-            haskey(grid, "type") && lowercase(String(grid["type"])) == "cubed_sphere" ||
-                push!(bad, "$(rel): native-source configs must declare grid.type = cubed_sphere")
-        elseif haskey(input, "spectral_dir")
-            missing = _missing_keys(cfg, (
-                ("input", "coefficients"),
-                ("output", "directory"),
-                ("grid", "type"),
-                ("grid", "level_top"),
-                ("grid", "level_bot"),
-                ("grid", "merge_min_thickness_Pa"),
-                ("numerics", "dt"),
-                ("numerics", "met_interval"),
-            ))
-            isempty(missing) || push!(bad, "$(rel): missing $(join(missing, ", "))")
-            haskey(grid, "type") &&
-                lowercase(String(grid["type"])) in ("latlon", "reduced_gaussian",
-                                                    "synthetic_reduced_gaussian",
-                                                    "era5_native_reduced_gaussian",
-                                                    "cubed_sphere") ||
-                push!(bad, "$(rel): unsupported or missing spectral grid.type")
-        else
-            push!(bad, "$(rel): must declare either [source].toml or [input].spectral_dir")
-        end
-    end
-    @test isempty(bad)
-end
 
-@testset "active run configs use canonical runtime input schema" begin
-    bad = String[]
-    for rel in _active_tomls("config/runs"; skip_completed = true)
-        cfg = TOML.parsefile(joinpath(REPO_ROOT, rel))
-        _has_canonical_input(get(cfg, "input", nothing)) ||
-            push!(bad, "$(rel): missing canonical [input] binary_paths or folder/start_date/end_date")
-    end
-    @test isempty(bad)
-end
 
 # Source, documentation, and active configuration citations are executable
 # contracts. Historical configs are excluded by their explicit

@@ -28,7 +28,7 @@
 #   * central finite differences of the cost, with window records;
 #   * the surface-pressure mismatch policy (error, skip) and the frozen
 #     model-error term;
-#   * departures v2 with the retrieval diagnostics.
+# Departures v2 retrieval diagnostics share the round trip in test_cs_departures_io.jl.
 
 using Test
 using Dates: DateTime, Second, year, month, day, hour, minute, second
@@ -739,93 +739,3 @@ end
 # ---------------------------------------------------------------------------
 # Departures v2
 # ---------------------------------------------------------------------------
-
-@testset "departures v2: placement code, surface-pressure mismatch, retrieval profile" begin
-    P = hydrostatic_cs_problem(; flux_fraction = 0.0, nsteps = 3)
-    site = _site(P)
-    ps = COLUMN_P_HALF[end]
-    σ = fill(2e-6, 6)
-    records = [_record(1; site..., retrieval = _retrieval(ps - 3000.0), value = 402e-6),
-               _record(2; site..., t = 1000.0, time_window_s = 1200.0, value = 401e-6,
-                       retrieval = _retrieval(ps + 500.0; sigma = σ), model_sigma = 0.2e-6),
-               _record(3; site..., value = 403e-6),
-               _record(4; site..., kind = "point", intake_height_m = 10.0, value = 420e-6)]
-    set = AT.CSObservationSet(records; time_origin = "2024-06-15 00:00:00")
-    obs = AT.bind_to_mesh(set, P.mesh, T0, DT; nsteps = P.nsteps, max_surface_pressure_mismatch_pa = 2000.0,
-                          placement = O.VerticalPlacementSpec(; unplaced = O.SkipUnplaced()))
-    result = with_logger(NullLogger()) do
-        _fourdvar(P, obs, _controls(P))
-    end
-    deps = AT.build_departure_set(set, result, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
-    @test [d.vertical_placement for d in deps.records] ==
-          [AT.RETRIEVAL_COLUMN_PLACEMENT_CODE, AT.RETRIEVAL_COLUMN_PLACEMENT_CODE, AT.COLUMN_MEAN_PLACEMENT_CODE,
-           O.VERTICAL_PLACEMENT_CODES.record_height]
-    @test [d.assimilated for d in deps.records] == [false, true, true, true]
-    @test deps[1].surface_pressure_mismatch_pa ≈ 3000 rtol = 1e-9
-    @test deps[2].surface_pressure_mismatch_pa ≈ -500 rtol = 1e-9
-    @test deps[2].retrieval_profile == result.stencils[2].retrieval_profile && length(deps[2].retrieval_profile) == 6
-    @test isnan(deps[3].surface_pressure_mismatch_pa) && isempty(deps[3].retrieval_profile)
-    profile_sigma = sqrt(sum((records[2].retrieval.pressure_weight .* records[2].retrieval.averaging_kernel .* σ) .^ 2))
-    @test deps[2].profile_model_sigma ≈ profile_sigma
-    @test deps[2].normalized_departure ≈ deps[2].departure / sqrt(1e-12 + 0.04e-12 + profile_sigma^2)
-    mktempdir() do dir
-        path = AT.write_departures(joinpath(dir, "deps.nc"), deps)
-        NCDataset(path) do ds
-            @test ds.dim["retrieval_level"] == 6
-            @test ds["assimilated"][:] == Int8[0, 1, 1, 1]
-            @test occursin("-3 = retrieval_column", ds.attrib["vertical_placement_codes"])
-        end
-        back = AT.read_departures(path)
-        for (a, b) in zip(deps.records, back.records)
-            @test all(f -> isequal(getfield(a, f), getfield(b, f)), fieldnames(AT.CSDepartureRecord))
-        end
-        # A file without averaging-kernel rows has no retrieval block.
-        plain = AT.CSDepartureSet(deps.records[3:4]; mesh_Nc = deps.mesh_Nc,
-                                  mesh_panel_convention = deps.mesh_panel_convention,
-                                  mesh_cs_definition_tag = deps.mesh_cs_definition_tag, t_start = deps.t_start,
-                                  dt_seconds = deps.dt_seconds, nsteps = deps.nsteps)
-        path = AT.write_departures(joinpath(dir, "plain.nc"), plain)
-        NCDataset(path) do ds
-            @test !haskey(ds, "assimilated") && !haskey(ds.dim, "retrieval_level")
-        end
-        @test all(r -> r.assimilated && isempty(r.retrieval_profile), AT.read_departures(path).records)
-        # The reader checks the profile's ordering and units and the mismatch's
-        # units, converting ppm and hPa.
-        restated = AT.write_departures(joinpath(dir, "restated.nc"), deps)
-        NCDataset(restated, "a") do ds
-            ds["retrieval_model_profile"].attrib["units"] = "ppm"
-            ds["retrieval_model_profile"][:, :] = ds["retrieval_model_profile"][:, :] .* 1e6
-            ds["surface_pressure_mismatch_pa"].attrib["units"] = "hPa"
-            ds["surface_pressure_mismatch_pa"][:] = ds["surface_pressure_mismatch_pa"][:] ./ 100
-        end
-        again = AT.read_departures(restated)
-        @test again[2].retrieval_profile ≈ deps[2].retrieval_profile rtol = 1e-14
-        @test again[1].surface_pressure_mismatch_pa ≈ deps[1].surface_pressure_mismatch_pa rtol = 1e-14
-        for (attr, value, msg) in (("ordering", "top_to_surface", "ordering"), ("units", "kg", "units"))
-            bad = AT.write_departures(joinpath(dir, "bad_$(attr).nc"), deps)
-            NCDataset(bad, "a") do ds
-                ds["retrieval_model_profile"].attrib[attr] = value
-            end
-            err = try AT.read_departures(bad) catch e e end
-            @test err isa ArgumentError && occursin(msg, sprint(showerror, err))
-        end
-        bad = AT.write_departures(joinpath(dir, "bad_mismatch.nc"), deps)
-        NCDataset(bad, "a") do ds
-            ds["surface_pressure_mismatch_pa"].attrib["units"] = "m"
-        end
-        @test_throws ArgumentError AT.read_departures(bad)
-    end
-    # Row checks: only averaging-kernel rows carry the diagnostics.
-    row = deps[3]
-    kw = Dict(f => getfield(row, f) for f in fieldnames(AT.CSDepartureRecord))
-    @test_throws ArgumentError AT.CSDepartureRecord(; kw..., assimilated = false)
-    @test_throws ArgumentError AT.CSDepartureRecord(; kw..., surface_pressure_mismatch_pa = 1.0)
-    kw2 = Dict(f => getfield(deps[2], f) for f in fieldnames(AT.CSDepartureRecord))
-    @test_throws ArgumentError AT.CSDepartureRecord(; kw2..., retrieval_profile = Float64[])
-    @test_throws ArgumentError AT.CSDepartureRecord(; kw2..., profile_model_sigma = 0.0)   # σ no longer matches
-    # The record's block must be the one the observation was bound with.
-    other = AT.CSObservationSet([records[1:1]; _record(2; site..., t = 1000.0, time_window_s = 1200.0,
-                                                       value = 401e-6, retrieval = _retrieval(ps), model_sigma = 0.2e-6);
-                                 records[3:4]]; time_origin = "2024-06-15 00:00:00")
-    @test_throws ArgumentError AT.build_departure_set(other, result, P.mesh, "2024-06-15 00:00:00", DT, P.nsteps)
-end

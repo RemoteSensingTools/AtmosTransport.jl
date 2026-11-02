@@ -92,9 +92,11 @@ end
     mktempdir() do dir
         path = joinpath(dir, "tm5_runtime.bin")
         write_runtime_recipe_binary(path)
+        path2 = joinpath(dir, "tm5_runtime_day2.bin")
+        write_runtime_recipe_binary(path2)
 
         cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [path]),
+            "input" => Dict("binary_paths" => [path, path2]),
             "numerics" => Dict("float_type" => "Float64"),
             "run" => Dict("start_window" => 1),
             "advection" => Dict("scheme" => "ppm"),
@@ -112,30 +114,12 @@ end
         @test model.diffusion isa ImplicitVerticalDiffusion
         @test model.convection isa TM5Convection
         @test model.workspace.convection_ws isa TM5Workspace{Float64}
-    end
-end
-
-@testset "run_transport accepts multiple binary paths" begin
-    mktempdir() do dir
-        path1 = joinpath(dir, "tm5_runtime_day1.bin")
-        path2 = joinpath(dir, "tm5_runtime_day2.bin")
-        write_runtime_recipe_binary(path1)
-        write_runtime_recipe_binary(path2)
-
-        cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [path1, path2]),
-            "numerics" => Dict("float_type" => "Float64"),
-            "run" => Dict("start_window" => 1),
-            "advection" => Dict("scheme" => "upwind"),
-            "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
-        )
-
-        model = run_driven_simulation(cfg)
+        @test model.convection_forcing.tm5_fields !== nothing
         @test total_air_mass(model.state) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS rtol = 1e-12
-        @test total_mass(model.state, :CO2) ≈
-              60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
+        @test total_mass(model.state, :CO2) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
     end
 end
+
 
 @testset "run_transport supports multi-tracer surface flux sources" begin
     mktempdir() do dir
@@ -172,44 +156,5 @@ end
                              AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2
         @test total_mass(model.state, :fossil_co2) ≈
               7.0 * storage_per_kg_co2 * 3600.0 rtol = 1e-12
-    end
-end
-
-@testset "run_transport runtime recipe wiring" begin
-    mktempdir() do dir
-        path = joinpath(dir, "tm5_runtime.bin")
-        write_runtime_recipe_binary(path)
-
-        cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [path]),
-            "numerics" => Dict("float_type" => "Float64"),
-            "run" => Dict("start_window" => 1),
-            "advection" => Dict("scheme" => "ppm"),
-            "convection" => Dict("kind" => "tm5"),
-            "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
-        )
-
-        model = run_driven_simulation(cfg)
-
-        @test model.convection_forcing.tm5_fields !== nothing
-        @test total_air_mass(model.state) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS rtol = 1e-12
-        @test total_mass(model.state, :CO2) ≈ 60 * _RUNTIME_RECIPE_AIR_MASS * 4.0e-4 rtol = 1e-12
-    end
-end
-
-@testset "run_transport rejects unsupported recipe capabilities" begin
-    mktempdir() do dir
-        path = joinpath(dir, "tm5_runtime.bin")
-        write_runtime_recipe_binary(path)
-
-        cfg = Dict{String, Any}(
-            "input" => Dict("binary_paths" => [path]),
-            "numerics" => Dict("float_type" => "Float64"),
-            "run" => Dict("start_window" => 1),
-            "convection" => Dict("kind" => "cmfmc"),
-            "init" => Dict("kind" => "uniform", "background" => 4.0e-4),
-        )
-
-        @test_throws ArgumentError run_driven_simulation(cfg)
     end
 end

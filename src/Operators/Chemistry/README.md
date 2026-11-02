@@ -87,5 +87,5 @@ operators, and sequential `CompositeChemistry` composition that
   [`../TOPOLOGY_SUPPORT.md`](../TOPOLOGY_SUPPORT.md)
 - Tests:
   - [`../../../test/core/test_chemistry.jl`](../../../test/core/test_chemistry.jl)
-  - [`../../../test/core/test_cs_chemistry.jl`](../../../test/core/test_cs_chemistry.jl)
+    covers structured and cubed-sphere states
   - [`../../../test/core/test_multiday_source_clock.jl`](../../../test/core/test_multiday_source_clock.jl)

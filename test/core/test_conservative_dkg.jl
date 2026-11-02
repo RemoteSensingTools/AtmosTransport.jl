@@ -51,11 +51,6 @@ end
     end
 end
 
-@testset "Dkg leaves isolated layers bit-exact" begin
-    for FT in (Float32,Float64)
-        check_dkg_isolated_layers(FT)
-    end
-end
 
 @testset "Dkg validates all workspace panels before mutation" begin
     m, d, rm = dkg_mass_fixture(Float64, 2, 3, 7, 1)
@@ -100,6 +95,7 @@ end
 
 @testset "Dkg closed interfaces do not pass rounding residuals" begin
     for FT in (Float32, Float64)
+        check_dkg_isolated_layers(FT)
         m, d, rm = dkg_mass_fixture(FT,2,4,7,40)
         for p in 1:6
             d[p][:,:,2] .= 0

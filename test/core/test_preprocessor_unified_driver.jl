@@ -20,17 +20,15 @@ using .AtmosTransport.Preprocessing: AbstractMetSettings,
 
 import .AtmosTransport.Preprocessing: windows_per_day,
                                        close_reader!,
-                                       ingest_window!,
-                                       drain_ready_windows!,
-                                       flush_final_windows!,
-                                       verify_window!,
+                                       driver_ingest_window!,
+                                       driver_drain_ready_windows!,
+                                       driver_flush_final_windows!,
                                        update_accumulator!,
                                        summarize_status!,
                                        write_window!,
                                        close_streaming_binary!,
                                        promote_streaming_binary!,
-                                       quarantine_streaming_binary!,
-                                       driver_after_write_window!
+                                       quarantine_streaming_binary!
 
 struct FakeSettings <: AbstractMetSettings end
 
@@ -45,15 +43,11 @@ close_reader!(reader::FakeReader) = (reader.closed = true; nothing)
 mutable struct FakeWorkspace{FT} <: AbstractWindowWorkspace{LatLonTargetGeometry, FT}
     pending       :: Vector{Any}
     ingested      :: Vector{Int}
-    after_written :: Vector{Int}
     flush_final   :: Bool
-    preverified   :: Bool
-    accumulated   :: Bool
 end
 
-FakeWorkspace{FT}(; flush_final::Bool=false, preverified::Bool=false,
-                  accumulated::Bool=false) where FT =
-    FakeWorkspace{FT}(Any[], Int[], Int[], flush_final, preverified, accumulated)
+FakeWorkspace{FT}(; flush_final::Bool=false) where FT =
+    FakeWorkspace{FT}(Any[], Int[], flush_final)
 
 _fake_ready(::Type{FT}, index::Int) where FT =
     ReadyWindow{LatLonTargetGeometry, FT}(index, (token = index,), payload_only_evidence(LatLonTargetGeometry, FT))
@@ -62,52 +56,37 @@ _fake_diag() = (replay = (max_rel_err = 0.0, max_abs_err = 0.0),
                 positivity = (ok = true, ratio = 0.0, direction = :none,
                               location = (0, 0, 0)))
 
-_fake_event(ws::FakeWorkspace{FT}, index::Int) where FT =
-    ws.preverified ? PreverifiedWindow(_fake_ready(FT, index), _fake_diag();
-                                       accumulated = ws.accumulated) :
-                     _fake_ready(FT, index)
+_fake_event(::FakeWorkspace{FT}, index::Int) where FT =
+    PreverifiedWindow(_fake_ready(FT, index), _fake_diag(); accumulated=false)
 
-function ingest_window!(ws::FakeWorkspace{FT}, _reader::FakeReader{FT},
-                        win::Int) where FT
+function driver_ingest_window!(ws::FakeWorkspace{FT}, _reader::FakeReader{FT},
+                        win::Int, _context) where FT
     push!(ws.ingested, win)
     push!(ws.pending, _fake_event(ws, win))
     return nothing
 end
 
-function drain_ready_windows!(ws::FakeWorkspace)
+function driver_drain_ready_windows!(ws::FakeWorkspace, _contract, _win::Int, _context)
     ready = copy(ws.pending)
     empty!(ws.pending)
     return ready
 end
 
-function flush_final_windows!(ws::FakeWorkspace{FT}, reader::FakeReader{FT},
-                              _contract) where FT
+function driver_flush_final_windows!(ws::FakeWorkspace{FT}, reader::FakeReader{FT},
+                              _contract, _context) where FT
     ws.flush_final || return ()
     return (_fake_event(ws, reader.windows + 1),)
 end
-
-driver_after_write_window!(ws::FakeWorkspace, _reader::FakeReader,
-                           ready::ReadyWindow, _context) =
-    (push!(ws.after_written, ready.index); nothing)
 
 mutable struct FakeContract{FT} <: AbstractWindowContract{LatLonTargetGeometry, FT}
     updates         :: Vector{Int}
     summarized      :: Bool
     fail_summary    :: Bool
-    verify_calls    :: Int
     quarantine_path :: Any
 end
 
 FakeContract{FT}(; fail_summary::Bool=false) where FT =
-    FakeContract{FT}(Int[], false, fail_summary, 0, nothing)
-
-function verify_window!(ready::ReadyWindow{LatLonTargetGeometry, FT},
-                        contract::FakeContract{FT},
-                        win_idx::Int) where FT
-    @test ready.index == win_idx
-    contract.verify_calls += 1
-    return _fake_diag()
-end
+    FakeContract{FT}(Int[], false, fail_summary, nothing)
 
 function update_accumulator!(contract::FakeContract, _positivity, win_idx::Int)
     push!(contract.updates, win_idx)
@@ -174,51 +153,13 @@ end
     @test result.out_path == writer.final_path
     @test result.promoted
     @test workspace.ingested == [1, 2, 3]
-    @test workspace.after_written == [1, 2, 3, 4]
     @test writer.written == [1, 2, 3, 4]
     @test contract.updates == [1, 2, 3, 4]
-    @test contract.verify_calls == 4
     @test contract.summarized
     @test contract.quarantine_path == writer.path
     @test writer.closed
     @test writer.promoted
     @test !writer.quarantined
-    @test reader.closed
-end
-
-@testset "unified driver accepts preverified ready events" begin
-    FT = Float64
-    reader = FakeReader{FT}(2, false)
-    workspace = FakeWorkspace{FT}(preverified = true)
-    contract = FakeContract{FT}()
-    writer = FakeWriter{FT}()
-
-    result = run_unified_preprocessor_day!(
-        UnifiedPreprocessorDay(reader, workspace, contract, writer))
-
-    @test result.windows_written == 2
-    @test writer.written == [1, 2]
-    @test contract.updates == [1, 2]
-    @test contract.verify_calls == 0
-    @test writer.promoted
-    @test reader.closed
-end
-
-@testset "unified driver can skip already-accumulated ready events" begin
-    FT = Float64
-    reader = FakeReader{FT}(2, false)
-    workspace = FakeWorkspace{FT}(preverified = true, accumulated = true)
-    contract = FakeContract{FT}()
-    writer = FakeWriter{FT}()
-
-    result = run_unified_preprocessor_day!(
-        UnifiedPreprocessorDay(reader, workspace, contract, writer))
-
-    @test result.windows_written == 2
-    @test writer.written == [1, 2]
-    @test isempty(contract.updates)
-    @test contract.verify_calls == 0
-    @test writer.promoted
     @test reader.closed
 end
 

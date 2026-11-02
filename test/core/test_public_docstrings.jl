@@ -68,3 +68,8 @@ end
 @testset "State basis conversion API has attached docstrings" begin
     @test has_attached_doc(AtmosTransport.State, :basis_symbol)
 end
+
+@testset "grid public API has attached docstrings" begin
+    @test :latitude_row_order in names(AtmosTransport.Grids)
+    @test has_attached_doc(AtmosTransport.Grids, :latitude_row_order)
+end

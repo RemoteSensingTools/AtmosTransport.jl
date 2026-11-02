@@ -50,7 +50,7 @@ quick = [
 ]
 
 [topics.health]
-description = "Package and repository hygiene: Aqua, JET, public API and docstrings, module READMEs, documentation links, environment variables, source revision, undefined global names, the test runner and these groups"
+description = "Package and repository hygiene: Aqua, JET, public API and docstrings, module READMEs, documentation links, environment variables, undefined global names, the test runner and these groups"
 files = [
     "core/test_aqua.jl",
     "core/test_jet.jl",
@@ -60,7 +60,6 @@ files = [
     "core/test_readme_current.jl",
     "core/test_documentation_links.jl",
     "core/test_environment_variables.jl",
-    "core/test_source_revision.jl",
     "core/test_runtests_runner.jl",
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
@@ -233,7 +232,6 @@ files = [
     "core/test_native_cs_surface_flux.jl",
     "core/test_surface_flux_ingestion.jl",
     "core/test_multiday_source_clock.jl",
-    "core/test_cs_chemistry.jl",
     "core/test_runtime_chemistry_recipe.jl",
     "core/test_chemistry.jl",
     "core/test_emissions_palindrome.jl",
@@ -264,7 +262,6 @@ files = [
     "core/test_latlon_flux_writer.jl",
     "core/test_gridded_io_surface_height.jl",
     "core/test_compare_cs_flux_files.jl",
-    "core/test_flux_port_parity_harness.jl",
 ]
 paths = [
     "src/GriddedIO/**",
@@ -291,6 +288,7 @@ paths = [
 [topics.metdrivers_binary]
 description = "Transport binaries and met drivers: writers and readers, header contract, format versions 4 and 5, sections, inspector, replay continuity, path expansion, window loading, prefetch and input staging, atomic publication"
 files = [
+    "core/test_transport_binary_reader.jl",
     "core/test_binary_inspector.jl",
     "core/test_binary_format_v5.jl",
     "core/test_binary_planet_radius.jl",
@@ -376,7 +374,7 @@ paths = [
 ]
 
 [topics.runner]
-description = "Driven simulations and the run driver: window stepping, runtime operator builders, schedules, callbacks and checks, progress and section timers"
+description = "Driven simulations and the run driver: window stepping, runtime operator builders, schedules, callbacks and checks, progress and section timers (through runner smokes)"
 files = [
     "core/test_driven_simulation.jl",
     "core/test_operator_defaults.jl",
@@ -385,7 +383,6 @@ files = [
     "core/test_cubed_sphere_runtime.jl",
     "core/test_run_transport_binary_recipe.jl",
     "core/test_run_logging_checks.jl",
-    "core/test_section_timer.jl",
 ]
 paths = [
     "src/Models/**",

@@ -83,12 +83,15 @@ end
         mkpath(ref_tree); mkpath(new_tree)
         mv(ref, joinpath(ref_tree, "tiny")); mv(new, joinpath(new_tree, "tiny"))
         output = joinpath(dir, "report.txt")
-        result = open(output, "w") do io
+        classify() = open(output, "w") do io
             redirect_stdout(io) do
                 GC.compare_cases([Dict("name" => "tiny")], ref_tree, new_tree)
             end
         end
-        @test !result
+        @test !classify()
         @test occursin("DIFFERS", read(output, String))
+        cp(joinpath(ref_tree, "tiny", "tiny.bin"), joinpath(new_tree, "tiny", "tiny.bin"); force=true)
+        @test classify()
+        @test occursin("identical", lowercase(read(output, String)))
     end
 end

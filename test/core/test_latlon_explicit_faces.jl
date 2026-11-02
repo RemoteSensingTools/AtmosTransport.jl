@@ -264,9 +264,4 @@ end
         end
     end
 
-    @testset "public, documented" begin
-        @test :latitude_row_order in names(AtmosTransport.Grids)
-        @test haskey(Base.Docs.meta(AtmosTransport.Grids),
-                     Base.Docs.Binding(AtmosTransport.Grids, :latitude_row_order))
-    end
 end

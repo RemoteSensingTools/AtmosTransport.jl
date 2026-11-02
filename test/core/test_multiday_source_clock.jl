@@ -24,7 +24,6 @@ using Test
 
 using AtmosTransport
 using .AtmosTransport.MetDrivers: driver_grid, current_time
-using .AtmosTransport.Operators.SurfaceFlux: StepwiseFlux, _flux_temporal_weights
 
 function _write_clock_test_binary(path; FT = Float64, steps = 2)
     Nx, Ny, Nz = 4, 3, 2
@@ -52,30 +51,6 @@ function _write_clock_test_binary(path; FT = Float64, steps = 2)
     return grid
 end
 
-@testset "DrivenSimulation start_time sets the clock origin" begin
-    mktemp() do path, io
-        close(io)
-        _write_clock_test_binary(path)
-        driver = TransportBinaryDriver(path; FT = Float64, arch = CPU())
-        grid = driver_grid(driver)
-        state = CellState(MoistBasis, ones(Float64, 4, 3, 2);
-                          CO2 = fill(400e-6, 4, 3, 2))
-        fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64,
-                                      basis = MoistBasis)
-        model = TransportModel(state, fluxes, grid, UpwindScheme())
-
-        # default: clock starts at zero (back-compat)
-        sim0 = DrivenSimulation(model, driver)
-        @test current_time(sim0) == 0.0
-
-        # day-2 rebuild: the clock must carry the accumulated run time
-        day2 = 86400.0
-        sim = DrivenSimulation(model, driver; start_time = day2)
-        @test current_time(sim) == day2
-        step!(sim)
-        @test current_time(sim) == day2 + sim.Δt   # advances FROM the origin
-    end
-end
 
 # A chemistry operator that records the `meteo` its `apply!` receives.
 struct _MeteoCaptureChemistry <: AtmosTransport.AbstractChemistryOperator
@@ -99,7 +74,9 @@ end
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float64,
                                       basis = MoistBasis)
         capture = _MeteoCaptureChemistry(Ref{Any}(nothing))
-        sim = DrivenSimulation(TransportModel(state, fluxes, grid, UpwindScheme()), driver;
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
+        @test current_time(DrivenSimulation(model, driver)) == 0.0
+        sim = DrivenSimulation(model, driver;
                                chemistry = capture)
         @test capture.captured[] === nothing
         step!(sim)
@@ -119,7 +96,9 @@ end
         grid = driver_grid(driver)
         state = CellState(MoistBasis, ones(Float32, 4, 3, 2); CO2 = fill(400f-6, 4, 3, 2))
         fluxes = allocate_face_fluxes(grid.horizontal, 2; FT = Float32, basis = MoistBasis)
-        sim = DrivenSimulation(TransportModel(state, fluxes, grid, UpwindScheme()), driver;
+        model = TransportModel(state, fluxes, grid, UpwindScheme())
+        @test current_time(DrivenSimulation(model, driver)) == 0.0
+        sim = DrivenSimulation(model, driver;
                                start_time = 86400.0)
         times = map(1:14) do _
             step!(sim)
@@ -131,30 +110,15 @@ end
     end
 end
 
-@testset "stepwise slice selection uses absolute run time" begin
-    # 3-hourly slices over two days (the lmdz/CAMS layout)
-    times = collect(0.0:10800.0:(2 * 86400.0 - 10800.0))   # 16 slices
-
-    # day 1, hour 4.5 -> slice block 2 (t in [3h, 6h))
-    i0, i1, w0, w1 = _flux_temporal_weights(StepwiseFlux(), times, 4.5 * 3600, 450.0)
-    @test i0 == 2 && w0 == 1
-
-    # day 2, hour 4.5 ABSOLUTE (t = 28.5h) -> slice block 10, NOT 2.
-    # A per-day clock reset would re-select block 2 here: that is exactly
-    # the day-1 replay that produced the +1 Pg co2_natural surplus.
-    i0, i1, w0, w1 = _flux_temporal_weights(StepwiseFlux(), times,
-                                            (24 + 4.5) * 3600, 450.0)
-    @test i0 == 10 && w0 == 1
-end
 
 @testset "runner wiring tripwire: start_time is passed at both call sites" begin
     # Codex should-fix: the unit tests above cannot catch deletion of the
-    # runner wiring. Until a 2-binary end-to-end fixture exists, pin the two
-    # call sites the 31-day verification campaign validated empirically.
+    # LL/RG runner wiring. The CS emission clock is exercised by the two-binary
+    # analysis_budget_closure run; retain the LL/RG tripwire until its emission
+    # clock is observed through a multi-day source run.
     src = read(normpath(joinpath(@__DIR__, "..", "..", "src", "Models",
                                  "Runner", "DrivenRunner", "DrivenRunner.jl")), String)
     @test occursin("start_time = run_time_seconds", src)        # LL/RG loop
-    @test occursin("start_time = total_hour * 3600.0", src)     # CS day loop
     @test occursin("run_time_seconds += (stop_window - start_window + 1)", src)
 end
 

@@ -33,8 +33,8 @@ command line, must be finite and non-negative, with `bitwise_fraction` at most
 either file is compared and a series present in only one file fails the
 comparison; set `common_variables_only = true` for an intentional comparison of
 products with different variable sets (for example SIF v1 against v3).
-Bitwise equality is only counted between values of the same stored type. Both scripts are tested by `test/core/test_compare_cs_flux_files.jl`
-and `test/core/test_flux_port_parity_harness.jl`, on synthetic C4 files.
+Bitwise equality is only counted between values of the same stored type.
+`test/core/test_compare_cs_flux_files.jl` exercises the comparator on synthetic C4 files.
 
 ## Validation levels (design §4.1)
 

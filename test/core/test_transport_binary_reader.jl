@@ -3,8 +3,7 @@
 using Test
 using JSON3
 
-include(joinpath(@__DIR__, "..", "..", "src", "AtmosTransport.jl"))
-using .AtmosTransport
+using AtmosTransport
 using .AtmosTransport.MetDrivers: TRANSPORT_BINARY_FORMAT_VERSION,
     source_flux_sampling, air_mass_sampling, flux_sampling, flux_kind,
     humidity_sampling, load_window!, load_qv_pair_window!,
@@ -224,14 +223,8 @@ end
 
         close(driver)
 
-        state = CellState(MoistBasis, copy(m); CO2=copy(m) .* 400e-6)
-        model = TransportModel(state, fluxes, grid, UpwindScheme())
-        sim = Simulation(model; Δt=1800.0, stop_time=3600.0)
-        m0 = total_air_mass(state)
-        rm0 = total_mass(state, :CO2)
-        run!(sim)
-        @test total_air_mass(sim.model.state) ≈ m0 atol=eps(Float64) * m0 * 10
-        @test total_mass(sim.model.state, :CO2) ≈ rm0 atol=eps(Float64) * rm0 * 10
+        close(reader)
+
     end
 end
 

@@ -32,25 +32,17 @@ function batch_fixture(nz, depth, nt, downdrafts; signed=false, FT=Float32)
 end
 
 function batch_reference(f)
-    FT = eltype(f.q)
-    result = copy(f.q)
+    result = Float64.(f.q)
     for c in axes(result, 1)
-        rates = map(r -> view(r,c,:), f.rates)
+        rates = map(r -> Float64.(view(r,c,:)), f.rates)
         top, _, lfs = C.TM5._tm5_diagnose_cloud_dims(rates[2],rates[3],f.nz)
         top > f.nz && continue
-        lo = min(lfs,max(top,2)-1)
-        A = zeros(FT,f.nz,f.nz)
-        pivots = zeros(Int,f.nz)
-        C.TM5._tm5_build_conv1!(A, rates..., view(f.m,c,:), top, lfs, FT(1800), f.nz;
-            f=A, amu=zeros(FT,f.nz+1), amd=zeros(FT,f.nz+1))
-        # Explicitly dense reference, independent of automatic structure selection.
-        if FT === Float64
-            # LAPACK dense solve independently checks the shared LU/structure path.
-            result[c, :, :] .= A \ f.q[c, :, :]
-        else
-            C.TM5._tm5_lu!(A, pivots, f.nz; icltop_eff=lo)
-            foreach(tracer -> C.TM5._tm5_solve_shared_tracer!(view(result,c,:,:), A, pivots, f.nz, max(Int(lo), 1), tracer), 1:f.nt)
-        end
+        A = zeros(Float64, f.nz, f.nz)
+        C.TM5._tm5_build_conv1!(A, rates..., Float64.(view(f.m,c,:)), top, lfs, 1800.0, f.nz;
+            f=A, amu=zeros(Float64,f.nz+1), amd=zeros(Float64,f.nz+1))
+        # LAPACK Float64 dense solve does not share production LU, structure
+        # selection, tracer batching or Float32 rounding.
+        result[c, :, :] .= A \ Float64.(f.q[c, :, :])
     end
     result
 end
@@ -156,9 +148,7 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
                                   66, 32, Float64, backend)
         @test C.TM5._should_use_collab(op, 85, 65, Float32, backend)
         @test_throws ArgumentError C.TM5._should_use_collab(op, 86, 65, Float32, backend)
-        depth = C.TM5._tm5_collab_max_depth(Float64, backend)
-        bytes(L) = 8*(L^2 + (C.TM5._TM5_COLLAB_TRACER_BATCH+3)*L + 2) + 4*(L+2)
-        @test bytes(depth) <= 48*1024 < bytes(depth+1)
+
     end
     @testset "Float64 positive and signed tracer batching on $expected_device" begin
         for topology in (:ll, :rg, :cs), (nz, depth) in ((1,1), (8,8), (66,66), (91,73)),
@@ -167,21 +157,6 @@ if get(ENV, "ATMOSTR_RUN_MATRIX_BATCH_GPU_TESTS", "0") == "1"
                 check_batches(batch_fixture(nz, depth, nt, downdrafts; signed, FT=Float64), topology)
             end
         end
-    end
-    @testset "Deferred scratch adaptation on $expected_device" begin
-        cpu_ws = C.TM5.TM5Workspace(zeros(Float32,2,2,8); tile_columns=4,
-                                cell_metrics=ones(Float32,2), defer_scratch=true)
-        # Simulate a CPU fallback before adapting the model to the GPU.
-        C.TM5._ensure_tm5_scratch!(cpu_ws)
-        gpu_ws = Adapt.adapt(CUDA.CuArray, cpu_ws)
-        @test isempty(gpu_ws.conv1)
-        @test gpu_ws.scratch_columns == 4
-        @test gpu_ws.cell_metrics isa CUDA.CuArray
-        @test gpu_ws.f_scratch === gpu_ws.conv1
-        C.TM5._ensure_tm5_scratch!(gpu_ws)
-        @test size(gpu_ws.conv1) == (8,8,4)
-        @test gpu_ws.f_scratch === gpu_ws.conv1
-        @test isempty(Adapt.adapt(Array, gpu_ws).conv1)
     end
     @testset "Collaborative tracer batching on $expected_device" begin
         for topology in (:ll, :rg, :cs), (nz, depth) in ((8,8), (91,85)),

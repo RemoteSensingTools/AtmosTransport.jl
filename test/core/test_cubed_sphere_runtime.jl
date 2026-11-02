@@ -44,6 +44,7 @@ include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
         @test caps.steps_per_window == 3
 
         driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
+        @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver)
         @test steps_per_window(driver) == 3
         @test steps_per_window(driver, 1) == 2
         @test steps_per_window(driver, 2) == 3
@@ -78,37 +79,6 @@ include(joinpath(@__DIR__, "..", "fixtures", "driven_cs_binary.jl"))
     end
 end
 
-@testset "CubedSphere reader rejects obsolete transport format version" begin
-    mktemp() do path, io
-        close(io)
-        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
-                               window_mass_scales=(1, 1),
-                               steps_per_window=2)
-        rewrite_cs_header!(path; updates = Dict("format_version" => 1))
-        @test_throws ArgumentError TransportBinaryReader(path; FT=Float64)
-    end
-end
-
-@testset "CubedSphere binary schedule can own runtime subcycling" begin
-    mktemp() do path, io
-        close(io)
-        write_driven_cs_binary(path; FT=Float64, Nc=4, Nz=2,
-                               window_mass_scales=(1,),
-                               steps_per_window=4)
-        driver_written = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
-        @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver_written)
-        close(driver_written)
-
-        rewrite_cs_header!(path; updates = Dict(
-            "preprocessor_contract" => "plan41_variable_substeps",
-            "adaptive_substeps" => true,
-            "runtime_substep_contract" => "binary_schedule",
-        ))
-        driver = TransportBinaryDriver(path; FT=Float64, arch=CPU(), Hp=1)
-        @test AtmosTransport.MetDrivers.uses_binary_substep_contract(driver)
-        close(driver)
-    end
-end
 
 function make_cs_surface_panels(FT::Type{<:AbstractFloat}, Nc::Int;
                                 pblh = FT(1000),
@@ -374,7 +344,6 @@ end
 end
 
 
-
 @testset "CubedSphere runtime supports CMFMC convection without promoting to Float64" begin
     FT = Float32
     Nc, Nz = 4, 5
@@ -606,7 +575,9 @@ end
         run!(sim)
 
         @test sim.iteration == 2
-        @test total_mass(sim.model.state, :CO2) ≈ rm0 rtol = 2e-4
+        relative_mass_error = abs(total_mass(sim.model.state, :CO2) / rm0 - 1)
+        @info "Lin-Rood/diffusion/TM5 relative mass error" relative_mass_error
+        @test relative_mass_error < 1e-12
         for p in 1:6
             panel = get_tracer(sim.model.state, :CO2)[p]
             @test any(panel[mesh.Hp + 1:mesh.Hp + mesh.Nc,

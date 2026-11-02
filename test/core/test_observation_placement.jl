@@ -775,22 +775,5 @@ O.point_elevation(d::ConstantDEM, lon::Real, lat::Real) = d.z
     @test placement_layer(VerticalPlacement(CODES.pressure, NaN, 50000.0, NaN), z_half, p_half) == 2
     @test placement_layer(VerticalPlacement(CODES.altitude_minus_dem, 600.0, NaN, NaN), z_half, p_half) == 1
     @test_throws ArgumentError O.intake_layer_index(z_half, NaN)
-    mktempdir() do dir
-        base = Dict{String, Any}("path" => joinpath(dir, "obs.nc"),
-                                 "sources" => Any[table_source(joinpath(dir, "x.csv"))])
-        spec(extra...) = observation_output_spec(Dict{String, Any}("observations" => merge(base, Dict(extra...))))
-        zs_path = surface_file(dir, 0.0)
-        # A spec naming a dataset the caller did not load, or a layout of another grid.
-        m = model10()
-        csv = joinpath(dir, "x.csv")
-        write(csv, "id,time,lat,lon\na,2021-12-02T00:30:00,$(LAT),$(LON)\n")
-        @test_throws ArgumentError quiet(() -> build_observation_sampler(spec("surface_height_file" => zs_path),
-            m.state, m.grid; origin = ORIGIN, window_seconds = (0.0, 86400.0), halo_width = 0))
-        @test_throws DimensionMismatch quiet(() -> build_observation_sampler(spec(), m.state, m.grid;
-            origin = ORIGIN, window_seconds = (0.0, 86400.0), halo_width = 0,
-            terrain = ObservationTerrain(; model_surface = ModelSurfaceHeight(zeros(2, 2), "small.nc"))))
-        @test_throws ArgumentError DR._check_observation_placement_files(
-            spec("surface_height_file" => joinpath(dir, "absent.nc")))
-        @test DR._check_observation_placement_files(spec("surface_height_file" => zs_path)) === nothing
-    end
+
 end

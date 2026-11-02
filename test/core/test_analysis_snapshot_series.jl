@@ -140,24 +140,31 @@ end
 end
 
 @testset "keep_frame" begin
-    dir = mktempdir()
-    origin = DateTime(2021, 12, 1)
-    f1 = write_fixture(joinpath(dir, "run_20211201.nc"), [0.0, 12.0, 24.0], h -> h)
-    f2 = write_fixture(joinpath(dir, "run_20211202.nc"), [24.0, 36.0, 48.0], h -> h == 24 ? -1.0f6 : h)
-    f3 = write_fixture(joinpath(dir, "run_20211203.nc"), [60.0], h -> h)
-    at_00 = t -> Dates.hour(t) == 0
-    s = daily_snapshot_series([f1, f2, f3], ["co2_column_mean", "co2"]; origin, keep_frame = at_00)
-    @test s.times == origin .+ Hour.([0, 24, 48])                     # f3 holds no 00 UTC frame
-    cm = s.values["co2_column_mean"]
-    @test size(cm) == (NX, NY, NF, 3)
-    @test cm[1, 1, 1, :] == Float32[0, 24, 48] .+ (1 + 10 + 100)      # hour 24 from f1, not the repeat
-    @test size(s.values["co2"]) == (NX, NY, NF, NL, 3)
-    early = daily_snapshot_series([f1, f2, f3], ["co2_column_mean"]; origin, keep_frame = t -> t < origin + Hour(20))
-    @test early.times == origin .+ Hour.([0, 12])
-    nothing_kept = daily_snapshot_series([f1, f2], ["co2_column_mean"]; origin, keep_frame = t -> false)
-    @test isempty(nothing_kept.times) && size(nothing_kept.values["co2_column_mean"]) == (NX, NY, NF, 0)
-    # The order check covers frames that are not kept.
-    back = write_fixture(joinpath(dir, "back.nc"), [18.0], h -> h)
-    @test_throws ArgumentError daily_snapshot_series([f1, back], ["co2"]; origin, keep_frame = at_00)
-    @test_throws TypeError daily_snapshot_series([f1], ["co2"]; origin, keep_frame = t -> 1)
+    mktempdir() do dir
+        origin = DateTime(2021, 12, 1)
+        f1 = write_fixture(joinpath(dir, "day1.nc"), [0.0, 12.0, 24.0], h -> h)
+        f2 = write_fixture(joinpath(dir, "day2.nc"), [24.0, 36.0, 48.0], h -> h == 24 ? -1.0f6 : h)
+        f3 = write_fixture(joinpath(dir, "day3.nc"), [60.0], h -> h)
+        at_00 = t -> Dates.hour(t) == 0
+        s = daily_snapshot_series([f1, f2, f3], ["co2_column_mean", "co2"]; keep_frame=at_00)
+        @test s.times == origin .+ Hour.([0, 24, 48])  # f3 contributes no frames
+        cm = s.values["co2_column_mean"]
+        @test cm isa Array{Float32, 4} && size(cm) == (NX, NY, NF, 3)
+        @test cm[1, 1, 1, :] == Float32[0, 24, 48] .+ 111  # first occurrence wins
+        @test size(s.values["co2"]) == (NX, NY, NF, NL, 3)
+        @test s.values["co2"][1, 1, 1, 2, :] == Float32[2, 26, 50]
+
+        early = daily_snapshot_series([f1, f2, f3], ["co2_column_mean"];
+                                      keep_frame=t -> t < origin + Hour(20))
+        @test early.times == origin .+ Hour.([0, 12])
+        @test early.values["co2_column_mean"][1, 1, 1, :] == Float32[111, 123]
+        empty = daily_snapshot_series([f1, f2], ["co2_column_mean", "co2"]; keep_frame=t -> false)
+        @test isempty(empty.times)
+        @test size(empty.values["co2_column_mean"]) == (NX, NY, NF, 0)
+        @test size(empty.values["co2"]) == (NX, NY, NF, NL, 0)
+        # Time ordering is checked even for frames rejected by the predicate.
+        back = write_fixture(joinpath(dir, "back.nc"), [18.0], h -> h)
+        @test_throws ArgumentError daily_snapshot_series([f1, back], ["co2"]; keep_frame=at_00)
+        @test_throws TypeError daily_snapshot_series([f1], ["co2"]; keep_frame=t -> 1)
+    end
 end
