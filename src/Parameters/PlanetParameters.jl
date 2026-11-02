@@ -20,12 +20,6 @@ struct PlanetParameters{FT <: AbstractFloat}
     end
 end
 
-function PlanetParameters(radius::Real, gravity::Real, reference_pressure::Real)
-    FT = promote_type(typeof(float(radius)), typeof(float(gravity)),
-                      typeof(float(reference_pressure)))
-    return PlanetParameters{FT}(FT(radius), FT(gravity), FT(reference_pressure))
-end
-
 function PlanetParameters(; FT::Type{<:AbstractFloat} = Float64,
                           radius = FT(EARTH_RADIUS),
                           gravity = FT(STANDARD_GRAVITY),

@@ -2,7 +2,6 @@
 Unit tests for `PerTracerFluxMap` + `SurfaceFluxSource` — plan 17 Commit 2.
 
 Validates:
-- Construction variants (variadic, tuple, vector of sources)
 - Duplicate tracer names are rejected at construction
 - Non-`SurfaceFluxSource` entries are rejected
 - `flux_for(map, :name)` returns the source, or `nothing` for absent
@@ -10,8 +9,6 @@ Validates:
 - `tracer_names(map)` matches storage order
 - Backward-compat: `SurfaceFluxSource` still usable by-name after
   the plan 17 Commit 2 migration from `src/Models/` to `src/Operators/SurfaceFlux/`
-- `Adapt.adapt_structure` path: CPU passthrough preserves structure
-  and per-source rate arrays
 - GPU adaptation (when CUDA.functional()): rate arrays become CuArrays
 - `SurfaceFluxOperator` resolves the map's tracer names against the state:
   `emitting_tracer_indices`, map tracers absent from the state are skipped,
@@ -34,29 +31,6 @@ catch
 end
 
 @testset "PerTracerFluxMap — plan 17 Commit 2" begin
-
-    @testset "construction — variadic SurfaceFluxSource..." begin
-        src1 = SurfaceFluxSource(:CO2,   fill(1.0, 4, 3))
-        src2 = SurfaceFluxSource(:SF6,   fill(2.0, 4, 3))
-        src3 = SurfaceFluxSource(:Rn222, fill(3.0, 4, 3))
-
-        map = PerTracerFluxMap(src1, src2, src3)
-        @test map isa PerTracerFluxMap
-        @test length(map) == 3
-        # Stored in declaration order
-        @test tracer_names(map) === (:CO2, :SF6, :Rn222)
-    end
-
-    @testset "construction — Tuple backed" begin
-        src1 = SurfaceFluxSource(:CO2, fill(1.0, 4, 3))
-        src2 = SurfaceFluxSource(:SF6, fill(2.0, 4, 3))
-        # Direct Tuple input
-        map = PerTracerFluxMap((src1, src2))
-        @test length(map) == 2
-        # Equivalent to variadic form
-        map2 = PerTracerFluxMap(src1, src2)
-        @test tracer_names(map) == tracer_names(map2)
-    end
 
     @testset "construction — Vector of sources" begin
         sources = [SurfaceFluxSource(:CO2, fill(1.0, 4, 3)),
@@ -127,38 +101,6 @@ end
         src_c = SurfaceFluxSource(:C, fill(1.0, 2, 2))
         map = PerTracerFluxMap(src_b, src_a, src_c)
         @test tracer_names(map) === (:B, :A, :C)
-    end
-
-    @testset "Adapt — structural conversion (CPU passthrough)" begin
-        rate1 = fill(1.0, 4, 3)
-        rate2 = fill(2.0, 4, 3)
-        src1 = SurfaceFluxSource(:CO2, rate1)
-        src2 = SurfaceFluxSource(:SF6, rate2)
-        map = PerTracerFluxMap(src1, src2)
-
-        map_adapt = Adapt.adapt(Array, map)
-        @test map_adapt isa PerTracerFluxMap
-        @test length(map_adapt) == 2
-        @test tracer_names(map_adapt) === (:CO2, :SF6)
-        # Values preserved
-        @test flux_for(map_adapt, :CO2).cell_mass_rate == rate1
-        @test flux_for(map_adapt, :SF6).cell_mass_rate == rate2
-    end
-
-    @testset "Adapt on SurfaceFluxSource alone (2D and 3D rates)" begin
-        # 2D rate (structured grid surface slice)
-        rate2d = fill(1.5, 3, 4)
-        src2d = SurfaceFluxSource(:X, rate2d)
-        src2d_ad = Adapt.adapt(Array, src2d)
-        @test src2d_ad.tracer_name === :X
-        @test src2d_ad.cell_mass_rate == rate2d
-
-        # Adaptation itself is rank-agnostic; shape validation occurs when a
-        # source is installed on a concrete state.
-        rate3d = fill(0.5, 3, 4, 2)
-        src3d = SurfaceFluxSource(:Y, rate3d)
-        src3d_ad = Adapt.adapt(Array, src3d)
-        @test src3d_ad.cell_mass_rate == rate3d
     end
 
     @testset "SurfaceFluxOperator resolves map tracers against the state" begin

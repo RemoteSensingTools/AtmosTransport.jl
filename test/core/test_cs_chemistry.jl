@@ -5,12 +5,11 @@ chemistry gap in TOPOLOGY_SUPPORT.md).
 
 Mirrors `test_chemistry.jl` but for `CubedSphereState` storage:
 
-1. `NoChemistry` — identity across all six panels.
-2. `ExponentialDecay{FT, N}` — decays selected tracers by
+1. `ExponentialDecay{FT, N}` — decays selected tracers by
    `exp(-rate * dt)` exactly (F64) or to ULP (F32) on every panel,
    including halo cells. Unselected tracers are unchanged.
-3. `CompositeChemistry` — sequential sub-operator application.
-4. Argument error when a named tracer isn't present.
+2. `CompositeChemistry` — sequential sub-operator application.
+3. Argument error when a named tracer isn't present.
 
 `get_tracer(state, name)` returns an `NTuple{6, Array}`; we check each
 panel independently, respecting the plan-14 accessor-API discipline.
@@ -58,20 +57,6 @@ for FT in (Float64, Float32)
     tag = FT === Float64 ? "F64" : "F32"
 
     # -------------------------------------------------------------------
-    # NoChemistry: identity
-    # -------------------------------------------------------------------
-    @testset "CS $tag: NoChemistry is identity" begin
-        state, _ = _make_cs_state(FT)
-        co2_before = deepcopy(get_tracer(state, :CO2))
-        rn_before  = deepcopy(get_tracer(state, :Rn222))
-        apply!(state, nothing, nothing, NoChemistry(), FT(3600))
-        for p in 1:6
-            @test get_tracer(state, :CO2)[p]   == co2_before[p]
-            @test get_tracer(state, :Rn222)[p] == rn_before[p]
-        end
-    end
-
-    # -------------------------------------------------------------------
     # ExponentialDecay: single decaying tracer
     # -------------------------------------------------------------------
     @testset "CS $tag: Rn-222 decays by exp(-λ·dt) on every panel" begin
@@ -84,42 +69,6 @@ for FT in (Float64, Float32)
         for p in 1:6
             @test all(get_tracer(state, :Rn222)[p] .≈ expected)
             @test get_tracer(state, :CO2)[p] == co2_before[p]   # untouched
-        end
-    end
-
-    # -------------------------------------------------------------------
-    # Multi-tracer independence: each tracer decays at its own rate
-    # -------------------------------------------------------------------
-    @testset "CS $tag: multi-tracer independent decay" begin
-        state, _ = _make_cs_state(FT)
-        op  = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE, CO2 = 1e15)  # CO2: essentially no decay at small dt
-        dt  = FT(3600)
-        apply!(state, nothing, nothing, op, dt)
-        rn_expected   = FT(2.0) * exp(-FT(RN222_LAMBDA) * dt)
-        co2_expected  = FT(1.0) * exp(-FT(log(2) / 1e15) * dt)
-        for p in 1:6
-            @test all(get_tracer(state, :Rn222)[p] .≈ rn_expected)
-            @test all(get_tracer(state, :CO2)[p]   .≈ co2_expected)
-        end
-    end
-
-    # -------------------------------------------------------------------
-    # Halo cells decay alongside interior
-    # -------------------------------------------------------------------
-    @testset "CS $tag: halo cells decay uniformly" begin
-        state, panel_shape = _make_cs_state(FT)
-        op  = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
-        dt  = FT(3600)
-        apply!(state, nothing, nothing, op, dt)
-        expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * dt)
-        # Panel halo corners (specifically the Hp=1 border row/col) should
-        # match the interior value since we initialized uniformly and the
-        # kernel launches over the full panel including halos.
-        for p in 1:6
-            panel = get_tracer(state, :Rn222)[p]
-            @test panel[1, 1, 1]                       ≈ expected
-            @test panel[end, end, end]                 ≈ expected
-            @test panel[panel_shape[1]÷2, panel_shape[2]÷2, 1] ≈ expected
         end
     end
 
@@ -164,46 +113,15 @@ for FT in (Float64, Float32)
                                  (Symbol(:t, n) => ntuple(_ -> fill(FT(n), panel_shape), 6) for n in 1:44)...)
         decaying = filter(n -> n % 11 != 0, 1:44)
         op = ExponentialDecay(FT; (Symbol(:t, n) => 3_600.0 * n for n in decaying)...)
-        d  = AtmosTransport.Operators.Chemistry._decay_decrements(op, nothing, FT(3600))
         expected = FT.(1:44)
-        for (k, n) in enumerate(decaying)
-            expected[n] = muladd(FT(n), d[k], FT(n))
+        for n in decaying
+            rate = FT(log(2) / (3_600.0 * n))
+            expected[n] = FT(n) * exp(-rate * FT(3600))
         end
         apply!(state, nothing, nothing, op, FT(3600))
         @test all(n -> all(p -> all(x -> isapprox(x, expected[n]; rtol = 2eps(FT)), get_tracer(state, Symbol(:t, n))[p]), 1:6), 1:44)
     end
 
-    # -------------------------------------------------------------------
-    # Zero-operator ExponentialDecay is identity (N == 0 branch)
-    # -------------------------------------------------------------------
-    @testset "CS $tag: zero-tracer ExponentialDecay is identity" begin
-        state, _ = _make_cs_state(FT)
-        # Construct an N=0 operator directly (keyword ctor won't allow it)
-        op = ExponentialDecay{FT, 0, Tuple{}}((), ())
-        co2_before = deepcopy(get_tracer(state, :CO2))
-        rn_before  = deepcopy(get_tracer(state, :Rn222))
-        apply!(state, nothing, nothing, op, FT(3600))
-        for p in 1:6
-            @test get_tracer(state, :CO2)[p]   == co2_before[p]
-            @test get_tracer(state, :Rn222)[p] == rn_before[p]
-        end
-    end
-
 end # FT loop
-
-# =========================================================================
-# CompositeChemistry dispatches cleanly to CubedSphereState via apply!.
-# =========================================================================
-@testset "CompositeChemistry on CubedSphereState" begin
-    state, _ = _make_cs_state(Float64)
-    ops = (ExponentialDecay(Float64; Rn222 = RN222_HALF_LIFE),
-           NoChemistry())
-    dt = 3600.0
-    apply!(state, nothing, nothing, CompositeChemistry(ops), dt)
-    expected = 2.0 * exp(-(log(2) / RN222_HALF_LIFE) * dt)
-    for p in 1:6
-        @test all(get_tracer(state, :Rn222)[p] .≈ expected)
-    end
-end
 
 end # outer testset

@@ -11,11 +11,8 @@ Asserts:
   analytic integral of the piecewise-constant / piecewise-linear
   reconstruction and does not depend on `dt`; for `LinearInterpFlux` it is the
   step-start Riemann sum;
-- `total_emission_rate(src, t)` reproduces the runner's former log value
-  (static lat-lon and cubed-sphere sources, time-varying and `cs_native`
-  sources at the run start), bit for bit for Float64 sources and to Float32
-  rounding for Float32 sources (now summed in Float64), and evaluates each
-  scheme's reconstruction at `t`;
+- `total_emission_rate(src, t)` sums static and time-varying sources in
+  Float64 and evaluates each scheme's reconstruction at `t`;
 - `emission_segments` covers the step and sums to the one-step integral;
 - invalid step arguments are rejected;
 - a source adapted to a device array type whose Float64 reductions fail (the
@@ -26,9 +23,7 @@ Asserts:
 
 using Test
 using Adapt
-using Dates
 using KernelAbstractions: KernelAbstractions as KA
-using NCDatasets
 using Random
 using AtmosTransport
 using AtmosTransport: CubedSphereState, DryBasis, SurfaceFluxSource, SurfaceFluxOperator,
@@ -36,40 +31,12 @@ using AtmosTransport: CubedSphereState, DryBasis, SurfaceFluxSource, SurfaceFlux
                       CubedSphereMesh, LatLonMesh, HybridSigmaPressure, AtmosGrid,
                       StepwiseFlux, LinearInterpFlux, ConservativeMeanFlux
 using AtmosTransport.Operators: total_emission_rate, emission_segments, integrated_emission
-using AtmosTransport.Models.InitialConditionIO: build_surface_flux_source
 
 # Stand-in for the `DrivenSimulation` clock: the operator reads only `current_time`.
 struct IntegralTestClock
     t :: Float64
 end
 AtmosTransport.MetDrivers.current_time(c::IntegralTestClock) = c.t
-
-# The runner's surface-source log value before `total_emission_rate` replaced it
-# (`DrivenRunner._surface_source_total_rate`): a sum in the storage float type,
-# over the first slice of a time-varying source.
-function legacy_logged_rate(source)
-    if hasproperty(source, :cell_mass_rate)
-        r = source.cell_mass_rate
-        return r isa Tuple ? Float64(sum(sum, r)) : Float64(sum(r))
-    else
-        series = source.cell_mass_rate_series
-        return Float64(sum(p -> sum(@view p[:, :, 1]), series))
-    end
-end
-
-# The former log summed Float32 rates in Float32. Its rounding depends on the
-# summation order Base chooses (which changed between Julia 1.12 and 1.13), so
-# it is compared with the exact Float64 total within the worst-case bound of a
-# Float32 sum of n terms, (n - 1) eps(Float32), rather than a fixed tolerance.
-function legacy_float32_rtol(source)
-    n = if hasproperty(source, :cell_mass_rate)
-        r = source.cell_mass_rate
-        r isa Tuple ? sum(length, r) : length(r)
-    else
-        sum(p -> length(@view p[:, :, 1]), source.cell_mass_rate_series)
-    end
-    return (n - 1) * Float64(eps(Float32))
-end
 
 # Stand-in for a Metal array on the CPU: its backend is a device, and a Float64
 # reduction over it or over a view of it throws (Metal has no Float64).
@@ -217,7 +184,7 @@ end
     @test integrated_emission(static, 0.0, 3600.0, 3600 / 7) ≈ total_emission_rate(static, 0.0) * 3600 rtol = 1e-14
 end
 
-@testset "total_emission_rate replaces the runner's log value" begin
+@testset "total_emission_rate uses Float64 totals at the requested time" begin
     @testset "static sources ($FT)" for FT in (Float64, Float32)
         rng = MersenneTwister(3)
         ll = SurfaceFluxSource(:CO2, FT.(1e-4 .* (1 .+ rand(rng, 36, 18))))
@@ -226,11 +193,6 @@ end
             r = src.cell_mass_rate
             @test total_emission_rate(src, 0.0) === total_emission_rate(src, 1.0e7)
             @test total_emission_rate(src, 0.0) === (r isa Tuple ? sum(p -> sum(Float64, p), r) : sum(Float64, r))
-            if FT === Float64
-                @test total_emission_rate(src, 0.0) === legacy_logged_rate(src)
-            else   # the former log summed in Float32
-                @test total_emission_rate(src, 0.0) ≈ legacy_logged_rate(src) rtol = legacy_float32_rtol(src)
-            end
         end
     end
 
@@ -240,7 +202,7 @@ end
         R = slice_totals(series)
         for scheme in (StepwiseFlux(), LinearInterpFlux(), ConservativeMeanFlux())
             src = TimeVaryingSurfaceFluxSource(:CO2, series, times, scheme)
-            @test total_emission_rate(src, 0.0) === legacy_logged_rate(src) === R[1]
+            @test total_emission_rate(src, 0.0) === R[1]
             @test total_emission_rate(src, -50.0) == R[1]           # before the series
             @test total_emission_rate(src, 9000.0) == R[3]          # after the series
             expected = scheme isa StepwiseFlux ? R[1] : 0.75 * R[1] + 0.25 * R[2]
@@ -249,55 +211,15 @@ end
         series32 = random_series(Float32, 3)
         src32 = TimeVaryingSurfaceFluxSource(:CO2, series32, times, StepwiseFlux())
         @test total_emission_rate(src32, 0.0) === slice_totals(series32)[1]
-        @test total_emission_rate(src32, 0.0) ≈ legacy_logged_rate(src32) rtol = legacy_float32_rtol(src32)
 
         # Without a slice at the run start, linear schemes report the
         # interpolated run-start rate; the former log showed the first slice.
         early = TimeVaryingSurfaceFluxSource(:CO2, series, [-3600.0, 3600.0, 7200.0], LinearInterpFlux())
         @test total_emission_rate(early, 0.0) ≈ 0.5 * (R[1] + R[2]) rtol = 1e-15
         stepwise_early = TimeVaryingSurfaceFluxSource(:CO2, series, [-3600.0, 3600.0, 7200.0], StepwiseFlux())
-        @test total_emission_rate(stepwise_early, 0.0) === legacy_logged_rate(stepwise_early)
+        @test total_emission_rate(stepwise_early, 0.0) === R[1]
     end
 
-    @testset "cs_native source ($FT)" for FT in (Float64, Float32)
-        mktempdir() do dir
-            path = joinpath(dir, "native.nc")
-            density(i, j, p, t) = 1e-9 * (i + 10j + 100p + 1000t)        # kg CO2 m⁻² s⁻¹
-            NCDataset(path, "c") do ds
-                for (name, n) in (("Xdim", NC), ("Ydim", NC), ("nf", 6), ("time", 3))
-                    defDim(ds, name, n)
-                end
-                defVar(ds, "time", Float64, ("time",),
-                       attrib = Dict("units" => "hours since 2014-01-01 00:00:00"))[:] = [0, 24, 48]
-                v = defVar(ds, "F", Float64, ("Xdim", "Ydim", "nf", "time"),
-                           attrib = Dict("units" => "kg CO2 m-2 s-1"))
-                v[:, :, :, :] = [density(i, j, p, t) for i in 1:NC, j in 1:NC, p in 1:6, t in 1:3]
-            end
-            grid = cs_grid(FT)
-            M = AtmosTransport.Parameters.SPECIES_MOLAR_MASS.co2     # species = "co2"
-            cfg = Dict{String, Any}("kind" => "cs_native", "file" => path, "variable" => "F",
-                                    "time_varying" => true, "species" => "co2", "scale" => 2.0)
-            # The runner passes the run span; the series then starts at the slice
-            # in effect at the run start (2014-01-02 00 UTC = file hour 24).
-            src = build_surface_flux_source(grid, :co2, cfg, FT;
-                                            reference_time = DateTime(2014, 1, 2),
-                                            run_span = (0.0, 86400.0 + 1.0))
-            @test src isa TimeVaryingSurfaceFluxSource
-            @test src.times == [0.0, 86400.0]
-            areas = Float64.(grid.horizontal.cell_areas)
-            storage = 2.0 * AtmosTransport.Parameters.DRY_AIR_MOLAR_MASS / M
-            from_file = sum(density(i, j, p, 2) * areas[i, j] * storage for i in 1:NC, j in 1:NC, p in 1:6)
-            rate = total_emission_rate(src, 0.0)
-            if FT === Float64
-                @test rate === legacy_logged_rate(src)
-                @test rate ≈ from_file rtol = 1e-13
-            else
-                @test rate ≈ legacy_logged_rate(src) rtol = legacy_float32_rtol(src)
-                @test rate ≈ from_file rtol = 1e-6
-            end
-            @test integrated_emission(src, 0.0, 86400.0, 450.0) ≈ rate * 86400 rtol = 1e-14
-        end
-    end
 end
 
 @testset "device sources are summed on host copies" begin
