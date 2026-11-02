@@ -43,3 +43,36 @@ function open_preprocessing_staging(path::AbstractString)
     close(io)
     return staging
 end
+
+"""
+    check_fixed_global_mass(m, endpoint_or_tendency; applications=nothing, mass_type)
+
+Reject a fixed global dry-mass budget if `abs(Σ(m_next-m))/Σm` exceeds
+`GLOBAL_DRY_MASS_BUDGET_RTOL`. With `applications`, the second argument is a
+per-application tendency and the numerator is `abs(applications * Σdm)`.
+Both reductions are compensated Float64 sums of stored values (including CS
+panel tuples). Expected global change is zero. Call only for a fixed dry target;
+moist and unpinned windows retain their physical global tendency. Stored lower
+precision endpoints allow `2eps(mass_type)` for their independent rounding.
+"""
+function check_fixed_global_mass(m, endpoint_or_tendency;
+                                applications::Union{Nothing,Int}=nothing,
+                                mass_type::Type=eltype(m isa Tuple ? first(m) : m))
+    panels = m isa Tuple ? m : (m,)
+    other = endpoint_or_tendency isa Tuple ? endpoint_or_tendency : (endpoint_or_tendency,)
+    indices = ((p, i) for p in eachindex(panels) for i in eachindex(panels[p]))
+    total = +(_neumaier_sum(indices, Float64) do (p, i)
+        Float64(panels[p][i])
+    end...)
+    change = +(_neumaier_sum(indices, Float64) do (p, i)
+        applications === nothing ? Float64(other[p][i]) - Float64(panels[p][i]) :
+                                   Float64(other[p][i])
+    end...)
+    applications === nothing || (change *= applications)
+    relative = abs(change) / total
+    tolerance = max(GLOBAL_DRY_MASS_BUDGET_RTOL, 2 * Float64(eps(mass_type)))
+    isfinite(total) && total > 0 && isfinite(relative) && relative <= tolerance ||
+        error("fixed global dry-mass budget mismatch: |ΔM|/M=$relative exceeds $tolerance " *
+              "(ΔM=$change kg, M=$total kg; expected global change is zero)")
+    return relative
+end

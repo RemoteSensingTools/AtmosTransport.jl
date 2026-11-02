@@ -126,7 +126,7 @@ README contract headings are reported only during the P1 rollout.
 ## Shared helpers owned here
 
 Architectures owns the compensated summation helper used by convection and
-Extras/Analysis. It is available through an explicit named import and is not
+Extras/Analysis, and offline preprocessing. It is available through an explicit named import and is not
 exported. This declaration also works on the minimum supported Julia 1.10.
 
 # shared: _neumaier_sum

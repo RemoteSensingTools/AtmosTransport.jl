@@ -94,6 +94,7 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
                                 contract,
                                 substep_policy::SubstepSchedulePolicy;
                                 write_replay_on::Bool = true,
+                                fixed_global_mass::Bool = false,
                                 weights::AbstractColumnWeights = MassWeightedColumn(),
                                 rebuild_rates = nothing,
                                 poisson_workspace = nothing,
@@ -143,7 +144,8 @@ function apply_poisson_balance!(storage::WindowStorage{FT},
             col_diag = balance_column_mass_fluxes!(storage.all_am[win_idx],
                                                    storage.all_bm[win_idx],
                                                    storage.all_m[win_idx],
-                                                   dm_dt_buf, poisson_ws; weights)
+                                                   dm_dt_buf, poisson_ws; weights, fixed_global_mass,
+                                                   steps_per_window=steps)
             worst_column_pre = max(worst_column_pre, col_diag.max_pre_residual)
             worst_column_post = max(worst_column_post, col_diag.max_post_residual)
             worst_column_delta = max(worst_column_delta, col_diag.max_face_delta)

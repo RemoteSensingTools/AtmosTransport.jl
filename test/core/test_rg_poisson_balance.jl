@@ -210,3 +210,22 @@ end
         HybridMassWeightedColumn([0.0, 0.0, 0.0, 1.0, 1.0]),
         [1.0, 1.0, 0.0, 0.0], zeros(4))
 end
+
+@testset "RG global mode follows column mass" begin
+    left, right, nc = ring_graph()
+    nz, steps = 3, 2
+    L = build_compressed_laplacian(left, right, nc)
+    m = [1e12 * k * (c <= 8 ? 0.001 : 1.0) for c in 1:nc, k in 1:nz]
+    next = m .* (1 + 3e-15)
+    for direct in (nothing, AtmosTransport.Preprocessing.MassClosure.DirectRingPoisson(L))
+        flux = zeros(length(left), nz)
+        @test_throws ErrorException balance_compressed_column_fluxes!(
+            flux, m, m .* (1 + 1e-10), left, right, L, 100,
+            new_scratch(nc); direct_solver=direct, fixed_global_mass=true)
+        balance_compressed_column_fluxes!(flux, m, next, left, right, L, steps,
+                                          new_scratch(nc); tol=1e-12, direct_solver=direct, fixed_global_mass=true)
+        _, error = close_window(flux, m, next, left, right, steps)
+        @test error < 1e-13
+        @test all(iszero, flux[end, :])
+    end
+end

@@ -136,9 +136,9 @@ Final dry repair can reuse `MetDrivers.recompute_cm_from_dm_target!`.
 The optional TM5 strategy adds the independent W constraint before the shared
 dry repair; legacy numerical policies remain in their existing dispatch.
 
-Keep CS and RG solver projection/reduction policies distinct. Keep FT CS cm
-recurrence, Float64 LL/RG recurrence, thresholds, floors and weight booking
-unchanged. GEOS diagnostic pressure-fixer closures remain available. Duplicates
+CS and RG retain their distinct solvers. Column mean-zero projections use compensated
+Float64 reductions; layer/standalone defaults keep their original sums; the FT CS cm recurrence, Float64 LL/RG recurrence,
+thresholds, floors and vertical weight booking are unchanged. GEOS diagnostic pressure-fixer closures remain available. Duplicates
 whose other copies belong to Targets, TransportBinary or Sources are tracked in
 the PP2 handoff for their owning PRs.
 
@@ -148,4 +148,32 @@ the PP2 handoff for their owning PRs.
 Spectral owns quadrature and endpoint construction; Targets owns layer
 orchestration, dry conversion and endpoint averaging. MassClosure imports
 neither Spectral nor Vertical. The direct solver is reused for RG layer and
-final dry column repair; the legacy PCG default keeps its arithmetic.
+final dry column repair; the PCG and direct paths share the column global-mode treatment.
+
+## Column global mode
+
+For fixed dry targets, LL (owned by Spectral), RG PCG/direct and CS column balances shift the solver
+target by `R̄ (M_c / mean(M) - 1)` using current column mass and compensated
+global reductions. Original endpoint tendencies remain the vertical-closure
+and replay targets. The residual global mode therefore follows column mass
+instead of being uniform per cell. The standalone CS per-level target is
+unchanged. Replay tolerances and CS typed closure tolerances are unchanged.
+
+This reaches spectral LL/RG/CS and TM5 LL/RG, LL-binary-to-CS and ERA5 N320
+regrids, MERRA-2, and GEOS endpoint-balanced/moisture-filtered/OMEGA closures wherever
+they call the shared column routines. Native mass pins remain separate.
+The manual's mass-conservation page records the equations and full-day evidence.
+
+On ERA5 2021-12-01 (1°, Float64 dry mass, 34 levels, 24 windows), replay
+maxima decrease from 1.471e-12 to 5.823e-15 for TM5 and from
+1.064e-12 to 6.107e-15 for point-sampled construction. Counts above
+1e-12 decrease from 536 and 6 to zero. Maximum |global ΔM| per window decreases
+from 135,695.388 to 666.004 kg (TM5), and from
+121,982.453 to 659.033 kg (point-sampled).
+
+The mass-proportional global-mode shift is enabled only for fixed dry-mass
+targets, after Common's compensated mass-normalized budget guard (`1e-14`
+for Float64; lower precision allows two-endpoint storage rounding). Moist and
+unpinned paths retain their uniform global mode and original endpoint tendency.
+TM5 LL/RG layer solves and standalone CS per-level solves retain original
+projection arithmetic; only column calls select compensated projection dispatch.
