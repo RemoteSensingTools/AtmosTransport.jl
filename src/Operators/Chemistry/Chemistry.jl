@@ -194,8 +194,6 @@ Throws `ArgumentError` if any name in `op.tracer_names` is not carried by
 function apply!(state::CellState, meteo, grid,
                 op::ExponentialDecay{FT, N}, dt;
                 workspace = nothing) where {FT, N}
-    N == 0 && return state
-
     # Resolve names → indices at call time.
     indices = ntuple(N) do n
         idx = tracer_index(state, op.tracer_names[n])
@@ -255,8 +253,6 @@ cells (see module comment).
 function apply!(state::CubedSphereState, meteo, grid,
                 op::ExponentialDecay{FT, N}, dt;
                 workspace = nothing) where {FT, N}
-    N == 0 && return state
-
     indices = ntuple(N) do n
         idx = tracer_index(state, op.tracer_names[n])
         if idx === nothing

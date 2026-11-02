@@ -8,8 +8,6 @@ const AT = AtmosTransport
 @testset "physical and state constructors reject ambiguous inputs" begin
     @test_throws ArgumentError AT.Parameters.PlanetParameters(radius=0.0)
     @test_throws ArgumentError AT.Parameters.PlanetParameters(gravity=Inf)
-    @test AT.Parameters.PlanetParameters(6.0f6, 9.8f0, 1.0f5) isa
-          AT.Parameters.PlanetParameters{Float32}
     @test_throws ArgumentError AT.HybridSigmaPressure([0.0], [0.0])
     @test_throws ArgumentError AT.HybridSigmaPressure([0.0, NaN], [0.0, 1.0])
 

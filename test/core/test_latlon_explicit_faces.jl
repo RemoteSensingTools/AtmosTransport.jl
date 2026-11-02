@@ -49,6 +49,31 @@ voronoi_faces(centres, south, north) =
 global_area(m) = sum(cell_areas_by_latitude(m)) * m.Nx
 const FULL_SPHERE = 4π * R^2
 
+@testset "regular lat-lon face geometry and periodic connectivity" begin
+    mesh = LatLonMesh(; Nx=10, Ny=8)
+    Nx, Ny = mesh.Nx, mesh.Ny
+    xfaces = (Nx + 1) * Ny
+    @test Gr.nfaces(mesh) == xfaces + Nx * (Ny + 1)
+    @test face_length(mesh, 1) ≈ R * deg2rad(mesh.Δφ)
+    @test face_length(mesh, xfaces + 1) >= 0
+    @test face_length(mesh, xfaces + 1 + Nx * (Ny ÷ 2)) ≈
+          R * deg2rad(mesh.Δλ)
+    @test Gr.face_normal(mesh, 1) == (1.0, 0.0)
+    @test Gr.face_normal(mesh, xfaces + 1) == (0.0, 1.0)
+    @test Gr.dy(mesh) ≈ R * deg2rad(mesh.Δφ)
+    for (i,j) in ((1,1), (3,4), (Nx,Ny))
+        c = i + (j-1)*Nx
+        w,e,s,n = Gr.cell_faces(mesh, (i,j))
+        @test (w,e,s,n) == ((j-1)*(Nx+1)+i, (j-1)*(Nx+1)+i+1,
+                            xfaces+(j-1)*Nx+i, xfaces+j*Nx+i)
+        @test Gr.cell_faces(mesh, c) == (w,e,s,n)
+        @test Gr.face_cells(mesh, w) == (mod1(i-1,Nx)+(j-1)*Nx, c)
+        @test Gr.face_cells(mesh, e) == (c, mod1(i+1,Nx)+(j-1)*Nx)
+        @test cell_area(mesh, c) == cell_area(mesh, i, j)
+        @test cell_area(mesh, c) == cell_area(mesh, (i,j))
+    end
+end
+
 # Every Δφ-based metric refuses a mesh with non-uniform latitude faces.
 function test_nonuniform_metrics(m)
     @test isnan(m.Δφ)

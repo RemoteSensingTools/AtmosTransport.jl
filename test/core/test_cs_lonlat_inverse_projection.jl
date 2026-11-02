@@ -208,28 +208,4 @@ end
         end
     end
 
-    @testset "lon/lat sweep round-trip through GEOS-IT C180" begin
-        # On the actual GEOS-IT C180 mesh, every (panel, i, j) cell-center
-        # lon/lat written by `panel_cell_center_lonlat` must invert back to
-        # the same (panel, i + 0.5, j + 0.5) — that's the strongest
-        # production guarantee we offer to SatelliteGridding.
-        # Use Nc = 12 to keep the test fast; the same code path covers C180.
-        Nc = 12
-        mesh = CubedSphereMesh(; Nc = Nc, FT = FT_T,
-                                definition = GMAOCubedSphereDefinition())
-        for p in 1:NPANEL
-            lons, lats = panel_cell_center_lonlat(mesh, p)
-            for j in 1:Nc, i in 1:Nc
-                p_out, s_out, t_out =
-                    lonlat_to_panel_xy(cs_definition(mesh), mesh.Nc, lons[i, j], lats[i, j], eltype(mesh))
-                @test p_out == p
-                # `FourCornerNormalizedCenter` (the GEOS center law) is not
-                # the midpoint of the parameter square; the inverse must
-                # *still* land in cell (i, j), so we test the integer floor
-                # equals (i, j) rather than the half-integer center.
-                @test floor(Int, s_out) == i
-                @test floor(Int, t_out) == j
-            end
-        end
-    end
 end

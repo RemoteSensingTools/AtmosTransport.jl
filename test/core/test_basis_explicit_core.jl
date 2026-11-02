@@ -20,6 +20,13 @@ catch
     false
 end
 
+# A different structured-flux subtype must not bypass the concrete dry-basis
+# gate on strang_split!, even when its arrays and basis have the right shape.
+struct MockStructuredFluxState{AX, AY, AZ} <: AtmosTransport.State.AbstractStructuredFaceFluxState{DryBasis}
+    am::AX
+    bm::AY
+    cm::AZ
+end
 
 @testset "PlanetParameters and AtmosGrid" begin
     params = PlanetParameters(; FT=Float32, radius=6.0f6, gravity=9.8f0, reference_pressure=1.0f5)
@@ -55,6 +62,9 @@ end
     ws = AdvectionWorkspace(state_dry.air_mass)
 
     @test_throws MethodError apply!(state_dry, flux_moist, grid, UpwindScheme(), 1800.0; workspace=ws)
+    mock = MockStructuredFluxState(flux_dry.am, flux_dry.bm, flux_dry.cm)
+    @test_throws MethodError strang_split!(state_dry, mock, grid, UpwindScheme(); workspace=ws)
+    @test_throws MethodError strang_split!(state_dry, flux_moist, grid, UpwindScheme(); workspace=ws)
 
     face_rm = ones(Float64, ncells(mesh), 2)
     face_m = ones(Float64, ncells(mesh), 2)
@@ -70,7 +80,6 @@ end
     @test err isa ArgumentError
     @test occursin("face-indexed meshes supports UpwindScheme only", sprint(showerror, err))
 end
-
 
 @testset "State and flux containers reject inconsistent storage" begin
     air = ones(Float64, 4, 3, 2)
@@ -106,8 +115,6 @@ end
         DryBasis, panels_air, panels_raw, (:CO2,); halo_width=2)
 
 end
-
-
 
 @testset "Structured static palindrome CFL pilot" begin
     FT = Float64
@@ -174,44 +181,6 @@ end
     @test rm[1, 1, 1] == zero(FT)
 end
 
-@testset "Face-indexed horizontal subcycling preserves positivity" begin
-    FT = Float64
-    Nz = 1
-    mesh = ReducedGaussianMesh(FT[0], [4]; FT=FT)
-    vc = HybridSigmaPressure(FT[0, 100], FT[0, 1])
-    grid = AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT=FT)
-
-    m = fill(FT(2.6), ncells(mesh), Nz)
-    rm = reshape(FT[1, 0, 0, 0], :, 1)
-    state = CellState(DryBasis, copy(m); CO2=copy(rm))
-    fluxes = allocate_face_fluxes(mesh, Nz; FT=FT, basis=DryBasis)
-    fluxes.horizontal_flux .= zero(FT)
-    fluxes.cm .= zero(FT)
-
-    # Cell 1 sees one strong outflow and one weaker inflow in the same sweep.
-    # Static palindrome budget: cell 1 ends the step with 2.6 + 2(0.4 − 1.2) = 1,
-    # so 2 · 1.2 / min(2.6, 1) = 2.4 → n_sub = ceil(2.4/1.0) = 3.
-    fluxes.horizontal_flux[1, 1] = FT(0.4)
-    fluxes.horizontal_flux[2, 1] = FT(1.2)
-
-    ws = AtmosTransport.Operators.Advection.AdvectionWorkspace(state.air_mass)
-    nsub = AtmosTransport.Operators.Advection._face_indexed_palindrome_subcycle_count(
-        fluxes.horizontal_flux, fluxes.cm, state.air_mass, mesh, FT(1))
-    @test nsub == 3
-
-    flux_scale = inv(FT(nsub))
-    for _ in 1:nsub
-        AtmosTransport.Operators.Advection.sweep_horizontal!(
-            state.tracers.CO2, state.air_mass, fluxes.horizontal_flux, mesh,
-            UpwindScheme(), ws, flux_scale)
-    end
-
-    q = mixing_ratio(state, :CO2)
-    @test minimum(state.air_mass) > zero(FT)
-    @test minimum(q) ≥ -eps(FT) * 10
-    @test maximum(q) ≤ one(FT) + eps(FT) * 10
-end
-
 @testset "GPU static CFL enforces max_n_sub" begin
     FT = Float32
     if HAS_CUDA_FOR_ADAPT
@@ -225,7 +194,6 @@ end
         @test true
     end
 end
-
 
 @testset "Face-connected reduced-Gaussian GPU matches CPU for Upwind" begin
     FT = Float64
@@ -280,8 +248,18 @@ end
     @test_throws ArgumentError apply!(state, fluxes, grid, PPMScheme(), FT(1800); workspace=ws)
 end
 
-
-
+@testset "ReducedGaussian production step preserves positivity under subcycling" begin
+    mesh = ReducedGaussianMesh([0.0], [4])
+    grid = AtmosGrid(mesh, HybridSigmaPressure([0.0,100.0],[0.0,1.0]), CPU())
+    state = CellState(DryBasis, fill(2.6,4,1); CO2=reshape([1.0,0,0,0],4,1))
+    fluxes = allocate_face_fluxes(mesh,1; basis=DryBasis)
+    fluxes.horizontal_flux[1,1] = 0.4
+    fluxes.horizontal_flux[2,1] = 1.2
+    apply!(state,fluxes,grid,UpwindScheme(),1.0;workspace=AdvectionWorkspace(state.air_mass))
+    @test minimum(state.air_mass) > 0
+    @test minimum(mixing_ratio(state,:CO2)) >= -10eps(Float64)
+    @test maximum(mixing_ratio(state,:CO2)) <= 1+10eps(Float64)
+end
 
 @testset "Canonical mass-basis conversion" begin
     for (tag, basis) in ((:dry, DryBasis()), (:moist, MoistBasis()))

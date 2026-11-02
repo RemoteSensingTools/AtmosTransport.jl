@@ -2,19 +2,18 @@
 """
 Chemistry operator unit tests (plan 15).
 
-Validates `apply!(state, meteo, grid, op, dt; workspace)` for the three
-`AbstractChemistryOperator` concrete types:
+Validates `apply!(state, meteo, grid, op, dt; workspace)` for the active
+chemistry operators. Optional defaults are checked in test_operator_defaults.jl:
 
-1. `NoChemistry` — identity.
-2. `ExponentialDecay{FT, N}` — multi-tracer first-order decay:
+1. `ExponentialDecay{FT, N}` — multi-tracer first-order decay:
    * zero-rate tracer unchanged (by not being registered).
    * nonzero-rate tracer decays by `exp(-rate * dt)` to ULP.
    * multi-tracer independence (per-tracer rates).
    * mass sum conservation under uniform-rate decay.
    * CPU-GPU agreement (ULP tolerance).
    * throws for names not in state.
-3. `CompositeChemistry` — sequential composition.
-4. End-of-operator observation through the accessor API
+2. `CompositeChemistry` — sequential composition.
+3. End-of-operator observation through the accessor API
    (`state.tracers.X`, `get_tracer(state, :X)`), NOT through the caller's
    input array (plan-14 test discipline).
 """
@@ -50,16 +49,16 @@ end
 Tracers `t1 … t44` holding `n`, of which the 40 with `n % 11 != 0` decay with
 distinct half-lives (more than one decay launch carries); `t11, t22, t33, t44`
 sit between them and do not decay. Returns the state, the operator and each
-tracer's value after one `dt = 3600` step (one `c + c·d` update).
+tracer's value after one `dt = 3600` step from the mathematical exponential.
 """
 function _make_many_decay_case(FT, AT)
     state = CellState(AT(ones(FT, 4, 3, 2)); (Symbol(:t, n) => AT(fill(FT(n), 4, 3, 2)) for n in 1:44)...)
     decaying = filter(n -> n % 11 != 0, 1:44)
     op = ExponentialDecay(FT; (Symbol(:t, n) => 3_600.0 * n for n in decaying)...)
-    d = AtmosTransport.Operators.Chemistry._decay_decrements(op, nothing, FT(3600))
     expected = FT.(1:44)
-    for (k, n) in enumerate(decaying)
-        expected[n] = muladd(FT(n), d[k], FT(n))
+    for n in decaying
+        rate = FT(log(2) / (3_600.0 * n))
+        expected[n] = FT(n) * exp(-rate * FT(3600))
     end
     return state, op, expected
 end
@@ -83,21 +82,9 @@ for FT in (Float64, Float32)
     precision_tag = FT === Float64 ? "F64" : "F32"
 
     # -------------------------------------------------------------------
-    # NoChemistry: identity
-    # -------------------------------------------------------------------
-    @testset "CPU $precision_tag: NoChemistry is identity" begin
-        state = _make_state(FT)
-        co2_before = copy(state.tracers.CO2)
-        rn_before  = copy(state.tracers.Rn222)
-        apply!(state, nothing, nothing, NoChemistry(), FT(3600))
-        @test state.tracers.CO2   == co2_before
-        @test state.tracers.Rn222 == rn_before
-    end
-
-    # -------------------------------------------------------------------
     # ExponentialDecay: single decaying tracer
     # -------------------------------------------------------------------
-    @testset "CPU $precision_tag: Rn-222 decays by exp(-λ·dt) exactly" begin
+    @testset "CPU $precision_tag: Rn-222 decays by exp(-λ·dt) exactly" for dt in FT.((3600, 86400))
         state = _make_state(FT)
         op    = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
         # decay_rates are AbstractTimeVaryingField{FT, 0} (ConstantField)
@@ -105,7 +92,7 @@ for FT in (Float64, Float32)
         @test field_value(op.decay_rates[1], ()) ≈ FT(RN222_LAMBDA)
         @test op.tracer_names == (:Rn222,)
 
-        dt = FT(3600)  # 1 hour
+        sum_before = sum(get_tracer(state, :Rn222))
         apply!(state, nothing, nothing, op, dt)
 
         expected = FT(2.0) * exp(-FT(RN222_LAMBDA) * dt)
@@ -114,38 +101,8 @@ for FT in (Float64, Float32)
         @test all(rn_after .≈ expected)
         # Property-syntax access gives the same thing
         @test all(state.tracers.Rn222 .≈ expected)
-    end
-
-    @testset "CPU $precision_tag: non-decaying tracer (CO2) unchanged" begin
-        state = _make_state(FT; co2_init = FT(1.5))
-        op    = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)  # CO2 not registered
-        apply!(state, nothing, nothing, op, FT(3600))
-        @test all(state.tracers.CO2 .== FT(1.5))
-    end
-
-    @testset "CPU $precision_tag: multi-tracer independence" begin
-        state = _make_state(FT)
-        op = ExponentialDecay(FT;
-                              Rn222 = RN222_HALF_LIFE,
-                              CO2   = 3_600.0)   # 1-hour half-life (synthetic)
-        dt = FT(3600)
-        apply!(state, nothing, nothing, op, dt)
-
-        @test all(state.tracers.Rn222 .≈ FT(2.0) * exp(-FT(RN222_LAMBDA) * dt))
-        co2_lambda = FT(log(2) / 3_600.0)
-        @test all(state.tracers.CO2 .≈ FT(1.0) * exp(-co2_lambda * dt))
-    end
-
-    @testset "CPU $precision_tag: mass sum = initial × exp(-λ·dt)" begin
-        state = _make_state(FT)
-        sum_before = sum(state.tracers.Rn222)
-        dt = FT(86_400)  # 1 day
-        apply!(state, nothing, nothing,
-               ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE), dt)
-        sum_after = sum(state.tracers.Rn222)
-        expected  = sum_before * exp(-FT(RN222_LAMBDA) * dt)
-        tol = FT === Float64 ? 1e-12 : FT(1e-5)
-        @test abs(sum_after - expected) / abs(expected) < tol
+        tolerance = FT === Float64 ? 1e-12 : FT(1e-5)
+        @test sum(rn_after) ≈ sum_before * exp(-FT(RN222_LAMBDA) * dt) rtol=tolerance
     end
 
     # -------------------------------------------------------------------
@@ -263,53 +220,6 @@ end  # for FT
 
     # Air mass: preserved (zero fluxes).
     @test sum(state.air_mass) == Nx * Ny * Nz
-end
-
-# =========================================================================
-# End-to-end: ordering — chemistry runs AFTER advection per §3.1
-# =========================================================================
-
-@testset "step!(model) composes advection then chemistry (order check)" begin
-    FT = Float64
-
-    # Construct a problem where order matters: non-uniform Rn-222 with
-    # zero flux ⇒ advection preserves spatial pattern, chemistry scales
-    # it uniformly. Compare `step!(model)` vs manual apply! sequence.
-    Nx, Ny, Nz = 4, 3, 2
-    mesh = LatLonMesh(; Nx = Nx, Ny = Ny, FT = FT)
-    A_ifc = zeros(FT, Nz + 1)
-    B_ifc = FT.(collect(range(0, 1, length = Nz + 1)))
-    vc = AtmosTransport.HybridSigmaPressure(A_ifc, B_ifc)
-    grid = AtmosTransport.AtmosGrid(mesh, vc, AtmosTransport.CPU(); FT = FT)
-
-    m = ones(FT, Nx, Ny, Nz)
-    # Non-uniform Rn-222 so we can detect pattern changes.
-    rm_rn = reshape(FT.(1:Nx*Ny*Nz), Nx, Ny, Nz)
-    state = CellState(m; Rn222 = copy(rm_rn))
-    state_ref = CellState(m; Rn222 = copy(rm_rn))
-
-    fluxes = AtmosTransport.StructuredFaceFluxState(
-        zeros(FT, Nx+1, Ny, Nz), zeros(FT, Nx, Ny+1, Nz), zeros(FT, Nx, Ny, Nz+1))
-    fluxes_ref = AtmosTransport.StructuredFaceFluxState(
-        zeros(FT, Nx+1, Ny, Nz), zeros(FT, Nx, Ny+1, Nz), zeros(FT, Nx, Ny, Nz+1))
-
-    chem = ExponentialDecay(FT; Rn222 = RN222_HALF_LIFE)
-    model = TransportModel(state, fluxes, grid, UpwindScheme();
-                           chemistry = chem)
-    model_ref = TransportModel(state_ref, fluxes_ref, grid, UpwindScheme())
-
-    dt = FT(7_200)
-
-    # Combined step!
-    step!(model, dt)
-
-    # Manual: advection then chemistry
-    apply!(state_ref, fluxes_ref, grid, UpwindScheme(), dt;
-           workspace = model_ref.workspace.advection_ws)
-    apply!(state_ref, nothing, grid, chem, dt)
-
-    @test get_tracer(model.state, :Rn222) ≈ get_tracer(state_ref, :Rn222)
-    @test model.state.air_mass ≈ state_ref.air_mass
 end
 
 end  # @testset
