@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **AutoTape CPU margin capped.** Automatic CPU selection now holds back
+  `min(10% of host/cgroup capacity, 2 GiB)` plus reverse-pass workspace,
+  instead of an uncapped 10% capacity margin. This avoids rejecting small
+  tapes on large shared hosts with several GiB of headroom. The cap is
+  `Tape._CPU_TAPE_MARGIN_MAX_BYTES`; GPU device and pinned-host margins and
+  explicit budget overrides are unchanged. Only candidate selection under
+  memory pressure changes; forward and adjoint results stay bitwise identical
+  on one CPU thread.
+
 - **Dry-mass rounding and polar replay closure.** The humidity-aware spectral
   pressure pin compensates every native/global reduction. LL/RG/CS column
   balances leave the remaining global mode proportional to column mass; this

@@ -36,14 +36,20 @@ Every reverse-pass entry point defaults to `tape = AutoTape()`. It resolves
 one concrete `AdjointTape` after building the replay and reserves its pools
 before recording. The binary's per-window step schedule fixes a closed-form
 size; CFL-driven schedules and Lin–Rood use one counting replay, cached for
-all evaluations of an optimization. Auto reads the backend's free memory
-after reclaiming its pool, subtracts reverse-workspace and output memory and
+all evaluations of an optimization. Auto reads the backend's free memory,
+including reclaimable allocator cache, subtracts reverse-workspace and output memory and
 `max(10% of capacity, 4 GiB)` on GPUs, and checks host availability against
-cgroup headroom, excluding reclaimable file cache. CPU selection holds back 10%
-of the memory limit; pinned-host selection alongside a GPU holds back
-`max(10% of limit, 8 GiB)`. These margins apply only to Auto selection; explicit
+cgroup headroom, excluding reclaimable file cache. CPU selection holds back
+`min(10% of capacity, 2 GiB)`, with capacity limited by the host and cgroup,
+plus the estimated reverse-pass workspace. The 2 GiB cap is
+`Tape._CPU_TAPE_MARGIN_MAX_BYTES`; it keeps small tapes feasible on large
+shared hosts when other jobs reduce headroom. Pinned-host selection alongside
+a GPU holds back `max(10% of limit, 8 GiB)`. These margins apply only to Auto selection; explicit
 `AdjointTape` choices attempt reservation directly, with a hard headroom check
 for pinned memory.
+
+The CPU budget policy changes only which candidate fits when memory is tight;
+forward and adjoint results remain bitwise identical on one CPU thread.
 
 Supplied `AutoTape` fields constrain the choice: `storage`, `checkpoint`,
 `content`, `budget_bytes` (overrides the measured device tape/snapshot budget
@@ -79,6 +85,14 @@ horizontal copies remain outside the pools and are counted in its device
 peak. Each runtime emits one `@info "adjoint tape"` with its choice, estimated
 and reserved bytes, budget and expected relative time. Mmap is scratch
 storage: persisted per-window tapes and bisection Revolve are absent.
+
+Pinned reservations use chunks targeting at most 1 GiB (a larger indivisible
+slot gets its own chunk). Slots have reserved locations keyed by element type
+and panel shape, so recording them in a different order needs no extra bytes.
+Segment sizes exclude a preceding step's pending convection flush and include
+their own final pending convection slot. Stride head pools reserve the maximum
+per-key count across windows. Convection supplies checkpoint carry shapes from
+the mesh and tracer count through its operator-owned checkpoint interface.
 
 A split-sweep tape stages each state once: the palindrome center's diffusion
 records and a convection call share the slots of the sweeps that read the same

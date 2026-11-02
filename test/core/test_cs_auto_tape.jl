@@ -227,7 +227,7 @@ end
     end
 end
 
-@testset "Auto margin scales on CPU; explicit and overridden budgets bypass it" begin
+@testset "Auto CPU margin scales up to its cap; explicit budgets bypass it" begin
     GiB = 1 << 30
     @test F._auto_memory_budgets(CPU(), 6GiB, 8GiB, 0, AT.AutoTape(), 0) ==
         (6GiB - cld(8GiB, 10), 6GiB - cld(8GiB, 10))
@@ -251,6 +251,41 @@ end
     end
     # CPU query dispatch accepts wrappers with a CPU backend.
     @test T._device_tape_memory(view(P.m0[1], :, :, :)) isa Tuple{Int, Int}
+end
+
+@testset "small CPU tapes under synthetic shared-host memory pressure" begin
+    GiB = 1 << 30
+    capacity, margin = 256GiB, 2GiB
+    @test T._CPU_TAPE_MARGIN_MAX_BYTES == margin
+    @test T._tape_device_margin(CPU(), capacity) == margin
+    # Accelerator policy is independent of the shared CPU margin cap.
+    @test T._tape_device_margin(:synthetic_gpu, capacity) == cld(capacity, 10)
+    @test T._tape_device_margin(:synthetic_gpu, 8GiB) == 4GiB
+
+    P = H.problem(H.Case(; name = "shared_host_pressure", scheme = AT.UpwindScheme()))
+    replay = _auto_replay(P)
+    size = F._closed_tape_size(replay, P.nsteps)
+    bytes = F._layout_total(F._segment_layout(size, 1:P.nsteps))
+    reverse_bytes = F._reverse_budget_bytes(replay, P.nsteps, 1)
+    @test 0 < bytes < GiB
+    for (headroom, expected) in ((margin + reverse_bytes + bytes + 1, bytes + 1),
+                                  (bytes - 1, 0))
+        device, host = F._auto_memory_budgets(CPU(), headroom, capacity,
+            reverse_bytes, AT.AutoTape(), 0)
+        @test device == host == expected
+        # Feed the synthetic measurement through the public budget override
+        # to exercise real selection/reservation without live-memory races.
+        request = AT.AutoTape(; checkpoint = AT.FullCheckpoint(), budget_bytes = device)
+        F._with_tape_runtime(request) do runtime
+            if expected > 0
+                @test F._prepare_tape!(runtime, replay, P.nsteps).checkpoint isa AT.FullCheckpoint
+                @test T._holds_tape_bytes(runtime.pool, bytes)
+            else
+                @test_throws AT.TapeReservationError F._prepare_tape!(runtime, replay, P.nsteps)
+                @test runtime.pool === nothing
+            end
+        end
+    end
 end
 
 struct _BrokenReservation <: T.AbstractCSTapeStorage end
@@ -317,5 +352,98 @@ end
             binary_substeps = P.schedule.binary_substeps, window_start_air_mass = targets,
             window_end_air_mass = P.schedule.window_end_air_mass)
         @test_throws ArgumentError _auto_replay(merge(P, (; schedule)))
+    end
+end
+
+@testset "every segment matches a fresh recorder at its starting state" begin
+    # Include binary and CFL schedules, all convection families, both float
+    # types and Lin–Rood. Each range starts with the preceding production
+    # state but a fresh recorder, exactly as a head window or tail does.
+    for case in H.CORE_CASES
+        case.inputs isa H.DirectInputs || continue
+        P = H.problem(case)
+        replay = _auto_replay(P)
+        initial = F._replay_snapshot(replay)
+        try
+            F._with_tape_runtime(AT.AdjointTape()) do runtime
+                sizing = F._size_tape!(runtime, replay, P.nsteps)
+                for lo in 1:P.nsteps
+                    F._replay_restore!(replay, initial)
+                    lo > 1 && F._replay_steps!(replay, 1:(lo - 1))
+                    start = F._replay_snapshot(replay)
+                    try
+                        for hi in lo:P.nsteps
+                            F._replay_restore!(replay, start)
+                            counter = F._CSCountingRecorder(AT.StateTape(), replay.advection)
+                            F._replay_steps!(replay, lo:hi; recorder = counter)
+                            F._finish_recording!(counter)
+                            actual = Dict{Any, Int}()
+                            for layout in counter.layouts, entry in layout
+                                key = T._layout_key(entry)
+                                actual[key] = get(actual, key, 0) + 1
+                            end
+                            expected = Dict(k => v[2] for (k, v) in F._segment_counts(sizing, lo:hi))
+                            @test expected == actual
+                        end
+                    finally
+                        F._release_snapshot!(start)
+                    end
+                end
+            end
+        finally
+            F._release_snapshot!(initial)
+        end
+    end
+end
+
+@testset "resident tail exhausts its exact reservation at a reset boundary" begin
+    case = only(filter(c -> c.name == "f64_monotone_cmfmcsub_split_mass_cfl", H.CORE_CASES))
+    P = H.problem(case)
+    replay = _auto_replay(P)
+    tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(2; resident_tail = 2))
+    F._with_tape_runtime(tape) do runtime
+        run = F._begin_taped_run(replay, runtime, P.nsteps)
+        try
+            F._run_forward!(run, replay)
+            @test all(b -> b.cursor == length(b.slabs), values(runtime.tail_pool.banks))
+            @test sum(b -> b.cursor, values(runtime.tail_pool.banks)) == 61
+        finally
+            F._end_taped_run!(run)
+        end
+    end
+end
+
+@testset "convection owns checkpoint carry shape and preserves its workspace" begin
+    C = AT.Operators.Convection
+    for FT in (Float32, Float64), conv in (:tm5, :cmfmc, :cmfmc_matrix)
+        P = H.problem(H.Case(; name = "carry", FT, conv))
+        replay = _auto_replay(P)
+        # Reserve for two tracers, independently of the adjoint's one-tracer
+        # restriction, so the interface cannot hard-code a single tracer.
+        state = AT.CubedSphereState(AT.DryBasis, P.mesh, P.m0; a = P.rm0, b = P.rm0)
+        ws = replay.convection_workspace
+        before = F.operator_state(ws)
+        snap = C.convection_checkpoint_state(replay.convection, ws, state, P.mesh)
+        try
+            @test all(a -> size(a) == (P.mesh.Nc, P.mesh.Nc, 2) && eltype(a) === FT && all(iszero, a), snap.carry)
+            @test F.operator_state(ws) == before
+            F.restore_operator_state!(ws, snap)
+            current = F.operator_state(ws)
+            foreach(a -> fill!(a, FT(0.125)), current.carry)
+            F.restore_operator_state!(ws, current)
+            copied = C.convection_checkpoint_state(replay.convection, ws, state, P.mesh)
+            try
+                @test copied.carry == current.carry
+                @test all(p -> copied.carry[p] !== current.carry[p], 1:6)
+                fill!(copied.carry[1], FT(0.25))
+                @test F.operator_state(ws).carry == current.carry
+            finally
+                F._release_snapshot_state!(copied)
+                F._release_snapshot_state!(current)
+            end
+        finally
+            F._release_snapshot_state!(before)
+            F._release_snapshot_state!(snap)
+        end
     end
 end

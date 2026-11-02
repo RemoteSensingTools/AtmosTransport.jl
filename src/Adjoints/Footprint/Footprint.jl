@@ -11,7 +11,7 @@ using ...Operators.Advection: CSAdjointFV3Vertical, CSAdjointLinearScheme, CSAdj
 using ...Operators.Diffusion: DiffusionWorkspace, NoDiffusion, surface_flux_center!,
     surface_flux_coupling
 using ...Operators.Convection.CMFMC: CMFMCConvection, CMFMCWorkspace, invalidate_cmfmc_cache!
-using ...Operators.Convection: NoConvection
+using ...Operators.Convection: NoConvection, convection_checkpoint_state
 import ...MetDrivers: current_time, uses_binary_substep_contract
 using ...Architectures: CPU
 using ...State: CubedSphereFaceFluxState, CubedSphereState, DryBasis

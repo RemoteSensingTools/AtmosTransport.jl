@@ -65,10 +65,12 @@ wrap6(panels) = ntuple(p -> _PseudoDevArray(panels[p]), 6)
 
 # Its backend's chunk registrations, as the extensions make them.
 const _REGISTERED = Dict{Ptr{UInt8}, Int}()
+const _PIN_FAIL_AFTER = Ref(-1)
 struct _PseudoRegistration
     ptr::Ptr{UInt8}
 end
 function TapeMod._pin_host_chunk(::_PseudoDevArray, ptr::Ptr, nbytes::Integer)
+    length(_REGISTERED) == _PIN_FAIL_AFTER[] && throw(OutOfMemoryError())
     haskey(_REGISTERED, ptr) && error("chunk registered twice")
     _REGISTERED[Ptr{UInt8}(ptr)] = nbytes
     return _PseudoRegistration(Ptr{UInt8}(ptr))
@@ -414,4 +416,74 @@ end
             @test !ispath(dir)
         end
     end
+end
+
+@testset "bounded pinned chunks: heterogeneous slots in any order" begin
+    large = wrap6(_build_panels(:m; Nc = 5, Hp = 3, Nz = 3, FT = Float64))
+    small = wrap6(map(a -> UInt8.(mod.(round.(Int, a), 251)),
+                      _build_panels(:m; Nc = 2, Hp = 3, Nz = 2, FT = Float32)))
+    # Deliberately put small slots first in the reservation, then request
+    # every large slot first. A sequential chunk cursor strands bytes here.
+    entries = vcat(fill((small, UInt8), 7), fill((large, Float64), 4))
+    total = sum(e -> TapeMod._tape_slot_bytes(e[2], e[1]), entries)
+    target = 2 * TapeMod._tape_slot_bytes(large)
+    arena = TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(; max_bytes = total), entries;
+                                     chunk_bytes = Int(target))
+    try
+        @test length(arena.chunks) > 1
+        @test all(c -> c.capacity <= target, arena.chunks)
+        @test TapeMod._arena_bytes(arena) == total
+        @test length(_REGISTERED) == length(arena.chunks)
+        bases = [c.base for c in arena.chunks]
+        slots = Any[]
+        sources = [map(a -> _PseudoDevArray(a.data .+ eltype(a)(i)), panels)
+            for (i, panels) in enumerate(vcat(fill(large, 4), fill(small, 7)))]
+        for panels in sources
+            slot = TapeMod._stage_panels(arena, panels)
+            push!(slots, slot)
+            @test all(p -> UInt(pointer(slot.panels[p])) % 64 == 0, 1:6)
+            @test all(p -> TapeMod._tape_panels(slot, TapeMod.AirMassRead())[p].data == panels[p].data, 1:6)
+        end
+        # Later writes must not alias slots already recorded in either bank.
+        @test all(zip(slots, sources)) do (slot, panels)
+            all(p -> TapeMod._tape_panels(slot, TapeMod.TracerMassRead())[p].data == panels[p].data, 1:6)
+        end
+        @test all(b -> b.cursor == length(b.locations), values(arena.banks))
+        @test_throws AT.TapeReservationExceeded TapeMod._stage_panels(arena, small)
+        @test_throws AT.TapeReservationExceeded TapeMod._stage_panels(arena, large)
+        TapeMod._rewind_tape_pool!(arena)
+        @test_throws TapeMod.StaleTapeSlotError TapeMod._tape_panels(first(slots), TapeMod.AirMassRead())
+        # Rewind and change the interleaving; all locations stay reserved.
+        for panels in vcat(fill(small, 3), fill(large, 2), fill(small, 4), fill(large, 2))
+            TapeMod._stage_panels(arena, panels)
+        end
+        @test [c.base for c in arena.chunks] == bases
+        @test length(_REGISTERED) == length(bases)
+        @test all(b -> b.cursor == length(b.locations), values(arena.banks))
+    finally
+        TapeMod._release_tape_pool!(arena)
+    end
+    @test isempty(_REGISTERED) && isempty(arena.banks)
+    # A single slot must remain contiguous, even above the chunk target.
+    arena = TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), [(large, Float64), (small, UInt8)];
+                                     chunk_bytes = 64)
+    try
+        @test map(c -> c.capacity, arena.chunks) ==
+              [TapeMod._tape_slot_bytes(large), TapeMod._tape_slot_bytes(small)]
+        TapeMod._stage_panels(arena, small)
+        TapeMod._stage_panels(arena, large)
+    finally
+        TapeMod._release_tape_pool!(arena)
+    end
+    @test isempty(_REGISTERED)
+    # A failure registering a later chunk releases all earlier chunks.
+    _PIN_FAIL_AFTER[] = 1
+    try
+        @test_throws OutOfMemoryError TapeMod._reserve_tape_pool(
+            AT.PinnedHostCSTapeStorage(), entries; chunk_bytes = Int(target))
+        @test isempty(_REGISTERED)
+    finally
+        _PIN_FAIL_AFTER[] = -1
+    end
+    @test_throws ArgumentError TapeMod._reserve_tape_pool(AT.PinnedHostCSTapeStorage(), entries; chunk_bytes = 0)
 end

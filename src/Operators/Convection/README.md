@@ -21,6 +21,10 @@ transposes. The CUDA extension adds the Float64 collaborative depth limit.
 ## Shared helpers owned here
 
 `convection_workspace_for(op, state, grid)` owns runtime workspace construction.
+`convection_checkpoint_state(op, workspace, state, mesh)` copies checkpoint
+state with lazy column carries sized for the mesh interior and actual tracer
+count. It preserves the live workspace and existing carry values; an unused
+carry is represented by zeros. CMFMC's clamped variant keeps its empty carry.
 The storage-only helpers below are shared by both child modules. Every buffer,
 including the cell-area metrics copied from the host mesh, is allocated like
 the state's air mass, so a workspace built for device state (`with_convection`
@@ -41,7 +45,7 @@ Checkpoint snapshot methods live here and extend Operators' shared interface.
 - `operators.jl`: `NoConvection` and its identity `apply!` methods.
 - `workspace_shared.jl`: topology-aware storage allocation helpers.
 - `workspace_factory.jl`: runtime workspace factories and cell metrics.
-- `workspace_state.jl`: convection checkpoint snapshot, restore and reset.
+- `workspace_state.jl`: convection checkpoint snapshot sizing, restore and reset.
 - [CMFMC/](CMFMC/README.md): direct CMFMC and CMFMC matrix convection, adjoint.
 - [TM5/](TM5/README.md): TM5 column solve, topology kernels and transpose.
 

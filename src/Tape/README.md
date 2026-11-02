@@ -107,7 +107,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
   pools' slots (`HostCSTapeSlot`, 64-byte aligned views, `_tape_slot_bytes`)
   and their role- and shape-keyed read caches, `_bytes_per_panel_tuple`
 - [`HostTapeArena.jl`](HostTapeArena.jl) — `_PinnedHostArena`, the pool of
-  `PinnedHostCSTapeStorage`: chunks of `malloc`ed host memory reserved before recording, each registered with the backend once and reused across rewinds
+  `PinnedHostCSTapeStorage`: chunks of `malloc`ed host memory reserved before recording, each registered with the backend once and reused across rewinds;
+  type- and shape-keyed slot locations support any recording order
 - [`TapeRecords.jl`](TapeRecords.jl) — record structs pushed by the forward
   recorder
 - [`MmapTapeStorage.jl`](MmapTapeStorage.jl) — `MmapCSTapeStorage(dir)` and
@@ -193,7 +194,11 @@ contains no transport physics and no reverse-loop logic; recording lives in
   registered host wrapper), dispatching on the pool's read template (the
   source backend's array type); staging is one synchronous device→host copy
   into pinned memory, reading one synchronous host→device copy into the role's
-  cache. Chunks are reused in order after a rewind. On release the backend is
+  cache. Chunks target at most 1 GiB; an indivisible slot larger than that
+  receives its own chunk. Capacities sum to the exact aligned slot bytes,
+  with no padding between chunks. Reserved slot locations are grouped by
+  element type and panel shape, so heterogeneous recording order cannot
+  strand unused chunk tails. Rewinds reset each bank's cursor. On release the backend is
   synchronized first, then each chunk leaves the arena and is unregistered and
   freed (also on an error or interrupt part-way, never twice; an arena dropped
   without release is released by its finalizer). Recording beyond the reservation raises `TapeReservationExceeded`.
@@ -277,9 +282,20 @@ add only the backend hooks (free, synchronize, pin a chunk).
 The runtime reserves the selected pools before recording. Rewinds cannot grow a
 reserved device bank or pinned arena; mmap already reserves its extent.
 Host chunks check current host/cgroup headroom before allocation. Backend
-queries reclaim cached CUDA/AMDGPU memory first; an unknown backend raises a
+queries include reclaimable cached CUDA/AMDGPU memory; an unknown backend raises a
 typed error. Host slots use `HostCSTapeSlot{P,A}`; tapes are not persisted.
 
 # shared: _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_bytes, _layout_pooled, _device_tape_memory, _tape_device_margin, _host_tape_budget, _check_tape_schedule, StrideSearch, _host_tape_memory, _is_reservation_failure
 
 Automatic selection tries device Full, device Stride with device snapshots, device Stride with pinned-host snapshots, then mmap candidates only when `scratch_dir` is set; a resident tail uses the tape’s selected storage.
+
+The CPU budget subtracts `min(10% of host/cgroup capacity, 2 GiB)` and the
+estimated reverse-pass workspace from reclaimable-aware headroom. The cap is
+`_CPU_TAPE_MARGIN_MAX_BYTES` in `TapeReservation.jl`; small tapes can still fit
+on large shared hosts when other jobs reduce headroom. CPU tape and snapshot
+bytes share this budget. GPU device margins remain `max(10% of capacity,
+4 GiB)` and GPU pinned-host margins remain `max(10% of host/cgroup limit,
+8 GiB)`. Explicit `budget_bytes` overrides the measured device budget
+(including the shared CPU budget); explicit `AdjointTape` attempts reservation
+directly. Budget changes affect candidate selection under memory pressure;
+forward and adjoint results remain bitwise identical on one CPU thread.

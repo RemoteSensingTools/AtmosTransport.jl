@@ -24,10 +24,18 @@ struct _HostTapeChunk
     registration::Any
 end
 
+# Locations are assigned at reservation, by element type and panel shape.
+# Recording can consume the banks in any order without stranding chunk tails.
+mutable struct _ReservedHostSlots
+    locations::Vector{Tuple{Int, Int64}}
+    cursor::Int
+end
+
+const _HOST_TAPE_CHUNK_BYTES = 1 << 30
+
 mutable struct _PinnedHostArena <: _AbstractHostTapePool
     chunks::Vector{_HostTapeChunk}
-    chunk::Int               # the chunk being filled since the last rewind (0: none yet)
-    used::Int64              # bytes handed out in it
+    banks::Dict{Any, _ReservedHostSlots}
     generation::Int
     released::Bool
     read_template::Union{Nothing, AbstractArray}
@@ -62,33 +70,32 @@ function _free_host_chunk!(chunk::_HostTapeChunk)
     return nothing
 end
 
-# Take a whole slot from the reserved chunks in order.
-function _arena_take!(arena::_PinnedHostArena, nbytes::Int64)
-    arena.chunk == 0 && (arena.chunk = 1)
-    if arena.chunk <= length(arena.chunks) && arena.used + nbytes > arena.chunks[arena.chunk].capacity
-        arena.chunk += 1
-        arena.used = 0
-    end
-    arena.chunk <= length(arena.chunks) ||
+# Take the next reserved slot of this type and shape. Slots never straddle
+# chunks; a slot larger than the chunk target has a dedicated chunk.
+function _arena_take!(arena::_PinnedHostArena, key, nbytes::Int64)
+    bank = get(arena.banks, key, nothing)
+    bank === nothing &&
         throw(TapeReservationExceeded(_arena_bytes(arena), _arena_bytes(arena) + nbytes))
-    chunk = arena.chunks[arena.chunk]
-    nbytes <= chunk.capacity || throw(TapeReservationExceeded(chunk.capacity, nbytes))
-    base = chunk.base + arena.used
-    arena.used += nbytes
-    return base
+    bank.cursor < length(bank.locations) ||
+        throw(TapeReservationExceeded(length(bank.locations) * nbytes, (bank.cursor + 1) * nbytes))
+    bank.cursor += 1
+    chunk, offset = bank.locations[bank.cursor]
+    return arena.chunks[chunk].base + offset
 end
 
 function _allocate_tape_slot(arena::_PinnedHostArena, panels::NTuple{6})
     _require_open(arena)
     _register_tape_read_backend!(arena, panels)
-    base = _arena_take!(arena, _tape_slot_bytes(panels))
+    key = (eltype(first(panels)), map(size, panels))
+    base = _arena_take!(arena, key, _tape_slot_bytes(panels))
     return HostCSTapeSlot(arena, _host_views(base, panels), arena.generation)
 end
 
 function _rewind_tape_pool!(arena::_PinnedHostArena)
     _require_open(arena)
-    arena.chunk = 0
-    arena.used = 0
+    for bank in values(arena.banks)
+        bank.cursor = 0
+    end
     arena.generation += 1
     return arena
 end
@@ -102,8 +109,7 @@ function _release_tape_pool!(arena::_PinnedHostArena)
     arena.released && return nothing
     arena.released = true
     arena.generation += 1
-    arena.chunk = 0
-    arena.used = 0
+    empty!(arena.banks)
     _tape_synchronize(arena.read_template)
     failure = nothing
     while !isempty(arena.chunks)

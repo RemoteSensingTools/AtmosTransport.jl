@@ -1,6 +1,10 @@
 # Budgets and reservation mechanics; the replay-specific size model and
 # candidate search live in Adjoints.Footprint.AutoTape.
 
+# Cap AutoTape's CPU safety margin on large shared hosts so unrelated jobs
+# cannot make small tapes infeasible while GiBs of headroom remain.
+const _CPU_TAPE_MARGIN_MAX_BYTES = 2 << 30
+
 # Linux cgroup limits apply at every ancestor. MemAvailable and inactive_file
 # include cache the kernel can reclaim; it is not live tape memory.
 function _host_tape_memory(; meminfo = "/proc/meminfo", cgroup = "/proc/self/cgroup",
@@ -56,14 +60,14 @@ _device_tape_memory(a::AbstractArray) = _device_tape_memory(get_backend(a), a)
 _device_tape_memory(backend, _a) = throw(TapeReservationError(0, 0,
     "no tape memory query for backend $(typeof(backend))"))
 _device_tape_memory(::KATapeCPU, _a) = _host_tape_memory()
-_tape_device_margin(::KATapeCPU, capacity) = cld(capacity, 10)
+_tape_device_margin(::KATapeCPU, capacity) = min(cld(capacity, 10), _CPU_TAPE_MARGIN_MAX_BYTES)
 _tape_device_margin(_backend, capacity) = max(cld(capacity, 10), 4 << 30)
 _is_reservation_failure(_err) = false
 _is_reservation_failure(::Union{OutOfMemoryError, TapeReservationError}) = true
 
 # A layout entry is (source panels, element type). It retains templates only;
 # no state data is copied by sizing. Device reservations allocate all slabs
-# before recording; host reservations register one exact-size arena chunk.
+# before recording; host reservations register bounded, exact-size chunks.
 _layout_key(entry) = (entry[2], map(size, entry[1]), length(entry) == 2 || entry[3])
 _layout_pooled(entry) = length(entry) == 2 || entry[3]
 _layout_bytes((panels, T)) = Int(_tape_slot_bytes(T, panels))
@@ -86,17 +90,36 @@ function _reserve_tape_pool(storage::DeviceCSTapeStorage, layout)
     end
 end
 
-function _reserve_tape_pool(storage::PinnedHostCSTapeStorage, layout)
+function _reserve_tape_pool(storage::PinnedHostCSTapeStorage, layout;
+                            chunk_bytes::Int = _HOST_TAPE_CHUNK_BYTES)
+    chunk_bytes > 0 || throw(ArgumentError("pinned host chunk size must be positive"))
     nbytes = sum(_layout_bytes, layout; init = 0)
     budget = min(first(_host_tape_memory()), something(storage.max_bytes, typemax(Int)))
     nbytes <= budget || throw(TapeReservationError(nbytes, budget, "pinned host reservation exceeds headroom"))
-    pool = _PinnedHostArena(_HostTapeChunk[], 0, 0, 1, false, nothing,
+    pool = _PinnedHostArena(_HostTapeChunk[], Dict{Any, _ReservedHostSlots}(), 1, false, nothing,
                             Dict{CSTapeReadCacheKey, CSPanelCache}())
     finalizer(_release_tape_pool!, pool)
     try
         if !isempty(layout)
             _register_tape_read_backend!(pool, first(layout)[1])
-            _reserve_host_chunk!(pool, Int64(nbytes))
+            capacities = Int64[]
+            for entry in layout
+                bytes = _layout_bytes(entry)
+                if isempty(capacities) || capacities[end] + bytes > chunk_bytes
+                    push!(capacities, 0)
+                end
+                panels, T = entry
+                bank = get!(pool.banks, (T, map(size, panels))) do
+                    _ReservedHostSlots(Tuple{Int, Int64}[], 0)
+                end
+                push!(bank.locations, (length(capacities), capacities[end]))
+                capacities[end] += bytes
+            end
+            # Each capacity is the sum of its slots' aligned sizes. No
+            # boundary padding is charged, regardless of recording order.
+            for capacity in capacities
+                _reserve_host_chunk!(pool, capacity)
+            end
         end
         return pool
     catch
