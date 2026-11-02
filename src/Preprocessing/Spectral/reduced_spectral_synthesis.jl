@@ -101,18 +101,20 @@ function synthesize_reduced!(out::AbstractMatrix{<:Real}, spec::AbstractArray{Co
     # stay zero from the allocation.
     for m in 0:T
         F = view(coeffs, :, 1:(T - m + 1))
-        @inbounds for k in 1:Nf, n in m:T
-            c = spec[n + 1, m + 1, k]
-            F[k, n - m + 1] = real(c)
-            F[Nf + k, n - m + 1] = imag(c)
+        Threads.@threads :static for k in 1:Nf
+            @inbounds for n in m:T
+                c = spec[n + 1, m + 1, k]
+                F[k, n - m + 1] = real(c)
+                F[Nf + k, n - m + 1] = imag(c)
+            end
         end
         mul!(sums, F, legendre[m + 1])
-        @inbounds for j in 1:nr
+        Threads.@threads :static for j in 1:nr
             nlon = mesh.nlon_per_ring[j]
             m <= ring_max_wavenumber(T, nlon) || continue
             shift = m == 0 ? one(ComplexF64) : exp(im * m * (pi / nlon))
             col = half_offsets[j] + m
-            for k in 1:Nf
+            @inbounds for k in 1:Nf
                 half[k, col] = complex(sums[k, j], sums[Nf + k, j]) * shift
             end
         end
