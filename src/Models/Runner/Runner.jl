@@ -16,6 +16,7 @@ using ...SectionTimer
 using ...State
 using ...Grids
 using ...Operators
+using ...Operators.Diffusion: TM5CalcKzzCSField
 # The step plan (Operators/StepPlan): `TransportModel.step!` and
 # `DrivenSimulation` execute it; the cubed-sphere adjoint records the same plan.
 using ...Operators.StepPlans: window_clock, window_step_dt,

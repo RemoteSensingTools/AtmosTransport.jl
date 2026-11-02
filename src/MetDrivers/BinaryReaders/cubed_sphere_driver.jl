@@ -211,6 +211,11 @@ function _cs_unpadded_section_fields(w::TransportWindow)
         targets[:vdiff_qv] = v.qv
     end
     w.dkg === nothing || (targets[:dkg] = w.dkg)
+    if w.tm5_pbl !== nothing
+        for (section,name) in zip(TM5_PBL_PAYLOAD_SECTIONS,TM5_PBL_FIELD_NAMES)
+            targets[section] = getproperty(w.tm5_pbl,name)
+        end
+    end
     return targets
 end
 
@@ -561,5 +566,6 @@ function load_transport_window(
                            convection,
                            surface = raw.surface,
                            vdiff = raw.vdiff,
-                           dkg = raw.dkg)
+                           dkg = raw.dkg,
+                           tm5_pbl = raw.tm5_pbl)
 end

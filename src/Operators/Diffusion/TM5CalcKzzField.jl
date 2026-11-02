@@ -33,17 +33,25 @@ Adapt.@adapt_structure TM5RGMetrics
 Adapt.@adapt_structure TM5CalcKzzField
 
 
-function TM5CalcKzzField(data::AbstractArray{FT,N}, metrics::Union{TM5LLMetrics,TM5RGMetrics}, vertical) where {FT,N}
+# Scratch is shared by independent column chunks, including all six CS panels.
+function _tm5_column_scratch(::Type{FT}, nc::Int, L::Int, chunk_columns::Int) where FT
+    chunk_columns > 0 || throw(ArgumentError("TM5 chunk_columns must be positive"))
+    n = min(nc, chunk_columns)
+    centres = (;p=zeros(FT,n,L+1),t=zeros(FT,n,L),q=zeros(FT,n,L),
+        mass=zeros(FT,n,L),u=zeros(FT,n,L),v=zeros(FT,n,L),D=zeros(FT,n,L))
+    out = (;g=zeros(FT,n,L+1),pf=zeros(FT,n,L),theta=zeros(FT,n,L),theta_v=zeros(FT,n,L),
+        z=zeros(FT,n,L),ri=zeros(FT,n,L-1),shear2=zeros(FT,n,L-1),
+        k_free=zeros(FT,n,L-1),kvh=zeros(FT,n,L-1))
+    return (;centres,out,guarded=zeros(Int,n))
+end
+
+function TM5CalcKzzField(data::AbstractArray{FT,N}, metrics::Union{TM5LLMetrics,TM5RGMetrics}, vertical;
+                         chunk_columns::Int=65_536) where {FT,N}
     L = size(data,N)
     L >= 2 || throw(ArgumentError("TM5 Calc_Kzz needs at least two layers"))
     nc = length(metrics.area)
     prod(size(data)[1:N-1]) == nc || throw(DimensionMismatch("TM5 cache does not match metrics"))
-    centres = (;p=zeros(FT,nc,L+1),t=zeros(FT,nc,L),q=zeros(FT,nc,L),
-        mass=zeros(FT,nc,L),u=zeros(FT,nc,L),v=zeros(FT,nc,L),D=zeros(FT,nc,L))
-    out = (;g=zeros(FT,nc,L+1),pf=zeros(FT,nc,L),theta=zeros(FT,nc,L),theta_v=zeros(FT,nc,L),
-        z=zeros(FT,nc,L),ri=zeros(FT,nc,L-1),shear2=zeros(FT,nc,L-1),
-        k_free=zeros(FT,nc,L-1),kvh=zeros(FT,nc,L-1))
-    scratch = (;centres,out,guarded=zeros(Int,nc))
+    scratch = _tm5_column_scratch(FT,nc,L,chunk_columns)
     lmax = pbl_layer_count(vertical.A,vertical.B,TM5_PBL_CUTOFF_PRESSURE,TM5_PBL_REFERENCE_PRESSURE)
     params = TM5BLDiffParameters(FT;lmax)
     return TM5CalcKzzField{FT,N,typeof(data),typeof(scratch),typeof(params),typeof(metrics)}(
@@ -72,41 +80,76 @@ end
 @inline _tm5_pressure_mass(::DryBasis,m,q) = m/(one(q)-q)
 @inline _tm5_pressure_mass(::MoistBasis,m,_q) = m
 
-@kernel function _tm5_refresh_kernel!(data, centres, out, guards,
-                                      @Const(inputs),@Const(mass),fluxes,metrics,params,
-                                      p_top,seconds,basis)
-    c = @index(Global,Linear)
-    FT = eltype(data)
-    L = size(data,2)
+struct TM5FlatLayout end
+@inline _tm5_mass(::TM5FlatLayout, mass, c, k) = @inbounds mass[c,k]
+@inline _tm5_input(::TM5FlatLayout, input, c, k) = @inbounds input[c,k]
+@inline _tm5_input(::TM5FlatLayout, input, c) = @inbounds input[c]
+@inline _tm5_area(metrics::Union{TM5LLMetrics,TM5RGMetrics}, c) = @inbounds metrics.area[c]
+@inline _tm5_store!(::TM5FlatLayout, data, c, k, value) = (@inbounds data[c,k] = value)
+
+@inline function _tm5_refresh_column!(data, centres, out, guards, inputs, mass,
+                                     fluxes, metrics, params, p_top, seconds, basis,
+                                     layout, c, s, L)
+    FT = typeof(p_top)
     @inbounds begin
-        centres.p[c,L+1] = p_top
+        centres.p[s,L+1] = p_top
         # Top-down pressure: TM5's plain sum in Float64, Kahan-compensated otherwise.
         p_sum, p_comp = p_top, zero(FT)
         for k in 1:L
             l = L-k+1
-            q = inputs.q[c,k]
-            m = mass[c,k]
-            centres.t[c,l] = inputs.t[c,k]
-            centres.q[c,l] = q
-            centres.mass[c,l] = m
-            p_sum, p_comp = _kahan_add(p_sum, p_comp, params.constants.gravity * _tm5_pressure_mass(basis,m,q) / metrics.area[c])
-            centres.p[c,l] = p_sum
+            q = _tm5_input(layout,inputs.q,c,k)
+            m = _tm5_mass(layout,mass,c,k)
+            centres.t[s,l] = _tm5_input(layout,inputs.t,c,k)
+            centres.q[s,l] = q
+            centres.mass[s,l] = m
+            p_sum, p_comp = _kahan_add(p_sum, p_comp, params.constants.gravity * _tm5_pressure_mass(basis,m,q) / _tm5_area(metrics,c))
+            centres.p[s,l] = p_sum
             u,v = _tm5_window_winds(metrics,fluxes,c,k,m,seconds)
-            centres.u[c,l],centres.v[c,l] = u,v
+            centres.u[s,l],centres.v[s,l] = u,v
         end
-        surface = (;lsm=inputs.lsm[c],sr=inputs.sr[c],fsr=inputs.fsr[c],u10=inputs.u10[c],
-            v10=inputs.v10[c],ewss=inputs.ewss[c],nsss=inputs.nsss[c],sshf=inputs.sshf[c],
-            slhf=inputs.slhf[c],oro=inputs.oro[c])
-        col = (;p=view(centres.p,c,:),p_geometry=view(centres.p,c,:),t=view(centres.t,c,:),
-            q=view(centres.q,c,:),mass=view(centres.mass,c,:),u=view(centres.u,c,:),v=view(centres.v,c,:),surface)
-        column_out = map(a->view(a,c,:),out)
-        result = tm5_calc_kzz_column!(view(centres.D,c,:),column_out,col,params)
-        guards[c] = result.guarded_active
+        surface = (;lsm=_tm5_input(layout,inputs.lsm,c),sr=_tm5_input(layout,inputs.sr,c),fsr=_tm5_input(layout,inputs.fsr,c),u10=_tm5_input(layout,inputs.u10,c),
+            v10=_tm5_input(layout,inputs.v10,c),ewss=_tm5_input(layout,inputs.ewss,c),nsss=_tm5_input(layout,inputs.nsss,c),sshf=_tm5_input(layout,inputs.sshf,c),
+            slhf=_tm5_input(layout,inputs.slhf,c),oro=_tm5_input(layout,inputs.oro,c))
+        col = (;p=view(centres.p,s,:),p_geometry=view(centres.p,s,:),t=view(centres.t,s,:),
+            q=view(centres.q,s,:),mass=view(centres.mass,s,:),u=view(centres.u,s,:),v=view(centres.v,s,:),surface)
+        column_out = map(a->view(a,s,:),out)
+        result = tm5_calc_kzz_column!(view(centres.D,s,:),column_out,col,params)
+        guards[s] = result.guarded_active
         for k in 1:L-1
-            data[c,k] = centres.D[c,L-k]
+            _tm5_store!(layout,data,c,k,centres.D[s,L-k])
         end
-        data[c,L] = zero(FT)
+        _tm5_store!(layout,data,c,L,zero(FT))
     end
+end
+
+@kernel function _tm5_refresh_kernel!(data, centres, out, guards,
+                                      @Const(inputs),@Const(mass),fluxes,metrics,params,
+                                      p_top,seconds,basis,layout,offset,L)
+    s = @index(Global,Linear)
+    _tm5_refresh_column!(data,centres,out,guards,inputs,mass,fluxes,metrics,params,
+                         p_top,seconds,basis,layout,offset+s,s,L)
+end
+
+function _tm5_refresh_chunks!(field, data, inputs, mass, fluxes, vertical, seconds, basis,
+                              layout, nc, L)
+    FT = typeof(field.params.constants.gravity)
+    s = field.scratch
+    s === nothing && throw(ArgumentError("cannot refresh a frozen TM5 Calc_Kzz field"))
+    backend = get_backend(s.centres.p)
+    chunk = length(s.guarded)
+    guarded = 0
+    for offset in 0:chunk:nc-1
+        n = min(chunk,nc-offset)
+        launch!(_tm5_refresh_kernel!,backend,256,n,data,s.centres,s.out,s.guarded,
+            inputs,mass,fluxes,field.metrics,field.params,FT(first(vertical.A)),FT(seconds),
+            basis,layout,offset,L)
+        guarded += sum(view(s.guarded,1:n))
+    end
+    if guarded > 0 && !field.guard_warned[]
+        @warn "TM5 Calc_Kzz kept BL K at non-finite active entrainment interfaces (further warnings suppressed for this run)" guarded
+        field.guard_warned[] = true
+    end
+    return field
 end
 
 """
@@ -126,14 +169,6 @@ function refresh_tm5_calc_kzz!(field::TM5CalcKzzField{FT,N}, inputs, mass, fluxe
     flat = map(inputs) do a
         ndims(a)==N ? reshape(a,nc,L) : reshape(a,nc)
     end
-    s = field.scratch
-    backend = get_backend(field.dkg)
-    launch!(_tm5_refresh_kernel!,backend,256,nc,reshape(field.dkg,nc,L),s.centres,s.out,s.guarded,
-        flat,reshape(mass,nc,L),fluxes,field.metrics,field.params,FT(first(vertical.A)),FT(seconds),basis)
-    guarded = sum(s.guarded)
-    if guarded > 0 && !field.guard_warned[]
-        @warn "TM5 Calc_Kzz kept BL K at non-finite active entrainment interfaces (further warnings suppressed for this run)" guarded
-        field.guard_warned[] = true
-    end
-    return field
+    return _tm5_refresh_chunks!(field,reshape(field.dkg,nc,L),flat,reshape(mass,nc,L),
+        fluxes,vertical,seconds,basis,TM5FlatLayout(),nc,L)
 end

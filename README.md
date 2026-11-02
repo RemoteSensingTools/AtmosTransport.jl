@@ -255,7 +255,7 @@ prognostic-moment scheme is postponed (see
 | `DerivedKzField` (Beljaars–Viterbo) | ✅ | Default for ERA5 runs |
 | `WindowPBLKzField` | ✅ | PBL-aware variant |
 | Local Holtslag–Boville Kz | ✅ | Computed from current meteorology |
-| `TM5CalcKzzField` (live Calc_Kzz) | 🟡 | LL/RG runtime, optional v5 T/q and surface inputs; Float64 CPU column parity, Float32 CPU tests; CS/adjoint deferred ([theory](docs/src/theory/tm5_boundary_layer.md)) |
+| `TM5CalcKzzField` / `TM5CalcKzzCSField` (live Calc_Kzz) | 🟡 | LL/RG/CS runtime, optional v5 T/q and surface inputs; Float64 column parity, Float32 CPU tests; frozen-D CS tracer adjoint ([theory](docs/src/theory/tm5_boundary_layer.md)) |
 | Exact TM5 interface exchange (`:dkg`) | ✅ | Dry-air kg s⁻¹ payload in binary v4 |
 | `DiffusiveSurfaceFluxBoundary` | 🟡 | LL/CS `S(dt) → V(dt)` placement; RG supports midpoint splitting only |
 

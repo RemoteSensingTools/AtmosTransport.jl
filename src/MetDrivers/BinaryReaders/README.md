@@ -63,3 +63,7 @@ arrays in `TransportWindow.tm5_pbl`, preserving on-disk precision conversion.
 
 Replay panel scaling uses Architectures.scale_arrays!, retaining the existing
 per-panel broadcast order.
+
+CS decodes `tm5_pbl` as a NamedTuple of six interior panel arrays per field.
+In-place refill and raw staging enumerate all twelve as unpadded targets,
+so each met-window handoff refreshes the entire group.

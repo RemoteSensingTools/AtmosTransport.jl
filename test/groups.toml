@@ -210,6 +210,7 @@ files = [
     "core/test_tm5_bldiff.jl",
     "core/test_tm5_calc_kzz.jl",
     "core/test_tm5_pbl_runtime.jl",
+    "core/test_tm5_pbl_cs.jl",
 ]
 paths = [
     "src/Operators/Diffusion/**",

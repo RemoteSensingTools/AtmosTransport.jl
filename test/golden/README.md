@@ -306,3 +306,9 @@ Combined TM5 spectral fluxes and live Calc_Kzz inputs use
 CPU synthesis and tropo34a levels. Record these cases with
 `record <ref> --cases=pre_ll72_tm5_tm5pbl,pre_o24_tm5_tm5pbl,run_ll72_tm5_tm5pbl_cpu_f64 --threads=1`,
 then verify them with `check <ref> <new>` using the same case selection and thread count.
+
+CS live Calc_Kzz cases: `pre_c24_tm5pbl`, `run_c24_tm5pbl_cpu_f64`,
+`run_c24_tm5pbl_boundary_cpu_f64` and `run_c24_tm5pbl_gpu_f32`. Preprocessing
+uses the frozen spectral/thermo/surface inputs and tropo34a; runtime uses PPM.
+The GPU case is a definition only in CPU-only validation sessions. Reference
+recording is separate from implementation.

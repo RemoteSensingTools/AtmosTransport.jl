@@ -115,3 +115,32 @@ function _apply_cs_diffusion_adjoint!(lambda_panels, panels_m,
         "CS adjoint diffusion requires `ImplicitVerticalDiffusion` with a " *
         "`CubedSphereField` Kz field; got $(typeof(op.kz_field))"))
 end
+
+function _validate_cs_diffusion_kz_for_adjoint(
+    op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField}) where FT
+    f = op.kz_field
+    for d in f.dkg
+        all(x->isfinite(x) && x>=zero(FT),d) || throw(ArgumentError(
+            "TM5 Calc_Kzz adjoint requires finite nonnegative D"))
+        L = size(d,3)
+        # Top-down: interfaces above the bottom lmax layers and terminal plane.
+        all(iszero,view(d,:,:,1:max(0,L-f.params.lmax))) &&
+            all(iszero,view(d,:,:,L)) || throw(ArgumentError(
+            "TM5 Calc_Kzz adjoint requires zero D above lmax and in the last plane"))
+    end
+    return nothing
+end
+
+function _apply_cs_diffusion_adjoint!(lambda_panels::NTuple{6,A},panels_m::NTuple{6},
+    op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},workspace,dt,meteo,
+    mesh::CubedSphereMesh) where {FT,A<:AbstractArray{FT,3}}
+    scratch,_ = check_diffusion_workspace(workspace)
+    for p in 1:6
+        check_diffusion_workspace(workspace,lambda_panels[p],panels_m[p];panel=p,columns=(mesh.Nc,mesh.Nc))
+        kernel! = _vertical_diffusion_cs_single_direct_dkg_adjoint_kernel!(
+            get_backend(lambda_panels[p]),(8,8))
+        kernel!(lambda_panels[p],panels_m[p],op.kz_field.dkg[p],scratch[p],FT(dt),
+                size(lambda_panels[p],3),mesh.Hp;ndrange=(mesh.Nc,mesh.Nc))
+    end
+    return nothing
+end

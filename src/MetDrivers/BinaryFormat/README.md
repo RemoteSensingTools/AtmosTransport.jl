@@ -85,7 +85,7 @@ Tests: binary inspector, format versions 4 and 5 (`test_binary_format_v5.jl`),
 persistence hardening, atomic files, binary planet radius, optional CS sections,
 and preprocessing writer/driver contracts.
 
-The optional v5 `tm5_pbl` group is implemented for LL/RG. The exported
+The optional v5 `tm5_pbl` group is implemented for LL/RG/CS. The exported
 `TM5_PBL_FIELD_NAMES` and `TM5_PBL_PAYLOAD_SECTIONS` define its ordered
 T/q and ten surface primitives. `validate_tm5_pbl_inputs` checks values and shapes
 for generic writers and the spectral LL writer. The contract rejects partial groups and v4
@@ -94,3 +94,9 @@ use; `TransportWindow.tm5_pbl` and its Adapt rule carry the group to runtime.
 ConfigChecks.parse_choice owns fidelity, surface-pressure basis and disk-type
 choice parsing. Disk types remain case sensitive; other tags preserve their
 previous case-insensitive String/Symbol policy. Header layout is unchanged.
+
+CS `include_tm5_pbl=true` requires dry mass and a v5 construction identity.
+Its group follows the optional CS sections; validation checks every panel.
+`RegriddedTransportBinaryHeader` records `regridded_transport_binary` with
+`source_flux_construction` when LL→CS passes through live Calc_Kzz inputs.
+Default writers retain their v4 bytes and omit the optional metadata.

@@ -2,7 +2,7 @@ _supports_pbl_diffusion(r::TransportBinaryReader) =
     all(s -> s in r.header.payload_sections,TM5_PBL_PAYLOAD_SECTIONS)
 _supports_pbl_diffusion(
     reader::TransportBinaryReader{<:Any, <:Any, CubedSphereBinaryGeometry},
-) = has_surface(reader)
+) = has_surface(reader) || all(s in reader.header.payload_sections for s in TM5_PBL_PAYLOAD_SECTIONS)
 
 _supports_gchp_nonlocal_vdiff(reader::TransportBinaryReader) =
     _supports_gchp_vdiff(reader) && has_pbl_eflux(reader)

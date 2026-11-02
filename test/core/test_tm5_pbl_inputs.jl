@@ -137,6 +137,38 @@ end
             Pre.build_target_geometry(Dict("type"=>"synthetic_reduced_gaussian","gaussian_number"=>2,"nlon_mode"=>"octahedral"),Float64))
         BF=AtmosTransport.MetDrivers.BinaryFormat
         MD=AtmosTransport.MetDrivers
+        # Exercise the actual CS spectral day writer, including its deferred
+        # payload ownership and next-day endpoint. T/q vary by layer; surface
+        # u10 varies by hour, so a stale or off-by-one group cannot pass.
+        for FT in (Float64,Float32)
+            cs=Pre.build_target_geometry(Dict("type"=>"cubed_sphere","Nc"=>2,
+                "staging_nlon"=>4,"staging_nlat"=>3,"regridder_cache_dir"=>joinpath(dir,"cs_weights")),Float64)
+            settings=Pre.ERA5SpectralSettings((;column_balance_weights=:mass,output_float_type=FT,
+                spectral_dir=spectral,spectral_cache_dir=cache,T_target=0,min_dp=0.,include_qv=false,
+                mass_basis=:dry,mass_fix_enable=false,target_ps_dry_pa=98325.,qv_global_climatology=0.,
+                thermo_dir=dir,surface_dir=dir,half_dt=450.,met_interval=3600.,dt=900.,
+                out_dir=joinpath(dir,"cs$(FT)"),include_surface=false,include_tm5_pbl=true,
+                qv_preload=false,qv_preload_max_bytes=0,face_lengths=:edge,face_fluxes=:vector,
+                face_interpolation=:fv3,wind_regrid=:cartesian,flux_time_sampling=:window_mean))
+            path=Pre.process_day(date,cs,settings,vertical;next_day_hour0=next)
+            driver=MD.TransportBinaryDriver(path;FT)
+            try
+                @test driver.reader.header.flux_construction isa BF.PointSampledSpectralFluxesHeader
+                for win in (1,2,24)
+                    window=MD.load_transport_window(driver,win)
+                    @test all(a->all(x->isapprox(x,6+win-.5;rtol=1e-6),a),window.tm5_pbl.u10)
+                    expected=LL.load_tm5_pbl_target_window(date,win,settings,vertical,
+                        reduce(vcat,map(vec,window.surface_pressure)),cs,(24,2))
+                    for name in BF.TM5_PBL_FIELD_NAMES
+                        actual=getproperty(window.tm5_pbl,name)
+                        flattened=name in (:t,:q) ? vcat(map(a->reshape(a,4,2),actual)...) : reduce(vcat,map(vec,actual))
+                        @test flattened ≈ getproperty(expected,name) rtol=8eps(FT)
+                    end
+                end
+            finally
+                close(driver.reader)
+            end
+        end
         for (i,grid) in enumerate(grids), FT in (Float64,Float32)
             drivers=[]
             try
@@ -198,6 +230,37 @@ end
                     @test all(x->isapprox(x,6+win-.5;rtol=1e-6),combined.u10)
                     @test all(x->isapprox(x,-25;rtol=1e-6),combined.sshf)
                 end
+                if grid isa Pre.LatLonTargetGeometry
+                    cs=Pre.build_target_geometry(Dict("type"=>"cubed_sphere","Nc"=>2,
+                        "regridder_cache_dir"=>joinpath(dir,"regrid_weights")),FT)
+                    remapped=Pre.regrid_ll_binary_to_cs(drivers[1].reader.path,cs,joinpath(dir,"regrid$(FT).bin");FT)
+                    reader=MD.TransportBinaryReader(remapped;FT)
+                    try
+                        @test reader.header.flux_construction isa BF.RegriddedTransportBinaryHeader
+                        @test reader.header.flux_construction.source_flux_construction=="point_sampled_spectral"
+                        raw=MD.load_window!(reader,2)
+                        @test all(a->all(x->isapprox(x,7.5;rtol=1e-6),a),raw.tm5_pbl.u10)
+                        @test all(a->all(isfinite,a),raw.tm5_pbl.t)
+                        # Independent intensive-density formulation of the
+                        # moist-mass mean (no production extensive adapter).
+                        source=MD.load_transport_window(drivers[1],2)
+                        R=AtmosTransport.Regridding
+                        r=R.build_regridder(MD.driver_grid(drivers[1]).horizontal,cs.mesh)
+                        q=reshape(Float64.(source.tm5_pbl.q),:,2)
+                        density=reshape(Float64.(source.air_mass),:,2)./(1 .- q)./r.src_areas
+                        denominator=zeros(length(r.dst_areas),2)
+                        R.apply_regridder!(denominator,r,density)
+                        for name in (:t,:q)
+                            numerator=similar(denominator)
+                            intensive=reshape(Float64.(getproperty(source.tm5_pbl,name)),:,2)
+                            R.apply_regridder!(numerator,r,intensive.*density)
+                            actual=vcat(map(a->reshape(a,4,2),getproperty(raw.tm5_pbl,name))...)
+                            @test actual ≈ numerator./denominator rtol=8eps(FT)
+                        end
+                    finally
+                        close(reader)
+                    end
+                end
             finally
                 foreach(d->close(d.reader),drivers)
             end
@@ -235,7 +298,8 @@ end
         settings=Pre.ERA5SpectralSettings((;output_float_type=Float64,met_interval=3600.,thermo_dir=dir,surface_dir=dir))
         vertical=(;Nz_native=2,Nz=2,level_range=1:2,ab=(;dA=[10000.,90000.],dB=[0.,0.]),merge_map=[1,2])
         for grid in (Pre.build_target_geometry(Dict("type"=>"latlon","nlon"=>12,"nlat"=>7),Float64),
-            Pre.build_target_geometry(Dict("type"=>"synthetic_reduced_gaussian","gaussian_number"=>2,"nlon_mode"=>"octahedral"),Float64))
+            Pre.build_target_geometry(Dict("type"=>"synthetic_reduced_gaussian","gaussian_number"=>2,"nlon_mode"=>"octahedral"),Float64),
+            Pre.build_target_geometry(Dict("type"=>"cubed_sphere","Nc"=>4,"regridder_cache_dir"=>joinpath(dir,"weights")),Float64))
             lons,lats=LL.tm5_target_coordinates(grid)
             shape=grid isa Pre.LatLonTargetGeometry ? (12,7,2) : (ncells(grid.mesh),2)
             cache=LL.TM5PBLInputCache()
@@ -277,6 +341,90 @@ end
             enabled=Pre.ERA5SpectralSettings((;include_tm5_pbl=true,thermo_dir=dir,met_interval=3600.,level_range=1:2))
             @test_throws r"target_vertical" Pre.validate_tm5_pbl_target(grid,enabled,merge(vertical,(;merge_map=Int[])))
             @test_throws r"at least two" Pre.validate_tm5_pbl_target(grid,enabled,merge(vertical,(;Nz=1,merge_map=[1,1])))
+        end
+    end
+end
+
+@testset "Float32 LL to CS partial all-land surface means" begin
+    mktempdir() do dir
+        MD=AtmosTransport.MetDrivers
+        R=AtmosTransport.Regridding
+        CS=Pre.CubedSphereTarget
+        nx,ny,nz,n=720,360,2,24
+        mesh=LatLonMesh(;Nx=nx,Ny=ny)
+        vc=HybridSigmaPressure([0.,50000.,100000.],zeros(3))
+        grid=AtmosGrid(mesh,vc,CPU())
+        input=LL.tm5_pbl_sample(Float32,(nx,ny,nz))
+        # Both pure-land and pure-sea target cells, plus a fractional coastline.
+        input.lsm[17:nx÷2+16,:] .= 1
+        input.q .= .005
+        input.t .= 280
+        flux=allocate_face_fluxes(mesh,nz;FT=Float32,basis=DryBasis)
+        for a in (flux.am,flux.bm,flux.cm)
+            fill!(a,0)
+        end
+        w=(;m=ones(Float32,nx,ny,nz),ps=fill(1f5,nx,ny),
+            am=flux.am,bm=flux.bm,cm=flux.cm,tm5_pbl=input)
+        path=joinpath(dir,"source.bin")
+        MD.write_transport_binary(path,grid,[w];mass_basis=:dry,source_flux_sampling=:window_start_endpoint,
+            surface_pressure_basis=TotalSurfacePressure(),
+            flux_construction=MD.BinaryFormat.PointSampledSpectralFluxesHeader())
+        reader=MD.TransportBinaryReader(path;FT=Float32)
+        try
+            cs=Pre.build_target_geometry(Dict("type"=>"cubed_sphere","Nc"=>n),Float64)
+            r=R.build_regridder(mesh,cs.mesh)
+            ws=CS.allocate_cs_preprocess_workspace(n,nx,ny,nz,nx*ny,6n*n,Float32)
+            out=CS._regrid_tm5_pbl_to_cs(reader,1,r,ws,n,Float32)
+            lsm=reduce(vcat,map(vec,out.lsm))
+            @test eltype(lsm)==Float32
+            @test all(x->0<=x<=1,lsm)
+            @test count(==(1),lsm)>length(lsm)÷4
+            @test any(==(0),lsm) && any(x->0<x<1,lsm)
+            @test all(p->MD.BinaryFormat.validate_tm5_pbl_inputs(map(a->a[p],out),(n,n,nz),(n,n)) === nothing,1:6)
+        finally
+            close(reader)
+        end
+    end
+end
+
+@testset "Spectral to CS panel-major nonuniform surface ordering" begin
+    mktempdir() do dir
+        # Smooth global field with independent longitude and latitude variation.
+        # Cell-area means approach this analytic centre value at second order.
+        f(l,p)=cosd(p)*(2+sind(l))+.5sind(p)
+        g(l,p)=cosd(p)*cosd(l)+.3sind(p)
+        mesh=LatLonMesh(;Nx=360,Ny=180)
+        NCDataset(joinpath(dir,"era5_surface_20211201.nc"),"c") do ds
+            defVar(ds,"longitude",mesh.λᶜ,("longitude",))
+            defVar(ds,"latitude",mesh.φᶜ,("latitude",))
+            defVar(ds,"time",0:23,("time",))
+            for (name,value,units) in (("lsm",.5,"1"),("fsr",.1,"m"),
+                    ("u10",0.,"m s-1"),("v10",1.,"m s-1"),("ewss",.1,"N m-2"),
+                    ("nsss",.2,"N m-2"),("sshf",0.,"W m-2"),("slhf",-10.,"W m-2"),("z",0.,"m2 s-2"))
+                a=[name=="u10" ? f(l,p) : name=="sshf" ? -20+3g(l,p) : value
+                    for l in mesh.λᶜ,p in mesh.φᶜ,h in 1:24]
+                defVar(ds,name,a,("longitude","latitude","time");attrib=Dict("units"=>units))
+            end
+        end
+        write_pbl_thermo(joinpath(dir,"era5_thermo_ml_20211201.nc"))
+        settings=Pre.ERA5SpectralSettings((;output_float_type=Float64,
+            met_interval=3600.,thermo_dir=dir,surface_dir=dir))
+        vertical=(;Nz_native=2,Nz=2,level_range=1:2,
+            ab=(;dA=[10000.,90000.],dB=[0.,0.]),merge_map=[1,2])
+        for convention in ("gnomonic","geos_native")
+            n=8
+            cs=Pre.build_target_geometry(Dict("type"=>"cubed_sphere","Nc"=>n,
+                "panel_convention"=>convention,"regridder_cache_dir"=>dir),Float64)
+            means=LL.load_tm5_pbl_target_window(Date(2021,12,1),1,settings,
+                vertical,fill(1e5,6n*n),cs,(6n*n,2))
+            # Pin the spectral writer's flattened panel order independently:
+            # panel, then j, then i, with Julia i-fast storage on each panel.
+            expected=reduce(vcat,[vec(f.(AtmosTransport.Grids.panel_cell_center_lonlat(cs.mesh,p)...)) for p in 1:6])
+            @test maximum(abs.(means.u10.-expected)) < 2/n^2
+            expected_g=reduce(vcat,[vec(g.(AtmosTransport.Grids.panel_cell_center_lonlat(cs.mesh,p)...)) for p in 1:6])
+            @test maximum(abs.(means.sshf.-(-20 .+ 3expected_g))) < 6/n^2
+            lons,lats=LL.tm5_target_coordinates(cs)
+            @test f.(lons,lats)==expected
         end
     end
 end

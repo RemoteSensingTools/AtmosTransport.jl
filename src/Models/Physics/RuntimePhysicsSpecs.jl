@@ -635,19 +635,36 @@ export AbstractDiffusionSpec, NoDiffusionSpec, ConstantDiffusionSpec,
 export convection_spec, advection_spec, chemistry_spec, diffusion_spec, materialize
 
 function materialize(s::TM5CalcKzzDiffusionSpec,
-                     style::Union{LatLonRuntimeRecipeStyle,ReducedGaussianRuntimeRecipeStyle},
+                     style::Union{LatLonRuntimeRecipeStyle,ReducedGaussianRuntimeRecipeStyle,CubedSphereRuntimeRecipeStyle},
                      ::Type{FT},context) where FT
     reader = _tm5_pbl_reader(context)
     all(s -> s in reader.header.payload_sections, TM5_PBL_PAYLOAD_SECTIONS) || throw(ArgumentError(
         "[diffusion] kind=tm5_calc_kzz requires the complete v5 tm5_pbl group; regenerate with [preprocessing] include_tm5_pbl=true"))
     grid = _tm5_pbl_grid(context,FT)
     shape = section_shape(reader.header,:m)
-    field = TM5CalcKzzField(zeros(FT,shape),_tm5_metrics(grid.horizontal,FT),grid.vertical)
+    field = _tm5_live_field(grid,FT,shape)
     return ImplicitVerticalDiffusion(;kz_field=field,
         surface_flux_coupling=_diffusion_surface_coupling(s.surface_flux_boundary,style))
 end
-materialize(::TM5CalcKzzDiffusionSpec,::CubedSphereRuntimeRecipeStyle,::Type{FT},context) where FT =
-    throw(ArgumentError("tm5_calc_kzz cubed-sphere support is deferred to TM5-PBL-2"))
+_tm5_live_field(grid::AtmosGrid{<:Union{LatLonMesh,ReducedGaussianMesh}},::Type{FT},shape) where FT =
+    TM5CalcKzzField(zeros(FT,shape),_tm5_metrics(grid.horizontal,FT),grid.vertical)
+function _tm5_live_field(grid::AtmosGrid{<:CubedSphereMesh},::Type{FT},shape) where FT
+    return TM5CalcKzzCSField(ntuple(_->zeros(FT,shape),6),
+                            _tm5_metrics(grid.horizontal,FT),grid.vertical)
+end
+
+function _tm5_metrics(mesh::CubedSphereMesh,::Type{FT}) where FT
+    # Evaluate geometry in Float64, then round once to working precision.
+    host = CubedSphereMesh(;Nc=mesh.Nc,Hp=mesh.Hp,FT=Float64,
+                           definition=cs_definition(mesh),radius=Float64(mesh.radius))
+    lx,ly = cs_face_edge_lengths(host)
+    basis = ntuple(6) do p
+        xe,xn,ye,yn = panel_cell_local_tangent_basis(host,p)
+        cosine = xe.*ye .+ xn.*yn
+        (FT.(cosine),FT.(sqrt.(1 .- cosine.^2)))
+    end
+    return TM5CSMetrics(FT.(host.cell_areas),FT.(lx),FT.(ly),basis,mesh.Hp)
+end
 export TM5CalcKzzDiffusionSpec
 
 function _tm5_metrics(mesh::LatLonMesh, ::Type{FT}) where FT

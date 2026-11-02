@@ -59,3 +59,6 @@ pressure. Merged T/q can differ between constructions beyond rounding,
 consistent with each binary's hybrid layers.
 The pending PBL group travels with its one-slot storage until the next
 completed window supplies the flux deltas; logical window indices remain distinct.
+
+The CubedSphere target reuses the PBL input assembler with a panel-major
+coordinate/output adapter and the shared CS conservative surface means.

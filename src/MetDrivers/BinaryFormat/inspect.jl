@@ -139,6 +139,9 @@ function print_capability_rows(io::IO, caps)
             println(io, "  ", key, " = ", value)
         end
     end
+    if all(s in caps.payload_sections for s in TM5_PBL_PAYLOAD_SECTIONS)
+        println(io,"  tm5_pbl          = tm5_calc_kzz_inputs_v1 (live diffusion)")
+    end
     println(io, "  grid_type        = ", caps.grid_type)
     println(io, "  format_version   = ", caps.format_version)
     println(io, "  flux_construction = ", flux_construction_summary(caps.flux_construction))

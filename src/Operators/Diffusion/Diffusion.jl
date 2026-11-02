@@ -52,7 +52,7 @@ export fill_dz_hydrostatic_constT_staged!, fill_dz_hydrostatic_virtualT_staged!
 export recover_total_surface_pressure_staged!
 export check_diffusion_workspace, preflight_diffusion
 
-export TM5CalcKzzField, TM5BLDiffParameters, refresh_tm5_calc_kzz!, tm5_calc_kzz_column!
+export TM5CalcKzzField, TM5CalcKzzCSField, TM5BLDiffParameters, refresh_tm5_calc_kzz!, tm5_calc_kzz_column!
 export refresh_gchp_nonlocal_pbl!
 export WindowPBLKzField, LocalHoltslagBovilleKzField, PBLPhysicsParameters
 export refresh_pbl_kz_cache!, refresh_local_holtslag_boville_kz_cache!
@@ -63,6 +63,7 @@ include("LocalHoltslagBovilleKzField.jl")
 include("window_kz_cache.jl")
 include("tm5_calc_kzz.jl")
 include("TM5CalcKzzField.jl")
+include("TM5CalcKzzCSField.jl")
 include("gchp_nonlocal_pbl.jl")
 
 include("diffusion_kernels.jl")

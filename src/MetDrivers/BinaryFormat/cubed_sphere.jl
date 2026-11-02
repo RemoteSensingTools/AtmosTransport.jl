@@ -14,6 +14,9 @@ fields), TM5 convection (`window.tm5_fields`), and GCHP VDIFF
 (`window.vdiff`) sub-tables.
 """
 @inline function _cs_window_section(window, section::Symbol)
+    if section in TM5_PBL_PAYLOAD_SECTIONS
+        return getproperty(window.tm5_pbl,TM5_PBL_FIELD_NAMES[findfirst(==(section),TM5_PBL_PAYLOAD_SECTIONS)])
+    end
     section === :pbl_eflux && return window.surface.eflux
     if _is_pbl_surface_payload_section(section)
         if haskey(window, :surface) && window.surface !== nothing
@@ -85,6 +88,13 @@ function _validate_streaming_cs_window(writer::StreamingTransportBinaryWriter,
     _transport_window_has_value(window, :dkg) && push!(actual_sections, :dkg)
     _cs_window_has_pbl_eflux(window) && push!(actual_sections, :pbl_eflux)
     _transport_window_has_value(window, :cmfmc_cloud_base) && push!(actual_sections, :cmfmc_cloud_base)
+    if _transport_window_has_value(window,:tm5_pbl)
+        append!(actual_sections,TM5_PBL_PAYLOAD_SECTIONS)
+        for p in 1:npanel
+            validate_tm5_pbl_inputs(map(a->a[p],window.tm5_pbl),
+                (Nc,Nc,Int(writer.header["nlevel"])),(Nc,Nc))
+        end
+    end
     actual_sections == writer.payload_sections || throw(ArgumentError(
         "CS transport-binary window payload sections $(actual_sections) do not match " *
         "the writer contract $(writer.payload_sections)"))
@@ -150,6 +160,7 @@ function open_streaming_cs_transport_binary(
         include_precomputed_dkg::Bool = false,
         include_pbl_eflux::Bool = false,
         include_cmfmc_cloud_base::Bool = false,
+        include_tm5_pbl::Bool = false,
         panel_convention = "gnomonic",
         cs_definition = nothing,
         cs_coordinate_law = nothing,
@@ -168,6 +179,11 @@ function open_streaming_cs_transport_binary(
         "exact TM5 `:dkg` is defined on the runtime dry-air mass basis; " *
         "include_precomputed_dkg=true requires mass_basis=:dry"))
 
+    include_tm5_pbl && mass_basis !== :dry && throw(ArgumentError(
+        "include_tm5_pbl=true requires mass_basis=:dry"))
+    include_tm5_pbl && flux_construction isa NoFluxConstructionHeader && throw(ArgumentError(
+        "tm5_pbl requires a v5 flux_construction identity"))
+
     ncell = npanel * Nc * Nc
     nface_h = npanel * 2 * Nc * (Nc + 1)
     payload_sections = Symbol[:m, :am, :bm, :cm, :ps]
@@ -184,6 +200,8 @@ function open_streaming_cs_transport_binary(
     include_precomputed_dkg && push!(payload_sections, :dkg)
     include_pbl_eflux && push!(payload_sections, :pbl_eflux)
     include_cmfmc_cloud_base && push!(payload_sections, :cmfmc_cloud_base)
+
+    include_tm5_pbl && append!(payload_sections,TM5_PBL_PAYLOAD_SECTIONS)
 
     elems_per_window = sum(_cs_section_elements(Nc, npanel, nlevel, s)
                            for s in payload_sections)
@@ -269,6 +287,13 @@ function open_streaming_cs_transport_binary(
             _cs_section_elements(Nc, npanel, nlevel, :cmfmc_cloud_base) : 0,
         "cmfmc_cloud_base_payload" => include_cmfmc_cloud_base ? "top_down_layer_index_v1" : "none",
     ))
+    if include_tm5_pbl
+        header["include_tm5_pbl"] = true
+        header["tm5_pbl_payload"] = "tm5_calc_kzz_inputs_v1"
+        for section in TM5_PBL_PAYLOAD_SECTIONS
+            header["n_$(section)"] = _cs_section_elements(Nc,npanel,nlevel,section)
+        end
+    end
     _set_tm5_convection_mass_basis!(header, payload_sections, mass_basis,
                                     tm5_convection_mass_basis)
     _set_flux_construction!(header, flux_construction)

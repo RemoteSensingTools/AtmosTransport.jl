@@ -67,6 +67,6 @@ export parse_flux_fidelity_header, parse_omega_fidelity_header, parse_column_clo
        parse_fidelity_status, parse_flux_fidelity_kind
 export FLUX_CONSTRUCTION_FORMAT_VERSION, TRANSPORT_BINARY_FORMAT_VERSIONS,
        AbstractFluxConstructionHeader, NoFluxConstructionHeader,
-       PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader,
+       PointSampledSpectralFluxesHeader, TM5SpectralFluxesHeader, RegriddedTransportBinaryHeader,
        flux_construction_tag, parse_flux_construction_header
 end

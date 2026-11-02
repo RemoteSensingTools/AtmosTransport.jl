@@ -85,12 +85,13 @@ The full list lives in `src/MetDrivers/BinaryFormat/header.jl`.
 Version 5 is version 4 plus the **flux-construction identity**: header keys
 that record how the preprocessor built the horizontal mass fluxes. The timing and sampling contracts are shared. A version-5 file that adds only
 the identity has identical payload bytes to its version-4 twin. Version 5 also
-supports the optional all-or-nothing `tm5_pbl` input group for LL/RG; this group
+supports the optional all-or-nothing `tm5_pbl` input group for LL/RG/CS; this group
 is rejected in v4.
 
 | Key (v5 only) | Type | Meaning |
 |---|---|---|
-| `flux_construction` | `String` | required in v5: `"point_sampled_spectral"` (the ERA5 spectral lat-lon and reduced-Gaussian construction: winds synthesized at the target truncation, sampled on faces and centres, times the face pressure thickness) or `"tm5_spectral"` (TM5-style face integrals of the retained spectrum, [TM5-style spectral mass fluxes](../preprocessing/tm5_spectral_fluxes.md)) |
+| `flux_construction` | `String` | required in v5: `"point_sampled_spectral"` (the ERA5 spectral lat-lon and reduced-Gaussian construction, also used for cubed-sphere staging: winds synthesized at the target truncation, sampled on faces and centres, times the face pressure thickness; CS vector/line-integral face metadata distinguishes the staging method) or `"regridded_transport_binary"` (transport fields remapped from another binary, with `source_flux_construction`) or `"tm5_spectral"` (TM5-style face integrals of the retained spectrum, [TM5-style spectral mass fluxes](../preprocessing/tm5_spectral_fluxes.md)) |
+| `source_flux_construction` | nonempty `String` | `regridded_transport_binary` only: source construction identity string only; source revision/truncation keys are not copied |
 | `flux_construction_revision` | `Int ≥ 1` | `tm5_spectral` only: revision of the construction |
 | `spectral_truncation_used` | `Int ≥ 1` | `tm5_spectral` only: triangular truncation T of the spectrum the fluxes were integrated from |
 | `quadrature_refinement_steps` | `Int ≥ 1` | `tm5_spectral` only: `nstep` of TM5's `ShRefinement` quadrature refinement |
@@ -99,7 +100,8 @@ is rejected in v4.
 The reader decodes these keys into a typed record, `header.flux_construction`:
 `NoFluxConstructionHeader()` for version 4, `PointSampledSpectralFluxesHeader()`
 or `TM5SpectralFluxesHeader(revision, spectral_truncation_used,
-quadrature_refinement_steps, vod2uv_radius_m)` for version 5. Both the contract
+quadrature_refinement_steps, vod2uv_radius_m)`, or
+`RegriddedTransportBinaryHeader(source_flux_construction)` for version 5. Both the contract
 validator and the typed parser reject:
 
 - a version-5 key in a version-4 header;
@@ -115,7 +117,7 @@ its keys, without one the header is byte-identical to before. `extra_header`
 cannot set these keys. `inspect_binary` reports `format_version` and
 `flux_construction`, and `binary_capabilities` returns both.
 
-ERA5 spectral LL/RG preprocessing with `[preprocessing] include_tm5_pbl=true`
+ERA5 spectral LL/RG/CS preprocessing with `[preprocessing] include_tm5_pbl=true`
 records the point-sampled construction identity and the complete live-Calc_Kzz
 input group. Default routes still emit v4. `tm5_t` and `tm5_q` have cell shape;
 `tm5_lsm`, `tm5_sr`, `tm5_fsr`, `tm5_u10`, `tm5_v10`, `tm5_ewss`, `tm5_nsss`,
@@ -123,7 +125,12 @@ input group. Default routes still emit v4. `tm5_t` and `tm5_q` have cell shape;
 ECMWF downward-positive W/m², stresses N/m², roughness metres, orography m²/s²,
 T Kelvin and q kg/kg of total air. `TransportWindow.tm5_pbl` carries the group.
 See [TM5 boundary-layer diffusion](../theory/tm5_boundary_layer.md).
-Cubed-sphere transformations and input writers remain outside this scope.
+On CS the group contains six interior panel arrays per field, requires dry
+mass, and is refreshed on in-place window loads. Spectral→CS uses the
+point-sampled spectral identity (its existing face-method keys describe the
+CS construction). LL→CS passes the group through with moist-mass-weighted
+T/q and area-mean surface primitives, and records the regridded identity.
+The N320→CS route does not yet supply this group.
 
 Every current writer also emits a schema-2 flux-fidelity certificate. The
 reader decodes its status and construction kind into nominal types

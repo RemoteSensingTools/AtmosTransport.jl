@@ -372,7 +372,7 @@ function validate_tm5_pbl_target(::AbstractTargetGeometry, settings, vertical=no
         "include_tm5_pbl is implemented only for lat-lon and reduced-Gaussian spectral targets"))
     return nothing
 end
-function validate_tm5_pbl_target(::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry}, settings, vertical=nothing)
+function validate_tm5_pbl_target(::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry,CubedSphereTargetGeometry}, settings, vertical=nothing)
     get(settings,:include_tm5_pbl,false) || return nothing
     first(get(settings,:level_range,1:137)) == 1 || throw(ArgumentError("include_tm5_pbl requires grid.level_top=1 (the complete native thermo column)"))
     if vertical !== nothing
@@ -396,7 +396,7 @@ shared conservative Regridding API. Return `(fields, regridder)` so day drivers
 reuse the weights. The default three-argument application has IntensiveCellField
 semantics, including the shared spherical-polygon geometry on RG targets.
 """
-function target_surface_means(source_mesh, grid::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry}, fields;
+function target_surface_means(source_mesh, grid::Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry,CubedSphereTargetGeometry}, fields;
                               regridder=nothing)
     r = regridder === nothing ? build_regridder(source_mesh,grid.mesh) : regridder
     values = map(fields) do a

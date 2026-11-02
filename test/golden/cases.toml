@@ -279,3 +279,33 @@ kind   = "run"
 config = "configs/run_tm5pbl.toml"
 tags   = ["run", "latlon", "cpu", "era5", "tm5"]
 set    = {"input.binary_paths" = ["@CASE:pre_ll72_tm5_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+
+# TM5-PBL-2: live Calc_Kzz on CS; references recorded separately.
+[[case]]
+name = "pre_c24_tm5pbl"
+kind = "preprocess"
+config = "configs/pre_c24_tm5pbl.toml"
+day = "2021-12-01"
+tags = ["preprocess", "cubed_sphere", "cpu", "era5", "tm5pbl"]
+
+[[case]]
+name = "run_c24_tm5pbl_cpu_f64"
+kind = "run"
+config = "configs/run_tm5pbl.toml"
+tags = ["run", "cubed_sphere", "cpu", "tm5pbl"]
+set = {"input.binary_paths" = ["@CASE:pre_c24_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+
+[[case]]
+name = "run_c24_tm5pbl_boundary_cpu_f64"
+kind = "run"
+config = "configs/run_tm5pbl.toml"
+tags = ["run", "cubed_sphere", "cpu", "tm5pbl"]
+set = {"input.binary_paths" = ["@CASE:pre_c24_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}
+add = {"diffusion.surface_flux_boundary" = true}
+
+[[case]]
+name = "run_c24_tm5pbl_gpu_f32"
+kind = "run"
+config = "configs/run_tm5pbl.toml"
+tags = ["run", "cubed_sphere", "gpu", "tm5pbl"]
+set = {"input.binary_paths" = ["@CASE:pre_c24_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm", "architecture.use_gpu" = true, "architecture.backend" = "cuda", "numerics.float_type" = "Float32"}

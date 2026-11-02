@@ -1,7 +1,7 @@
 # TM5 boundary-layer diffusion (`Calc_Kzz`)
 
-This page specifies `TM5CalcKzzField`, an implemented interface-exchange (`dkg`)
-field for the existing `ImplicitVerticalDiffusion` operator. It transcribes
+This page specifies `TM5CalcKzzField` and `TM5CalcKzzCSField`, interface-exchange (`dkg`)
+fields for the existing `ImplicitVerticalDiffusion` operator. It transcribes
 TM5's live `Calc_Kzz`: the friction velocity, the hydrostatic interface
 heights, the Holtslag–Boville boundary-layer scheme `bldiff`, and the
 conversion of the heat diffusivity into an exchange rate in kg s⁻¹ across each
@@ -9,8 +9,8 @@ level interface. It is a new field type; the existing diffusion schemes and the
 preprocessing port `tm5_bldiff.jl` stay unchanged.
 
 Lat-lon and reduced-Gaussian column physics, v5 inputs and runtime integration
-are implemented in TM5-PBL-1. Cubed-sphere and adjoint support remain planned
-for TM5-PBL-2. Local pydyn fixtures are read only through
+are implemented. Cubed-sphere live refresh and its tracer adjoint
+are also implemented. Local pydyn fixtures are read only through
 `ATMOSTR_TM5_FIXTURES_DIR`; they are never committed (§14).
 
 The page follows the design of 2026-10-30, with the owner answers of that
@@ -393,9 +393,9 @@ that are non-finite only in the branch that is not used:
 Branch selection takes the used branch in both cases (the
 previous ``h``; ``f = 1``), as it does for entrainment. These selections are implemented with the column physics.
 
-## 10. Integration in AtmosTransport (implemented for LL/RG)
+## 10. Integration in AtmosTransport
 
-**One field type inside the existing operator.**
+**Topology-specific fields inside the existing operator.**
 
 ```julia
 struct TM5CalcKzzField{FT,N,D<:AbstractArray{FT,N},S,P,M} <: AbstractTimeVaryingField{FT,N}
@@ -418,9 +418,10 @@ end
   ``K_{vh}``, full and active guard counts); column tests call it directly.
 - **Solve.** `DkgExchange` reads interface exchange directly. Its factor
   method feeds the existing structured and face-indexed backward-Euler solves,
-  including their flux-form tracer-mass update and column ledger. No second
-  diffusion operator or new solve kernel is introduced. The new field's
-  cubed-sphere route remains deferred.
+  including their flux-form tracer-mass update and column ledger.
+  `TM5CalcKzzCSField` supplies six interior D panels to the same six-panel
+  solver. It has no `panel_field` method: a generic Kz path must fail rather
+  than interpret exchange in kg/s as diffusivity in m²/s.
 - **Refresh.** A new `_refresh_pbl_kz_for_window!` method
   (`src/Models/Runner/driven_physics_refresh.jl`) runs once per met window,
   after the window-advance air-mass reset; `_refresh_dz_for_window!` gets a
@@ -431,6 +432,30 @@ end
   reduced-Gaussian runs reject today). ``l_\mathrm{max}`` is computed when the
   field is materialised (§8).
 - `PrecomputedCSDkgField` and `GCHPNonlocalPBLField` stay untouched.
+
+**CS metrics and bounded scratch.** The field owns one column-chunked
+scratch, shared across all panels, with at most 65,536 columns. LL/RG use
+the same chunking with their existing indexing and arithmetic order.
+Scratch is approximately 16 working-precision values per chunk column and
+layer, plus a guard count. At L137 the default chunk needs about 575 MB in
+Float32 or 1.15 GB in Float64 (decimal units), excluding D and metrics. D is
+stored on interior arrays; mass and fluxes are read through their halos without exchanging D halos.
+
+For a CS cell of area A and mass m, recover face-normal speeds from the
+stored amounts over s seconds:
+
+```math
+u_1 = \frac{A}{2ms}\left(\frac{a_w}{L_w}+\frac{a_e}{L_e}\right),\qquad
+u_2 = \frac{A}{2ms}\left(\frac{b_s}{L_s}+\frac{b_n}{L_n}\right).
+```
+
+With ``c=e_x\cdot e_y`` and ``s_\theta=\sqrt{1-c^2}``, the orthonormal
+components are ``u'=(u_1+c u_2)/s_\theta`` and ``v'=u_2``. Geometry is
+computed in Float64 with `cs_face_edge_lengths` and
+`panel_cell_local_tangent_basis`, then rounded once. Calc_Kzz uses squared
+wind differences, so any fixed orthonormal frame per column gives the same
+D. This also handles GEOS-native panel orientation. Both surface couplings
+are supported on CS.
 
 **Inputs (owner decision Q5).** Pressure, carrier mass and winds come from the
 runtime state; the binary adds only ``T``, ``q`` and the surface fields, so the
@@ -454,7 +479,7 @@ analysis and forecast inputs. `tm5_q` is used instead of the `qv_start` and
 `qv_end` sections because cubed-sphere binaries do not carry humidity
 endpoints.
 
-**Binary section group `tm5_pbl` (implemented, TM5-PBL-1).** Optional, valid only
+**Binary section group `tm5_pbl` (implemented).** Optional, valid only
 in format version 5, all-or-nothing, one record per window:
 
 | Sections | Shape | Units and sign |
@@ -471,15 +496,22 @@ in format version 5, all-or-nothing, one record per window:
 
 Enable the input writer with `[preprocessing] include_tm5_pbl = true`,
 `input.thermo_dir` and `input.surface_dir`. This is an hourly ERA5 spectral
-LL/RG option and can be combined with
-`[preprocessing] spectral_flux_construction = "tm5_spectral"`. The resulting
-v5 binary carries both the TM5 flux construction identity and the complete
-`tm5_pbl` group; the same input assembly serves both flux constructions.
+LL/RG/CS option. LL/RG can combine it with
+`[preprocessing] spectral_flux_construction = "tm5_spectral"`; those binaries
+carry both the TM5 flux identity and the complete `tm5_pbl` group. CS uses
+its existing spectral staging construction, recorded as `point_sampled_spectral`.
+LL-binary→CS remapping also passes the group through, with T/q weighted by
+source moist mass and surface fields by area. Averaging the stress and 10 m
+wind components before their magnitudes can underestimate friction velocity
+where direction varies within a cell; this applies to all targets and matters
+most for CS cells much coarser than the source. That path records
+`regridded_transport_binary` and the source construction. N320→CS input
+assembly remains deferred pending archive coverage.
 The thermo sidecar must contain `t` in K and `q` in kg/kg;
 the surface archive must contain the ten primitives, including the next day's
 00 UTC endpoint. NetCDF, split ZIP and ARCO surface layouts are supported.
 Surface primitives (`lsm`, stresses, heat fluxes, `sr`/`fsr`, 10 m winds and
-orography) are **cell-area means** on the actual LL or RG mesh, using the package's
+orography) are **cell-area means** on the actual LL, RG or CS mesh, using the package's
 shared conservative regridder with intensive-field semantics. In particular,
 `lsm` is the coastal cell's land fraction, rather than the value at its centre.
 Excursions of the remapped fraction within 1e-12 of [0, 1] are clamped:
@@ -561,25 +593,37 @@ repurposed. A leaf function of `tm5_bldiff.jl` may be shared only where
 constants, arithmetic order and mask semantics agree; it then moves to the
 earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
 
-## 13. Adjoint and tape (planned, TM5-PBL-2)
+## 13. Adjoint and window capture
 
-- For fixed ``D`` the solve is linear in the tracer, so the adjoint is the
-  transpose solve. The planned adjoint (B5) transposes whichever forward solve
-  the cubed sphere uses. The ``K_z`` transpose kernels in
-  `src/Operators/Diffusion/adjoint_kernels.jl` compute the exchange inline
-  with `_kz_exchange`, so a `DkgExchange` factor method there needs a small
-  refactor; the existing cubed-sphere `dkg` adjoint
-  (`_vertical_diffusion_cs_single_dkg_adjoint_kernel!`, same file) transposes
-  the conservative solve of `src/Operators/Diffusion/conservative_dkg.jl`.
-- With the default `air_mass_reset_mode` (anything other than `:none`), the
-  refresh runs after the reset, so ``D`` depends only on the binary's window
-  data; the adjoint recomputes it and needs no tape.
-- With `:none`, ``D`` depends on the prognostic mass and is taped per window:
-  ``N_c^2 × 6 × l_\mathrm{max}`` values, for C90 with ``l_\mathrm{max} ≈ 26``
-  about ``1.26 × 10^6`` values, 5 MB in Float32 per window, 121 MB per day.
-- ``D`` is treated as forcing: no derivatives through ``u_*`` or ``K`` with
-  respect to the state.
-- Adjoint coverage is cubed sphere only, as for the 4D-Var path.
+For fixed ``D`` the backward-Euler solve is linear in tracer mass. The CS
+adjoint transposes its matrix with D read directly from the interior panels;
+the existing Kz transpose continues to reconstruct exchange from Kz and dz.
+The flux-form ledger corrects rounding and has no adjoint, as for Kz.
+
+D depends on meteorological inputs, face fluxes and carrier air mass, and
+never on tracer mass. Even with `air_mass_reset_mode = :none`, prognostic
+air mass is advanced only by fixed meteorological fluxes. Thus D is forcing
+in every reset mode; derivatives through meteorology, friction velocity or
+K are outside the tracer-only adjoint.
+
+`cs_adjoint_inputs` executes production's window refresh and freezes a copy
+of the six D panels once per met window. The captured field omits refresh
+scratch and geometry, and steps within a window share its operator. Replay
+uses the same `DkgExchange` forward solver. A single diffusion workspace is
+shared across windows because this solver never reads layer thickness.
+Under `:none`, capture advances carrier mass with production advection
+so the next window sees the same prognostic mass as the forward run.
+Tracers during capture are disposable.
+D is neither recomputed during replay nor stored in a tape slot. The tape
+pool, byte estimate and AutoTape policy are unaffected: forcing/operator
+objects are retained by reference outside the tape.
+
+Frozen D requires ``6 N_c^2 N_z`` values per window, including zero planes.
+At C90 L34 that is 6.6 MB in Float32 (159 MB for 24 windows); C180 L137
+requires 106 MB per window (2.55 GB per day). These arrays stay on the model's
+device with the captured fluxes. The Lin–Rood tape remains device-only;
+combined Lin–Rood/TM5 runs must budget for both. Compact active-layer storage
+is deferred. Adjoint coverage is CS only; LL/RG adjoints remain refused.
 
 ## 14. Tests and tolerances
 
@@ -594,6 +638,26 @@ earlier `Diffusion` module and the old wrapper stays bitwise unchanged.
 | Float32 against Float64 CPU, synthetic fixture columns (well conditioned) | active K and D: ``2 × 10^{-4}`` per nonzero entry; D column L1: ``3 × 10^{-5}``; all K (including above cutoff): ``4 × 10^{-3}``; against Float64 on the Float32-rounded inputs, D: ``2 × 10^{-5}`` per entry and ``10^{-5}`` column L1; interfaces with exactly equal Float64 ``θ_v`` counted, not scored; branch flips reported separately |
 | Float32 against Float64 CPU, real ERA5 windows | D per nonzero entry: median ``≤ 1.5 × 10^{-5}``, p99 ``≤ 2 × 10^{-4}``, maximum ``≤ 2 × 10^{-2}``; D column L1: p99 ``≤ 4 × 10^{-4}``, maximum ``≤ 1.5 × 10^{-2}``; branch flips reported |
 | CUDA Float32 against CPU Float32 | D per nonzero entry: p99 ``≤ 2 × 10^{-5}``, maximum ``≤ 5 × 10^{-4}`` |
+
+**Cubed-sphere CPU coverage.** `test_tm5_pbl_cs.jl` checks the shared column
+physics, chunk sizes, C48 versus 2.5° LL columns, rotation invariance in both
+panel conventions, uniform tracer, column conservation, packed/single solves
+and the direct-D transpose including an empty layer. Face fluxes from the
+production `LineIntegralFaceFluxes` recover analytic wind speeds with RMS
+errors (m s⁻¹) of 0.05658, 0.01420 and 0.003553 for solid-body flow on C12,
+C24 and C48; the deformation flow gives 0.14306, 0.03585 and 0.008957.
+Both decrease by about four per refinement.
+
+Production `DrivenSimulation` and frozen-D adjoint replay agree bit for bit
+for both surface couplings and `:preserve_tracer_mass`/`:none` resets.
+With `:none`, capture advances carrier mass through production advection;
+that advance currently also transports all tracers, so capture cost scales
+with tracer count. A future mass-only advance must preserve the carrier bits.
+Full and Stride checkpoints agree. The new split and boundary/`:none`
+footprint cases give relative errors of ``2.91 \times 10^{-14}`` and
+``1.60 \times 10^{-14}`` against production central differences on the
+synthetic CPU test. These tests differentiate tracer mass and emissions,
+with meteorology fixed. GPU validation is separate.
 
 **Edge inventory (synthetic).** Neutral ``H_v = +0`` and ``−0``; small stable
 flux; strong convection; zero and weak shear; no Ri crossing; a crossing
@@ -728,24 +792,20 @@ mass.
 - **Q12** Float32 on the GPU is acceptable for production; parity
   tests use Float64 on the CPU.
 
-On 2026-10-31 the owner bundled the pull requests: TM5-0 (local-only fixtures, this page
-and the page
-[TM5-style spectral mass fluxes](../preprocessing/tm5_spectral_fluxes.md),
-binary format gate), TM5-PBL-1 (B2 column physics
-in Float64 on the CPU, B3 binary group and writers, B4 lat-lon and
-reduced-Gaussian runtime) and TM5-PBL-2 (B5 cubed sphere and adjoint). B6, the
-combined convection and diffusion matrix, stays deferred.
+Column physics, binary inputs and live refresh on lat-lon, reduced-Gaussian
+and cubed-sphere grids are implemented, together with the frozen-diffusivity
+tracer adjoint. The combined convection and diffusion matrix stays deferred.
 
 ## 16. Implementation status
 
 | Item | Status |
 |---|---|
-| This page; binary version-5 format gate | Implemented (TM5-0) |
+| This page; binary version-5 format gate | Implemented |
 | pydyn `Calc_Kzz` column fixtures | Generated locally outside the repository; not committed; loader and parity tests implemented using `ATMOSTR_TM5_FIXTURES_DIR`, with a clear skip when unset or fixtures are absent |
-| B2: bldiff constants, column function, shared layer-count rule | Implemented (TM5-PBL-1) |
-| B3: `tm5_pbl` section group, ERA5 surface readers, lat-lon and reduced-Gaussian writers | Implemented (TM5-PBL-1) |
-| B4: `TM5CalcKzzField`, `DkgExchange`, lat-lon and reduced-Gaussian runtime, new golden case definitions | Implemented; references generated by the main session |
-| B5: cubed sphere, adjoint | Planned (TM5-PBL-2) |
+| B2: bldiff constants, column function, shared layer-count rule | Implemented |
+| B3: `tm5_pbl` section group, ERA5 surface readers, lat-lon and reduced-Gaussian writers | Implemented |
+| B4: `TM5CalcKzzField`, `DkgExchange`, lat-lon and reduced-Gaussian runtime, golden regression cases | Implemented |
+| B5: cubed sphere, adjoint | Implemented; frozen per-window D, no met derivatives |
 | B6: combined convection and diffusion matrix | Deferred (Q6) |
 
 ## References
