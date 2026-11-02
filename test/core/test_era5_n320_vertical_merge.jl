@@ -87,6 +87,193 @@ end
 
 end
 
+@testset "ERA5 native dry flux thickness follows the endpoint pin" begin
+    for FT in (Float32, Float64), delta_ps in (0.0, 37.0, -19.0)
+        pin_strategy = Pre.ERA5.NativeMergedPinSensitivity()
+        Nc, Nz = 2, 4
+        gravity = FT(AtmosTransport.Parameters.STANDARD_GRAVITY)
+        vc = Pre.HybridSigmaPressure([0.0, 100.0, 1000.0, 1000.0, 0.0],
+                                     [0.0, 0.0, 0.2, 0.6, 1.0])
+        plan = Pre.plan_vertical(Pre.LevelSelection([0, 1, 3, 4]), vc)
+        area = FT[2.0e10 2.5e10; 3.0e10 3.5e10]
+        qv = ntuple(p -> FT[0.001p + 0.002k + 0.0001i + 0.0002j
+                            for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6)
+        ps = ntuple(p -> fill(FT(100_000 + 100p), Nc, Nc), 6)
+        mass = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+        ps_dry = ntuple(_ -> zeros(FT, Nc, Nc), 6)
+        Pre.derive_c180_dry_mass!(mass, ps_dry,
+            ntuple(_ -> zeros(Float64, Nc, Nc), 6), ps, qv, vc, area)
+        before = map(copy, mass)
+        merged = ntuple(_ -> zeros(FT, Nc, Nc, plan.Nz_output), 6)
+        Pre.ERA5._merge_cs_center_extensive!(merged, mass, plan, Pre.MassField())
+        sensitivity = Pre.ERA5._allocate_era5_pin_sensitivity(
+            Pre.ERA5.NativeMergedPinSensitivity(), FT, Nc, Nz, plan.Nz_output)
+        Pre.ERA5._fill_era5_pin_sensitivity!(sensitivity.native, qv,
+                                           diff(vc.B), area, gravity)
+        target = Pre.cs_total_air_mass(merged) +
+                 delta_ps * Pre.cs_total_air_mass(sensitivity.native)
+        stats = Pre.ERA5._pin_era5_endpoint_mass!(
+            Pre.ERA5.NativeMergedPinSensitivity(), merged, qv, nothing,
+            sensitivity.native, sensitivity.merged, plan, area, gravity, target)
+
+        # N320 has different areas and humidity; it must use the CS offset,
+        # rather than independently pinning its own global mass integral.
+        source_area = [1.0e10, 1.5e10, 2.0e10]
+        source_q = FT[0.003c + 0.01k for c in 1:3, k in 1:Nz]
+        source_mass = FT[(1 - Float64(source_q[c, k])) *
+            (diff(vc.A)[k] + diff(vc.B)[k] * 99_000) * source_area[c] /
+            AtmosTransport.Parameters.STANDARD_GRAVITY for c in 1:3, k in 1:Nz]
+        source_before = copy(source_mass)
+        dry = (; m_dry = source_mass, delp_dry = zero(source_mass),
+                  ps_dry = zeros(FT, 3), ps_dry_acc = zeros(3))
+        pipe = (; vc, c180_m_dry = mass, c180_fields = (; ps, qv),
+                  target_grid = (; mesh = (; cell_areas = area)),
+                  cell_areas = source_area, dry_fields = dry,
+                  window_fields = (; qv = source_q))
+        Pre.ERA5._pin_era5_native_flux_mass!(pin_strategy, pipe, stats.delta_ps_pa, gravity)
+        x = (; dp = map(zero, mass))
+        Pre.ERA5._fill_era5_flux_thickness!(Pre.ERA5.DryMassFluxThickness(),
+                                           x, pipe, vc, Nc, Nz, pin_strategy)
+        for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+            expected_mass = FT(Float64(before[p][i, j, k]) + diff(vc.B)[k] *
+                stats.delta_ps_pa * (1 - Float64(qv[p][i, j, k])) *
+                Float64(area[i, j]) / Float64(gravity))
+            @test mass[p][i, j, k] == expected_mass
+            @test x.dp[p][i, j, k] == gravity * mass[p][i, j, k] / area[i, j]
+        end
+        for k in 1:Nz, c in 1:3
+            expected_mass = FT(Float64(source_before[c, k]) + diff(vc.B)[k] *
+                stats.delta_ps_pa * (1 - Float64(source_q[c, k])) *
+                source_area[c] / Float64(gravity))
+            @test source_mass[c, k] == expected_mass
+            @test dry.delp_dry[c, k] == FT(gravity * source_mass[c, k] / source_area[c])
+        end
+        @test dry.ps_dry == FT.(vec(sum(Float64.(dry.delp_dry); dims = 2)))
+        # The extensive merge and the native pin agree up to storage rounding.
+        native_merged = map(zero, merged)
+        Pre.ERA5._merge_cs_center_extensive!(native_merged, mass, plan, Pre.MassField())
+        @test all(isapprox(native_merged[p], merged[p]; rtol = 3eps(FT)) for p in 1:6)
+        @test all(mass[p][:, :, 1] == before[p][:, :, 1] for p in 1:6) # dB=0
+        if !iszero(delta_ps)
+            @test any(x.dp[p][:, :, end] != gravity .* before[p][:, :, end] ./ area
+                      for p in 1:6)
+        end
+        merra_x = (; dp = map(zero, mass))
+        Pre.MERRA2._fill_flux_thickness!(Pre.MERRA2.DryMassFluxThickness(),
+            merra_x, ps, mass, vc, pipe.target_grid.mesh, Nc, Nz)
+        @test merra_x.dp == x.dp
+        moist_x = (; dp = map(zero, mass))
+        Pre.ERA5._fill_era5_flux_thickness!(Pre.ERA5.MoistFluxThickness(),
+            moist_x, pipe, vc, Nc, Nz, pin_strategy)
+        for p in 1:6, k in 1:Nz
+            @test moist_x.dp[p][:, :, k] ≈
+                abs.(diff(vc.A)[k] .+ diff(vc.B)[k] .* ps[p]) rtol = 2eps(FT)
+        end
+    end
+end
+
+@testset "ERA5 pin-off thickness preserves the original arithmetic bitwise" begin
+    for FT in (Float32, Float64)
+        UIntFT = FT === Float32 ? UInt32 : UInt64
+        bits(a) = reinterpret(UIntFT, vec(a))
+        pin_strategy = Pre.ERA5.NoERA5MassPin()
+        Nc, Nz = 2, 4
+        gravity = FT(AtmosTransport.Parameters.STANDARD_GRAVITY)
+        vc = Pre.HybridSigmaPressure([0.0, 100.0, 1000.0, 1000.0, 0.0],
+                                     [0.0, 0.0, 0.2, 0.6, 1.0])
+        area = FT[2.0e10 2.5e10; 3.0e10 3.5e10]
+        qv = ntuple(p -> FT[0.001p + 0.002k + 0.0001i + 0.0002j
+                            for i in 1:Nc, j in 1:Nc, k in 1:Nz], 6)
+        ps = ntuple(p -> fill(FT(100_000 + 100p), Nc, Nc), 6)
+        mass = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+        Pre.derive_c180_dry_mass!(mass, ntuple(_ -> zeros(FT, Nc, Nc), 6),
+            ntuple(_ -> zeros(Nc, Nc), 6), ps, qv, vc, area)
+        # Baseline target formula: humidity subtraction occurs in FT before
+        # multiplication by the Float64 hybrid pressure thickness.
+        previous_cs = ntuple(_ -> zeros(FT, Nc, Nc, Nz), 6)
+        for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
+            dp = abs((Float64(vc.A[k+1]) - Float64(vc.A[k])) +
+                     (Float64(vc.B[k+1]) - Float64(vc.B[k])) * Float64(ps[p][i,j]))
+            previous_cs[p][i,j,k] = (1 - qv[p][i,j,k]) * dp
+        end
+        source_area = [1.0e10, 1.5e10, 2.0e10]
+        source_q = FT[0.003c + 0.01k for c in 1:3, k in 1:Nz]
+        window = Pre.ERA5N320WindowFields{FT}(zeros(FT, 3, Nz), zeros(FT, 3, Nz),
+            zeros(FT, 3, Nz), source_q, fill(FT(99_000), 3))
+        dry = Pre.ERA5N320DryMassFields{FT}(zeros(FT, 3, Nz), zeros(FT, 3, Nz),
+                                          zeros(FT, 3), zeros(3))
+        Pre.derive_n320_dry_mass!(dry, window, vc, source_area)
+        # Baseline source formula: all dry pressure arithmetic is Float64,
+        # with a single cast to FT at storage, before conversion to mass.
+        previous_source = FT[(1.0 - Float64(source_q[c,k])) *
+            ((Float64(vc.A[k+1]) - Float64(vc.A[k])) +
+             (Float64(vc.B[k+1]) - Float64(vc.B[k])) * Float64(window.ps[c]))
+            for c in 1:3, k in 1:Nz]
+        source_mass_before = copy(dry.m_dry)
+        source_ps_before = copy(dry.ps_dry)
+        source_acc_before = copy(dry.ps_dry_acc)
+        pipe = (; vc, c180_m_dry = mass, c180_fields = (; ps, qv),
+                  target_grid = (; mesh = (; cell_areas = area)),
+                  cell_areas = source_area, dry_fields = dry, window_fields = window)
+        Pre.ERA5._pin_era5_native_flux_mass!(pin_strategy, pipe, 0.0, gravity)
+        x = (; dp = map(zero, mass))
+        Pre.ERA5._fill_era5_flux_thickness!(Pre.DryMassFluxThickness(),
+                                           x, pipe, vc, Nc, Nz, pin_strategy)
+        for p in 1:6
+            @test bits(x.dp[p]) == bits(previous_cs[p])
+        end
+        @test bits(dry.delp_dry) == bits(previous_source)
+        @test bits(dry.m_dry) == bits(source_mass_before)
+        @test bits(dry.ps_dry) == bits(source_ps_before)
+        @test reinterpret(UInt64, dry.ps_dry_acc) == reinterpret(UInt64, source_acc_before)
+    end
+end
+
+@testset "ERA5 endpoint line integrals consume pinned source thickness" begin
+    G = AtmosTransport.Grids
+    Nc, Nz = 2, 2
+    source = G.LatLonMesh(; Nx = 12, Ny = 6, FT = Float64)
+    target = G.CubedSphereMesh(; Nc, FT = Float64)
+    table = G.build_cs_global_face_table(Nc, G.panel_connectivity_for(target.convention))
+    method = Pre.LineIntegralFaceFluxes(source, target, table; samples_per_face = 4)
+    nsrc = G.ncells(source)
+    vc = Pre.HybridSigmaPressure([0.0, 1000.0, 0.0], [0.0, 0.2, 1.0])
+    gravity = AtmosTransport.Parameters.STANDARD_GRAVITY
+    u = reshape(collect(range(-10.0, 10.0; length = nsrc * Nz)), nsrc, Nz)
+    v = reverse(u; dims = 1)
+    qv = fill(0.01, nsrc, Nz)
+    source_area = G.cell_areas(source)
+    smap = Pre.FidelitySampleMap(table)
+    rows = Pre.LineIntegralFidelityStencil(method, smap)
+    pin_strategy = Pre.ERA5.PurePressureMergePinCompatibility()
+    endpoints = map((37.0, -19.0)) do delta_ps
+        mass = [((diff(vc.A)[k] + diff(vc.B)[k] * 100_000) * 0.99) *
+                source_area[c] / gravity for c in 1:nsrc, k in 1:Nz]
+        dry = (; m_dry = mass, delp_dry = zero(mass),
+                  ps_dry = zeros(nsrc), ps_dry_acc = zeros(nsrc))
+        panels = ntuple(_ -> ones(Nc, Nc, Nz), 6)
+        pipe = (; vc, c180_m_dry = panels, c180_fields = (; qv = map(zero, panels)),
+                  target_grid = (; mesh = target), cell_areas = source_area,
+                  dry_fields = dry, window_fields = (; u, v, qv))
+        Pre.ERA5._pin_era5_native_flux_mass!(pin_strategy, pipe, delta_ps, gravity)
+        x = (; am = ntuple(_ -> zeros(Nc + 1, Nc, Nz), 6),
+               bm = ntuple(_ -> zeros(Nc, Nc + 1, Nz), 6))
+        Pre.ERA5._endpoint_face_fluxes!(method, Pre.ERA5.DryMassFluxThickness(),
+                                       x, pipe, vc, gravity, 60.0, Nc, Nz, pin_strategy)
+        expected = map(a -> map(zero, a), x)
+        thickness = gravity .* mass ./ source_area
+        Pre.line_integral_face_fluxes!(expected.am, expected.bm, method,
+                                       u, v, thickness, gravity, 60.0, Nz)
+        @test x == expected
+        capture = Pre.ERA5._capture_era5_endpoint_flux_fidelity(method,
+            Pre.ERA5.DryMassFluxThickness(), x, pipe, table, gravity,
+            60.0, Nc, Nz, smap, rows)
+        @test capture.reference ≈ capture.candidate rtol = 2e-14
+        return x
+    end
+    @test endpoints[1] != endpoints[2]
+end
+
 @testset "native ERA5 config resolves named L66 preset" begin
     coeff_path = joinpath(@__DIR__, "..", "..", "config",
                           "era5_L137_coefficients.toml")

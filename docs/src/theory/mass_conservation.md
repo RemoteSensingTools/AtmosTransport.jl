@@ -104,6 +104,118 @@ committed to disk.
 The production GEOS-CS path does not use the separate FV3-style pressure-fixer
 `cm` diagnostic; it closes against the raw dry endpoint described above.
 
+## Dry-mass pin and the column global mode
+
+The humidity-aware spectral pin adds one uniform surface-pressure offset,
+
+```math
+\delta p_s = \frac{p_{\mathrm{dry,target}}\sum_c A_c -
+ \sum_c A_c\sum_k(\Delta A_k+\Delta B_k p_{s,c})(1-q_{c,k})}
+ {\sum_c A_c\sum_k\Delta B_k(1-q_{c,k})}.
+```
+
+Native-layer dry-pressure and sensitivity sums and all three global reductions
+use compensated Float64 summation. The small target-minus-current numerator
+retains the compensated low parts and uses a fused multiply-add for the target
+pressure times area. The pin uses local scalar accumulators, without scratch
+allocations or shared mutable state.
+
+Horizontal faces conserve global mass and cannot remove a remaining global
+endpoint mismatch. Let the column residual be convergence minus endpoint
+mass tendency, `R_c`, with arithmetic mean `R̄`, and let
+`q_c = M_c / mean(M)` for current column mass `M_c = Σ_k m_{c,k}`.
+For a fixed global dry-mass target, the column Poisson solve uses the shifted tendency
+`T_c + R̄(q_c - 1)` and accurately projects its right-hand side to zero mean.
+This is equivalent to distributing the shift across levels with fractions
+`m_{c,k}/M_c`. It leaves `R̄ q_c`, rather than a constant kilogram residual in
+every cell. Small polar cell budgets therefore do not amplify the global mode.
+Vertical closure still uses the original endpoint tendency and the configured
+layer weights. Raw residuals and the global mean remain diagnostic quantities.
+
+Before applying this shift, a separate compensated global-budget guard requires
+
+```math
+\frac{\left|\sum_{c,k}(m^{\mathrm{next}}_{c,k}-m_{c,k})\right|}
+ {\sum_{c,k}m_{c,k}} \leq \mathtt{GLOBAL\_DRY\_MASS\_BUDGET\_RTOL}=10^{-14}.
+```
+
+The expected global change is zero when the dry-mass pin is enabled. LL uses
+the equivalent numerator `|2 n Σ dm|` from its per-application tendency, with
+the actual window substep count `n`; RG and CS sum endpoint differences.
+The tolerance allows roughly two orders of magnitude above the measured
+post-pin Float64 roundoff of about `1e-16` relative per window (largest measured
+changes: 666.004 and 659.033 kg out of about `5.1e18` kg). Lower-precision
+stored endpoints allow the larger of this tolerance and `2 eps(FT)`, a bound
+for rounding both endpoints. Reductions use the stored values in Float64.
+The guard runs regardless of whether replay is enabled and uses no flux scale;
+circulation and substep refinement cannot dilute a global-budget error.
+A polar regression with `m_next = m*(1+1e-10)`, 100 substeps and divergence-free
+zonal flux `am = 0.25m` per application is rejected; an `O(eps(Float64))`
+mismatch passes. Replay alone can accept the former case because its
+denominator grows with circulation.
+
+For moist-basis or unpinned windows, a physical global mass change is permitted.
+These paths neither assert a zero global budget nor apply the mass-proportional
+shift. They retain the uniform nullspace treatment, original endpoint tendency,
+and the existing local replay and CS closure checks. Conservative horizontal
+faces cannot close a genuine global source or sink: it must be represented by
+a physical boundary/source term or remain in the raw residual. Local checks
+can reject an incompatible budget, but are not an independent global guarantee.
+
+This treatment applies to LL FFT, RG PCG/direct and CS column solves. The
+spectral pin applies to point-sampled LL/RG/CS and TM5 LL/RG construction.
+The same CS column balance is used by spectral CS, LL-binary-to-CS regridding,
+ERA5 N320 regridding, MERRA-2 and the GEOS endpoint-balanced, moisture-filtered and OMEGA closures.
+Native sources retain their separate mass-pin routine. The separately callable
+CS per-level balance retains its original target and arithmetic. The TM5 LL and
+RG layer solves also retain their original arithmetic: compensated projections
+are selected by separate dispatch only for column solves.
+
+The production call sites are:
+
+| Routine | Callers and coverage |
+|---|---|
+| `pin_global_mean_ps_using_qv!` | `construct_tm5_endpoint` (TM5 LL/RG), `apply_mass_fix_if_needed!` (point-sampled LL and spectral CS staging), `pin_convert_merge_window!` (point-sampled RG) |
+| `balance_column_mass_fluxes!` | `apply_poisson_balance!` (point-sampled and TM5 LL) |
+| `balance_compressed_column_fluxes!` | RG `balance_window!` (point-sampled), RG `process_day` for `TM5SpectralFluxes` (direct solver) |
+| `balance_cs_column_mass_fluxes!` | `cs_spectral_contract_diag!`, `regrid_ll_binary_to_cs`, `process_era5_n320_to_cs_day`, MERRA-2 `_balance_window!`, and GEOS `_geos_prepare_window_for_steps!` (moisture-filtered, both OMEGA modes and endpoint-balanced branches) |
+| `balance_cs_global_mass_fluxes!` | `balance_cs_column_mass_fluxes!` on single-level column buffers, with mass weighting only for fixed dry targets; standalone per-level callers retain original target and projection arithmetic |
+| `balance_mass_fluxes!` | TM5 LL `balance_tm5_layers!` uses the original FFT RHS; column calls explicitly select compensated RHS projection |
+| `project_mean_zero!` | TM5 RG `balance_compressed_level!` → `solve_compressed_poisson_direct!`, standalone RG/CS solvers: original `sum(v)/length(v)`; column solvers explicitly select compensated dispatch |
+| `check_fixed_global_mass` | LL/RG/CS column entry points only when dry mass is pinned; spectral settings, native pin flags, or a dry regrid source's recorded pin enable it |
+
+## Measured 1° dry-mass and replay correction
+
+CPU validation uses ERA5 2021-12-01 on 360 × 180 cells, Float64 dry mass,
+34 `ml137_tropo34a` levels, and all 24 windows (52,876,800 budgets per
+construction). The point-sampled construction retains its default T179
+truncation; TM5 retains T639. The after runs use the stock `1e-12` replay gate
+and adaptive positivity checks. TM5 was regenerated through the binary writer;
+point-sampled endpoints use the bounded hourly diagnostic driver with the
+production pin, dry conversion, merge, balance and closure.
+
+| Construction | median | p99 | p99.99 | maximum | count > 1e-12 |
+|---|---:|---:|---:|---:|---:|
+| TM5 before | 2.0295e-15 | 5.1465e-14 | 5.6883e-13 | 1.4709e-12 | 536 |
+| TM5 after | 0.0000e+00 | 2.0675e-16 | 1.1806e-15 | 5.8233e-15 | 0 |
+| Point-sampled before | 1.4122e-15 | 3.4638e-14 | 2.8047e-13 | 1.0639e-12 | 6 |
+| Point-sampled after | 0.0000e+00 | 2.0077e-16 | 8.5414e-16 | 6.1071e-15 | 0 |
+
+Largest absolute global mass change per window falls from 135,695.388
+to 666.004 kg for TM5 and from 121,982.453 to 659.033 kg
+for point-sampled construction. The remaining mass changes and endpoint target
+errors are reported separately from the local replay metric; they cannot be
+removed by conservative horizontal faces. Maximum relative endpoint target
+errors after the change are 6.651e-17
+(TM5) and 7.338e-17
+(point-sampled), measured with compensated mass totals against the dry-pressure
+area integral.
+
+All spectral `pre_*` golden outputs are expected to change at rounding level.
+The same column-mode treatment also applies to native-source and regrid
+callers; it does not change the separate native mass-pin routine or the
+Float64 `1e-12` / Float32 `1e-5` replay thresholds.
+
 ## Replay-gate tolerance
 
 Conservation in floating-point is verified per window and per cell. With

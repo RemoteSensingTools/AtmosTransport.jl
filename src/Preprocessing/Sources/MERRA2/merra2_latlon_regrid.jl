@@ -511,10 +511,8 @@ end
 _fill_flux_thickness!(::MoistFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz) =
     fill_cs_layer_thickness!(x.dp, ps_moist, vc.A, vc.B, Nc, Nz)
 function _fill_flux_thickness!(::DryMassFluxThickness, x, ps_moist, m_a, vc, mesh, Nc, Nz)
-    g, areas = eltype(x.dp[1])(STANDARD_GRAVITY), mesh.cell_areas
-    @inbounds for p in 1:6, k in 1:Nz, j in 1:Nc, i in 1:Nc
-        x.dp[p][i, j, k] = g * m_a[p][i, j, k] / areas[i, j]
-    end
+    fill_dry_mass_flux_thickness!(x.dp, m_a, mesh.cell_areas,
+                                  eltype(x.dp[1])(STANDARD_GRAVITY))
     return nothing
 end
 
@@ -540,7 +538,8 @@ function _balance_window!(d::MERRA2DayDriver, ps_moist, m_a, m_b, steps)
     diag = balance_cs_column_mass_fluxes!(x.am, x.bm, m_a, m_b, g.face_table, g.cell_degree,
                                           steps, g.poisson_scratch; tol,
                                           max_iter = DEFAULT_POISSON_BALANCE_MAX_ITER,
-                                          project_every, weights = d.balance.weights)
+                                          project_every, weights = d.balance.weights,
+                                          fixed_global_mass = d.mass_target !== nothing)
     fill_cs_window_mass_tendency!(x.dm, m_a, m_b, steps)
     foreach(c -> fill!(c, zero(FT)), x.cm)
     cm_diag = diagnose_balanced_cs_cm!(x.cm, x.am, x.bm, x.dm, m_a, Nc, Nz, diag,

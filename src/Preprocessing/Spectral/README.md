@@ -63,3 +63,29 @@ policy applies only to offline spectral preprocessing.
 
 `read_qv_from_thermo` accepts `variable="t"` for the opt-in live-Calc_Kzz
 input writer; the default `variable="q"` retains the original humidity path.
+
+## Dry-mass rounding and column closure
+
+`pin_global_mean_ps_using_qv!` compensates native-layer dry-pressure and
+sensitivity sums and every global reduction. The target difference retains
+low parts; the routine allocates no scratch and shares no mutable state.
+Point-sampled LL, RG and the LL staging of spectral CS, plus TM5 LL/RG endpoints,
+all use it. LL column balance leaves its unresolved global mode proportional
+to current column mass, diagnoses vertical closure against the original
+endpoint tendency, and retains the Float64 replay tolerance of `1e-12`.
+All spectral `pre_*` goldens are expected to change at rounding level.
+See the manual's mass-conservation page for equations and full-day evidence.
+
+On ERA5 2021-12-01 (1°, Float64 dry mass, 34 levels, 24 windows), replay
+maxima decrease from 1.471e-12 to 5.823e-15 for TM5 and from
+1.064e-12 to 6.107e-15 for point-sampled construction. Counts above
+1e-12 decrease from 536 and 6 to zero. Maximum |global ΔM| per window decreases
+from 135,695.388 to 666.004 kg (TM5), and from
+121,982.453 to 659.033 kg (point-sampled).
+
+The mass-proportional global-mode shift is enabled only for fixed dry-mass
+targets, after Common's compensated mass-normalized budget guard (`1e-14`
+for Float64; lower precision allows two-endpoint storage rounding). Moist and
+unpinned paths retain their uniform global mode and original endpoint tendency.
+TM5 LL/RG layer solves and standalone CS per-level solves retain original
+projection arithmetic; only column calls select compensated projection dispatch.

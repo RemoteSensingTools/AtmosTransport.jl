@@ -37,3 +37,6 @@ No adjoint. Window replay mirrors MetDrivers continuity. The shared palindrome s
 ## Experimental coarsening
 
 Nested coarsening restricts an existing operator with block sums; it still requires direct-target scientific validation. It retains its source schedule, replay and positivity gates.
+
+`fill_dry_mass_flux_thickness!` converts native-level pinned dry mass to `g*m/A`
+for CS panel arrays or source-grid arrays. ERA5 and MERRA-2 share this rule.

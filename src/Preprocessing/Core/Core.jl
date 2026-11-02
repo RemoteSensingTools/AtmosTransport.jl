@@ -2,6 +2,9 @@ module Common
 
 import TOML
 
+using ...Architectures: _neumaier_sum
+using ...Parameters: GLOBAL_DRY_MASS_BUDGET_RTOL
+
 using Dates
 using Logging
 using Printf
@@ -21,7 +24,7 @@ import ...expand_data_path
 import ...MetDrivers: has_surface, has_vdiff_fields, has_pbl_eflux, has_cmfmc_cloud_base
 using FastGaussQuadrature: gausslegendre
 
-export AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings, AbstractGEOSSettings,
+export check_fixed_global_mass, AbstractChainPolicy, AbstractColumnWeights, AbstractERA5GRIBSettings, AbstractGEOSSettings,
     AbstractMetReader, AbstractMetSettings, AbstractTargetGeometry, COLUMN_WEIGHT_NAMES,
     ChainedMass, CubedSphereTargetGeometry, ERA5SpectralSettings, FlushingLogger, LatLonTargetGeometry, MAX_SPECIFIC_HUMIDITY, MassWeightedColumn, NoChain, PACKAGE_ROOT,
     RawWindow, ReducedGaussianTargetGeometry, source_grid, allocate_raw_window,

@@ -41,3 +41,24 @@ The surface reader is initialized outside the daily `try` and closed in `finally
 GRIB levels are canonical top-down; the former single-value `level_orientation` setting is removed. State merges retain extensive mass and moist-dp-weighted thermodynamics; no merged dry-DELP or endpoint accumulator is stored.
 
 ConfigChecks.env_flag preserves ERA5_N320_PROFILE as the exact string "1".
+
+With the global dry-mass pin enabled, dry flux thickness is `g*m/A` from
+native-level mass with the stored endpoint pin applied. Each sliding-window pipeline retains its native CS mass. N320
+line integrals use the same endpoint pressure offset on source-grid mass,
+including next-day lookahead; they do not independently pin the source total.
+Merged endpoint pin arithmetic and the moist thickness option are unchanged.
+
+When pinning is disabled, source thickness keeps its original Float64
+pressure/humidity calculation and the CS thickness keeps its original
+`(1-q) Δp` calculation; neither is rebuilt through `g*m/A`, preserving both
+Float32 and Float64 rounding bitwise.
+
+A one-day ERA5 N320 → C90 L117 Float32 comparison (2022-01-15, line integrals)
+measured `am`/`bm`/`cm` relative RMS changes of 0.016–0.018 % (maximum relative
+change about 0.02 %). Stored `m`, `ps`, `dm`, and all included physics payloads
+were bitwise identical. Flux-fidelity relative RMS improved from 2.5e-7 to
+1.0e-7, and maximum relative error from 2.0e-4 to 6.8e-5. Closure and replay
+residuals stayed at the same numerical scale, and global mass residuals were
+unchanged. Existing ERA5 N320 dry-mass binaries built with the pin retain the
+old, unpinned-thickness fluxes until regenerated, as do products that copy
+their fluxes; both require regeneration to use the corrected thickness.

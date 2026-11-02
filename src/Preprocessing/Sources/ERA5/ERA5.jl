@@ -71,6 +71,7 @@ import ..Common: AbstractERA5GRIBSettings,
 
 import ..CubedSphereTarget: allocate_cs_preprocess_workspace,
     derive_c180_dry_mass!,
+    fill_dry_mass_flux_thickness!,
     fill_cs_mass_delta_payload!,
     fill_cs_window_mass_tendency!,
     init_cs_positivity_accumulator,

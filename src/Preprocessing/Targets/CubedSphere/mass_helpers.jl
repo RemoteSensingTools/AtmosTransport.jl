@@ -20,6 +20,37 @@ function ps_from_air_mass!(ps::AbstractMatrix{FT},
     return ps
 end
 
+"""
+    fill_dry_mass_flux_thickness!(dp, m_dry, cell_areas, g)
+
+Fill native-level dry pressure thickness with `g * m_dry / cell_areas`.
+The mass includes the endpoint's global dry-mass pin. Arrays have horizontal
+axes matching `cell_areas` and a final level axis; CS panel tuples share one
+area matrix. Used before face interpolation or source-grid line integration.
+"""
+function fill_dry_mass_flux_thickness!(dp::AbstractArray, m_dry::AbstractArray,
+                                       cell_areas::AbstractArray, g)
+    size(dp) == size(m_dry) || throw(DimensionMismatch("dry thickness/mass shapes differ"))
+    size(m_dry)[1:end-1] == size(cell_areas) ||
+        throw(DimensionMismatch("dry mass horizontal shape does not match cell areas"))
+    n = length(cell_areas)
+    thickness = reshape(dp, n, :)
+    mass = reshape(m_dry, n, :)
+    @inbounds for k in axes(mass, 2), c in 1:n
+        thickness[c, k] = g * mass[c, k] / cell_areas[c]
+    end
+    return nothing
+end
+
+function fill_dry_mass_flux_thickness!(dp::NTuple{6, <:AbstractArray},
+                                       m_dry::NTuple{6, <:AbstractArray},
+                                       cell_areas, g)
+    for p in 1:6
+        fill_dry_mass_flux_thickness!(dp[p], m_dry[p], cell_areas, g)
+    end
+    return nothing
+end
+
 function cs_total_air_mass(panels_m::NTuple{CS_PANEL_COUNT, <:AbstractArray})
     total = 0.0
     for p in 1:CS_PANEL_COUNT

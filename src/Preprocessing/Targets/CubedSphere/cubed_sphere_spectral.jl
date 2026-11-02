@@ -397,7 +397,8 @@ function cs_spectral_contract_diag!(workspace::CubedSphereSpectralWindowWorkspac
             cur_am, cur_bm, cur_m, cs_ws.m_next_panels,
             grid.face_table, grid.cell_degree, steps,
             grid.poisson_scratch; tol=ctx.cs_balance_tol, max_iter=max_iter,
-            project_every=ctx.cs_balance_project_every, weights=ctx.balance_weights)
+            project_every=ctx.cs_balance_project_every, weights=ctx.balance_weights,
+            fixed_global_mass=ctx.settings.mass_fix_enable && ctx.settings.mass_basis == :dry)
         ctx.total_balance += time() - t_bal
         ctx.worst_pre  = max(ctx.worst_pre,  bal_diag.max_pre_residual)
         ctx.worst_post = max(ctx.worst_post, bal_diag.max_post_residual)

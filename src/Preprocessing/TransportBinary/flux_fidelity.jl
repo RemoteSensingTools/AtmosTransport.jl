@@ -167,7 +167,10 @@ struct ColumnClosureRecord <: AbstractColumnClosureRecord
     residual_to_tolerance :: Float64
     booked_residual_kg    :: Float64
     cm_residual_to_tolerance :: Float64
+    mass_weighted_global_mode :: Bool
 end
+ColumnClosureRecord(projected, ratio, booked, cm_ratio) =
+    ColumnClosureRecord(projected, ratio, booked, cm_ratio, false)
 "No cubed-sphere column balance ran (lat-lon/reduced Gaussian, payload-only, pressure fixer)."
 struct NoColumnClosureRecord <: AbstractColumnClosureRecord end
 
@@ -175,7 +178,8 @@ column_closure_record(balance_diag, cm_diag) = ColumnClosureRecord(
     Float64(balance_diag.final_column_projected_residual),
     Float64(balance_diag.final_column_residual_ratio),
     Float64(cm_diag.max_booked_residual),
-    Float64(cm_diag.max_raw_residual_ratio))
+    Float64(cm_diag.max_raw_residual_ratio),
+    balance_diag.mass_weighted_global_mode)
 
 """
     full_window_column_closure_record(record, am, bm, m, m_next, ft, steps, scratch) -> record′
@@ -195,11 +199,12 @@ function full_window_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_
                                            ft::CSGlobalFaceTable, steps::Integer,
                                            scratch::CSPoissonScratch)
     amounts = 2 * Int(steps)
-    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch, (;);
+    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch, (; mass_weighted_global_mode=r.mass_weighted_global_mode);
                                        flux_scale = 1 / amounts)
     return ColumnClosureRecord(amounts * Float64(stored.final_column_projected_residual),
                                Float64(stored.final_column_residual_ratio),
-                               amounts * r.booked_residual_kg, r.cm_residual_to_tolerance)
+                               amounts * r.booked_residual_kg, r.cm_residual_to_tolerance,
+                               r.mass_weighted_global_mode)
 end
 
 """
@@ -222,11 +227,12 @@ function rescaled_column_closure_record(r::ColumnClosureRecord, am, bm, m, m_nex
                                         ft::CSGlobalFaceTable, balanced_steps::Integer,
                                         steps::Integer, scratch::CSPoissonScratch)
     steps == balanced_steps && return r
-    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch, (;))
+    stored = recheck_cs_column_closure(am, bm, m, m_next, ft, Int(steps), scratch,
+                                       (; mass_weighted_global_mode=r.mass_weighted_global_mode))
     return ColumnClosureRecord(Float64(stored.final_column_projected_residual),
                                Float64(stored.final_column_residual_ratio),
                                r.booked_residual_kg * balanced_steps / steps,
-                               r.cm_residual_to_tolerance)
+                               r.cm_residual_to_tolerance, r.mass_weighted_global_mode)
 end
 
 struct FluxFidelityEvidenceBundle{F,O,C<:AbstractColumnClosureRecord}

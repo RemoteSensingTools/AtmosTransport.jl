@@ -23,11 +23,11 @@ function DirectRingPoisson(L::CompressedLaplacian)
     return DirectRingPoisson(cholesky(Symmetric(matrix[1:nc-1,1:nc-1])),nc)
 end
 
-function solve_compressed_poisson_direct!(psi,rhs,solver::DirectRingPoisson)
-    project_mean_zero!(rhs)
+function solve_compressed_poisson_direct!(psi,rhs,solver::DirectRingPoisson; projection::Val=Val(false))
+    project_mean_zero!(rhs, projection)
     psi[1:end-1] .= solver.factor \ view(rhs,1:solver.nc-1)
     psi[end]=0
-    project_mean_zero!(psi)
+    project_mean_zero!(psi, projection)
     return psi
 end
 
