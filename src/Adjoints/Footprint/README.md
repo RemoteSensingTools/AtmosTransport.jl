@@ -26,7 +26,14 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
 - `AutoTape.jl`: closed-form binary schedule sizes, cached CFL/Lin–Rood
   counts, constrained candidate selection, memory budgets, reserve-before-run
-  setup and preallocated snapshot capture (including lazy convection carries).
+  setup and preallocated snapshot capture. Convection owns the lazy carry
+  shapes through `convection_checkpoint_state`.
+  CPU budgets subtract `min(10% of host/cgroup capacity, 2 GiB)` plus reverse
+  workspace from available headroom; `Tape._CPU_TAPE_MARGIN_MAX_BYTES` owns
+  the cap. Tape and snapshots share that budget. GPU margins are unchanged
+  (device: `max(10% of capacity, 4 GiB)`; pinned host:
+  `max(10% of limit, 8 GiB)`). This changes candidate selection when memory is
+  tight and preserves bitwise forward/adjoint results on one CPU thread.
 - `TapeRuntime.jl`: the runtime of an `AdjointTape` for one call or one
   optimization (`_TapeRuntime`, `_with_tape_runtime`): its pool, opened
   once, rewound for each further tape and released explicitly; the counted
@@ -96,6 +103,11 @@ also reserve and are never overridden. The driver rewinds the tape pool
 before each re-recorded window and releases the pools at the end (`cs_surface_flux_4dvar_optimize` keeps one pool for
 all its evaluations). Binary schedules use the closed-form size; CFL
 schedules and Lin–Rood use one cached counting replay per runtime.
+Segment sizing omits a leading convection flush inherited from the preceding
+step: a fresh segment recorder has no pending convection there. It includes
+the final pending convection slot. Head pools reserve the maximum count for
+each type and shape across their windows; a resident tail reserves its exact
+segment counts.
 A call runs one forward run of its replay, which records what the schedule's
 reverse pass needs (Full: the tape; Stride: the K-step checkpoints) through
 its taped steps; the reverse pass may stop earlier (the 4D-Var's last

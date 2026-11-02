@@ -1,4 +1,32 @@
 # Persistent convection state for checkpoint replay.
+
+"""
+    convection_checkpoint_state(op, workspace, state::CubedSphereState, mesh::CubedSphereMesh)
+
+Copy persistent convection state for a preallocated checkpoint, sizing lazy
+column carries for the mesh and the state's tracer count without changing the
+workspace. An unused carry is equivalent to a zero carry of that shape.
+"""
+convection_checkpoint_state(::NoConvection, workspace, _state, _mesh) = operator_state(workspace)
+
+function convection_checkpoint_state(::TM5Convection, ws::TM5Workspace,
+                                     state::CubedSphereState, mesh::CubedSphereMesh)
+    dims = (mesh.Nc, mesh.Nc, size(first(state.tracers_raw), 4))
+    return (carry = _fitted_ledger_carry(_copy_state(ws.ledger_carry), dims),)
+end
+
+function convection_checkpoint_state(op::CMFMCConvection, ws::CMFMCWorkspace,
+                                     state::CubedSphereState, mesh::CubedSphereMesh)
+    snap = operator_state(ws)
+    op.clamp && return snap
+    dims = (mesh.Nc, mesh.Nc, size(first(state.tracers_raw), 4))
+    return merge(snap, (carry = _fitted_ledger_carry(snap.carry, dims),))
+end
+
+convection_checkpoint_state(op::CMFMCMatrixConvection, ws::CMFMCMatrixWorkspace,
+                            state::CubedSphereState, mesh::CubedSphereMesh) =
+    convection_checkpoint_state(op.inner, ws.tm5_workspace, state, mesh)
+
 # CMFMC convection: the ledger carry and the window's cached CFL sub-steps.
 operator_state(ws::CMFMCWorkspace) =
     (carry = _copy_state(ws.ledger_carry[]), n_sub = ws.cached_n_sub[],

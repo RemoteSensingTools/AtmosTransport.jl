@@ -166,6 +166,10 @@ end
 
 _record!(r::_CSTapeRecorder, op) = (push!(r.ops, op); length(r.ops))
 _record!(r::_CSCountingRecorder, op) = (_count_record!(r, op); 0)
+# The counting recorder needs the convection's originating step instead of
+# an index into a record vector, to identify a flush at a segment boundary.
+_record!(r::_CSCountingRecorder, op::_CSConvectionRecord) =
+    (_count_record!(r, op); r.current_step)
 _count_record!(r, ::_CSSweepRecord) = (r.sweep += 1; nothing)
 _count_record!(r, ::_CSHaloRecord) = (r.halo += 1; nothing)
 _count_record!(r, ::_CSMidpointRecord) = (r.midpoint += 1; nothing)
@@ -304,7 +308,15 @@ end
 function _flush_convection!(r::_AbstractCSRecorder)
     r.convection_pending || return nothing
     _sync!(r, r.convection_m)
-    _bind_convection!(r, _stage!(r, r.convection_m))
+    _bind_convection!(r, _stage_convection!(r))
+    return nothing
+end
+
+_stage_convection!(r::_CSTapeRecorder) = _stage!(r, r.convection_m)
+function _stage_convection!(r::_CSCountingRecorder)
+    panels = r.convection_m
+    _count_layout!(r, panels; convection_step = r.convection_index)
+    _count_state!(r, _bytes_per_panel_tuple(panels), _tape_slot_bytes(panels))
     return nothing
 end
 
@@ -409,10 +421,11 @@ record_linrood_horizontal!(r::_CSCountingRecorder, ::Val{:finish}, fx_out, am, b
 
 _bytes_of(panels) = sum(p -> sizeof(eltype(p)) * length(p), panels)
 
-function _count_layout!(r::_CSCountingRecorder, panels, T = eltype(first(panels)); pooled::Bool = true)
+function _count_layout!(r::_CSCountingRecorder, panels, T = eltype(first(panels));
+                        pooled::Bool = true, convection_step::Int = r.current_step)
     while length(r.layouts) < r.current_step
         push!(r.layouts, Any[])
     end
-    push!(r.layouts[r.current_step], (panels, T, pooled))
+    push!(r.layouts[r.current_step], (panels, T, pooled, convection_step))
     return nothing
 end

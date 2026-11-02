@@ -4,6 +4,7 @@
 struct _TapeSizing
     layouts::Vector{Vector{Any}}
     pending::Vector{Bool}
+    boundary_flush::Vector{Bool}
     panels::Any
     prefixes::Dict{Any, Tuple{Any, Vector{Int}}}
 end
@@ -11,7 +12,11 @@ end
 function _TapeSizing(layouts, pending, panels)
     prefixes = Dict{Any, Tuple{Any, Vector{Int}}}()
     n = length(layouts)
+    boundary_flush = falses(n)
     for (s, layout) in enumerate(layouts), entry in layout
+        # A flush can belong to convection from the preceding step. A
+        # recorder starting at this step has no such record to flush.
+        length(entry) > 3 && entry[4] < s && (boundary_flush[s] = true)
         key = _layout_key(entry)
         _, counts = get!(prefixes, key) do
             (entry, zeros(Int, n + 1))
@@ -21,7 +26,7 @@ function _TapeSizing(layouts, pending, panels)
     for (_, counts) in values(prefixes)
         cumsum!(counts, counts)
     end
-    return _TapeSizing(layouts, pending, panels, prefixes)
+    return _TapeSizing(layouts, pending, collect(boundary_flush), panels, prefixes)
 end
 
 function _closed_tape_size(replay::_CSReplay, n::Int)
@@ -29,6 +34,7 @@ function _closed_tape_size(replay::_CSReplay, n::Int)
     layouts = [Any[] for _ in 1:n]
     pending = falses(n)
     waiting = false
+    convection_step = 0
     for s in 1:n
         layout = layouts[s]
         for stage in _stages_of_step(replay.plan, replay.steps, s)
@@ -37,13 +43,14 @@ function _closed_tape_size(replay::_CSReplay, n::Int)
                 _append_codes!(layout, replay.advection, panels)
                 waiting = false
             elseif stage isa ConvectionStage && !(replay.convection isa NoConvection)
-                waiting && push!(layout, (panels, eltype(first(panels))))
+                waiting && push!(layout, (panels, eltype(first(panels)), true, convection_step))
                 waiting = true
+                convection_step = s
             elseif stage isa AirMassResetStage
                 if stage.mode === :preserve_vmr
                     append!(layout, fill((panels, eltype(first(panels))), 2))
                 elseif waiting
-                    push!(layout, (panels, eltype(first(panels))))
+                    push!(layout, (panels, eltype(first(panels)), true, convection_step))
                 end
                 waiting = false
             end
@@ -79,6 +86,11 @@ function _segment_counts(size::_TapeSizing, steps::AbstractUnitRange)
     for (key, (entry, through)) in size.prefixes
         count = through[last(steps) + 1] - through[first(steps)]
         count > 0 && (counts[key] = (entry, count))
+    end
+    if size.boundary_flush[first(steps)]
+        key = _layout_key((size.panels, eltype(first(size.panels))))
+        entry, count = counts[key]
+        count == 1 ? delete!(counts, key) : (counts[key] = (entry, count - 1))
     end
     if size.pending[last(steps)]
         entry = (size.panels, eltype(first(size.panels)))
@@ -371,20 +383,11 @@ function _reserved_snapshot(replay, pool)
     return (; rm, m, _snapshot_operator_state(replay)...)
 end
 
-# Convection ledger carries are sized on first use. Reserve their eventual
-# Nc×Nc×1 shape now; the initial empty carry is equivalent to zero columns.
-function _reserve_snapshot_state(x::AbstractArray, replay)
-    if isempty(x) && ndims(x) == 3
-        return zeros_like(x, eltype(x), replay.mesh.Nc, replay.mesh.Nc, 1)
-    end
-    return x
-end
-_reserve_snapshot_state(x::Union{Tuple, NamedTuple}, replay) = map(v -> _reserve_snapshot_state(v, replay), x)
-_reserve_snapshot_state(x, _replay) = x
 function _snapshot_operator_state(replay)
-    return _reserve_snapshot_state((emissions = operator_state(replay.emissions),
-        convection = operator_state(replay.convection_workspace),
-        diffusion = operator_state(replay.diffusion_workspace)), replay)
+    return (emissions = operator_state(replay.emissions),
+        convection = convection_checkpoint_state(replay.convection,
+            replay.convection_workspace, replay.state, replay.mesh),
+        diffusion = operator_state(replay.diffusion_workspace))
 end
 _release_snapshot_state!(x::AbstractArray) = _free_tape_array!(x)
 _release_snapshot_state!(x::Union{Tuple, NamedTuple}) = (foreach(_release_snapshot_state!, x); nothing)

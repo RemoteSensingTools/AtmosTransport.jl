@@ -87,4 +87,5 @@ using ..Operators: _copy_state, _zero_state!
 include("workspace_factory.jl")
 include("workspace_state.jl")
 export convection_workspace_for, derive_tile_columns
+export convection_checkpoint_state
 end # module Convection
