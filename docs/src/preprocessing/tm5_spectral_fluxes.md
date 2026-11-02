@@ -559,8 +559,13 @@ for each transform and restored even on exceptions; FAST_MATH is rejected.
 
 ## 13. Differences from TM5
 
+The [TM5-FLUX-2a real-day memo](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/docs/memos/2026-11-01_tm5_flux_real_day.md)
+records the default-versus-TM5 construction comparison, balance diagnostics
+and flux × PBL transport experiment. Reproduction commands and CSV definitions
+are in `scripts/diagnostics/README.md`.
+
 The atmospheric sizes below are measured in the independent **2026-10-31
-WIND_DIFF_PROBE**, `/temp1/cfranken/plan/tm5_parity/WIND_DIFF_PROBE.md`,
+WIND_DIFF_PROBE** report (`WIND_DIFF_PROBE.md` in that experiment's output directory),
 using the original ERA5 T639 analysis coefficients for 2022-01-15 00–01 UTC.
 They cover native levels 1, 60, 96 and 137 on a common 1° target, before pin,
 balance, drying or merging. Caps mean |latitude| > 85°. They are raw flux and
@@ -660,7 +665,7 @@ with attributable deltas, S8 cubed-sphere direct target).
 | Integrated PS, face fluxes and ``W`` (S5) | Implemented (TM5-FLUX-1) |
 | Per-layer balance, TM5 guards, RG factor-once solve (S6a) | Implemented (TM5-FLUX-1) |
 | End to end for LL and RG, new cases `pre_ll72_tm5`, `pre_o24_tm5` (S6b) | Implemented; golden definitions only, references generated separately |
-| First real day and attributable deltas (S7) | Planned (TM5-FLUX-2) |
+| First real day and attributable deltas (S7) | [Real-day comparison memo](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/docs/memos/2026-11-01_tm5_flux_real_day.md) and `scripts/diagnostics/compare_flux_constructions.jl` (TM5-FLUX-2a) |
 | Cubed-sphere direct target (S8) | Planned (TM5-FLUX-2) |
 
 ## 17. Synthesis backends and measurements
