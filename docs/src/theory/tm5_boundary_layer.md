@@ -528,7 +528,13 @@ stored window-start total surface pressure. Since that pressure can differ
 between constructions, merged T/q can differ beyond rounding; each merge is
 consistent with its binary's hybrid layers. Day-local input ownership reuses
 the shared hourly thermo endpoint, surface readers (including split-ZIP extraction), and
-surface remap weights. `grid.target_vertical` pressure-overlap remapping and
+surface remap weights. Thermo files stay open with their bilinear weights for
+the day. Consecutive records are decoded in temporal-chunk blocks capped at
+three hours, then only sampled target endpoints are retained. The next-day
+file supplies just midnight. This avoids repeated chunk decompression while
+preserving each record's scalar conversion, orientation and interpolation;
+the pressure-dependent layer merge and endpoint average keep their operation order.
+`grid.target_vertical` pressure-overlap remapping and
 `grid.level_top != 1` are rejected before synthesis; at least two output layers
 are required. ERA5 reanalysis accumulations are hourly interval totals labelled
 by their ending time, not cumulative forecast-since-initialisation values.

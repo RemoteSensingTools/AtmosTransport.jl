@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **121136 bytes / 34610.3 tokens**. Public names: **51**.
+Size: **125349 bytes / 35814.0 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1073,18 +1073,18 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 Files:
 
 - `Spectral.jl` (2919 bytes)
-- `device_spectral_synthesis.jl` (6865 bytes)
+- `device_spectral_synthesis.jl` (7227 bytes)
 - `discovery.jl` (1527 bytes)
-- `mass_support.jl` (39982 bytes)
+- `mass_support.jl` (41507 bytes)
 - `reduced_spectral_synthesis.jl` (7032 bytes)
 - `spectral_hour_io.jl` (4471 bytes)
-- `spectral_integral_fluxes.jl` (7762 bytes)
+- `spectral_integral_fluxes.jl` (8936 bytes)
 - `spectral_io.jl` (13730 bytes)
-- `spectral_quadrature.jl` (6212 bytes)
+- `spectral_quadrature.jl` (6385 bytes)
 - `spectral_synthesis.jl` (24175 bytes)
-- `synthesis_kernels.jl` (1823 bytes)
-- `synthesis_rings.jl` (2490 bytes)
-- `tm5_endpoint.jl` (2148 bytes)
+- `synthesis_kernels.jl` (2452 bytes)
+- `synthesis_rings.jl` (2531 bytes)
+- `tm5_endpoint.jl` (2457 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1114,7 +1114,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/LatLon`
 
-Size: **101078 bytes / 28879.4 tokens**. Public names: **45**.
+Size: **104196 bytes / 29770.3 tokens**. Public names: **45**.
 
 Depends on: `src`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/TransportBinary`, `src/State`.
 
@@ -1122,13 +1122,13 @@ Used by: `src/Preprocessing`, `src/Preprocessing/Targets/CubedSphere`, `src/Prep
 
 Files:
 
-- `LatLon.jl` (5703 bytes)
+- `LatLon.jl` (5746 bytes)
 - `latlon_contracts.jl` (26093 bytes)
 - `latlon_spectral.jl` (21010 bytes)
 - `latlon_workspaces.jl` (29653 bytes)
-- `tm5_layer_balance.jl` (3541 bytes)
-- `tm5_pbl_writer.jl` (6167 bytes)
-- `tm5_spectral_day.jl` (8911 bytes)
+- `tm5_layer_balance.jl` (3747 bytes)
+- `tm5_pbl_writer.jl` (8471 bytes)
+- `tm5_spectral_day.jl` (9476 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1136,7 +1136,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/ReducedGaussian`
 
-Size: **108472 bytes / 30992.0 tokens**. Public names: **40**.
+Size: **109167 bytes / 31190.6 tokens**. Public names: **40**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/State`.
 
@@ -1149,7 +1149,7 @@ Files:
 - `reduced_spectral_day.jl` (29733 bytes)
 - `reduced_transport_helpers.jl` (25396 bytes)
 - `reduced_window_buffer.jl` (11878 bytes)
-- `tm5_spectral_day.jl` (9838 bytes)
+- `tm5_spectral_day.jl` (10533 bytes)
 
 Forward ↔ adjoint mirrors:
 

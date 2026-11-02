@@ -41,6 +41,123 @@ function write_pbl_thermo(path;exact=false,
     end
 end
 
+@testset "TM5 chunked thermo preserves scalar reads and endpoint ownership" begin
+    mktempdir() do dir
+        date = Date(2021,12,1)
+        vertical = (;Nz_native=4,Nz=2,level_range=1:4,
+            ab=(;dA=[1000.,2000.,3000.,4000.],dB=[.1,.2,.3,.4]),merge_map=[1,1,2,2])
+        grid = Pre.build_target_geometry(Dict("type"=>"latlon","nlon"=>4,"nlat"=>3),Float64)
+        lons,lats = LL.tm5_target_coordinates(grid)
+        # Both supported disk dimension orders, with both axis orientations.
+        for longitude_first in (true,false), centered in (true,false)
+            for day in (date,date+Day(1))
+                path = Pre.Spectral.era5_thermo_path(dir,day)
+                NCDataset(path,"c") do ds
+                    for (name,n) in (("longitude",4),("latitude",3),("level",4),("time",24))
+                        defDim(ds,name,n)
+                    end
+                    lon = centered ? [-180.,-90.,0.,90.] : [0.,90.,180.,270.]
+                    lat = centered ? [-90.,0.,90.] : [90.,0.,-90.]
+                    defVar(ds,"longitude",lon,("longitude",))
+                    defVar(ds,"latitude",lat,("latitude",))
+                    dims = longitude_first ? ("longitude","latitude","level","time") :
+                        ("time","level","latitude","longitude")
+                    chunks = longitude_first ? (2,2,2,3) : (3,2,2,2)
+                    for (name,units) in (("t","K"),("q","kg kg-1"))
+                        a = [Float32(name == "t" ? 250+sin(i+2j+3k+h)+h+Dates.day(day) :
+                            .001+.00001*(i+2j+3k+h+Dates.day(day))) for i in 1:4,j in 1:3,k in 1:4,h in 1:24]
+                        data = longitude_first ? a : permutedims(a,(4,3,2,1))
+                        defVar(ds,name,data,dims;chunksizes=chunks,deflatelevel=1,attrib=Dict("units"=>units))
+                    end
+                end
+                write_pbl_surface(joinpath(dir,"era5_surface_$(Dates.format(day,"yyyymmdd")).nc"))
+                # The scalar reader remains the independent pre-batching path.
+                NCDataset(path) do ds
+                    for variable in ("t","q"), records in (1:3,22:24), FT in (Float32,Float64)
+                        Pre.Spectral.foreach_thermo_record(ds,records,3;FT,variable) do field,record
+                            reference = Pre.read_qv_from_thermo(path,record,4,3,4;FT,variable)
+                            @test reinterpret(UInt8,vec(field)) == reinterpret(UInt8,vec(reference))
+                        end
+                    end
+                end
+            end
+            settings = Pre.ERA5SpectralSettings((;output_float_type=Float64,met_interval=3600.,thermo_dir=dir,surface_dir=dir))
+            cache = LL.TM5PBLInputCache()
+            readers = LL.TM5PBLThermoReader[]
+            try
+                previous = nothing
+                for win in (1,2,3,22,23,24,1)
+                    ps = fill(1e5+win,4,3)
+                    cached = LL.load_tm5_pbl_target_window(date,win,settings,vertical,ps,grid,(4,3,2);cache)
+                    fresh = LL.load_tm5_pbl_target_window(date,win,settings,vertical,ps,grid,(4,3,2))
+                    @test all(name->isequal(getproperty(cached,name),getproperty(fresh,name)),keys(cached))
+                    reader = cache.thermo_readers[Pre.Spectral.era5_thermo_path(dir,date)]
+                    @test reader.batch == 3
+                    if win == 1
+                        previous = reader.values
+                    elseif win == 2
+                        @test reader.values === previous
+                        @test reader.records == 1:3
+                    end
+                end
+                append!(readers,values(cache.thermo_readers))
+                @test length(readers) == 2
+                @test cache.thermo_readers[Pre.Spectral.era5_thermo_path(dir,date+Day(1))].records == 1:1
+            finally
+                close(cache)
+            end
+            @test isempty(cache.thermo_readers)
+            @test cache.regridder === nothing
+            @test all(reader->!isopen(reader.dataset),readers)
+        end
+    end
+end
+
+@testset "TM5 day cleanup closes all readers after surface cleanup failure" begin
+    mktempdir() do dir
+        date = Date(2021,12,1)
+        cache = LL.TM5PBLInputCache()
+        surface_readers = PI.ERA5SurfaceReader[]
+        thermo_readers = LL.TM5PBLThermoReader[]
+        extraction_dirs = String[]
+        try
+            for day in (date,date+Day(1))
+                write_pbl_surface(joinpath(dir,"era5_surface_$(Dates.format(day,"yyyymmdd")).nc"))
+                surface = PI.open_era5_surface_reader(dir,day,4,3)
+                push!(surface_readers,surface)
+                cache.readers[day] = surface
+                surface.tmp_dir = mktempdir(dir)
+                push!(extraction_dirs,surface.tmp_dir)
+                path = Pre.Spectral.era5_thermo_path(dir,day)
+                write_pbl_thermo(path)
+                push!(thermo_readers,LL._tm5_thermo_reader!(cache,path,[0.],[0.]))
+            end
+            # Inject a removal failure independent of user privileges/platform.
+            # Fail the first reader in actual cleanup order, so later closes matter.
+            first(values(cache.readers)).tmp_dir = joinpath(dir,"invalid\0surface")
+            cache.endpoint = (;key=("thermo",1),value=(ones(1,2),zeros(1,2)))
+            cache.regridder = :retained_weights
+            @test_throws ArgumentError close(cache)
+            @test all(reader->all(ds->!isopen(ds),reader.datasets),surface_readers)
+            @test all(reader->!isopen(reader.dataset),thermo_readers)
+            @test isempty(cache.readers)
+            @test isempty(cache.thermo_readers)
+            @test cache.endpoint === nothing
+            @test cache.regridder === nothing
+            @test count(isdir,extraction_dirs) == 1
+            @test close(cache) === nothing
+        finally
+            # Also release fixtures if setup or an assertion fails.
+            for reader in surface_readers, ds in reader.datasets
+                isopen(ds) && close(ds)
+            end
+            for reader in thermo_readers
+                isopen(reader.dataset) && close(reader.dataset)
+            end
+        end
+    end
+end
+
 @testset "TM5 surface intervals, units, endpoints and roughness" begin
     mktempdir() do dir
         path=joinpath(dir,"era5_surface_20211201.nc")

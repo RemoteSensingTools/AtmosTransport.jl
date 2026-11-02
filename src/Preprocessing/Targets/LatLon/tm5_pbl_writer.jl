@@ -8,17 +8,53 @@ function tm5_pbl_sample(::Type{FT}, shape) where FT
         nsss=zeros(FT,surface_shape),sshf=zeros(FT,surface_shape),slhf=zeros(FT,surface_shape),oro=zeros(FT,surface_shape))
 end
 
-"Day-local input ownership: one shared thermo endpoint, surface readers and remap weights."
+"One open thermo file, its point weights and a bounded block of sampled endpoints."
+mutable struct TM5PBLThermoReader
+    dataset::NCDataset
+    weights::LatLonBilinearWeights
+    ny::Int
+    batch::Int
+    records::UnitRange{Int}
+    values::Vector{Tuple{Matrix{Float64},Matrix{Float64}}}
+end
+
+"Day-local ownership of thermo/surface readers, shared endpoints and remap weights."
 mutable struct TM5PBLInputCache
     readers::Dict{Date,ERA5SurfaceReader}
     endpoint::Any
     regridder::Any
+    thermo_readers::Dict{String,TM5PBLThermoReader}
 end
+TM5PBLInputCache(readers,endpoint,regridder) =
+    TM5PBLInputCache(readers,endpoint,regridder,Dict{String,TM5PBLThermoReader}())
 TM5PBLInputCache() = TM5PBLInputCache(Dict{Date,ERA5SurfaceReader}(),nothing,nothing)
 function Base.close(cache::TM5PBLInputCache)
-    foreach(close_era5_surface_reader,values(cache.readers))
-    empty!(cache.readers)
-    cache.endpoint = nothing
+    errors = Any[]
+    try
+        for reader in values(cache.readers)
+            try
+                close_era5_surface_reader(reader)
+            catch err
+                push!(errors,err)
+            end
+        end
+    finally
+        try
+            for reader in values(cache.thermo_readers)
+                try
+                    close(reader.dataset)
+                catch err
+                    push!(errors,err)
+                end
+            end
+        finally
+            empty!(cache.readers)
+            empty!(cache.thermo_readers)
+            cache.endpoint = nothing
+            cache.regridder = nothing
+        end
+    end
+    isempty(errors) || throw(length(errors) == 1 ? only(errors) : CompositeException(errors))
     return nothing
 end
 function _tm5_reader!(cache,settings,date)
@@ -27,25 +63,52 @@ function _tm5_reader!(cache,settings,date)
     end
 end
 
-function _tm5_thermo_endpoint(path,record,vertical,target_lons,target_lats,cache)
+function _tm5_thermo_reader!(cache,path,target_lons,target_lats)
+    return get!(cache.thermo_readers,path) do
+        ds = NCDataset(path)
+        try
+            units_t = lowercase(String(get(ds["t"].attrib,"units","")))
+            units_q = lowercase(replace(String(get(ds["q"].attrib,"units",""))," "=>"", "**"=>"^"))
+            units_t in ("k","kelvin") || throw(ArgumentError("TM5 thermo t requires Kelvin"))
+            units_q in ("kgkg-1","kgkg^-1","kg/kg","1") || throw(ArgumentError("TM5 thermo q requires kg/kg total air"))
+            lons,lats = read_thermo_coordinates(ds)
+            weights = LatLonBilinearWeights(lons,lats,target_lons,target_lats)
+            # Bound native scratch even when an archive chunks an entire day.
+            batch = minimum(("t","q")) do name
+                storage,chunks = chunking(ds[name])
+                time_dim = first(dimnames(ds[name])) == "longitude" ? 4 : 1
+                storage == :chunked ? min(3,chunks[time_dim]) : 1
+            end
+            return TM5PBLThermoReader(ds,weights,length(lats),batch,1:0,
+                Tuple{Matrix{Float64},Matrix{Float64}}[])
+        catch
+            close(ds)
+            rethrow()
+        end
+    end
+end
+
+function _tm5_thermo_endpoint(path,record,vertical,target_lons,target_lats,cache;
+                              last_record=24)
     key = (path,record)
     cache.endpoint !== nothing && cache.endpoint.key == key && return cache.endpoint.value
-    lons,lats = read_thermo_coordinates(path)
-    nx,ny = length(lons),length(lats)
-    t,q = NCDataset(path) do ds
-        units_t = lowercase(String(get(ds["t"].attrib,"units","")))
-        units_q = lowercase(replace(String(get(ds["q"].attrib,"units",""))," "=>"", "**"=>"^"))
-        units_t in ("k","kelvin") || throw(ArgumentError("TM5 thermo t requires Kelvin"))
-        units_q in ("kgkg-1","kgkg^-1","kg/kg","1") || throw(ArgumentError("TM5 thermo q requires kg/kg total air"))
-        (read_qv_from_thermo(path,record,nx,ny,vertical.Nz_native;FT=Float64,variable="t"),
-         read_qv_from_thermo(path,record,nx,ny,vertical.Nz_native;FT=Float64))
+    reader = _tm5_thermo_reader!(cache,path,target_lons,target_lats)
+    if !(record in reader.records)
+        first_record = record-mod(record-1,reader.batch)
+        records = first_record:min(first_record+reader.batch-1,last_record)
+        sampled = map(("t","q")) do variable
+            fields = Matrix{Float64}[]
+            foreach_thermo_record(reader.dataset,records,reader.ny;variable) do a, _
+                dst = zeros(Float64,length(target_lons),length(vertical.level_range))
+                interpolate_ll_qv!(dst,view(a,:,:,vertical.level_range),reader.weights)
+                push!(fields,dst)
+            end
+            fields
+        end
+        reader.values = collect(zip(sampled...))
+        reader.records = records
     end
-    idx = vertical.level_range
-    weights = LatLonBilinearWeights(lons,lats,target_lons,target_lats)
-    value = map((t,q)) do a
-        dst = zeros(Float64,length(target_lons),length(idx))
-        interpolate_ll_qv!(dst,view(a,:,:,idx),weights)
-    end
+    value = reader.values[record-first(reader.records)+1]
     cache.endpoint = (;key,value)
     return value
 end
@@ -82,7 +145,8 @@ function _load_tm5_pbl_target_window(date,win,settings,vertical,ps,grid,shape,ca
     path = era5_thermo_path(settings.thermo_dir,date)
     path2 = era5_thermo_path(settings.thermo_dir,date2)
     t0,q0 = _tm5_thermo_endpoint(path,win,vertical,lons,lats,cache)
-    t1,q1 = _tm5_thermo_endpoint(path2,record2,vertical,lons,lats,cache)
+    t1,q1 = _tm5_thermo_endpoint(path2,record2,vertical,lons,lats,cache;
+        last_record=date2 == date ? hours_per_day : 1)
     nc,nz = length(lons),shape[end]
     t,q,weights = zeros(Float64,nc,nz),zeros(Float64,nc,nz),zeros(Float64,nc,nz)
     # IntensiveCenterField semantics: sum(value * moist mass) / sum(moist mass).
