@@ -13,19 +13,20 @@ function CSSpectralQuadrature(grid::CubedSphereTargetGeometry, T::Integer, c::TM
     refinement = quadrature_refinement(T, edge, c.refinement_steps)
     spacing = edge/refinement
     ny = max(2, ceil(Int, 180/spacing))
-    nx = max(2ny, 2(T+1)+1)
+    nx = max(2ny, 2(T+2))
     mesh = LatLonMesh(; Nx=nx, Ny=ny, FT=Float64, radius=grid.mesh.radius,
         longitude=(0, 360), latitude=(-90, 90))
     rings = SynthesisRings(deg2rad.(mesh.φᶜ), fill(nx, ny), fill(deg2rad(first(mesh.λᶜ)), ny))
     return CSSpectralQuadrature(rings, mesh, cell_areas(grid.mesh), Float64(grid.mesh.radius),
-        max(16, 4refinement))
+        max(16, 4refinement, ceil(Int, (T+2)*max(maximum(lx),maximum(ly))/grid.mesh.radius/0.1)))
 end
 
 # CSC of the transpose provides rows for a portable gather, without atomics.
 # Geometry is prepared on the host and transferred once, never per level.
 function cs_gather_operator(matrix, adapter, ::Type{FT}) where FT
     rows = sparse(transpose(matrix))
-    return (; offsets=adapter(Int32.(rows.colptr)), indices=adapter(Int32.(rows.rowval)),
+    IT = max(size(rows,1), length(rows.nzval)+1) <= typemax(Int32) ? Int32 : Int64
+    return (; offsets=adapter(IT.(rows.colptr)), indices=adapter(IT.(rows.rowval)),
         weights=adapter(FT.(rows.nzval)))
 end
 
@@ -47,11 +48,12 @@ function cs_apply_integral!(out, values, op)
 end
 
 """CS integration plans; face and overlap matrices are supplied by the target."""
-struct CSSpectralIntegralWorkspace{Q, S, F, G}
+struct CSSpectralIntegralWorkspace{Q, S, F, G, P}
     quadrature::Q
     synthesis::S
     surface::F
     geometry::G
+    polar::P
 end
 
 function CSSpectralIntegralWorkspace(q::CSSpectralQuadrature, T::Integer, face_matrix, overlap;
@@ -71,7 +73,7 @@ function CSSpectralIntegralWorkspace(q::CSSpectralQuadrature, T::Integer, face_m
         area=cs_gather_operator(spdiagm(0 => q.areas)*means, adapt, FT),
         sinlon=adapt(FT.(sin.(lon))), coslon=adapt(FT.(cos.(lon))),
         sinlat=adapt(FT.(sin.(lat))), coslat=adapt(FT.(cos.(lat))))
-    return CSSpectralIntegralWorkspace(q, s, surface, g)
+    return CSSpectralIntegralWorkspace(q, s, surface, g, cs_polar_synthesis(s, T))
 end
 
 # Unlike LL's latitude integrand, this is a density per m². All arithmetic
@@ -131,6 +133,7 @@ function integrate_face_fluxes!(ws::CSSpectralIntegralWorkspace, H, vo, d, T, dA
         vb[:, :, 1:nb] .= view(vo, :, :, levels)
         db[:, :, 1:nb] .= view(d, :, :, levels)
         U, V, D = synthesize_native_fields(vb, db, T, c.vod2uv_radius, ws.synthesis)
+        cs_stable_polar_winds!(U, V, vb, db, c.vod2uv_radius, ws.polar)
         xyz = similar(p.coeffs, FT, 3ns, nf)
         forcing = similar(p.coeffs, FT, ns, nf)
         aa, bb = zeros(FT, nf), zeros(FT, nf)

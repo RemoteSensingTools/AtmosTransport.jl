@@ -184,7 +184,14 @@ projection arithmetic; only column calls select compensated projection dispatch.
 projection arithmetic for existing PCG layer/column callers. Targets supply
 outward divergence; TM5 convergence is negated in the CS target adapter.
 `line_integral_face_matrix` builds only the geometry map used by both the
-existing `LineIntegralFaceFluxes` constructor and direct spectral CS; it
+existing `LineIntegralFaceFluxes` constructor; it
 allocates no source-field or per-thread scratch.
 
 # shared: DirectCSPoisson, _ArrayTarget, line_integral_face_matrix
+
+`cs_spectral_face_geometry` supplies the direct TM5 CS route with 16-point
+cardinal interpolation, reflected polar stencils and arc-length midpoints.
+It combines scalar stencils on the host and stores each face normal once;
+the existing bilinear map is unchanged.
+
+# shared: cs_spectral_face_geometry

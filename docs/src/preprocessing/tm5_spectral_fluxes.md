@@ -416,7 +416,7 @@ E marks a shared existing function, N a new implemented function.
 
 For CS, `Spectral/cs_spectral_integrals.jl` implements stages 3–4 on regular
 cell-centred rings without pole nodes. The CS target prepares the shared
-`line_integral_face_matrix` geometry and conservative box overlaps once,
+`cs_spectral_face_geometry` scalar stencils, face normals and conservative box overlaps once,
 then supplies them to Spectral without a reverse dependency on MassClosure.
 `CSSpectralIntegralWorkspace` applies face and overlap maps on the synthesis
 backend with portable KernelAbstractions gathers. Refined three-dimensional
@@ -437,7 +437,7 @@ shared CS PBL writer. Two moist endpoints and one output window are retained.
 
 CS writes `TM5SpectralFluxesHeader` with unchanged v5 identity fields and no
 new payload sections. Ordinary provenance keys are
-`cs_face_quadrature = "great_circle_midpoint_bilinear_v1"`,
+`cs_face_quadrature = "great_circle_midpoint_cardinal16_v2"`,
 `samples_per_face`, `refined_nlon`, `refined_nlat` and
 `cs_cell_quadrature = "conservative_refined_box_mean_v1"`, plus the actual
 synthesis backend/precision. Existing v5 LL/RG files require no new keys.
@@ -531,14 +531,12 @@ The direct RG spectral path already shares the LL primitives
 `src/Preprocessing/Targets/ReducedGaussian/reduced_transport_helpers.jl`).
 
 **Direct CS quadrature.** Let ``Δ_{min}`` be the smallest target face length
-in degrees and ``r = quadrature_refinement(T, Δ_{min}, nstep)``. A regular
-cell-centred source mesh has latitude spacing at most ``Δ_{min}/r`` and
-longitude spacing no larger, with at least ``2(T+1)+1`` longitudes to retain
-the wind and gradient edge row. There are no pole samples. Each target face
-uses at least 16 great-circle midpoint samples (at least ``4r`` when larger).
-The run cache reuses the synthesis plans, face/overlap maps and graph factor
-across days with matching geometry, truncation, refinement, backend, precision
-and level-batch size.
+in degrees and ``r = quadrature_refinement(T, Δ_{min}, nstep)``. Open,
+cell-centred synthesis rings have spacing at most ``Δ_{min}/r`` and an even
+longitude count retaining degree ``T+1``. At C90/T639 the shape is
+3056×1528; at C90/T255 it is 1528×764. These are oversampled relative to the
+retained bandwidth. The run cache retains synthesis plans, face/overlap maps
+and the graph factor across matching days.
 
 For the constant Cartesian normal ``N_f`` directed left to right,
 
@@ -547,32 +545,184 @@ F_{f,k}=\frac{1}{g}\int_f
     (\mathbf v_k\cdot N_f)(ΔA_k+ΔB_k e^H)\,dl.
 ```
 
-The bilinear interpolant is formed from the **Cartesian mass-flux product**
-at refined nodes, preserving sampled wind–pressure covariance. PS is the
-conservative overlap mean of ``e^H`` box values. Independent ``C_k`` uses the
-same overlap on the spectral forcing of §5 divided by ``R^2\cos φ``;
-its density contains ``R_v/(Rg) D_k Δp_k`` and
-``p_s ΔB_k(U_k H_λ+V_k H_φ)/(Rg\cos^2 φ)``. The integrated forcing is
-multiplied by the target cell area before the common W construction.
+The face map uses tensor-product **16-point cardinal interpolation** in
+longitude and latitude of the sampled Cartesian wind–pressure product. It
+preserves sampled pressure–wind covariance. It integrates that interpolant
+with equally spaced **midpoints in great-circle arc length**, including the
+slerp Jacobian. This differs from TM5's uniform-latitude/longitude trapezoids
+of ``UΔp/\cos φ`` and ``VΔp``. The sample count is
+``N=\max(16,4r,\lceil(T+2)θ_{max}/0.1\rceil)``, where ``θ_{max}`` is the
+largest target edge angle in radians. It is 112 at C90/T639 and 45 at
+C90/T255. The tighter midpoint spacing bounds the error of modes oscillating
+*along* the face as well as the interpolation error across it. Increasing
+only the old midpoint count would leave its transverse bilinear damping.
+The previous 24-point bilinear C90/T639 rule attenuated the 637/637 meridian
+probe by 20.70%; it is no longer the direct TM5 CS default. The existing
+point-sampled CS, LL/RG and general `LineIntegralFaceFluxes` paths retain
+their original arithmetic.
 
-This is a generalization of TM5's LL rule: great-circle midpoint sampling
-of a Cartesian bilinear interpolant, with conservative box means for cell
-integrals. It is not TM5's exact meridian/parallel integration of its linear
-interpolant. The independent Gauss residual converges with refinement and
-the layer solve removes the remaining local mismatch.
+A zero face integral has no finite relative error. Tests therefore check
+complex harmonic phases against an absolute integral envelope and also
+report ordinary relative error when the integral is at least 10% of that
+envelope. The envelope is the integral of the absolute harmonic amplitude;
+underflowed modes below ``10^{-13}`` of the largest envelope are excluded.
+Every retained scalar harmonic through T255 and T639 is tested on C90-like
+meridians (including halfway between source longitudes), a tilted actual C90
+edge, a polar edge and an equatorial arc, against independent 256-node
+Gauss integration. Vector harmonics and converged TM5 comparisons are tested
+in the same file, `test_tm5_cs_harmonic_accuracy.jl`. The maximum ordinary
+relative error is 0.04075% against exact integration and 0.04091% against
+converged TM5; the maximum envelope-normalized error is 0.02747%. These
+sweeps cover all 205,120 retained scalar modes and both vector families at
+T639, and all 32,896 at T255, on each of five faces. Selected high modes
+also exercise the portable gather in Float32 and Float64. This is a measured bound
+on those faces and test fields, not a theorem for arbitrary pressure spectra:
+``e^H\mathbf v`` is not band limited even when ``H`` and the wind are.
 
-On the C2/T3 analytic probe, refinement steps 16, 32 and 64 give degree-one
-Gauss residuals ``7.08×10^{-4}``, ``1.57×10^{-4}``, ``4.13×10^{-5}`` and
-meridian errors against the solid-rotation closed form
-``4.49×10^{-4}``, ``1.14×10^{-4}``, ``2.96×10^{-5}``. Against production LL
-quadrature on the coincident meridian, relative differences are
-``2.48×10^{-4}``, ``6.36×10^{-5}``, ``1.70×10^{-5}``.
-Variable-LNSP forcing residuals are ``5.19×10^{-3}``, ``1.32×10^{-3}``,
-``3.40×10^{-4}``, approaching second order. Coarser interpolation and midpoint
-errors can cancel, so asymptotic convergence is tested separately from the
-coarse resolutions. Constant LNSP gives uniform PS to integration roundoff
-and exactly zero C/W for solid rotation. Focused tests also check exact seam
-mirrors, three-pass failure/recovery, the q=0 hybrid-B closure and dry replay.
+**Accuracy reference.** The CS path targets converged physical integrals
+(owner decision, 2026-11-02). Default TM5 IntLon has one-degree retained-mode
+errors of −18.7414% at T255 and −16.6374% at T639; its default and exact
+integrals cannot simultaneously satisfy a 0.1% bound. Tests preserve those
+counterexamples and compare accuracy with the IntLat/IntLon rule at converged
+refinement (1024 subdivisions). Section 13 gives the measured cause, the
+comment/code refinement mismatch and the real-ERA5 difference. General tilted
+CS edges have no corresponding TM5 meridian/parallel face.
+
+**Polar evaluation.** A scalar transform of pseudo-wind coefficients obtains
+small ``U`` by subtraction before division by ``\cos φ``. On the C90/T639
+outermost ring at 89.941099°, the Float32 degree-one zonal rotation had
+5.9582% relative error (physical ``u=0.00567218`` m/s). CS now evaluates
+vector harmonics from latitude derivatives of associated Legendre functions
+where ``|\cos φ|<0.025``. Derivative tables use ``\cos φ`` directly and a
+differentiated recurrence; their device tables, potential coefficients,
+GEMMs, FFTs and replacement kernel all use the selected 3-D precision.
+No Float64 arithmetic is introduced in Float32 device kernels. The same
+probe's relative error is ``4.51×10^{-7}`` at T639 and ``4.86×10^{-7}`` at
+T255. Tests also exercise tilted rotation and divergent degree-one modes.
+Selected near-truncation vector modes on production rings have maximum
+Float32 relative wind error ``3.40×10^{-7}`` against direct Float64 values.
+Surface synthesis retains the existing Float64 policy.
+
+The old bilinear source sampler **clamps** latitude poleward of its outermost
+ring. The new high-order CS map instead continues Cartesian products through
+the poles by reflecting latitude and shifting longitude by π. This supplies
+centred stencils even for face samples closer to a pole than the outermost
+ring. Neither policy reproduces TM5's duplicate-longitude polar mean or its
+substituted ``D\cos φ`` endpoint. Ordinary LL/RG polar policy is unchanged.
+
+PS remains the conservative overlap mean of ``e^H`` box samples. Independent
+``C_k`` retains the same overlap on the §5 forcing density, including
+``R_v/(Rg) D_k Δp_k`` and
+``p_s ΔB_k(U_k H_λ+V_k H_φ)/(Rg\cos^2 φ)``. Its integral feeds W and the
+existing layer solve. The face accuracy change does not turn that box rule
+into an exact spectral cell integral; Gauss/closure/replay tests cover its
+separate discretization and budget.
+
+**Cost and choice.** `cs_exact_samples` supplies a portable, batched direct
+vector-harmonic evaluation at arbitrary face points without interpolation.
+It uses selected-precision Legendre/derivative recurrence, Fourier sums and
+compensated accumulation. Bounded chunks need no per-point Legendre table.
+A warmed T639 eight-level, 64-point chunk took 1.388 s on one CPU thread.
+Straight scaling to every C90 face midpoint and two L137 endpoints gives
+8.09 million seconds per window, versus 123 seconds for the previous
+ring-synthesis/face-gather workload. This is an extrapolation of the direct
+implementation, not an optimized non-uniform FFT or exact-latitude ring
+implementation. A separate exact-sample-latitude geometry count, grouping
+absolute latitudes within ``10^{-12}`` radians and exploiting hemisphere
+symmetry, finds 685,507 distinct latitudes at C90 and 1,366,010 at C180.
+A conventional retained Legendre table would require 1.128/2.249 TB in
+Float64 (half in Float32), or 449/894 times the current latitude-contraction
+work before exact longitude evaluation. Chunking removes that storage
+requirement while retaining the contraction work. These are measured
+geometry counts and storage/work estimates, not NUFFT timings.
+The measured direct point implementation exceeds the 5× threshold by a
+wide margin, so the high-order oversampled-ring alternative is the default. Its integrated
+stencils are combined into one reusable scalar face stencil, with each
+Cartesian normal stored once. The gather reconstructs weights in the original
+X/Y/Z order, preserving the expanded map's arithmetic, including zero-normal
+products. Float32 stores an Int8 rounding offset per component/stencil entry
+so that the reconstructed weight equals the original once-rounded Float64
+geometry product, without Float64 device arithmetic. This avoids both a
+samples×16² allocation per level and triplicated scalar geometry.
+
+Before geometry compaction, C90/T639 warmed batch costs were 3.376 s for eight-level U/V/D synthesis,
+0.143 s for polar replacement and 1.325 s for the face gather (previous gather:
+0.201 s). Two L137 endpoint equivalents cost 166 s versus 123 s, a 1.35×
+ratio. These window estimates exclude common surface/cell overlap, balance,
+closure and IO work. Setup took 55.6 s for the face map. The former expanded Float64
+portable gather stored 1.540 GB, shared synthesis plans 3.129 GB, and polar
+plans 0.118 GB; estimated live synthesis/face buffers total 7.07 GB, excluding
+source hourly coefficients, cell overlap and graph factors. Setup temporarily
+retains the 2.165 GB host sparse map. Sizes are decimal GB; times exclude
+compilation after warmup except the first geometry setup.
+
+A CPU-only GPU model at 500 GB/s effective gather bandwidth gives 1.41 s
+per two-endpoint L137 C90 window-equivalent for the new gather alone
+(1.48 s including the padded final batches). A 1 TFLOP/s FP64
+recurrence model gives 27,533 s for the direct point method. These are
+estimates, not GPU measurements, and omit GEMM/FFT, launch and transfer costs.
+Actual GPU execution remains untested in this CPU-only run.
+
+The corresponding pre-compaction C180/T639 benchmark retains 3056×1528 rings and uses 56 face
+midpoints. Warmed eight-level synthesis, polar replacement and gather cost
+3.382, 0.133 and 3.853 s; the old gather costs 0.364 s. Two-endpoint L137
+equivalents are 252 s versus 128 s (1.97×). The expanded gather stored 4.864 GB, estimated live
+synthesis/face storage is 10.41 GB, and the temporary host sparse map is
+6.595 GB. Face-map setup takes 119.8 s. Direct-point scaling gives 16.20
+million CPU seconds per window. Under the same GPU assumptions the new
+gather is 4.44 s (4.67 s with padding) and the direct recurrence 55,066 s. These timings use Julia
+and BLAS one thread, batch eight, Float64, with no actual GPU execution.
+The benchmark is retained at
+`scripts/benchmarks/bench_cs_spectral_quadrature.jl`.
+Set `ATMOSTR_BENCH_EXACT_LATITUDES=1` to reproduce the exact-ring geometry
+count, and `ATMOSTR_BENCH_FULL_WINDOW=1` to time complete face-path windows.
+The latter includes all 36 padded batches plus the production Cartesian
+pressure–wind/forcing kernel. C90/C180 measured 198.1/292.1 s, with peak
+process RSS 14.63/23.79 GB, including setup and benchmark scratch in the peak. This still
+excludes common surface synthesis, cell overlap, balance, closure and IO;
+it is not a full preprocessing-window timing. The day driver reuses the
+previous endpoint, so steady-state face work is approximately 99.1 s/window
+at C90 and 146.1 s/window at C180; a 24-window day builds 25 endpoints,
+giving approximately 103.2/152.2 s/window before the common stages and
+amortized setup. The GPU gather model likewise halves to 0.74/2.33 s per
+steady-state window with endpoint reuse. These full-window timings and GPU
+models describe the expanded geometry before the storage optimization.
+
+The compact map shares scalar stencil indices/weights and each face normal.
+A paired CPU benchmark against the pre-compaction fix measures:
+
+| T639, Float64, batch eight | C90 | C180 |
+|---|---|---|
+| Expanded → compact portable geometry (decimal GB) | 1.539983 → **0.515920** | 4.863692 → **1.631599** |
+| Compact host geometry (GB; transient during setup) | 0.687375 | 2.173391 |
+| Expanded → compact setup (s) | 54.52 → 48.98 | 119.51 → 105.31 |
+| Expanded → compact gather median (s; three warmed trials) | 1.2820 → 1.2348 | 4.1868 → 3.8669 |
+| Compact Float32 geometry including rounding offsets (GB) | 0.471987 | 1.491874 |
+
+The live-buffer estimates above decrease by the geometry reduction alone:
+approximately 6.05/7.18 GB instead of 7.07/10.41 GB. These are estimates,
+not new peak-memory measurements. The benchmark process itself retains both
+maps and reference scratch; its 44.68 GB peak is not a production requirement.
+Reconstruction preserves every weight and the X/Y/Z accumulation order.
+All 4.86 million production-sized output values checked across C90/C180 and
+Float32/Float64 match the pre-compaction fix **bitwise**. The CS integration
+and day fixtures also match bitwise (76 and 4,356 numeric leaves respectively,
+including all 24 windows in Float64, Float32 and live-PBL fixtures). Timings
+use one Julia/BLAS CPU thread; setup includes first-call compilation, while
+gather medians exclude warmup. No GPU execution is claimed. The compact
+gather model would read 36 rather than 60 bytes per scalar entry/level
+(12 for shared index/weight and 24 for three source values), but this is a
+traffic estimate rather than a GPU measurement.
+
+**Real endpoint check.** Local ERA5 T639 GRIB endpoints on 2021-12-01 at
+00:00 and 01:00 were checked at native levels 1, 70 and 137 on four C90
+faces (central, tilted, polar and panel boundary). Actual ring-synthesized
+Cartesian pressure–wind products use the production cardinal weights and
+are compared with 256-node Gauss integration of direct spectral point
+values. All eight endpoint/face checks pass; maximum scaled relative error
+is 0.002885%. This checks individual endpoint rates before balancing; it
+is not a full-day ERA5 W or transport comparison. The reproducible opt-in
+file is `test/real_data/test_tm5_cs_endpoint_accuracy.jl`.
 
 ## 11. Types, dispatch and configuration
 
@@ -656,6 +806,143 @@ for each transform and restored even on exceptions; FAST_MATH is rejected.
 
 ## 13. Differences from TM5
 
+We reproduce TM5's equations and modelling choices, evaluated accurately; we
+**do not reproduce TM5's numerical errors**. In particular, the direct CS path
+targets converged face integrals, rather than agreement with TM5's default
+under-resolved quadrature (owner decision, 2026-11-02). There is no
+TM5-default-compatible CS quadrature option. The two groups below distinguish
+numerical corrections from modelling or convention choices; unisolated sizes
+are explicitly marked **not measured**.
+
+**Deliberate corrections of TM5 numerical errors**
+
+| Where TM5 differs | Here | Why | How much |
+|---|---|---|---|
+| ``n=T`` Nabla sign error and gradient truncated at ``T`` (§5; `grid_type_sh.F90:1804`) | Exact LNSP gradient through degree ``T+1`` | The top-row sign in TM5 is a code error; differentiation also generates a nonzero extra degree | Sign-only single-mode difference ``2(T-1)ε_{m,T}H_{T-1}^m``; real L96 forcing proxy 0.41% global / 26.9% cap divergence RMS (qualifications below). Separate missing-degree atmospheric effect: **not measured** |
+| ``P_T^T=0`` (§1) | Evaluate ``P_T^T`` | A retained Legendre function must not be suppressed | Real L137 global Δu RMS about ``3.5×10^{-4}`` m/s; unit real corner amplitude ``2P_T^T`` |
+| `vod2uv` edge rows ``n=T−1``, ``m=T−1``, ``n=T`` (§2) | Retain every neighbour and ``iσ`` term inside ``[m,T]`` | Complete the vector transform at truncation | Combined truncation-edge probe: L137 cap Δu/Δv RMS 0.140/0.176 m/s (3.53/4.39%); omitted terms ``−R_v δ_{m,T}ζ_T^m``, ``iR_v σ_{m,T}D_T^m`` and V counterparts; special ``m=n=T−1`` branch differs by exactly zero |
+| Wind row ``n=T+1`` dropped (§2) | Complete transform retains it | Required by the vector transform and Gauss identity | Unit VO/D contributes ``±R_v δ_{m,T+1}``; isolated atmospheric size **not measured** |
+| Polar endpoint ``1/(N_λ+1)`` mean; adjacent-row ``D\cos φ`` substitution (§4) | LL/RG open polar nodes; CS stable vector evaluation on open rings (§10) | Remove the duplicated-longitude mean and artificial endpoint; avoid cancellation of small pseudo-winds before division by ``\cos φ`` | L137 Fu cap RMS about 8%, L1 cap divergence RMS 40% in the probe below. Unit cosine has spurious mean ``1/(N_λ+1)``; constant-D endpoint adds ``(h/2)sin(h)``. CS Float32 outer-ring rotation error 5.9582% → ``4.51×10^{-7}`` relative at T639; 0.8471% → ``4.86×10^{-7}`` at T255 |
+| Default IntLat/IntLon refinement versus converged CS face quadrature (§10) | Cardinal-16 Cartesian interpolation and resolved arc midpoints; coordinate-face checks use converged IntLat/IntLon | Integrate the retained oscillations accurately; default trapezoids have a measurable integration error | Unit retained-mode default misses −18.7414% (T255), −16.6374% (T639). Real ERA5 default/converged difference: **0.02655% relative L2 over 48 sampled rates**; **1.7009%** at 80°E, 30–31°N, L137, 2021-12-01 01:00 UTC (**−501,352 vs −492,967 kg/s**). CS harmonic/exact maximum 0.04075% on the §10 sweep; real CS endpoint maximum 0.002885% |
+| `π` literal `3.14159265358979` (`binas:35`) | Julia's ``π`` | Use the available constant precision | Relative difference ``1.0×10^{-15}`` |
+
+The default face-integration error is the **composite trapezoid error of a
+coarsely sampled oscillation**, not an error in the exact face integral or a
+CS-only interpolation effect: a 1° ``V=cos((T-2)λ)`` probe reproduces
+−18.7414% / −16.6374%, agreeing with the analytic trapezoid response to roundoff.
+The code uses **2**, despite comments saying **5** points per spectral
+resolution; even setting 5 leaves −2.5518% / −3.1995%, rather than removing
+the error.
+
+The inspected source is `deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base/`:
+`grid_interpol.F90:1624–1626` defines
+``s_T=360°/[2(T+1)]``, ``nstep=2`` and
+``r=max(1,ceil(nstep·Δ/s_T))``. Its call-site comments say “5 points per sh
+resolution” (`grid_interpol.F90:1675`, also 1820, 2006, 2224, 2713 and 2941).
+The CarbonTracker tree agrees (`base/trunk/src/grid_interpol.F90:1626–1628`,
+comment at 1677). These routines are in **grid_interpol**, rather than
+`grid_type_sh.F90`, which contains the spectral primitives and Nabla bug.
+IntLat applies the trapezoid to ``U·Δp/\cos φ`` in latitude
+(`grid_interpol.F90:3248,3275`); IntLon applies it to ``V·Δp`` in longitude
+(`grid_interpol.F90:3609,3629`), with ``U=u\cos φ``, ``V=v\cos φ``.
+The common radius/gravity factors do not affect the relative quadrature error.
+
+For 1° faces, default T255/T639 subdivisions are **3/8**, giving spacings
+**0.333333°/0.125°**. The shortest retained longitudinal wavelengths
+``360°/T`` are 1.411765°/0.563380°, hence **4.2353/4.5070 samples per
+wavelength** (spacing 0.23611/0.221875 of a wavelength). They are above the
+Nyquist sampling minimum of two, but far too coarse for accurate trapezoid
+integration. The following measurements integrate the retained ``m=T-2``
+cosine from 0° to 1° with constant pressure thickness. For each sinusoid,
+the measured relative response equals ``x cot(x)-1``, where
+``x=mΔ/(2r)`` in radians, to better than ``10^{-12}`` in relative error.
+
+| ``nstep`` | T255: subdivisions / error | T639: subdivisions / error |
+|---|---|---|
+| 2 | 3 / −18.741384% | 8 / −16.637396% |
+| 3 | 5 / −6.585504% | 11 / −8.661243% |
+| 5 | 8 / −2.551821% | 18 / −3.199522% |
+| 8 | 12 / −1.130926% | 29 / −1.227786% |
+
+Holding the default spacing fixed isolates the along-face frequency:
+
+| Along-face ``m`` (T255 / T639) | T255 error | T639 error |
+|---|---|---|
+| 1 / 1 | −0.00028205% | −0.00003966% |
+| 63 / 159 | −1.121983% | −1.004755% |
+| 126 / 318 | −4.518499% | −4.043503% |
+| 253 / 637 | −18.741384% | −16.637396% |
+
+Thus high **along-face** frequency causes the miss. A near-sectoral harmonic
+varying slowly along a meridian can instead expose transverse interpolation
+error (§10); it does not test this trapezoid defect. The analytic response
+and direct sums separate those two causes. The reproducible 32-case sweep
+(`nstep=2,3,5,8`, four wavenumbers at each truncation) is produced by
+`scripts/diagnostics/tm5_default_quadrature.jl harmonics OUT`; its `day` and
+`native-day` commands measure the ERA5 impact below. See
+`scripts/diagnostics/README.md` for definitions and commands.
+
+**Real ERA5 1° LL day: integration-only comparison.** On 2021-12-01,
+all 24 hourly UTC analyses and all 137 native levels were integrated on every
+meridian and parallel face, using identical complete wind coefficients and surface pressure on both
+sides. TM5-default here means the eight-subdivision IntLat/IntLon rule,
+including its meridian polar endpoint means; the reference uses 16-node
+Gauss latitude integration and Fourier primitives of longitude products.
+Doubling to 32 Gauss nodes and 11,520 rather than 5,760 product longitudes
+at hour 00 (levels 1/70/137) changes U/V relative L2 by only
+``8.23×10^{-13}`` / ``3.96×10^{-16}``. The independently evaluated review
+case is −501,352.1089 versus −492,967.1089 kg/s, confirming its 1.7009%
+difference.
+
+Below, Δ is default minus converged. RMS is unweighted over faces and
+hours, in kg/s; relative L2 is ``rms(Δ)/rms(reference)``. Rates use the IFS
+radius on both sides, as in the independent review; this common scale does
+not affect relative errors. Caps are absolute
+face latitude >85°; meridian faces use interval centres and parallel faces
+their latitude boundary. The parallel statistics include zero polar rates.
+The last column excludes absolute latitude ≥89°, separating ordinary
+trapezoid error from the outer polar interval. The cap meridian discrepancy
+includes TM5's polar endpoint-mean policy; it must not all be attributed to
+the sinusoidal trapezoid response above.
+
+| Native level / rate | Global Δ RMS (kg/s) | Global relative L2 | Cap Δ RMS (kg/s) | Cap relative L2 | Relative L2, latitude <89° in magnitude |
+|---|---|---|---|---|---|
+| 1 / Fu (meridian) | 2,180.504 | 0.316011% | 9,246.98858 | 2.844701% | 0.009494% |
+| 1 / Fv (parallel) | 19.426 | 0.013821% | 0.01043 | 0.000075% | 0.013821% |
+| 60 / Fu (meridian) | 200,272.242 | 0.187393% | 847,350.73076 | 2.419952% | 0.013917% |
+| 60 / Fv (parallel) | 8,662.252 | 0.026106% | 1.87134 | 0.000142% | 0.026106% |
+| 70 / Fu (meridian) | 216,055.058 | 0.107259% | 908,277.32706 | 2.102330% | 0.014501% |
+| 70 / Fv (parallel) | 17,769.944 | 0.023305% | 3.47345 | 0.000215% | 0.023305% |
+| 96 / Fu (meridian) | 633,818.123 | 0.211811% | 2,643,025.22090 | 2.653127% | 0.039553% |
+| 96 / Fv (parallel) | 50,661.231 | 0.037187% | 23.91611 | 0.000536% | 0.037187% |
+| 137 / Fu (meridian) | 84,455.719 | 0.568389% | 353,524.19361 | 3.715678% | 0.093682% |
+| 137 / Fv (parallel) | 6,792.446 | 0.078181% | 5.67749 | 0.001383% | 0.078182% |
+
+The full 137-level profile and the 32 harmonic cases are retained in
+`scripts/benchmarks/results/tm5_quadrature_20261102/`, with definitions and
+reproduction commands. The raw day has 6,576 hour/level/component statistics
+covering 427,308,480 face/level/time rates, including zero polar parallel
+rates. All 144 statistics from the independent three-level day agree exactly
+with their entries in the all-level pass. Pooling every level and component
+gives relative L2 **0.252418% globally**, **3.32820% in caps**, and
+**0.0370244% with absolute latitude <89°**. The maximum daily per-level Fu
+relative L2 is 0.670047% at level 129; the Fv maximum is 0.078181% at level
+137. The full native-level pass used
+about 48 CPU minutes including setup and a discarded partial hour; the two
+preliminary/convergence passes bring the measurement work to about one CPU
+hour. Independent hourly chunks reduced wall time; no GPU was used.
+
+These are raw analysis face rates, before pin, balance, drying or merging,
+rather than a balanced transport-day or W comparison. Restricting caps to
+``85°<|latitude|<89°`` gives Fu relative L2 0.01135%, 0.02259%, 0.09181%
+at levels 1/70/137 (Fv: 0.00007582%, 0.00021812%, 0.00142049%). The
+large Fu differences are concentrated in the outer polar degree, where TM5
+also substitutes pole means. This comparison does not isolate that
+substitution from trapezoid error within that degree; ordinary trapezoid
+error remains visible away from it. The original 48-rate
+review sample above has a different spatial/level selection and is not a
+global or day-wide statistic.
+
 The [TM5-FLUX-2a real-day memo](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/docs/memos/2026-11-01_tm5_flux_real_day.md)
 records the default-versus-TM5 construction comparison, balance diagnostics
 and flux × PBL transport experiment. Reproduction commands and CSV definitions
@@ -678,28 +965,11 @@ wind differences, not final transport errors or full-day statistics.
 | Suppressed Legendre corner | L137 global u RMS about 3.5×10⁻⁴ m/s; negligible aloft and in polar caps; redundant once the corner wind coefficient is zeroed. |
 | Special n=m=T−1 branch | Exactly zero isolated difference on the measured coefficients. |
 
+
 The unit-coefficient values below are reproducible analytic test anchors;
 they are not atmospheric amplitudes. The separate missing T+1 gradient,
 full-column forcing and final balanced transport effects were not isolated
 by this four-level probe.
-
-| TM5 | Here | Reason or size |
-|---|---|---|
-| Additive match of the total-pressure area mean to 98500 Pa (§9) | Our dry pin, applied after flux integration, fluxes not recomputed | Owner decision Q1; global water term, *estimate* ``10^{-11}``–``10^{-9}`` s⁻¹ |
-| Forecast records (`h06h18tr3`), valid-time and lead bookkeeping, balanced fluxes interpolated to each dynamic-step midpoint | Hourly analyses; the window flux is the mean of the two endpoint sets, each balanced against the same tendency | Owner decision Q2; the mean is the exact window integral of TM5's linear interpolation |
-| NOAA 1° archive plus offline coarsener | Direct integration on the target grid | Owner decision; *estimate:* a direct coarse integral differs from the sum of 1° fluxes |
-| Mass-weighted coarsening of 1° T and Q | ``q`` from the existing reader (point values on target cells), merged with the pinned moist masses | ``q`` is a grid-point field, not spectral |
-| ``n = T`` Nabla sign error and gradient truncated at ``T`` (§5) | Exact gradient to degree ``T + 1`` | Q3; single-mode sign-only difference is ``2(T-1)ε_{m,T}H_{T-1}^m`` |
-| ``P_T^T = 0`` (§1) | ``P_T^T`` evaluated | Q3; removed unit corner has amplitude ``2P_T^T`` for a real coefficient |
-| `vod2uv` edge rows ``n = T−1``, ``m = T−1`` and ``n = T`` (§2) | All neighbour and ``iσ`` terms inside ``[m, T]`` | Q3; omitted terms are ``−R_v δ_{m,T}ζ_T^m`` and ``iR_v σ_{m,T}D_T^m`` (and the V counterparts); the special ``m=n=T−1`` branch already agrees |
-| Polar rows: ``1/(N_λ + 1)`` mean and adjacent-row mean for ``D\cos φ`` (§4) | Open polar nodes | Q3; duplicate-endpoint unit cosine has spurious mean ``1/(N_λ+1)``; substituted endpoint for constant D adds ``(h/2)sin(h)`` |
-| ``π`` literal `3.14159265358979` (`binas:35`) | Julia's ``π`` | relative ``1.0 × 10^{-15}`` |
-| `vod2uv` radius `ae`, 6.371 × 10⁶ m | `IFS_EARTH_RADIUS`, 6.371229 × 10⁶ m | Q4; relative ``3.6 × 10^{-5}`` |
-| One radius: ``R^2/g`` in the ``D`` term of ``C_k`` | ``R R_v/g`` (§5) | follows from Q4; keeps ``W`` consistent with the face fluxes |
-| Wind row ``n = T + 1`` dropped (§2) | retained by the new complete transform | unit VO/D coefficient contributes ``±R_v δ_{m,T+1}``; required for Gauss convergence |
-| Balance never skips a level | `balance_mass_fluxes!` skips levels with residual ``< 10^{-10}`` | harmless |
-| `tsp` and the `'bottom'` `FillLevels` key | Not built | not consumed |
-| Check_CFL, polar clustering, prognostic slopes, diffusion inside convection, window-end convection | Runtime unchanged | These bound any "TM5-style" claim: this is a flux construction, not TM5 runtime parity |
 
 For the unit-coefficient tests at ``T=7``, the missing ``n=T+1`` LNSP
 gradient at ``m=2`` is −3.39549875051. A unit ``ζ_T^1`` has the omitted
@@ -710,6 +980,25 @@ These are unit spectral amplitudes, not measured atmospheric winds. The
 special ``m=n=T−1`` branch contributes zero discrepancy. At polar interval
 ``h=0.0125`` radians the substituted D endpoint adds 7.81229655107 × 10⁻⁵
 to the unit-integrand quadrature.
+
+
+**Deliberate modelling or convention choices**
+
+| Where TM5 differs | Here | Why | How much |
+|---|---|---|---|
+| Total-pressure area mean additively matched to 98500 Pa (§9) | Dry pin after flux integration, without recomputing fluxes | Fix our dry carrier mass while preserving TM5's ordering of integration before pinning | Global water term, *estimate* ``10^{-11}``–``10^{-9}`` s⁻¹ |
+| Forecast `h06h18tr3` records and lead bookkeeping; balanced fluxes interpolated to dynamic-step midpoints | Hourly analyses; average two endpoint flux sets, each balanced against the same tendency | Use the available analysis archive and its window-mean flux contract | Endpoint mean exactly integrates the assumed linear interpolation; forecast-versus-analysis effect **not measured** |
+| NOAA 1° archive plus offline coarsener | Integrate directly on the target | Avoid an intermediate archive and integrate the target's own boundaries | Direct coarse integrals can differ from sums of 1° fluxes; magnitude **not measured** |
+| Mass-weighted coarsening of 1° T and Q | Reader's target-cell point ``q``, merged with pinned moist masses | Humidity is supplied as a grid-point field rather than spectral coefficients | Isolated difference **not measured** |
+| `vod2uv` radius `ae=6.371×10^6` m | IFS radius ``R_v=6.371229×10^6`` m | Match the radius used to define the ERA5 coefficients | 0.003594% coherent wind scale change (relative ``3.6×10^{-5}``) |
+| Single-radius ``R²/g`` multiplying D in ``C_k`` | ``R R_v/g`` (§5) | Keep independent W consistent with winds synthesized using the IFS radius and faces using the mesh radius | Coefficient ratio ``R_v/R``; for ``R=6.371×10^6`` m, relative ``3.6×10^{-5}``; isolated final W effect **not measured** |
+| Latitude/longitude trapezoids on coordinate faces | CS uses midpoints in great-circle arc length, with the arc Jacobian (§10) | CS edges are great circles; their natural integration coordinate is arc length | Isolated rule-versus-coordinate effect **not measured**; combined CS accuracy bounds in §10 |
+| IntLat and IntLon on meridians and parallels | Integrate ``(v·N_f)Δp`` on each CS edge with its constant Cartesian normal | General CS faces are neither meridians nor parallels, so IntLat/IntLon are not directly applicable | No one-to-one TM5 face comparison on tilted edges; isolated effect **not measured**; coincident coordinate-face convergence is tested |
+| Polar endpoint means on LL | CS uses stable vector evaluation, Cartesian pole reflection and longitude shift; ``asin`` argument clamped to ``[-1,1]`` for roundoff | Continue smooth Cartesian products through the pole without an artificial endpoint mean. The previous bilinear latitude clamp is superseded on the direct CS path | Vector cancellation improvement above; separate reflection/clamping atmospheric effect **not measured** |
+| IntArea on LL boxes | Conservative refined-box overlap for CS PS and independent C | Supply cell means and forcing on CS polygons without a new spectral polygon integral | Separate exact-cell-integral difference **not measured**; Gauss convergence, closure and replay tests in §10 |
+| Balance never skips a level | Skip residuals below ``10^{-10}`` in `balance_mass_fluxes!` | Avoid solving negligible residuals | Uncorrected residual bounded by ``10^{-10}`` at the skip; final transport difference **not measured** |
+| `tsp` and `'bottom'` FillLevels key | Not built | No consumer in our construction | Atmospheric effect **not measured**; neither output is consumed here |
+| Check_CFL, polar clustering, prognostic slopes, diffusion inside convection, window-end convection | Existing runtime | This change implements spectral flux construction, rather than a TM5 runtime replacement | Combined runtime difference **not measured** |
 
 ## 14. Validation tolerances
 
@@ -763,7 +1052,7 @@ with attributable deltas, S8 cubed-sphere direct target).
 | Per-layer balance, TM5 guards, RG factor-once solve (S6a) | Implemented (TM5-FLUX-1) |
 | End to end for LL and RG, new cases `pre_ll72_tm5`, `pre_o24_tm5` (S6b) | Implemented; golden definitions only, references generated separately |
 | First real day and attributable deltas (S7) | [Real-day comparison memo](https://github.com/RemoteSensingTools/AtmosTransport.jl/blob/main/docs/memos/2026-11-01_tm5_flux_real_day.md) and `scripts/diagnostics/compare_flux_constructions.jl` (TM5-FLUX-2a) |
-| Cubed-sphere direct target (S8) | Implemented (TM5-FLUX-2b): refined rings, portable face/overlap gathers, independent W, direct per-layer graph solve, dry endpoint mean and shared CS write gates. Focused synthetic tests; `pre_c24_tm5`, `pre_c24_tm5_tm5pbl`, `run_c24_tm5_cpu_f64` definitions added. Reference recording and GPU measurements remain separate. |
+| Cubed-sphere direct target (S8) | Implemented (TM5-FLUX-2b): refined rings, portable face/overlap gathers, independent W, direct per-layer graph solve, dry endpoint mean and shared CS write gates. Synthetic, exhaustive retained-harmonic and real ERA5 endpoint checks plus CPU cost measurements; `pre_c24_tm5`, `pre_c24_tm5_tm5pbl`, `run_c24_tm5_cpu_f64` definitions added. Reference recording and GPU measurements remain separate. |
 
 ## 17. Synthesis backends and measurements
 

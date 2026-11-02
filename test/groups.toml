@@ -359,6 +359,7 @@ files = [
     "core/test_spectral_ring_synthesis.jl",
     "core/test_tm5_spectral_fluxes.jl",
     "core/test_tm5_cs_spectral_integrals.jl",
+    "core/test_tm5_cs_harmonic_accuracy.jl",
     "core/test_tm5_cs_balance.jl",
     "core/test_tm5_cs_spectral_day.jl",
     "core/test_spectral_synthesis_backends.jl",

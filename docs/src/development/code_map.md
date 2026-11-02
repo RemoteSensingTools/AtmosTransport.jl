@@ -948,7 +948,7 @@ None recorded.
 
 ## `src/Preprocessing/MassClosure`
 
-Size: **131292 bytes / 37512.0 tokens**. Public names: **42**.
+Size: **134430 bytes / 38408.6 tokens**. Public names: **42**.
 
 Depends on: `src`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`.
 
@@ -963,7 +963,7 @@ Files:
 - `cs_poisson_balance.jl` (33967 bytes)
 - `cs_poisson_solver.jl` (12179 bytes)
 - `cs_wind_rotation.jl` (5250 bytes)
-- `face_line_integrals.jl` (11494 bytes)
+- `face_line_integrals.jl` (14632 bytes)
 - `flux_construction.jl` (11608 bytes)
 - `ring_closure.jl` (713 bytes)
 - `ring_poisson_balance.jl` (15565 bytes)
@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **132328 bytes / 37808.0 tokens**. Public names: **52**.
+Size: **141917 bytes / 40547.7 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1072,8 +1072,11 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 
 Files:
 
-- `Spectral.jl` (3094 bytes)
-- `cs_spectral_integrals.jl` (6768 bytes)
+- `Spectral.jl` (3189 bytes)
+- `cs_face_gather.jl` (2856 bytes)
+- `cs_point_synthesis.jl` (2623 bytes)
+- `cs_polar_synthesis.jl` (3758 bytes)
+- `cs_spectral_integrals.jl` (7025 bytes)
 - `device_spectral_synthesis.jl` (7227 bytes)
 - `discovery.jl` (1527 bytes)
 - `mass_support.jl` (41507 bytes)
@@ -1093,7 +1096,7 @@ None recorded.
 
 ## `src/Preprocessing/Targets/CubedSphere`
 
-Size: **147713 bytes / 42203.7 tokens**. Public names: **29**.
+Size: **147715 bytes / 42204.3 tokens**. Public names: **29**.
 
 Depends on: `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/LatLon`, `src/Preprocessing/TransportBinary`, `src/Quantities`, `src/Regridding`, `src/State`.
 
@@ -1108,7 +1111,7 @@ Files:
 - `cubed_sphere_regrid.jl` (40164 bytes)
 - `cubed_sphere_spectral.jl` (38244 bytes)
 - `mass_helpers.jl` (8474 bytes)
-- `tm5_spectral_day.jl` (12775 bytes)
+- `tm5_spectral_day.jl` (12777 bytes)
 
 Forward ↔ adjoint mirrors:
 

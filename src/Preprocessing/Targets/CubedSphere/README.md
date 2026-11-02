@@ -63,7 +63,7 @@ for CS panel arrays or source-grid arrays. ERA5 and MERRA-2 share this rule.
   native interfaces. It uses the existing CS `m/am/bm/cm/ps/dm` sections and
   optional `tm5_pbl` group. `include_surface` is rejected; live Calc_Kzz inputs
   use `include_tm5_pbl`. Humidity is used internally for the dry carrier.
-- Ordinary provenance keys record `great_circle_midpoint_bilinear_v1`,
+- Ordinary provenance keys record `great_circle_midpoint_cardinal16_v2`,
   samples per face, refined shape, synthesis backend and actual precision;
   the v5 identity schema is unchanged. The writer also records the shared
   column-closure certificate for every window. The quadrature generalizes TM5's LL

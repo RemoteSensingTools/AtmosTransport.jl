@@ -99,3 +99,45 @@ must run under the site lock, e.g.
 `flock "${GPU_LOCK:?Set GPU_LOCK to the site lock file}" env CUDA_VISIBLE_DEVICES=1 ...`.
 The [real-day memo](../../docs/memos/2026-11-01_tm5_flux_real_day.md) records
 the measured scope, inputs, precision, failures and results.
+
+
+## TM5 default quadrature error
+
+`tm5_default_quadrature.jl` isolates raw face integration from spectral wind
+transform changes, mass pins, drying, merging and balancing. CPU commands:
+
+```bash
+export TMPDIR=/temp2/cfranken/tmp OPENBLAS_NUM_THREADS=1 JULIA_NUM_THREADS=1
+julia --startup-file=no --project=test scripts/diagnostics/tm5_default_quadrature.jl harmonics OUT
+julia --startup-file=no --project=test scripts/diagnostics/tm5_default_quadrature.jl day SPECTRAL_DIR 2021-12-01 OUT
+```
+
+The harmonic CSV compares composite trapezoids with exact cosine integrals and
+`x*cot(x)-1` at four along-face frequencies and nstep=2/3/5/8, at T255/T639.
+The day CSV covers every unique 1° LL face at levels 1/70/137 for hourly
+analyses 00–23; the second CSV covers all 137 native levels at 00 UTC.
+Rates use the IFS radius on both sides. Statistics are equal-face RMS in
+kg/s, relative L2, and caps (absolute face
+latitude >85°). Meridian face latitudes are interval centres; zonal faces use
+their boundary latitude and include zero polar rates. Reference integration
+uses 16-node Gauss latitude and Fourier primitives of longitude products
+sampled at 5760 points per circle. The hour-00 reference check doubles both
+resolutions. Both sides use identical complete wind coefficients, retaining
+the integration-only contrast. Meridian default endpoints use TM5's
+361-longitude polar mean, so polar-cell differences also include that policy.
+Additional columns restrict all faces to absolute latitude <89° and caps to
+85° < absolute latitude <89°, separating errors away from the polar interval.
+The probe targets about one hour of single-thread CPU time; completed CSV
+rows are flushed incrementally. A completed full day is not implied if the
+budget stops the probe early. These are raw analysis face rates, rather than
+balanced window fluxes or a full transport-day comparison.
+
+The `native-day` command uses the same reference and measures every native
+level at every hour, writing `ll_day_all_levels.csv`. Run `day` once for the
+doubled-resolution convergence check; `native-day` reuses those quadrature
+rules. Its 2600-second budget is checked after each complete hour; count CSV
+hours before claiming a complete 24-analysis day. For example:
+
+```bash
+julia --startup-file=no --project=test scripts/diagnostics/tm5_default_quadrature.jl native-day SPECTRAL_DIR 2021-12-01 OUT
+```

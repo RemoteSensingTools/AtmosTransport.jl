@@ -80,7 +80,7 @@ end
             header=reader.header.raw_header
             @test header["format_version"]==5
             @test header["flux_construction"]=="tm5_spectral"
-            @test header["cs_face_quadrature"]=="great_circle_midpoint_bilinear_v1"
+            @test header["cs_face_quadrature"]=="great_circle_midpoint_cardinal16_v2"
             @test header["samples_per_face"]>=16
             @test header["refined_nlon"]>=2*(3+1)+1
             @test header["source_flux_sampling"]=="window_mean"

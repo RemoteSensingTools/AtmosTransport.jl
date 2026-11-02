@@ -1,4 +1,4 @@
-using Test, AtmosTransport, LinearAlgebra, SparseArrays, KernelAbstractions
+using Test, AtmosTransport, LinearAlgebra, SparseArrays, KernelAbstractions, Random
 const PP = AtmosTransport.Preprocessing
 const SP = PP.Spectral
 const MC = PP.MassClosure
@@ -9,9 +9,9 @@ const GRAV = AtmosTransport.Parameters.STANDARD_GRAVITY
 
 function cs_integral_workspace(grid, T, c; kwargs...)
     q = SP.CSSpectralQuadrature(grid, T, c)
-    faces = MC.LineIntegralFaceFluxes(q.mesh, grid.mesh, grid.face_table; samples_per_face=q.samples_per_face)
+    faces = MC.cs_spectral_face_geometry(q.mesh, grid.mesh, grid.face_table; samples_per_face=q.samples_per_face)
     overlap = AtmosTransport.Regridding.build_regridder(q.mesh, grid.mesh)
-    return SP.CSSpectralIntegralWorkspace(q, T, faces.L, overlap; kwargs...)
+    return SP.CSSpectralIntegralWorkspace(q, T, faces, overlap; kwargs...)
 end
 
 @testset "Portable CS face gather and analytic integrals" begin
@@ -56,6 +56,43 @@ end
     exact = G.dot3(omega, a.-b)
     errs = [abs(sum(G.dot3(G.cross3(omega,G.slerp3(a,b,theta,(i-0.5)/ns)),n) for i in 1:ns)*theta/ns-exact) for ns in (4,8,16)]
     @test errs[3] < errs[2]/3.9 < errs[1]/3.9^2
+end
+
+
+@testset "Compact CS geometry preserves expanded Cartesian bits" begin
+    rng = MersenneTwister(1739)
+    for convention in ("gnomonic", "geos_native")
+        grid = PP.build_target_geometry(Dict("type"=>"cubed_sphere", "Nc"=>2,
+            "panel_convention"=>convention), Float64)
+        q = SP.CSSpectralQuadrature(grid, 3, PP.TM5SpectralFluxes())
+        geometry = MC.cs_spectral_face_geometry(q.mesh, grid.mesh, grid.face_table;
+            samples_per_face=q.samples_per_face)
+        rows, normals = geometry.stencils, geometry.normals
+        ns, nf = size(rows)
+        # Independent expansion of the previous map, including signed zeros.
+        offsets = cumsum([1; 3 .* diff(rows.colptr)])
+        indices = Int[]; weights = Float64[]
+        for f in 1:nf, d in 1:3, t in rows.colptr[f]:rows.colptr[f+1]-1
+            push!(indices, (d-1)*ns+rows.rowval[t])
+            push!(weights, normals[d,f]*rows.nzval[t])
+        end
+        expanded = sparse(transpose(SparseMatrixCSC(3ns,nf,offsets,indices,weights)))
+        values = randn(rng,3ns,4) .* exp2.(rand(rng,-20:20,3ns,4))
+        @test any(iszero, weights)
+        for FT in (Float64, Float32)
+            compact = SP.cs_gather_operator(geometry,identity,FT)
+            previous = SP.cs_gather_operator(expanded,identity,FT)
+            input = FT.(values)
+            actual = zeros(FT,nf,4); expected = similar(actual)
+            SP.cs_apply_integral!(actual,input,compact)
+            SP.cs_apply_integral!(expected,input,previous)
+            synchronize(get_backend(actual))
+            @test reinterpret(UInt8,vec(actual)) == reinterpret(UInt8,vec(expected))
+            @test length(compact.weights)*3 == length(previous.weights)
+            @test Base.summarysize(compact) < Base.summarysize(previous)*(FT===Float64 ? .36 : .52)
+            FT===Float32 && @test any(!iszero,compact.rounding)
+        end
+    end
 end
 
 @testset "CS spectral Gauss, meridian LL parity, constant PS and W" begin

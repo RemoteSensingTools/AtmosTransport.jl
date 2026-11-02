@@ -56,7 +56,7 @@ process_day(date::Date, grid::CubedSphereTargetGeometry, settings::ERA5SpectralS
 """Prepare geometry once; refined samples are never reconstructed from LL fluxes."""
 function tm5_cs_integral_workspace(grid::CubedSphereTargetGeometry, T, c::TM5SpectralFluxes; cache_dir=nothing, kwargs...)
     q = CSSpectralQuadrature(grid, T, c)
-    faces = line_integral_face_matrix(q.mesh, grid.mesh, grid.face_table; samples_per_face=q.samples_per_face)
+    faces = cs_spectral_face_geometry(q.mesh, grid.mesh, grid.face_table; samples_per_face=q.samples_per_face)
     overlap = build_regridder(q.mesh, grid.mesh; cache_dir)
     return CSSpectralIntegralWorkspace(q, T, faces, overlap; kwargs...)
 end
@@ -80,7 +80,7 @@ end
 function tm5_cs_quadrature_metadata(ws::CSSpectralIntegralWorkspace)
     q = ws.quadrature
     return merge(spectral_synthesis_metadata(ws), Dict{String,Any}(
-        "cs_face_quadrature"=>"great_circle_midpoint_bilinear_v1",
+        "cs_face_quadrature"=>"great_circle_midpoint_cardinal16_v2",
         "samples_per_face"=>q.samples_per_face,
         "refined_nlon"=>q.mesh.Nx, "refined_nlat"=>q.mesh.Ny,
         "cs_cell_quadrature"=>"conservative_refined_box_mean_v1"))

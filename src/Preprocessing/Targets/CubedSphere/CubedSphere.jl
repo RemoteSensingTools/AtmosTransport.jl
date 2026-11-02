@@ -210,7 +210,7 @@ import ..Common: TM5SpectralFluxes, PointSampledSpectralFluxes, balance_window_l
 import ..Spectral: CSSpectralQuadrature, CSSpectralIntegralWorkspace, TM5EndpointPlan,
     construct_tm5_endpoint, with_spectral_hours, spectral_synthesis_metadata,
     era5_thermo_path, read_thermo_coordinates, read_qv_from_thermo
-import ..MassClosure: cs_cell_face_degree, line_integral_face_matrix
+import ..MassClosure: cs_cell_face_degree, cs_spectral_face_geometry
 import ..LatLonTarget: LatLonBilinearWeights, interpolate_ll_qv!
 import ...MetDrivers.BinaryFormat: TM5SpectralFluxesHeader, abandon_streaming_transport_binary!
 import ..TransportBinary: tm5_flux_evidence
