@@ -806,25 +806,37 @@ for each transform and restored even on exceptions; FAST_MATH is rejected.
 
 ## 13. Differences from TM5
 
-We reproduce TM5's equations and modelling choices, evaluated accurately; we
-**do not reproduce TM5's numerical errors**. In particular, the direct CS path
+We use TM5's spectral budget equations, with the numerical corrections and
+modelling departures inventoried below; we **do not reproduce TM5's numerical
+errors**. In particular, the direct CS path
 targets converged face integrals, rather than agreement with TM5's default
 under-resolved quadrature (owner decision, 2026-11-02). There is no
 TM5-default-compatible CS quadrature option. The two groups below distinguish
 numerical corrections from modelling or convention choices; unisolated sizes
 are explicitly marked **not measured**.
 
+For this inventory, paired citations identify the two inspected source trees:
+`R/file:line` is relative to
+`deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base` in the sibling
+`/home/cfranken/code/gitHub/AtmosTransportModel` checkout (this worktree has no
+`deps` directory); `C/file:line` is relative to
+`/temp1/cfranken/external_ref/ct-unified-github/base/trunk/src`.
+These prefixes do not change the CarbonTracker abbreviations in Sources above.
+Archive settings and the offline coarsener are configuration choices, not
+universal properties of either base tree; their additional provenance follows
+the convention table.
+
 **Deliberate corrections of TM5 numerical errors**
 
 | Where TM5 differs | Here | Why | How much |
 |---|---|---|---|
-| ``n=T`` Nabla sign error and gradient truncated at ``T`` (§5; `grid_type_sh.F90:1804`) | Exact LNSP gradient through degree ``T+1`` | The top-row sign in TM5 is a code error; differentiation also generates a nonzero extra degree | Sign-only single-mode difference ``2(T-1)ε_{m,T}H_{T-1}^m``; real L96 forcing proxy 0.41% global / 26.9% cap divergence RMS (qualifications below). Separate missing-degree atmospheric effect: **not measured** |
-| ``P_T^T=0`` (§1) | Evaluate ``P_T^T`` | A retained Legendre function must not be suppressed | Real L137 global Δu RMS about ``3.5×10^{-4}`` m/s; unit real corner amplitude ``2P_T^T`` |
-| `vod2uv` edge rows ``n=T−1``, ``m=T−1``, ``n=T`` (§2) | Retain every neighbour and ``iσ`` term inside ``[m,T]`` | Complete the vector transform at truncation | Combined truncation-edge probe: L137 cap Δu/Δv RMS 0.140/0.176 m/s (3.53/4.39%); omitted terms ``−R_v δ_{m,T}ζ_T^m``, ``iR_v σ_{m,T}D_T^m`` and V counterparts; special ``m=n=T−1`` branch differs by exactly zero |
-| Wind row ``n=T+1`` dropped (§2) | Complete transform retains it | Required by the vector transform and Gauss identity | Unit VO/D contributes ``±R_v δ_{m,T+1}``; isolated atmospheric size **not measured** |
-| Polar endpoint ``1/(N_λ+1)`` mean; adjacent-row ``D\cos φ`` substitution (§4) | LL/RG open polar nodes; CS stable vector evaluation on open rings (§10) | Remove the duplicated-longitude mean and artificial endpoint; avoid cancellation of small pseudo-winds before division by ``\cos φ`` | L137 Fu cap RMS about 8%, L1 cap divergence RMS 40% in the probe below. Unit cosine has spurious mean ``1/(N_λ+1)``; constant-D endpoint adds ``(h/2)sin(h)``. CS Float32 outer-ring rotation error 5.9582% → ``4.51×10^{-7}`` relative at T639; 0.8471% → ``4.86×10^{-7}`` at T255 |
-| Default IntLat/IntLon refinement versus converged CS face quadrature (§10) | Cardinal-16 Cartesian interpolation and resolved arc midpoints; coordinate-face checks use converged IntLat/IntLon | Integrate the retained oscillations accurately; default trapezoids have a measurable integration error | Unit retained-mode default misses −18.7414% (T255), −16.6374% (T639). Real ERA5 default/converged difference: **0.02655% relative L2 over 48 sampled rates**; **1.7009%** at 80°E, 30–31°N, L137, 2021-12-01 01:00 UTC (**−501,352 vs −492,967 kg/s**). CS harmonic/exact maximum 0.04075% on the §10 sweep; real CS endpoint maximum 0.002885% |
-| `π` literal `3.14159265358979` (`binas:35`) | Julia's ``π`` | Use the available constant precision | Relative difference ``1.0×10^{-15}`` |
+| ``n=T`` Nabla branch uses the positive lower-neighbour term and allocates only through ``T`` (§5; `R/grid_type_sh.F90:1769–1772,1796–1805`; `C/grid_type_sh.F90:1771–1774,1798–1807`) | Exact LNSP gradient through degree ``T+1`` | The top-row sign in TM5 is a code error; differentiation also generates a nonzero extra degree | Sign-only single-mode difference ``2(T-1)ε_{m,T}H_{T-1}^m``; real L96 forcing proxy 0.41% global / 26.9% cap divergence RMS (qualifications below). Separate missing-degree atmospheric effect: **not measured** |
+| Sets ``P_T^T=0`` (§1; `R/grid_type_sh.F90:827–828`; `C/grid_type_sh.F90:829–830`) | Evaluate ``P_T^T`` | A retained Legendre function must not be suppressed | Real L137 global Δu RMS about ``3.5×10^{-4}`` m/s; unit real corner amplitude ``2P_T^T`` |
+| `vod2uv` drops the upper neighbour at ``n=T−1``, the ``iσ`` term at ``n=T``, and zeros the corner (§2; `R/grid_type_sh.F90:1998–2029`; `C/grid_type_sh.F90:2000–2031`) | Retain every neighbour and ``iσ`` term inside ``[m,T]`` | Complete the vector transform at truncation | Combined truncation-edge probe: L137 cap Δu/Δv RMS 0.140/0.176 m/s (3.53/4.39%); omitted terms ``−R_v δ_{m,T}ζ_T^m``, ``iR_v σ_{m,T}D_T^m`` and V counterparts; special ``m=n=T−1`` branch differs by exactly zero |
+| `vod2uv` output stops at ``n=T``; no ``T+1`` wind row (§2; `R/grid_type_sh.F90:1983–2029`; `C/grid_type_sh.F90:1985–2031`) | Complete transform retains it | Required by the vector transform and Gauss identity | Unit VO/D contributes ``±R_v δ_{m,T+1}``; isolated atmospheric size **not measured** |
+| Polar endpoint mean includes the duplicated longitude; IntArea substitutes the adjacent-row mean of ``D\cos φ`` (§4; `R/grid_interpol.F90:3200–3214,3229,3260–3264,2495–2509,2550`; `C/grid_interpol.F90:3202–3216,3231,3262–3266,2497–2511,2552`) | LL/RG open polar nodes; CS stable vector evaluation on open rings (§10) | Remove the duplicated-longitude mean and artificial endpoint; avoid cancellation of small pseudo-winds before division by ``\cos φ`` | L137 Fu cap RMS about 8%, L1 cap divergence RMS 40% in the probe below. Unit cosine has spurious mean ``1/(N_λ+1)``; constant-D endpoint adds ``(h/2)sin(h)``. CS Float32 outer-ring rotation error 5.9582% → ``4.51×10^{-7}`` relative at T639; 0.8471% → ``4.86×10^{-7}`` at T255 |
+| IntLat/IntLon use `nstep=2` refinement and linear (trapezoid) quadrature (§10; `R/grid_interpol.F90:1624–1626,3275,3629`; `C/grid_interpol.F90:1626–1628,3277,3631`) | Cardinal-16 Cartesian interpolation and resolved arc midpoints; coordinate-face checks use converged IntLat/IntLon | Integrate the retained oscillations accurately; default trapezoids have a measurable integration error | Unit retained-mode default misses −18.7414% (T255), −16.6374% (T639). Real ERA5 default/converged difference: **0.02655% relative L2 over 48 sampled rates**; **1.7009%** at 80°E, 30–31°N, L137, 2021-12-01 01:00 UTC (**−501,352 vs −492,967 kg/s**). CS harmonic/exact maximum 0.04075% on the §10 sweep; real CS endpoint maximum 0.002885% |
+| `π` literal `3.14159265358979` (`R/binas.F90:34`; `C/binas.F90:35`) | Julia's ``π`` | Use the available constant precision | Relative difference ``1.0×10^{-15}`` |
 
 The default face-integration error is the **composite trapezoid error of a
 coarsely sampled oscillation**, not an error in the exact face integral or a
@@ -986,19 +998,41 @@ to the unit-integrand quadrature.
 
 | Where TM5 differs | Here | Why | How much |
 |---|---|---|---|
-| Total-pressure area mean additively matched to 98500 Pa (§9) | Dry pin after flux integration, without recomputing fluxes | Fix our dry carrier mass while preserving TM5's ordering of integration before pinning | Global water term, *estimate* ``10^{-11}``–``10^{-9}`` s⁻¹ |
-| Forecast `h06h18tr3` records and lead bookkeeping; balanced fluxes interpolated to dynamic-step midpoints | Hourly analyses; average two endpoint flux sets, each balanced against the same tendency | Use the available analysis archive and its window-mean flux contract | Endpoint mean exactly integrates the assumed linear interpolation; forecast-versus-analysis effect **not measured** |
-| NOAA 1° archive plus offline coarsener | Integrate directly on the target | Avoid an intermediate archive and integrate the target's own boundaries | Direct coarse integrals can differ from sums of 1° fluxes; magnitude **not measured** |
-| Mass-weighted coarsening of 1° T and Q | Reader's target-cell point ``q``, merged with pinned moist masses | Humidity is supplied as a grid-point field rather than spectral coefficients | Isolated difference **not measured** |
-| `vod2uv` radius `ae=6.371×10^6` m | IFS radius ``R_v=6.371229×10^6`` m | Match the radius used to define the ERA5 coefficients | 0.003594% coherent wind scale change (relative ``3.6×10^{-5}``) |
-| Single-radius ``R²/g`` multiplying D in ``C_k`` | ``R R_v/g`` (§5) | Keep independent W consistent with winds synthesized using the IFS radius and faces using the mesh radius | Coefficient ratio ``R_v/R``; for ``R=6.371×10^6`` m, relative ``3.6×10^{-5}``; isolated final W effect **not measured** |
-| Latitude/longitude trapezoids on coordinate faces | CS uses midpoints in great-circle arc length, with the arc Jacobian (§10) | CS edges are great circles; their natural integration coordinate is arc length | Isolated rule-versus-coordinate effect **not measured**; combined CS accuracy bounds in §10 |
-| IntLat and IntLon on meridians and parallels | Integrate ``(v·N_f)Δp`` on each CS edge with its constant Cartesian normal | General CS faces are neither meridians nor parallels, so IntLat/IntLon are not directly applicable | No one-to-one TM5 face comparison on tilted edges; isolated effect **not measured**; coincident coordinate-face convergence is tested |
-| Polar endpoint means on LL | CS uses stable vector evaluation, Cartesian pole reflection and longitude shift; ``asin`` argument clamped to ``[-1,1]`` for roundoff | Continue smooth Cartesian products through the pole without an artificial endpoint mean. The previous bilinear latitude clamp is superseded on the direct CS path | Vector cancellation improvement above; separate reflection/clamping atmospheric effect **not measured** |
-| IntArea on LL boxes | Conservative refined-box overlap for CS PS and independent C | Supply cell means and forcing on CS polygons without a new spectral polygon integral | Separate exact-cell-integral difference **not measured**; Gauss convergence, closure and replay tests in §10 |
-| Balance never skips a level | Skip residuals below ``10^{-10}`` in `balance_mass_fluxes!` | Avoid solving negligible residuals | Uncorrected residual bounded by ``10^{-10}`` at the skip; final transport difference **not measured** |
-| `tsp` and `'bottom'` FillLevels key | Not built | No consumer in our construction | Atmospheric effect **not measured**; neither output is consumed here |
-| Check_CFL, polar clustering, prognostic slopes, diffusion inside convection, window-end convection | Existing runtime | This change implements spectral flux construction, rather than a TM5 runtime replacement | Combined runtime difference **not measured** |
+| Total-pressure area mean additively matched to 98500 Pa (§9; `R/binas.F90:129`, `R/meteo.F90:1730–1735`, `R/grid_type_ll.F90:1167–1175`; `C/binas.F90:133`, `C/meteo.F90:1535–1537`, `C/grid_type_ll.F90:1025–1033`) | Dry pin to 98325 Pa after flux integration, without recomputing fluxes | Fix our dry carrier mass while preserving TM5's ordering of integration before pinning | Global water term, *estimate* ``10^{-11}``–``10^{-9}`` s⁻¹ |
+| Periodic five-point index-space FFT Poisson operator; subtract west/south correction fluxes to close outer faces (§6; `R/grid_type_ll.F90:2846–2850,2873–2896`; `C/grid_type_ll.F90:2703–2707,2730–2753`; speedup overlay `GTS:3028,3031,3172–3192`) | CS uses the global degree-four cell graph, a pinned potential (one principal minor), and canonical/mirror seam signs; reuse the direct factorization | CS topology has panel seams and no LL outer boundary. Its graph distributes face corrections differently; this is a geometry choice, not a demonstrated TM5 error | Isolated atmospheric difference from TM5 **not measured**. Direct residuals and direct-versus-PCG checks in §6/§10 verify our solver only |
+| FFT potential zero mode set to zero; the index-space mean layer residual remains uncorrected (§6; `R/grid_type_ll.F90:2854–2863`; `C/grid_type_ll.F90:2711–2720`; speedup overlay `GTS:3166`) | Before the layer solve remove ``(S_c/∑S)∑H^*`` from each cell's horizontal target; guard subtracts the known global water tendency, then final dry column repair imposes the dry endpoint budget (§9) | Closed global faces require a zero-sum target. The dry pin allows a moist global water tendency; distributing its removal by area avoids a polar pressure amplification | Exact target change is the displayed area-weighted term; §9's ``10^{-11}``–``10^{-9}`` s⁻¹ global water scale is an *estimate*. Isolated atmospheric difference **not measured**; solver residuals do not measure it |
+| Archive reader derives forecast-day filename keys from ``t1−tref`` (`R/tmm_mf_tm5_nc.F90:409–415`; `C/tmm_mf_tm5_nc.F90:408–414`); balanced fluxes interpolated to each dynamic-step midpoint (`R/meteodata.F90:683–693`; `C/meteodata.F90:763–773`). NOAA selects `h06h18tr3` (provenance below) | Hourly analyses; average two endpoint flux sets, each balanced against the same tendency (§7/§8) | Use the available analysis archive and its window-mean flux contract | Endpoint mean exactly integrates the assumed linear interpolation; forecast-versus-analysis effect **not measured** |
+| NOAA 1° archive plus offline coarsener (provenance below); base mapper combines stored fields with `FillGrid` (`R/tmm.F90:1264–1273`; `C/tmm.F90:1258–1267`) and sums integrated face fluxes according to `CombineKey` (`R/tmm_param.F90:97–99`; `C/tmm_param.F90:98–100`) | Integrate directly on the target | Avoid an intermediate archive and integrate the target's own boundaries | Direct coarse integrals can differ from sums of 1° fluxes; magnitude **not measured** |
+| T and Q use horizontal and vertical `mass-aver` (`R/tmm_param.F90:105–107`; `C/tmm_param.F90:106–108`); horizontal weights are cell area × hybrid pressure thickness (`R/tmm.F90:1218–1248`; `C/tmm.F90:1221–1251`) | Reader's target-cell point ``q``, merged with pinned moist masses (§8); no TM5 archive T/Q coarsening stage | Humidity is supplied as a grid-point field rather than spectral coefficients | Isolated difference **not measured** |
+| `vod2uv` imports radius `ae=6.371×10^6` m (`R/grid_type_sh.F90:1949`, `R/binas.F90:50`; `C/grid_type_sh.F90:1951`, `C/binas.F90:51`) | IFS radius ``R_v=6.371229×10^6`` m | Match the radius used to define the ERA5 coefficients | 0.003594% coherent wind scale change (relative ``3.6×10^{-5}``) |
+| Single-radius ``R²/g`` multiplying D in ``C_k`` (`R/tmm.F90:2487,2499`; `C/tmm.F90:2468,2480`) | ``R R_v/g`` (§5) | Keep independent W consistent with winds synthesized using the IFS radius and faces using the mesh radius | Coefficient ratio ``R_v/R``; for ``R=6.371×10^6`` m, relative ``3.6×10^{-5}``; isolated final W effect **not measured** |
+| Latitude/longitude trapezoids on coordinate faces (`R/grid_interpol.F90:3275,3629`; `C/grid_interpol.F90:3277,3631`) | CS uses midpoints in great-circle arc length, with the arc Jacobian (§10) | CS edges are great circles; their natural integration coordinate is arc length | Isolated rule-versus-coordinate effect **not measured**; combined CS accuracy bounds in §10 |
+| IntLat integrates ``U Δp/cos φ`` on meridians, IntLon integrates ``V Δp`` on parallels (`R/grid_interpol.F90:3248,3606–3609`; `C/grid_interpol.F90:3250,3608–3611`) | Integrate ``(v·N_f)Δp`` on each CS edge with its constant Cartesian normal (§10) | General CS faces are neither meridians nor parallels, so IntLat/IntLon are not directly applicable | No one-to-one TM5 face comparison on tilted edges; isolated effect **not measured**; coincident coordinate-face convergence is tested |
+| LL poles use neighbouring-row means (`R/grid_interpol.F90:3200–3214,3260–3264`; `C/grid_interpol.F90:3202–3216,3262–3266`) | CS uses stable vector evaluation, Cartesian pole reflection and longitude shift; ``asin`` argument clamped to ``[-1,1]`` for roundoff (§10) | Continue smooth Cartesian products through the pole without an artificial endpoint mean. The previous bilinear latitude clamp is superseded on the direct CS path | Vector cancellation improvement above; separate reflection/clamping atmospheric effect **not measured** |
+| IntArea averages PS and integrates independent C over LL boxes (`R/tmm.F90:1864,2447–2449,2465–2471`; `C/tmm.F90:1845,2428–2430,2446–2452`) | Conservative refined-box overlap for CS PS and independent C (§10) | Supply cell means and forcing on CS polygons without a new spectral polygon integral | Separate exact-cell-integral difference **not measured**; Gauss convergence, closure and replay tests in §10 |
+| Balance loops through every level and calls Poisson for each coarse cell, with no residual threshold (`R/grid_type_ll.F90:2609–2644`; `C/grid_type_ll.F90:2464–2499`) | LL `balance_mass_fluxes!` skips residuals below ``10^{-10}`` (`src/Preprocessing/Spectral/mass_support.jl:339`); this is not a skip in the direct CS solver | Avoid solving negligible LL residuals | Uncorrected residual bounded by ``10^{-10}`` at the skip; final transport difference **not measured** |
+| Builds `tsp` and passes `'bottom'` to FillLevels (`R/tmm.F90:2516–2526,2577`, `R/grid_type_hyb.F90:2178–2189,2201–2203`; `C/tmm.F90:2497–2507,2558`, `C/grid_type_hyb.F90:2408–2420,2436–2438`); `'bottom'` affects interpolation, not retained-interface combination (§5) | Neither `tsp` nor a `'bottom'` interpolation key is built; retain W interfaces directly | No `tsp` consumer in our construction; no vertical interpolation in this path | Atmospheric effect **not measured**; neither output is consumed here |
+| Check_CFL replays air-mass advection over the read interval and reduces the dynamic timestep on failure (`R/advectm_cfl.F90:251–333`; `C/advectm_cfl.F90:190–261`) | Preprocessing checks amounts/replay and donor positivity, optionally retries with more substeps, and writes the schedule; runtime consumes it (`src/Preprocessing/Targets/CubedSphere/tm5_spectral_day.jl:96–131`; `src/Models/Runner/driven_stepping.jl:182–187`) | Keep our binary schedule and positivity contract rather than TM5's online timestep search | Isolated transport difference **not measured** |
+| When reduced-grid mode is enabled, zonal advection combines polar cells and fluxes before the sweep and expands afterwards (`R/advectx__slopes.F90:185–240`; `C/advectx__slopes.F90:246–270`) | CS advects on its six panels without polar cell clustering (`src/Operators/Advection/CubedSphere/cs_sweep_x.jl:34–49`; §10 geometry) | CS has no shrinking LL polar cells requiring that treatment | Isolated transport difference **not measured** |
+| Prognostic tracer-mass slopes are advected and updated along with mass (`R/advectx__slopes.F90:577–589`; `C/advectx__slopes.F90:651–663`) | `SlopesScheme` diagnoses slopes anew from neighbouring cell means; PPM uses reconstructed profiles, without persistent TM5 moments (`src/Operators/Advection/Reconstruction/reconstruction.jl:242–246,367–386`; [advection schemes](../theory/advection_schemes.md)) | Retain the configured advection algorithm; spectral preprocessing does not implement prognostic moments | Isolated transport difference **not measured** |
+| Unless `without_diffusion` is defined, adds `dkg/m` diffusion terms inside the convection matrix (`R/convection.F90:446–451`; `C/convection.F90:472–477`) | Configured implicit diffusion and convection are separate operators; Dkg uses a conservative tridiagonal solve (`src/Operators/Diffusion/conservative_dkg.jl:1–9,48–60`; [TM5 diffusion](../theory/tm5_boundary_layer.md)) | Retain our operator composition, rather than a coupled convection/diffusion matrix | Isolated transport difference **not measured** |
+| Convection is the split-order `'v'` step, with duration set by `nconv/(2*tref(region))` (`R/modelIntegration.F90:678–695`, `R/convection.F90:342`; `C/modelIntegration.F90:783–807`, `C/convection.F90:359`); Check_CFL may reset `nconv=ndyn` (`R/advectm_cfl.F90:318`; `C/advectm_cfl.F90:246`) | Binary-scheduled runtime defaults to convection once at window end after restoring endpoint air mass; `physics_cadence=:substep` selects per-step composition (`src/Models/Runner/driven_stepping.jl:320–358`) | Follow the stored window forcing and configured physics cadence | Isolated transport difference **not measured** |
+
+The NOAA archive provenance is `C/../rc/meteo-tm5-noaa.rc:223–234`
+(ERA5 forecasts from 06/18 UTC, three-hour model-level records),
+`:415–418,451–454` (source archive selection) and `:585–587` (destination keys).
+The offline rig is outside the base source trees at
+`/work2/noaa/co2/ash/meteo-coarsening/`; its source/destination layout,
+360×180×137 input and launch/configuration files are recorded in
+`ct-unified-github/docs/meteo_coarsening_pipeline.md:8–23,52–78`.
+The base `tmm`/`tmm_param` code cited above implements the coarsening in
+both trees; the external rig selects archives and launches that mapper.
+The NOAA configuration is not present in the older R base and is
+not inferred from its midpoint interpolation. Forecast-day filename keys are
+also distinct from GRIB lead bookkeeping: the older `_fc012up2tr3` selector
+sets start day/hour and lead step at `R/tmm_mf_ecmwf_tm5.F90:1655–1677` and
+`C/tmm_mf_ecmwf_tm5.F90:1667–1689`. That legacy 00/12 convention is not evidence
+for NOAA's ERA5 06/18 selection.
 
 ## 14. Validation tolerances
 
@@ -1059,10 +1093,17 @@ with attributable deltas, S8 cubed-sphere direct target).
 `CPURingSynthesis` uses batched host GEMM and unnormalised FFTW;
 `GPUSpectralSynthesis` uses the same portable KernelAbstractions pack/scatter/
 gather stages, device GEMM and device FFT. Refined samples stay on the device
-through quadrature, whose accumulation is Float64. Batches are limited to
-eight field levels in the day driver. Surface LNSP and both gradients always
-use Float64. Core does not load CUDA. With CUDA loaded, automatic precision
-uses Float64 on A100/H100/B200-class devices and Float32 for 3-D fields on
+through quadrature. LL/RG quadrature accumulates in Float64. Direct CS
+three-dimensional products and face/overlap gathers accumulate in the selected
+synthesis precision (Float32 or Float64), including the `total` accumulator in
+`cs_apply_face_kernel!` (`src/Preprocessing/Spectral/cs_face_gather.jl:44–58`)
+and the overlap kernel (`src/Preprocessing/Spectral/cs_spectral_integrals.jl:33–42`).
+Reduced CS results are then copied to host Float64 endpoint arrays; that copy
+does not change the accumulation precision. Batches are limited to eight field
+levels in the day driver. Surface LNSP, both surface gradients and surface PS
+integration always use Float64. Core does not load CUDA. With CUDA loaded,
+automatic precision uses Float64 on A100/H100/B200-class devices and Float32
+for 3-D fields on
 L40S-class devices. `FAST_MATH` is rejected and the CUDA extension selects
 pedantic math through `CUDA.math_mode!`, restoring the caller's mode after each transform. GPU execution is opt-in in tests:
 
