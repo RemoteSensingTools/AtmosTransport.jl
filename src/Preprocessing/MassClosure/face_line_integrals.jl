@@ -72,7 +72,8 @@ struct LineIntegralFaceFluxes{S,T}
     target_mesh :: T
 end
 
-function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
+"""Geometry-only great-circle midpoint map; no field or per-thread scratch."""
+function line_integral_face_matrix(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
                                 ft::CSGlobalFaceTable; samples_per_face::Integer = 16)
     samples_per_face >= 1 || throw(ArgumentError("samples_per_face must be ≥ 1, got $samples_per_face"))
     R = Float64(target.radius)
@@ -92,9 +93,89 @@ function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, 
             end
         end
     end
+    return sparse(I, J, V, ft.nf, 3nsrc)
+end
+
+"""Sixteen-point cardinal interpolation on the open, periodic CS synthesis rings."""
+function cs_cardinal_stencil(m::LatLonMesh, x, order::Int=16)
+    # Continue Cartesian fields smoothly across either pole: reflect latitude
+    # and shift longitude by pi. No extrapolation of small polar winds.
+    lon = mod(atan(x[2], x[1])-deg2rad(first(m.λᶜ)), 2pi)/deg2rad(m.Δλ)
+    lat = (asin(clamp(x[3], -1., 1.))-deg2rad(first(m.φᶜ)))/deg2rad(m.Δφ)
+    i0, j0 = floor(Int, lon)-order÷2+1, floor(Int, lat)-order÷2+1
+    wx = cs_cardinal_weights(lon-i0, order)
+    wy = cs_cardinal_weights(lat-j0, order)
+    indices = Matrix{Int}(undef, order, order)
+    for j in 1:order
+        row = mod(j0+j-1, 2m.Ny)
+        reflected = row >= m.Ny
+        row = reflected ? 2m.Ny-1-row : row
+        for i in 1:order
+            col = mod(i0+i-1+(reflected ? m.Nx÷2 : 0), m.Nx)
+            indices[i,j] = 1+col+row*m.Nx
+        end
+    end
+    return indices, wx, wy
+end
+
+function cs_cardinal_weights(t, order)
+    w = ones(Float64, order)
+    for i in 0:order-1, j in 0:order-1
+        i == j || (w[i+1] *= (t-j)/(i-j))
+    end
+    return w
+end
+
+function cs_cardinal_integral_weights(source,a,b,samples_per_face)
+    theta = arc3(a,b)
+    row = Dict{Int,Float64}()
+    for q in 1:samples_per_face
+        x = slerp3(a,b,theta,(q-0.5)/samples_per_face)
+        ids,wx,wy = cs_cardinal_stencil(source,x)
+        for j in eachindex(wy), i in eachindex(wx)
+            c = ids[i,j]
+            row[c] = get(row,c,0.)+wx[i]*wy[j]
+        end
+    end
+    columns = sort!(collect(keys(row)))
+    return columns,[row[c]*Float64(source.radius)*theta/samples_per_face for c in columns]
+end
+
+"""High-order CS scalar stencils and face normals; no Cartesian duplication."""
+function cs_spectral_face_geometry(source::LatLonMesh, target::CubedSphereMesh,
+                                ft::CSGlobalFaceTable; samples_per_face::Integer)
+    iseven(source.Nx) || throw(ArgumentError("CS polar reflection requires even longitude count"))
+    centre = cs_cell_bases(target)[1]
+    nsrc = ncells(source)
+    # Accumulate each face before appending: memory scales with the union of
+    # its stencils, rather than samples_per_face times the stencil area.
+    columns = Vector{Vector{Int}}(undef, ft.nf)
+    weights = Vector{Vector{Float64}}(undef, ft.nf)
+    normals = Vector{NTuple{3,Float64}}(undef, ft.nf)
+    Threads.@threads :static for f in 1:ft.nf
+        a, b = cs_face_corners(target, ft, f)
+        n = unit3(cross3(a, b))
+        s = dot3(n, centre[ft.face_right[f]].-centre[ft.face_left[f]]) >= 0 ? 1 : -1
+        columns[f],weights[f] = cs_cardinal_integral_weights(source,a,b,samples_per_face)
+        weights[f] .*= s
+        normals[f] = Tuple(n)
+    end
+    # One scalar stencil per face; the gather reconstructs X/Y/Z weights in
+    # their original component-major order, including zero-normal products.
+    offsets = cumsum([1; length.(columns)])
+    indices = reduce(vcat, columns)
+    values = reduce(vcat, weights)
+    stencils = SparseMatrixCSC(nsrc, ft.nf, offsets, indices, values)
+    return (; stencils, normals=stack(normals))
+end
+
+function LineIntegralFaceFluxes(source::Union{LatLonMesh, ReducedGaussianMesh}, target::CubedSphereMesh,
+                                ft::CSGlobalFaceTable; samples_per_face::Integer = 16)
+    matrix = line_integral_face_matrix(source, target, ft; samples_per_face)
+    nsrc = ncells(source)
     lon, lat = source_cell_centers(source)
     nt = Threads.maxthreadid()
-    return LineIntegralFaceFluxes(sparse(I, J, V, ft.nf, 3nsrc),   # repeated (face, cell) pairs add up
+    return LineIntegralFaceFluxes(matrix,
                                   ft, wind_basis_trig(deg2rad.(Float64.(lon)), deg2rad.(Float64.(lat))),
                                   [zeros(3nsrc) for _ in 1:nt], [zeros(ft.nf) for _ in 1:nt],
                                   Int(samples_per_face), source, target)

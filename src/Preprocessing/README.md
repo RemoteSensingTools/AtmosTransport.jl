@@ -65,7 +65,7 @@ forward. The driver can thread days only when `supports_day_threading(settings)`
 `chain_mass = false`, and an enabled mass pin has a fixed target; ERA5 N320
 currently returns `false` because its inner kernels use static thread schedules.
 
-ERA5 spectral to LL, RG, or CS:
+Default point-sampled ERA5 spectral to LL, RG, or CS:
 
 1. Read the day's VO/D/LNSP GRIB (`read_day_spectral`; missing files skip the
    day with a warning) and next-day 00 UTC when present (`next_day_hour0`).
@@ -239,7 +239,7 @@ CUDA; each source uses the same lower binary replay and positivity contracts.
 The optional `[preprocessing] spectral_flux_construction = "tm5_spectral"`
 selects retained-spectrum PS and face integrals with independent vertical
 forcing, moist layer balance, endpoint drying and `window_mean` sampling on
-LL and RG. `spectral_synthesis = "cpu"` selects the CPU reference; the TM5
+LL, RG and direct CS. `spectral_synthesis = "cpu"` selects the CPU reference; the TM5
 default is `"gpu"`, which requires a loaded functional CUDA backend. It writes
 v5 identity keys. See the manual page `preprocessing/tm5_spectral_fluxes.md`.
 
@@ -248,10 +248,10 @@ LL retains one completed lookahead output window; RG writes immediately.
 Spectral owns direct quadrature and endpoint reduction; Targets owns the moist
 layer balance, dry conversion and mean. MassClosure stays source independent.
 
-ERA5 spectral LL/RG can opt into live Calc_Kzz inputs with
+ERA5 spectral LL/RG/CS can opt into live Calc_Kzz inputs with
 `[preprocessing] include_tm5_pbl=true`. `entrypoint.jl` validates the topology,
 hourly cadence and thermo path before IO. The optional v5 group is described
-in PhysicsInputs and the target READMEs; native sources and CS are deferred.
+in PhysicsInputs and the target READMEs; native sources are deferred.
 
 ConfigChecks owns entrypoint date/scalar/choice parsing; TOML dates and ISO
 strings both work. Numeric settings reject Booleans; integer settings require
@@ -279,3 +279,10 @@ for Float64; lower precision allows two-endpoint storage rounding). Moist and
 unpinned paths retain their uniform global mode and original endpoint tendency.
 TM5 LL/RG layer solves and standalone CS per-level solves retain original
 projection arithmetic; only column calls select compensated projection dispatch.
+
+The opt-in direct CS TM5 route synthesizes refined open rings, integrates
+Cartesian mass flux along great-circle faces, conservatively integrates PS
+and independent forcing over cells, and balances each moist layer with W.
+It then uses shared endpoint drying/averaging and CS column/replay/write
+contracts. The default CS LL staging path retains its arithmetic. See
+`Targets/CubedSphere/README.md` for the file map and provenance keys.

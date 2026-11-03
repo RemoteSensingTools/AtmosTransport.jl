@@ -58,14 +58,17 @@ function resolve_spectral_construction(cfg)
               spectral_synthesis_float=precision)
 end
 
+validate_tm5_spectral_target(::ReducedGaussianTargetGeometry) = nothing
+validate_tm5_spectral_target(::CubedSphereTargetGeometry) = nothing
+function validate_tm5_spectral_target(grid::LatLonTargetGeometry)
+    isapprox(last(grid.mesh.λᶠ)-first(grid.mesh.λᶠ),360;atol=1e-9,rtol=0) &&
+        first(grid.mesh.φᶠ)==-90 && last(grid.mesh.φᶠ)==90 ||
+        throw(ArgumentError("tm5_spectral requires a global lat-lon target"))
+    return nothing
+end
+
 function validate_spectral_construction(c::TM5SpectralFluxes, grid, settings)
-    grid isa Union{LatLonTargetGeometry,ReducedGaussianTargetGeometry} ||
-        throw(ArgumentError("tm5_spectral supports lat-lon and reduced-Gaussian targets; cubed sphere is deferred"))
-    if grid isa LatLonTargetGeometry
-        isapprox(last(grid.mesh.λᶠ)-first(grid.mesh.λᶠ),360;atol=1e-9,rtol=0) &&
-            first(grid.mesh.φᶠ)==-90 && last(grid.mesh.φᶠ)==90 ||
-            throw(ArgumentError("tm5_spectral requires a global lat-lon target"))
-    end
+    validate_tm5_spectral_target(grid)
     settings.mass_basis === :dry || throw(ArgumentError("tm5_spectral requires mass_basis=\"dry\""))
     settings.flux_time_sampling === :window_mean || throw(ArgumentError("tm5_spectral requires flux_time_sampling=\"window_mean\""))
     get(settings,:met_interval,ERA5_MET_INTERVAL_SECONDS)==ERA5_MET_INTERVAL_SECONDS ||

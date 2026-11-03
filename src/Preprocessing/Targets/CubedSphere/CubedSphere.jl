@@ -204,7 +204,22 @@ export CSSpectralUnifiedDriverContext,
 
 include("cs_transport_helpers.jl")
 include("cubed_sphere_contracts.jl")
+import ..Common: TM5SpectralFluxes, PointSampledSpectralFluxes, balance_window_layers!,
+    spectral_construction, validate_spectral_construction, validate_spectral_vertical,
+    GPUSynthesis, AutoSynthesisPrecision
+import ..Spectral: CSSpectralQuadrature, CSSpectralIntegralWorkspace, TM5EndpointPlan,
+    construct_tm5_endpoint, with_spectral_hours, spectral_synthesis_metadata,
+    era5_thermo_path, read_thermo_coordinates, read_qv_from_thermo
+import ..MassClosure: cs_cell_face_degree, cs_spectral_face_geometry
+import ..LatLonTarget: LatLonBilinearWeights, interpolate_ll_qv!
+import ...MetDrivers.BinaryFormat: TM5SpectralFluxesHeader, abandon_streaming_transport_binary!
+import ..TransportBinary: tm5_flux_evidence
+import ..MassClosure: DirectCSPoisson, CSPoissonScratch, balance_cs_level!,
+    cs_face_divergence!, sync_cs_mirrors!, _ArrayTarget
+import ..LatLonTarget: tm5_horizontal_convergence, balance_tm5_layers!, dry_target_fluxes!
+
 include("cubed_sphere_spectral.jl")
+include("tm5_spectral_day.jl")
 include("cubed_sphere_regrid.jl")
 include("cubed_sphere_coarsen.jl")
 

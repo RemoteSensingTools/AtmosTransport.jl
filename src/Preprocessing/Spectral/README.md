@@ -97,3 +97,33 @@ for Float64; lower precision allows two-endpoint storage rounding). Moist and
 unpinned paths retain their uniform global mode and original endpoint tendency.
 TM5 LL/RG layer solves and standalone CS per-level solves retain original
 projection arithmetic; only column calls select compensated projection dispatch.
+
+## Direct TM5 cubed-sphere integrals
+
+- `cs_point_synthesis.jl`: selected-precision, batched KA direct point reference
+  using stable vector harmonics and compensated Fourier accumulation.
+- `cs_polar_synthesis.jl`: CS-only stable derivative-based vector transforms
+  on polar rings, avoiding cancellation in small pseudo-winds.
+- `cs_spectral_integrals.jl`: `CSSpectralQuadrature` selects regular open
+  refined rings from the smallest target edge and retained truncation;
+  `CSSpectralIntegralWorkspace` applies great-circle midpoint/cardinal16 Cartesian face maps and
+  conservative box-overlap maps with KernelAbstractions gathers. The target
+  supplies geometry matrices, keeping this stage independent of MassClosure
+  and Regridding. Only reduced target fields return from the device per batch.
+- Surface synthesis and PS integration use Float64. CS 3-D integrands and
+  gathers use the selected plan precision, including typed constants; the
+  new kernels introduce no Float64 promotion. The forcing is a density per
+  square metre before conservative area integration, with the IFS/target
+  radius ratio retained.
+- `construct_tm5_endpoint` shares the same pin, moist merge and W selection
+  for LL/RG and CS. CS stores every unique canonical face in `u`, with a
+  zero-row `v`; the target owns panel expansion and seam synchronization.
+
+# shared: CSSpectralQuadrature, CSSpectralIntegralWorkspace
+
+`cs_face_gather.jl` stores one scalar stencil and normal per face, with
+component-major accumulation identical to the expanded Cartesian map. Float32
+uses checked Int8 bit offsets to reproduce rounding of each original Float64
+geometry product without Float64 device arithmetic.
+
+# shared: CSFaceGather

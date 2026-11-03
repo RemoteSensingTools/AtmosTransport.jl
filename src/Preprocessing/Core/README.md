@@ -80,3 +80,7 @@ panel tuples, or LL per-application tendencies and their application count.
 Moist/unpinned paths do not assert a zero global change.
 
 # shared: check_fixed_global_mass
+
+TM5 spectral target validation dispatches separately on global LL, RG and CS
+geometry. Direct CS shares dry basis, hourly cadence, window mean and complete
+native-column requirements with LL/RG. Legacy strategy validation is unchanged.

@@ -309,3 +309,25 @@ kind = "run"
 config = "configs/run_tm5pbl.toml"
 tags = ["run", "cubed_sphere", "gpu", "tm5pbl"]
 set = {"input.binary_paths" = ["@CASE:pre_c24_tm5pbl@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm", "architecture.use_gpu" = true, "architecture.backend" = "cuda", "numerics.float_type" = "Float32"}
+
+# Direct CS target: definitions only; references are recorded by the owner.
+[[case]]
+name = "pre_c24_tm5"
+kind = "preprocess"
+config = "configs/pre_c24_tm5.toml"
+day = "2021-12-01"
+tags = ["preprocess", "cubed_sphere", "cpu", "tm5", "slow"]
+
+[[case]]
+name = "pre_c24_tm5_tm5pbl"
+kind = "preprocess"
+config = "configs/pre_c24_tm5_tm5pbl.toml"
+day = "2021-12-01"
+tags = ["preprocess", "cubed_sphere", "cpu", "tm5", "slow", "tm5pbl"]
+
+[[case]]
+name = "run_c24_tm5_cpu_f64"
+kind = "run"
+config = "configs/run_spectral_grid.toml"
+tags = ["run", "cubed_sphere", "cpu", "tm5"]
+set = {"input.binary_paths" = ["@CASE:pre_c24_tm5@/era5_transport_20211201_merged1000Pa_float64.bin"], "advection.scheme" = "ppm"}

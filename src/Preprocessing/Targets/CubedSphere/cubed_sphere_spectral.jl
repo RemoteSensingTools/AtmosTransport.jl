@@ -576,7 +576,7 @@ Spectral→CS transport binary: spectral synthesis to an internal LL staging gri
 conservative regridding to CS panels, endpoint continuity closure, and streaming
 binary write. No on-disk LL intermediate.
 """
-function process_day(date::Date,
+function process_day(::PointSampledSpectralFluxes, date::Date,
                      grid::CubedSphereTargetGeometry,
                      settings::ERA5SpectralSettings,
                      vertical;

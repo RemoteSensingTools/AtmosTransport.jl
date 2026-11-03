@@ -49,3 +49,33 @@ construction identity. N320→CS support is deferred pending archive coverage.
 
 `fill_dry_mass_flux_thickness!` converts native-level pinned dry mass to `g*m/A`
 for CS panel arrays or source-grid arrays. ERA5 and MERRA-2 share this rule.
+
+## Direct TM5 spectral target
+
+- `tm5_spectral_day.jl`: typed `TM5SpectralFluxes` day driver, refined-ring
+  geometry setup, canonical-face/panel adapters, per-layer moist balance
+  with independent W, adjacent-cell dry conversion, endpoint averaging,
+  dry column repair, explicit-dm closure and streaming v5 write.
+- The `PointSampledSpectralFluxes` dispatch retains the LL staging workflow.
+  Direct TM5 never recovers winds from LL transport fluxes. Only PS and the
+  independent spectral forcing use conservative refined-box overlap.
+- The direct route requires next-day spectral/humidity endpoints and retained
+  native interfaces. It uses the existing CS `m/am/bm/cm/ps/dm` sections and
+  optional `tm5_pbl` group. `include_surface` is rejected; live Calc_Kzz inputs
+  use `include_tm5_pbl`. Humidity is used internally for the dry carrier.
+- Ordinary provenance keys record `great_circle_midpoint_cardinal16_v2`,
+  samples per face, refined shape, synthesis backend and actual precision;
+  the v5 identity schema is unchanged. The writer also records the shared
+  column-closure certificate for every window. The quadrature generalizes TM5's LL
+  rule; the layer equation is TM5's equation on our CS graph, solved by a
+  reused `DirectCSPoisson` factor. The serial run cache retains that factor,
+  synthesis plans and geometry across days; its key includes geometry,
+  truncation, refinement, backend, precision and batch size.
+- `close_tm5_cs_window` restarts dry amount construction from pristine rates
+  on every positivity retry and applies the shared replay/positivity gates.
+  Two moist endpoints and one output window are retained. Files are promoted
+  only after all windows and summary gates pass; failures abandon staging.
+
+Focused tests: `test_tm5_cs_spectral_integrals.jl`, `test_tm5_cs_balance.jl`,
+`test_tm5_cs_spectral_day.jl`. Golden definitions: `pre_c24_tm5`,
+`pre_c24_tm5_tm5pbl`, `run_c24_tm5_cpu_f64` (references recorded separately).
