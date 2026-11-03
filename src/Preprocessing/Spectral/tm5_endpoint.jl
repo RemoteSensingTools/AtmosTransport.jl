@@ -21,7 +21,10 @@ function construct_tm5_endpoint(ws::Union{SpectralIntegralWorkspace, CSSpectralI
     c = spectral_construction(settings)
     nz = vertical.Nz_native
     nc = length(ws.quadrature.areas)
-    raw = integrate_face_fluxes!(ws, H, vo, d, T, vertical.ab.dA, vertical.ab.dB, c)
+    integrated = integrate_face_fluxes!(ws, H, vo, d, T, vertical.ab.dA, vertical.ab.dB, c)
+    # Quadrature stays in the selected precision. The existing host pin and
+    # closure budgets require a Float64 endpoint pressure after device transfer.
+    raw = merge(integrated, (; ps=Float64.(integrated.ps)))
     q = reshape(clamp.(Float64.(q_native), 0, MAX_SPECIFIC_HUMIDITY), nc, nz)
     offset = settings.mass_fix_enable ? pin_global_mean_ps_using_qv!(raw.ps, ws.quadrature.areas,
         vertical.ab.dA, vertical.ab.dB, q;

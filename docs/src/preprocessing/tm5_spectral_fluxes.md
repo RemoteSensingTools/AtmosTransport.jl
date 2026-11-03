@@ -19,6 +19,9 @@ the default. Select the new route explicitly:
 spectral_flux_construction = "tm5_spectral"
 spectral_synthesis = "cpu" # reference; omit for GPU (CLI loads CUDA)
 # spectral_synthesis_float = "auto" # GPU: auto, Float64 or Float32
+# face_quadrature = "gauss_fourier" # LL/RG default
+# To select TM5 trapezoids instead:
+# face_quadrature = "tm5_trapezoid"
 # quadrature_refinement_steps = 2
 
 [numerics]
@@ -83,17 +86,39 @@ from the TM5 meteorological archive and has no spectral stage.
 (`gi:1587`). For ERA5 this is TL639. The existing route synthesises at the
 target truncation (`target_spectral_truncation`, ``T = N_λ/2 − 1`` on LL).
 
-**Refinement.** Each cell edge of length ``Δ`` degrees is divided into
+**LL/RG face integration.** `face_quadrature = "gauss_fourier"` is the
+`TM5SpectralFluxes` default. Gauss–Legendre nodes integrate
+``U Δp / \cos φ`` along meridians. Longitude products are synthesized on an
+oversampled ring, Fourier transformed, multiplied by the exact interval factor
+``Δλ \, \operatorname{sinc}(mΔλ/(2π)) e^{imΔλ/2}``, and evaluated at target
+interval starts. Frequency folding before the inverse FFT handles arbitrary
+RG boundary counts without an LCM-sized synthesis grid. Cell pressure and
+independent divergence forcing use the same Gauss/Fourier box integrals.
+
+For a latitude width ``Δφ`` in radians, the measured rule uses
+``N_φ = \max(10, \lceil(T+2)Δφ\rceil+3)`` nodes: **10 at T255 and 15 at
+T639 on 1° faces**. Longitude ring length is the smallest multiple of the
+cell's longitude count exceeding ``10(T+2)``. This oversampling resolves the
+nonlinear ``p_s = \exp H`` product; exact Fourier integration by itself does
+not remove aliasing. §13 reports the resolution measurements and doubled
+reference checks. Polar Gauss nodes are open; their Legendre tables use
+``\cos φ`` directly to avoid cancellation in ``\sqrt{1-\sin^2 φ}``.
+
+**Explicit TM5 trapezoids.** `face_quadrature = "tm5_trapezoid"` selects the
+previous LL/RG integration, with `quadrature_refinement_steps = 2` by default:
 
 ```math
-r(T, Δ) = \max\!\left(1, \left\lceil \frac{2\,Δ}{s_T} \right\rceil\right),
-\qquad s_T = \frac{360°}{2(T+1)}
+r(T, Δ) = \max\!\left(1, \left\lceil \frac{nstep\,Δ}{s_T} \right\rceil\right),
+\qquad s_T = \frac{360°}{2(T+1)}.
 ```
 
-intervals (`ShRefinement`, `gi:1602–1630`; `nstep = 2` at `gi:1627`). The
-call sites carry the comment "5 points per sh resolution" (`gi:1677`, `gi:1822`,
-`gi:2458`), but the function uses 2. For TL639 and a 1° cell, ``s_T = 0.28125°``
-and ``r = 8``.
+TM5 uses 2 despite comments saying "5 points per sh resolution"
+(`gi:1602–1630,1677,1822,2458`). A 1° edge has 3 subdivisions at T255 and
+8 at T639. The refinement-16 proposal was rejected on cost. The explicit
+rule retains our existing open polar policy and complete wind transform;
+it does not restore TM5's other numerical errors. CS keeps its established
+cardinal-16 arc integration and refinement 2 (§10); this selector changes
+LL/RG coordinate faces.
 
 **Oversampled rings.** For ``K`` output longitudes, TM5 doubles ``L`` until
 ``J = K L ≥ 2T + 1``, runs one FFT of length ``J`` and keeps every ``L``-th value
@@ -106,17 +131,10 @@ retained zonal wavenumber is synthesised. The unnormalised `bfft` is kept.
 `gts:829–830`). `compute_legendre_column!` evaluates it; this is a documented
 difference (§13).
 
-**Cost.** The retained TL639 work is approximately 101 times the legacy
-T179, 1° Legendre work: eight times as many refined rows, multiplied by
-``639·641/(179·181)``. The earlier estimate of 50 times omitted half the
-latitude refinement. Batched GEMM reduces the actual wall-time ratio.
-With this implementation on one CPU thread (Julia 1.12.6, BLAS one thread),
-a real T639/137-level instant on 360×180 LL takes 84.4 s for synthesis and
-quadrature; plan construction takes 8.6 s. A complete window using two
-identical copies of that real endpoint and ``q=0`` takes 171–183 s through
-pin, merge, balance, dry conversion, closure and replay, excluding plan
-construction and GRIB decode. This is a stage benchmark, not a changing
-real-hour pair or a golden reference.
+**CPU cost and golden cases.** See §13 for complete changing-hour window
+measurements, memory and the golden decision. The former refinement-16
+proposal cost 6.08× at T255 and 17.10× at T639 (2,577 s/window) and was
+replaced by Gauss/Fourier integration.
 
 ## 2. Vorticity and divergence to pseudo-winds
 
@@ -175,8 +193,11 @@ cosine-weighted linear quadrature in ``φ`` (`IntervalQuad_Cos_Lin`, `gi:1926`)
 and divides by the cell area (key `'exp,aver'`, `tmm:1876`). The cell value
 ``\bar p_{s,c}`` is therefore the exact integral of a piecewise-linear
 interpolant of ``e^{H}``; it is neither ``\iint e^{H}\,dA / S_c`` nor
-``\exp`` of the mean of ``H``. The construction implements this rule
-with the same refinement. The layer mass is
+``\exp`` of the mean of ``H``. Explicit `tm5_trapezoid` retains this rule.
+The default `gauss_fourier` instead integrates the sampled exponential with
+Fourier longitude intervals and Gauss latitude weights times ``\cos φ``,
+approximating the actual area mean ``\iint e^{H}\,dA / S_c`` (§1/§13). Neither
+rule is the exponential of mean H. The layer mass remains
 
 ```math
 M_{c,k} = \frac{S_c}{g}\left(ΔA_k + ΔB_k\,\bar p_{s,c}\right).
@@ -729,8 +750,9 @@ file is `test/real_data/test_tm5_cs_endpoint_accuracy.jl`.
 ```julia
 abstract type AbstractSpectralFluxConstruction end
 struct PointSampledSpectralFluxes <: AbstractSpectralFluxConstruction end  # default: today's bodies
-struct TM5SpectralFluxes <: AbstractSpectralFluxConstruction
-    refinement_steps :: Int   # TM5 ShRefinement nstep = 2
+struct TM5SpectralFluxes{Q<:AbstractFaceQuadrature} <: AbstractSpectralFluxConstruction
+    face_quadrature :: Q      # GaussFourier() default; TM5Trapezoid() explicit
+    refinement_steps :: Int   # 2; trapezoids and CS
     vod2uv_radius    :: Float64     # IFS_EARTH_RADIUS (Q4)
 end
 ```
@@ -752,9 +774,10 @@ end
   `ConfigChecks.parse_choice`; absence adds no fields to historical settings,
   preserving their fingerprint representation. `flux_construction` and the
   existing face-method keys retain their meaning. `TM5SpectralFluxes` has the
-  fixed IFS radius and a positive `quadrature_refinement_steps` (default 2).
+  fixed IFS radius, typed `face_quadrature` (default `GaussFourier()`) and
+  positive `quadrature_refinement_steps` (default 2; trapezoids and CS).
 - `ConfigChecks.check_known_keys` rejects unknown preprocessing keys, and native
-  sources reject all four spectral-only keys. Planning rejects moist basis and sampling other than
+  sources reject spectral-only keys. Planning rejects moist basis and sampling other than
   `window_mean`. The day driver requires next-day 00 UTC. The new route
   requires retained native interfaces, rather than pressure-overlap remapping.
 - `[preprocessing] include_tm5_pbl = true` can be combined with this construction
@@ -787,7 +810,8 @@ plus the construction identity. This part is implemented (TM5-0); see
 | `flux_construction` | `"tm5_spectral"` or `"point_sampled_spectral"` |
 | `flux_construction_revision` | revision of the construction (tm5_spectral only) |
 | `spectral_truncation_used` | retained truncation ``T`` (tm5_spectral only) |
-| `quadrature_refinement_steps` | `nstep` of the refinement rule (tm5_spectral only) |
+| `face_quadrature` | `gauss_fourier` (LL/RG default) or `tm5_trapezoid`; parsed once into a type |
+| `quadrature_refinement_steps` | `nstep` of the explicit trapezoid and CS refinement rule (default 2) |
 | `vod2uv_radius_m` | `vod2uv` radius in m (tm5_spectral only) |
 
 The reader decodes the keys into `TM5SpectralFluxesHeader` or
@@ -801,15 +825,18 @@ the new LL and RG route records these tags from its construction.
 
 The v5 headers also record `spectral_synthesis` (`cpu`/`gpu`),
 `spectral_synthesis_float` (the actual Float64/Float32 plan type), and
-`spectral_surface_float` (Float64). CUDA's math mode is set to PEDANTIC
+`spectral_surface_float` (the actual surface precision).
+LL/RG Gauss/Fourier products use construction revision 2; explicit trapezoids
+and the existing CS rule retain revision 1. The `face_quadrature` tag and
+Gauss/oversampling resolution fields record the LL/RG quadrature. CUDA's math mode is set to PEDANTIC
 for each transform and restored even on exceptions; FAST_MATH is rejected.
 
 ## 13. Differences from TM5
 
 We use TM5's spectral budget equations, with the numerical corrections and
 modelling departures inventoried below; we **do not reproduce TM5's numerical
-errors**. In particular, the direct CS path
-targets converged face integrals, rather than agreement with TM5's default
+errors**. In particular, LL/RG now use the Gauss/Fourier reference rule as their default,
+and the direct CS path targets converged face integrals, rather than agreement with TM5's default
 under-resolved quadrature (owner decision, 2026-11-02). There is no
 TM5-default-compatible CS quadrature option. The two groups below distinguish
 numerical corrections from modelling or convention choices; unisolated sizes
@@ -835,10 +862,138 @@ the convention table.
 | `vod2uv` drops the upper neighbour at ``n=T−1``, the ``iσ`` term at ``n=T``, and zeros the corner (§2; `R/grid_type_sh.F90:1998–2029`; `C/grid_type_sh.F90:2000–2031`) | Retain every neighbour and ``iσ`` term inside ``[m,T]`` | Complete the vector transform at truncation | Combined truncation-edge probe: L137 cap Δu/Δv RMS 0.140/0.176 m/s (3.53/4.39%); omitted terms ``−R_v δ_{m,T}ζ_T^m``, ``iR_v σ_{m,T}D_T^m`` and V counterparts; special ``m=n=T−1`` branch differs by exactly zero |
 | `vod2uv` output stops at ``n=T``; no ``T+1`` wind row (§2; `R/grid_type_sh.F90:1983–2029`; `C/grid_type_sh.F90:1985–2031`) | Complete transform retains it | Required by the vector transform and Gauss identity | Unit VO/D contributes ``±R_v δ_{m,T+1}``; isolated atmospheric size **not measured** |
 | Polar endpoint mean includes the duplicated longitude; IntArea substitutes the adjacent-row mean of ``D\cos φ`` (§4; `R/grid_interpol.F90:3200–3214,3229,3260–3264,2495–2509,2550`; `C/grid_interpol.F90:3202–3216,3231,3262–3266,2497–2511,2552`) | LL/RG open polar nodes; CS stable vector evaluation on open rings (§10) | Remove the duplicated-longitude mean and artificial endpoint; avoid cancellation of small pseudo-winds before division by ``\cos φ`` | L137 Fu cap RMS about 8%, L1 cap divergence RMS 40% in the probe below. Unit cosine has spurious mean ``1/(N_λ+1)``; constant-D endpoint adds ``(h/2)sin(h)``. CS Float32 outer-ring rotation error 5.9582% → ``4.51×10^{-7}`` relative at T639; 0.8471% → ``4.86×10^{-7}`` at T255 |
-| IntLat/IntLon use `nstep=2` refinement and linear (trapezoid) quadrature (§10; `R/grid_interpol.F90:1624–1626,3275,3629`; `C/grid_interpol.F90:1626–1628,3277,3631`) | Cardinal-16 Cartesian interpolation and resolved arc midpoints; coordinate-face checks use converged IntLat/IntLon | Integrate the retained oscillations accurately; default trapezoids have a measurable integration error | Unit retained-mode default misses −18.7414% (T255), −16.6374% (T639). Real ERA5 default/converged difference: **0.02655% relative L2 over 48 sampled rates**; **1.7009%** at 80°E, 30–31°N, L137, 2021-12-01 01:00 UTC (**−501,352 vs −492,967 kg/s**). CS harmonic/exact maximum 0.04075% on the §10 sweep; real CS endpoint maximum 0.002885% |
+| IntLat/IntLon use `nstep=2` refinement and linear (trapezoid) quadrature (§10; `R/grid_interpol.F90:1624–1626,3275,3629`; `C/grid_interpol.F90:1626–1628,3277,3631`) | LL/RG Gauss latitude nodes and exact Fourier longitude integrals; CS cardinal-16 Cartesian interpolation and resolved arc midpoints | Integrate the retained oscillations accurately; default trapezoids have a measurable integration error | Unit retained-mode TM5 default misses −18.7414% (T255), −16.6374% (T639). Real ERA5 TM5-default/converged difference: **0.02655% relative L2 over 48 sampled rates**; **1.7009%** at 80°E, 30–31°N, L137, 2021-12-01 01:00 UTC (**−501,352 vs −492,967 kg/s**). CS harmonic/exact maximum 0.04075% on the §10 sweep; real CS endpoint maximum 0.002885% |
 | `π` literal `3.14159265358979` (`R/binas.F90:34`; `C/binas.F90:35`) | Julia's ``π`` | Use the available constant precision | Relative difference ``1.0×10^{-15}`` |
 
-The default face-integration error is the **composite trapezoid error of a
+**Measured Gauss/Fourier correction (CPU, 2026-11-03).** The default now
+uses the converged-reference approach above for LL/RG production. The shared
+Gauss rule and exact Fourier integrator live in
+`src/Preprocessing/Spectral/gauss_fourier.jl`; the historical raw-face diagnostic
+calls that integrator too. There is one home for the integration math.
+
+The order was chosen by measurement. Eight nodes passed the retained-harmonic
+probe but missed the real T255 all-native-level per-face requirement: maximum
+meridian relative error **4.50e-6** at 01 UTC. Production therefore uses at
+least **10 nodes**, **15 at T639 on 1° faces**, and tenfold longitude-product
+oversampling (§1). Tests sweep every product frequency through ``2(T+1)`` at
+T255/T639, on 0.5°, 1° and 5° intervals with equatorial and polar origins;
+every nonzero harmonic integral passes ``1e-6`` relative error. Analytic null
+integrals use an absolute tolerance. Independent Fourier-product tests include
+odd/even FFT lengths and noncommensurate RG interval counts.
+
+Real ERA5 checks cover **all unique faces and all 137 native levels** at
+**00, 01 and 02 UTC, 2021-12-01**, on 360×180 LL in Float64. These are raw
+face rates before pinning, drying, merging or balance. The table is the maximum
+of ``|F−F_ref|/|F_ref|`` over every nonzero face, level and tested hour;
+zero-reference faces have exactly zero error. No denominator floor is used.
+
+| Input | Meridian face maximum relative error | Parallel face maximum relative error | Cell forcing C maximum relative error |
+|---|---:|---:|---:|
+| T255 | 2.984e-07 | 5.633e-09 | 6.611e-08 |
+| T639 | 3.301e-07 | 4.375e-09 | 5.949e-07 |
+
+The reference uses **20 Gauss nodes / 6,480 longitudes at T255** and
+**30 / 7,920 at T639**. At hour 00, levels 1/70/137, doubling the actual
+node and longitude counts (40 / 12,960 and 60 / 15,840) changes the largest
+relative L2 among PS, both face rates and C by **1.078e-14 / 8.045e-15**,
+well below ``1e-12``. These are convergence measurements on the stated input,
+not a uniform bound on every meteorological day or Float32 device execution.
+
+**Balanced and closed fluxes.** The following unweighted relative L2 values
+pool three complete 00–03 UTC windows, unique horizontal faces (excluding the
+periodic am duplicate), and all 117 merged layers / 118 cm interfaces. Each
+stored mass amount is converted to kg/s using its own recorded schedule.
+Both arms use the production dry pin, moist layer balance, dry closure,
+replay and positivity gates; schedules are 118/124/126 in both arms.
+
+| Input / reference | am relative L2 | bm relative L2 | cm relative L2 |
+|---|---:|---:|---:|
+| T255 / retained steps-64 trapezoid binary | 2.954909e-06 | 4.480361e-06 | 4.328223e-05 |
+| T639 / own converged Gauss/Fourier result | 2.257483e-13 | 4.515015e-13 | 3.676260e-12 |
+
+Only the T255 steps-64 binary remains in the impact job; T639 is therefore
+compared against the certified production-kernel reference. The T255 numbers
+include the finite error of steps 64; they are not the Gauss/Fourier raw-face
+error reported above. Explicit `tm5_trapezoid`, steps 2 reproduces the previous
+job's **complete one-window binary payload bitwise at both T255 and T639**, excluding the
+updated metadata header.
+
+**Wall time and memory.** The 00–01 UTC window includes decode, planning,
+hourly humidity, both changing endpoints, pin, merge, balance, closure, replay,
+positivity and write; package/process startup is excluded from wall time.
+Settings: Julia threads **16**, BLAS **1**, native batch **8**, L137→L117 at
+100 Pa, dry Float64, `--heap-size-hint=64G` (a GC hint, not a memory cap).
+Gauss/Fourier divides its 32-cell budget across **four band workers**, with
+**two FFT threads each**; the global FFTW setting remains **1**, as used by
+explicit trapezoids. The complete arms are both warmed first, followed by
+**A B A B**, two measured repetitions per rule. The ratio is the ratio of
+mean measured times. The host is shared; these are CPU window measurements,
+not full-day or GPU performance guarantees.
+
+RSS below comes from **separate single-arm processes**, including startup/JIT;
+it is not the second arm's process-lifetime high-water mark in a paired run.
+
+| Input | Steps-2 reps (s) | Gauss/Fourier reps (s) | Ratio of means | Steps-2 isolated peak RSS (GB) | Gauss/Fourier isolated peak RSS (GB) |
+|---|---:|---:|---:|---:|---:|
+| T255 | 18.89 / 19.35 | 22.41 / 23.60 | 1.20× | 6.03 | 7.71 |
+| T639 | 99.60 / 100.08 | 83.63 / 83.85 | 0.84× | 14.80 | 16.20 |
+
+Both warmed cost ratios satisfy the ≤1.5× target. T639 Gauss/Fourier peaks at
+**16.20 GB**, **1.095×** its isolated trapezoid peak,
+below the approximately 1.2× target and down from the reviewed **33.28 GB**.
+At each truncation, every **609,094,080-byte** one-window payload matches the
+retained pre-streaming Gauss/Fourier result bitwise (headers excluded); both
+measured repetitions and the isolated run were checked. Explicit CPU Float64
+trapezoid payloads also match their retained counterparts. These checks cover
+the measured input, precision, backend and window.
+
+Reproduce warmed timing with
+`scripts/benchmarks/bench_tm5_refinement_window.jl CONFIG 2021-12-01 OUT`.
+For isolated RSS, add a fourth argument, `tm5_trapezoid` or `gauss_fourier`,
+in a fresh process per rule. Use `TMPDIR=/temp2/cfranken/tmp`, empty
+`CUDA_VISIBLE_DEVICES`, and the settings above. Raw `accepted_warm_t{255,639}/timings.tsv`,
+`final_isolated_t{255,639}_{tm5_trapezoid,gauss_fourier}/timings.tsv`, payload
+SHA256 checks and the summary `FINAL_MEASUREMENTS.json` are retained under
+`/temp2/cfranken/codex_scratch/quaddef/memory_revision/`.
+These warmed/isolated results supersede the earlier ordered cold-pair claim;
+accuracy and balanced-flux evidence remains under `gauss_fourier/`, with the
+full work record in `PROGRESS.md`.
+
+**Golden policy.** Only the two O24 configs pin `tm5_trapezoid`, steps 2.
+The following golden stage/window figures predate the memory and CPU
+scheduling revision; they document the retained pin decision rather than
+current golden throughput. On the frozen T639 input, a warmed eight-level
+batch cost **3.093/7.939 s**
+(trapezoid/Gauss), **2.57×**. With 18 padded native batches and surface work
+counted once, projected spectral endpoint cost is **2.64×**, beyond the ~2×
+threshold. The two LL72 configs follow Gauss/Fourier: their warmed batch is
+**2.283/4.414 s (1.93×)** and the spectral endpoint projection is **1.96×**.
+These historical projections cover spectral work, not total golden-suite runtime.
+
+Complete changing-hour windows took **150.91/181.60 s (1.20×)** on LL72 and
+**163.92/294.05 s (1.79×)** on O24. Their fixed decode/planning/humidity work
+and first-arm JIT mask the O24 repeated cost; pinning uses the warmed evidence.
+Live PBL adds shared non-spectral work. The two LL cases `pre_ll72_tm5` and
+`pre_ll72_tm5_tm5pbl` are stated numerical deltas in masses, pressures and
+fluxes, with possible pressure-dependent PBL deltas. C24 keeps its existing
+arc method and restored refinement 2. No golden references are written here.
+The only defined runtime consumer of these changed cases is
+`run_ll72_tm5_tm5pbl_cpu_f64`, which consumes `pre_ll72_tm5_tm5pbl`;
+`pre_ll72_tm5` has no runtime consumer in `cases.toml`. Standard golden
+`check` resolves `@CASE:` inputs from the reference tree, so that runtime
+case's delta needs a separate record/comparison using regenerated inputs.
+An unchanged runtime check does not test the new preprocessing products.
+See `test/golden/README.md` for the case policy.
+
+**Historical impact context.** The retained impact report at
+`/temp1/cfranken/jobs/tm5_quadrature_impact/REPORT.md` measured steps 2 versus
+64 over the full T255 day: balanced cm differs by **4.0879% relative L2**.
+Its owner-run advection-only comparison found differences of about **1–2% of
+the one-day tracer change**. Those are 2-versus-64 results; transport with the
+new Gauss/Fourier default has not been run, and no full-physics ppm claim is
+made. The historical raw trapezoid derivation and day profiles follow.
+
+TM5's default face-integration error is the **composite trapezoid error of a
 coarsely sampled oscillation**, not an error in the exact face integral or a
 CS-only interpolation effect: a 1° ``V=cos((T-2)λ)`` probe reproduces
 −18.7414% / −16.6374%, agreeing with the analytic trapezoid response to roundoff.
@@ -859,7 +1014,7 @@ IntLat applies the trapezoid to ``U·Δp/\cos φ`` in latitude
 (`grid_interpol.F90:3609,3629`), with ``U=u\cos φ``, ``V=v\cos φ``.
 The common radius/gravity factors do not affect the relative quadrature error.
 
-For 1° faces, default T255/T639 subdivisions are **3/8**, giving spacings
+For 1° faces, TM5-default T255/T639 subdivisions are **3/8**, giving spacings
 **0.333333°/0.125°**. The shortest retained longitudinal wavelengths
 ``360°/T`` are 1.411765°/0.563380°, hence **4.2353/4.5070 samples per
 wavelength** (spacing 0.23611/0.221875 of a wavelength). They are above the
@@ -876,7 +1031,7 @@ the measured relative response equals ``x cot(x)-1``, where
 | 5 | 8 / −2.551821% | 18 / −3.199522% |
 | 8 | 12 / −1.130926% | 29 / −1.227786% |
 
-Holding the default spacing fixed isolates the along-face frequency:
+Holding TM5's default spacing fixed isolates the along-face frequency:
 
 | Along-face ``m`` (T255 / T639) | T255 error | T639 error |
 |---|---|---|
@@ -1043,7 +1198,18 @@ for NOAA's ERA5 06/18 selection.
 | Per-layer balance against pydyn | about ``10^{-12}`` scaled; retry decisions exact away from thresholds. FFTW and NumPy FFT differ at rounding level (`pydyn/balance.py:9–12`), so bitwise equality is not claimed |
 | Closure identity (§7) | ``≤ 10^{-12}`` scaled |
 | Binary and replay | exact same-type round trip; replay ``10^{-12}`` (Float64) and ``10^{-5}`` (Float32) |
-| Float32 storage | equal to the matched Float64 result rounded to Float32 |
+| Float32 storage conversion | with the synthesis calculation held fixed, equal to that result rounded to Float32 |
+
+A selected Float32 synthesis/quadrature plan performs its own rounded arithmetic;
+it need not equal a Float64 calculation rounded only at storage. The CPU
+selected-precision tests check numerical agreement, replay and the dry pin,
+not cross-precision bitwise equality. The verified explicit-trapezoid bitwise
+compatibility covers the previous CPU Float64 payload at matched settings
+(§13), excluding headers; it establishes neither every precision/backend nor
+bitwise parity with a Fortran TM5 dump. LL/RG Float32 trapezoids now also use
+Float32 surfaces and integrands, where the previous implementation used
+Float64. The shared CPU builder honors explicit Float32 for CS too; unchanged
+CS quadrature and defaults do not imply unchanged explicitly selected precision.
 
 A tolerance is never loosened to cover a wrong grid, product, basis or missing
 modes, and an absent or skipped fixture is never reported as passed. pydyn has
@@ -1090,18 +1256,44 @@ with attributable deltas, S8 cubed-sphere direct target).
 
 ## 17. Synthesis backends and measurements
 
+Gauss/Fourier executes with a total band budget of 32 target latitude cells, sliced
+from the existing quadrature geometry. Packed native coefficients are reused
+across bands; compatible bands refill the same bounded Legendre tables and
+reuse synthesis/sample buffers. Sequential surface, boundary and forcing
+Fourier transforms share scratch. Each cell retains its original node order.
+CPU surface synthesis uses a reusable single-mode panel with the original
+GEMM dimensions and column positions, preserving its accumulation order
+without retaining all latitude tables. CPU band pack/scatter/gather uses host
+loops around the same GEMM/FFT arithmetic. Up to four CPU workers divide the
+cell budget between them, with up to two FFT threads each. Plans preserve
+the global FFTW thread setting; explicit
+trapezoids keep their existing policy. These CPU measurements do not establish
+GPU memory fit, bitwise behavior or performance.
+Bands also limit interior rows to 128, allowing one complete larger cell;
+the CPU reduces concurrent workers when needed to keep their aggregate
+interior-row budget at 512 (or one larger cell). Thus coarse cells with more
+Gauss nodes also stream their tables.
+
 `CPURingSynthesis` uses batched host GEMM and unnormalised FFTW;
 `GPUSpectralSynthesis` uses the same portable KernelAbstractions pack/scatter/
 gather stages, device GEMM and device FFT. Refined samples stay on the device
-through quadrature. LL/RG quadrature accumulates in Float64. Direct CS
+through quadrature. LL/RG synthesis, surface fields, integrands, FFT products
+and accumulators use the selected precision throughout (Float32 or Float64),
+including CPU selection. Geometry and reference coefficients are prepared on
+the host; device kernels introduce no Float64 arithmetic in Float32 plans.
+After transfer, endpoint pressure is converted to Float64 for the existing
+host dry pin and closure budgets. Direct CS
 three-dimensional products and face/overlap gathers accumulate in the selected
 synthesis precision (Float32 or Float64), including the `total` accumulator in
 `cs_apply_face_kernel!` (`src/Preprocessing/Spectral/cs_face_gather.jl:44–58`)
 and the overlap kernel (`src/Preprocessing/Spectral/cs_spectral_integrals.jl:33–42`).
 Reduced CS results are then copied to host Float64 endpoint arrays; that copy
 does not change the accumulation precision. Batches are limited to eight field
-levels in the day driver. Surface LNSP, both surface gradients and surface PS
-integration always use Float64. Core does not load CUDA. With CUDA loaded,
+levels in the day driver. LL/RG Gauss/Fourier packs U/V/D into one transform
+batch (24 component columns for eight native levels), reusing the Legendre
+operator and reducing per-mode launches. Explicit trapezoids keep their
+historical transform sequence. CS surface LNSP, both surface gradients and surface PS
+integration retain Float64. Core does not load CUDA. With CUDA loaded,
 automatic precision uses Float64 on A100/H100/B200-class devices and Float32
 for 3-D fields on
 L40S-class devices. `FAST_MATH` is rejected and the CUDA extension selects
@@ -1119,7 +1311,7 @@ kernels in ordinary CI. The spike's mirrored-table optimization, pinned
 staging and copy-free cuFFT execution are performance follow-ups; this
 implementation uses bounded batches and standard array/FFT APIs.
 
-Measured synthetic Gauss residuals ``||C + H||₂ / ||C||₂`` with refinement
+Measured synthetic divergence-identity residuals with explicit trapezoids ``||C + H||₂ / ||C||₂`` with refinement
 steps 2, 4, 8 are 0.0322, 0.00778, 0.00252 on LL and 0.0138, 0.00453,
 0.00135 on RG (degree 4, two layers, variable pressure and a truncation-edge
 divergence mode). Constant-pressure solid-body rotation gives exactly zero

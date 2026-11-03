@@ -12,7 +12,9 @@ struct SynthesisRings
     end
 end
 
-"""Number of intervals in TM5 ShRefinement (grid_interpol.F90:1602–1630)."""
+"""TM5 ShRefinement intervals (grid_interpol.F90:1602–1630); default 2 is TM5's rule.
+The explicit trapezoid and CS paths pass `TM5SpectralFluxes.refinement_steps` (default 2).
+"""
 quadrature_refinement(T::Integer, degrees::Real, steps::Integer = 2) =
     max(1, ceil(Int, steps * abs(degrees) * (2(T+1)) / 360))
 

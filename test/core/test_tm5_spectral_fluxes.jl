@@ -96,6 +96,46 @@ function tm5_grid(rg=false)
         PP.build_target_geometry(Dict("nlon"=>12,"nlat"=>6),Float64)
 end
 
+@testset "Latitude streaming preserves samples and complete cell sums" begin
+    T = 7
+    h, vo, d = spectral_example(T)
+    # Three levels exercises the padded last batch; a non-dividing band size
+    # exercises scratch replacement as well as reuse and internal boundaries.
+    vo = cat(vo, vo[:, :, 1:1]; dims=3)
+    d = cat(d, d[:, :, 1:1]; dims=3)
+    c = PP.TM5SpectralFluxes()
+    for rg in (false, true), FT in (Float64, Float32)
+        grid = tm5_grid(rg)
+        full = SP.SpectralIntegralWorkspace(grid, T, c; batch=2, precision=FT, latitude_band_cells=0)
+        expected = SP.integrate_face_fluxes!(full, h, vo, d, T, [2000., 0., -2000.], [0.2, 0.3, 0.5], c)
+        for cells in (1, 2, 3)
+            ws = SP.SpectralIntegralWorkspace(grid, T, c; batch=2, precision=FT, latitude_band_cells=cells)
+            for repeat in 1:2 # refilling the first band's tables after an endpoint
+                actual = SP.integrate_face_fluxes!(ws, h, vo, d, T, [2000., 0., -2000.], [0.2, 0.3, 0.5], c)
+                for field in (:ps, :u, :v, :C)
+                    @test reinterpret(FT === Float64 ? UInt64 : UInt32, vec(actual[field])) ==
+                          reinterpret(FT === Float64 ? UInt64 : UInt32, vec(expected[field]))
+                end
+            end
+        end
+    end
+end
+
+@testset "Coarse cells stream their larger Gauss row sets" begin
+    T = 63
+    h, vo, d = spectral_example(T)
+    grid = PP.build_target_geometry(Dict("nlon"=>12, "nlat"=>3), Float64)
+    c = PP.TM5SpectralFluxes()
+    full = SP.SpectralIntegralWorkspace(grid, T, c; batch=2, latitude_band_cells=0)
+    ws = SP.SpectralIntegralWorkspace(grid, T, c; batch=2)
+    @test ws.bands !== nothing
+    expected = SP.integrate_face_fluxes!(full, h, vo, d, T, [0., 0.], [0.3, 0.7], c)
+    actual = SP.integrate_face_fluxes!(ws, h, vo, d, T, [0., 0.], [0.3, 0.7], c)
+    for field in (:ps, :u, :v, :C)
+        @test reinterpret(UInt64, vec(actual[field])) == reinterpret(UInt64, vec(expected[field]))
+    end
+end
+
 @testset "TM5 face integrals, independent divergence and polar convergence" begin
     h,vo,d=spectral_example()
     for rg in (false,true)
@@ -286,6 +326,8 @@ end
             header=JSON3.read(String(bytes[1:stop-1]))
             @test header.format_version==5
             @test header.flux_construction=="tm5_spectral"
+            @test header.flux_construction_revision==2
+            @test header.face_quadrature=="gauss_fourier"
             @test header.source_flux_sampling=="window_mean"
             @test header.spectral_truncation_used==3
             @test header.spectral_synthesis=="cpu"
@@ -429,5 +471,107 @@ end
         cfg=TOML.parsefile(joinpath(pkgdir(AtmosTransport),"test/golden/configs",target*".toml"))
         cfg["input"]["coefficients"]=joinpath(pkgdir(AtmosTransport),"config/era5_L137_coefficients.toml")
         @test PP.validate_preprocessing_config(cfg) !== nothing
+    end
+end
+
+@testset "Gauss/Fourier retained products and exact RG segment integrals" begin
+    rule=CO.GaussFourier()
+    for T in (255,639), width in deg2rad.((0.5,1.,5.)), south in (-pi/2, -0.35)
+        north=south+width
+        nodes,w,_=SP.gauss_latitude_quadrature(south,north,T,rule)
+        # Includes the sum frequencies of two retained harmonics. Complex modes
+        # avoid phase-dependent zero denominators; exact zeros use absolute error.
+        for m in 1:2(T+1)
+            exact=cis(m*south)*SP.fourier_interval_factor(m,width)
+            actual=sum(w.*cis.(m.*nodes))
+            tolerance = abs(exact) <= 1e-12*width ? 1e-6*width : 1e-6*abs(exact)+2e-14*width
+            @test abs(actual-exact) <= tolerance
+        end
+    end
+    # Noncommensurate synthesis and target counts exercise frequency folding,
+    # including modes above the target Nyquist frequency and a nonzero origin.
+    for FT in (Float64,Float32), n in (12,17,60), J in (520,521)
+         rings=SP.SynthesisRings([0.2],[J],[0.37])
+        synthesis=SP.build_ring_synthesis(CO.CPUSynthesis(),rings,127,1,FT)
+        plan=SP.fourier_integral_plan(rings,[n],synthesis,1)
+        @test eltype(plan.groups[1].factors) === Complex{FT}
+        lons=FT.(0.37 .+2pi.*(0:J-1)./J)
+        # Product has frequencies 40, 246 and a mean (bandwidth 254).
+        values=reshape((@. (1+cos(103*lons))*(1+sin(143*lons))),J,1)
+        actual=SP.fourier_integrals!(values,plan,1)[:,1]
+        exact=[real(SP.fourier_interval_factor(0,2pi/n))+
+            real(cis(103*a)*SP.fourier_interval_factor(103,2pi/n))+
+            imag(cis(143*a)*SP.fourier_interval_factor(143,2pi/n))+
+            (imag(cis(246*a)*SP.fourier_interval_factor(246,2pi/n))+
+             imag(cis(40*a)*SP.fourier_interval_factor(40,2pi/n)))/2
+            for a in 0.37 .+2pi.*(0:n-1)./n]
+        @test eltype(actual) === FT
+        @test actual ≈ exact rtol=(FT===Float64 ? 2e-13 : 2e-5) atol=(FT===Float64 ? 1e-14 : 2e-6)
+    end
+end
+
+@testset "Explicit TM5 trapezoid matches independent nonpolar face sums" begin
+    T=7;grid=tm5_grid();c=PP.TM5SpectralFluxes(2)
+    @test c.face_quadrature isa CO.TM5Trapezoid
+    h,vo,d=spectral_example(T,1)
+    fill!(h,0);h[1]=log(100000.)
+    raw=SP.integrate_face_fluxes!(SP.SpectralIntegralWorkspace(grid,T,c;batch=1),h,vo,d,T,[0.],[1.],c)
+    U,V=SP.complete_wind_coefficients(vo,d,T)
+    nx,ny=12,6;R=grid.mesh.radius;scale=R/AtmosTransport.Parameters.STANDARD_GRAVITY*100000
+    for j in 2:ny-1, i in 1:nx
+        south,north=deg2rad.(grid.mesh.φᶠ[j:j+1]);lon=deg2rad(grid.mesh.λᶠ[i])
+        r=max(1,ceil(Int,2*rad2deg(north-south)*2(T+1)/360))
+        nodes=collect(range(south,north;length=r+1))
+        f=[only(harmonic_samples(U[:,:,1],T+1,p,[lon]))/cos(p) for p in nodes]
+        expected=scale*(north-south)/r*(sum(f)-(first(f)+last(f))/2)
+        @test raw.u[(j-1)*nx+i,1] ≈ expected rtol=2e-12 atol=1e-5
+    end
+end
+
+@testset "Default quadrature convergence and selected precision on CPU arrays" begin
+    T=7;h,vo,d=spectral_example(T,2)
+    for rg in (false,true)
+        grid=tm5_grid(rg)
+        c=PP.TM5SpectralFluxes()
+        reference=PP.TM5SpectralFluxes(;face_quadrature=CO.GaussFourier(16,24))
+        ref=SP.integrate_face_fluxes!(SP.SpectralIntegralWorkspace(grid,T,reference;batch=2),
+            h,vo,d,T,[2000.,-2000.],[0.3,0.7],reference)
+        for FT in (Float64,Float32)
+            ws=SP.SpectralIntegralWorkspace(grid,T,c;batch=2,precision=FT)
+            @test eltype(ws.surface.plan.coeffs) === FT
+            raw=SP.integrate_face_fluxes!(ws,h,vo,d,T,[2000.,-2000.],[0.3,0.7],c)
+            for name in (:ps,:u,:v,:C)
+                @test eltype(raw[name]) === FT
+                @test norm(raw[name]-ref[name])/norm(ref[name]) < (FT===Float64 ? 1e-10 : 3e-6)
+            end
+        end
+    end
+end
+
+@testset "Explicit trapezoid selected-precision kernels" begin
+    T=7;h,vo,d=spectral_example(T,2);c=PP.TM5SpectralFluxes(2)
+    for rg in (false,true)
+        grid=tm5_grid(rg)
+        ref=SP.integrate_face_fluxes!(SP.SpectralIntegralWorkspace(grid,T,c;batch=2),
+            h,vo,d,T,[2000.,-2000.],[0.3,0.7],c)
+        raw=SP.integrate_face_fluxes!(SP.SpectralIntegralWorkspace(grid,T,c;batch=2,precision=Float32),
+            h,vo,d,T,[2000.,-2000.],[0.3,0.7],c)
+        for name in (:ps,:u,:v,:C)
+            @test eltype(raw[name]) === Float32
+            @test norm(raw[name]-ref[name])/norm(ref[name]) < 3e-6
+        end
+    end
+end
+
+@testset "Selected Float32 quadrature feeds the host dry pin" begin
+    T=7;h,vo,d=spectral_example(T,2)
+    for rg in (false,true)
+        grid=tm5_grid(rg);c=PP.TM5SpectralFluxes()
+        ws=SP.SpectralIntegralWorkspace(grid,T,c;batch=2,precision=Float32)
+        nc=length(ws.quadrature.areas)
+        endpoint=SP.construct_tm5_endpoint(ws,h,vo,d,T,zeros(nc,2),
+            SP.TM5EndpointPlan(tm5_vertical()),tm5_settings(spectral_synthesis_float=Float32))
+        @test eltype(endpoint.ps) === Float64
+        @test sum(endpoint.m)*AtmosTransport.Parameters.STANDARD_GRAVITY/sum(ws.quadrature.areas) ≈ 98325. rtol=3e-15
     end
 end

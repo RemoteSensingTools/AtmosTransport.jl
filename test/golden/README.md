@@ -9,6 +9,29 @@ points (`scripts/preprocessing/preprocess_transport_binary.jl` and
 compares every output with a recorded reference, bit for bit. A change that is
 meant to alter results states its deltas from the same comparison.
 
+The two O24 configs (`pre_o24_tm5`, `pre_o24_tm5_tm5pbl`) pin
+`face_quadrature = "tm5_trapezoid"`, `quadrature_refinement_steps = 2`.
+On the actual frozen T639 input, a warmed eight-level batch took 3.093 s
+(trapezoid) / 7.939 s (Gauss/Fourier), **2.57×**. Projecting 18 padded native
+batches per endpoint, with surface work counted once, gives **2.64×** spectral
+cost, exceeding the ~2× threshold. Live PBL adds shared non-spectral work.
+The first complete O24 window took 163.92/294.05 s (1.79×), but its fixed
+startup/decode work and first-arm JIT mask the repeated spectral cost.
+
+The two LL72 configs follow Gauss/Fourier: their warmed batch costs
+2.283/4.414 s (**1.93×**) and projected spectral endpoint costs **1.96×**;
+the complete window costs 150.91/181.60 s (**1.20×**). These measurements use
+Julia/BLAS/FFT threads 16/1/1, batch 8, CPU Float64. Endpoint projections cover
+spectral work only, not a full-suite rerun.
+
+Thus `pre_ll72_tm5` and `pre_ll72_tm5_tm5pbl` are stated numerical deltas in
+mass, pressure and flux quadratures, with possible pressure-dependent live PBL
+deltas. Both O24 cases retain the regression quadrature; their headers now
+record the rule. C24 follows the restored default refinement 2 and established
+arc method, with no quadrature-induced physical delta. Reference outputs are
+not regenerated here. Focused tests cover default Gauss/Fourier, explicit
+trapezoids and selected precision.
+
 ## Usage
 
 ```bash
@@ -306,6 +329,15 @@ Combined TM5 spectral fluxes and live Calc_Kzz inputs use
 CPU synthesis and tropo34a levels. Record these cases with
 `record <ref> --cases=pre_ll72_tm5_tm5pbl,pre_o24_tm5_tm5pbl,run_ll72_tm5_tm5pbl_cpu_f64 --threads=1`,
 then verify them with `check <ref> <new>` using the same case selection and thread count.
+
+A standard `check` resolves `@CASE:` inputs under `<ref>`. Therefore
+`run_ll72_tm5_tm5pbl_cpu_f64` continues to consume reference
+`pre_ll72_tm5_tm5pbl` inputs even when that preprocessing case changes.
+Its transport delta needs a separate record/comparison with regenerated inputs.
+It is the only defined runtime consumer of the changed LL72 preprocessing
+cases: `pre_ll72_tm5` has no runtime consumer in `cases.toml`.
+An unchanged standard runtime check does not validate transport with the new
+Gauss/Fourier input products.
 
 CS live Calc_Kzz cases: `pre_c24_tm5pbl`, `run_c24_tm5pbl_cpu_f64`,
 `run_c24_tm5pbl_boundary_cpu_f64` and `run_c24_tm5pbl_gpu_f32`. Preprocessing

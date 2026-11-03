@@ -61,6 +61,7 @@ function process_day(c::TM5SpectralFluxes, date::Date, grid::ReducedGaussianTarg
             steps_per_window = source_steps, face_left = left, face_right = right)
         transport_grid = AtmosGrid(grid.mesh, vertical.merged_vc, CPU(); FT = FT, radius = grid.mesh.radius)
         metadata = spectral_synthesis_metadata(ws)
+        metadata["face_quadrature"] = tm5_construction_metadata(c, T)["face_quadrature"]
         metadata["preprocessor"] = "preprocess_transport_binary.jl"
         metadata["source_type"] = "era5_spectral"
         metadata["horizontal_balance"] = HORIZONTAL_BALANCE_TAG
@@ -131,7 +132,7 @@ function process_day(c::TM5SpectralFluxes, date::Date, grid::ReducedGaussianTarg
                         steps_per_window = source_steps, source_flux_sampling = :window_mean,
                         flux_sampling = :window_constant, humidity_sampling = settings.include_qv ? :window_endpoints : :none,
                         delta_semantics = :none, mass_basis = :dry, surface_pressure_basis = TotalSurfacePressure(),
-                        flux_construction = TM5SpectralFluxesHeader(1, T, c.refinement_steps, c.vod2uv_radius),
+                        flux_construction = TM5SpectralFluxesHeader(tm5_construction_revision(c), T, c.refinement_steps, c.vod2uv_radius),
                         extra_header = metadata)
                 end
                 write_streaming_window!(writer, window)

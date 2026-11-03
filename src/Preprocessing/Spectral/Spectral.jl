@@ -25,7 +25,8 @@ using ..Common: check_column_weight_levels, spread_column_correction!, AbstractC
 using SparseArrays: sparse, spdiagm
 using ...Grids: LatLonMesh, cell_areas, cs_face_edge_lengths
 using ..Common: CubedSphereTargetGeometry
-using LinearAlgebra: mul!
+using LinearAlgebra: mul!, eigen, SymTridiagonal
+using ..Common: AbstractFaceQuadrature, GaussFourier, TM5Trapezoid, face_quadrature_name
 using ..Common: CPUSynthesis, GPUSynthesis, AutoSynthesisPrecision, TM5SpectralFluxes, spectral_construction, validate_spectral_vertical
 using ..Vertical: sum_merged_layers!, plan_vertical, LevelSelection, apply_vertical!, MassField, MassFluxField, InterfaceMassFluxField
 
@@ -52,8 +53,11 @@ include("reduced_spectral_synthesis.jl")
 include("synthesis_rings.jl")
 include("synthesis_kernels.jl")
 include("device_spectral_synthesis.jl")
+include("cpu_band_synthesis.jl")
+include("gauss_fourier.jl")
 include("spectral_quadrature.jl")
 include("spectral_integral_fluxes.jl")
+include("latitude_band_integrals.jl")
 include("cs_polar_synthesis.jl")
 include("cs_point_synthesis.jl")
 include("cs_spectral_integrals.jl")

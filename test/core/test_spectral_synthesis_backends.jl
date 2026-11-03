@@ -52,9 +52,25 @@ end
     config=Dict{String,Any}("preprocessing"=>Dict{String,Any}("spectral_flux_construction"=>"tm5_spectral","spectral_synthesis"=>"cpu"))
     settings=c.resolve_spectral_construction(config)
     @test settings.spectral_flux_construction isa c.TM5SpectralFluxes
+    @test c.TM5SpectralFluxes().refinement_steps == 2
+    @test settings.spectral_flux_construction.refinement_steps == 2
+    @test settings.spectral_flux_construction.face_quadrature isa c.GaussFourier
+    @test c.TM5SpectralFluxes().face_quadrature isa c.GaussFourier
+    explicit=deepcopy(config);explicit["preprocessing"]["quadrature_refinement_steps"]=2
+    explicit["preprocessing"]["face_quadrature"]="tm5_trapezoid"
+    tm5=c.resolve_spectral_construction(explicit).spectral_flux_construction
+    @test tm5.refinement_steps == c.TM5SpectralFluxes(2).refinement_steps == 2
+    @test tm5.face_quadrature isa c.TM5Trapezoid
+    # Independent ShRefinement rule: ceil(nstep * edge / spectral spacing).
+    for T in (255,639), edge in (0.1,1.,5.)
+        expected=max(1,ceil(Int,2*edge/(360/(2*(T+1)))))
+        @test SS.quadrature_refinement(T,edge,tm5.refinement_steps) == expected
+    end
+    @test SS.quadrature_refinement(255,1.,tm5.refinement_steps) == 3
+    @test SS.quadrature_refinement(639,1.,tm5.refinement_steps) == 8
     @test settings.spectral_synthesis isa c.CPUSynthesis
     @test_throws ArgumentError AtmosTransport.Preprocessing.TransportBinary.tm5_construction_metadata(settings.spectral_flux_construction,0)
-    for (key,value) in (("spectral_synthesis",true),("spectral_synthesis_float","half"),("quadrature_refinement_steps",false))
+    for (key,value) in (("spectral_synthesis",true),("spectral_synthesis_float","half"),("quadrature_refinement_steps",false),("face_quadrature","bogus"),("face_quadrature",true))
         bad=deepcopy(config);bad["preprocessing"]=Dict{String,Any}(bad["preprocessing"]);bad["preprocessing"][key]=value
         @test_throws ArgumentError c.resolve_spectral_construction(bad)
     end
@@ -85,7 +101,7 @@ if get(ENV,"ATMOSTR_TEST_SPECTRAL_GPU","0")=="1"
                 for FT in (Float64,Float32)
                     gpu=SS.integrate_face_fluxes!(SS.SpectralIntegralWorkspace(grid,T,c;
                         batch=2,synthesis=PP.Common.GPUSynthesis(),precision=FT),h,vo,d,T,[0.,0.],[0.3,0.7],c)
-                    @test gpu.ps ≈ cpu.ps rtol=1e-12
+                    @test gpu.ps ≈ cpu.ps rtol=(FT===Float64 ? 1e-12 : 1e-6)
                     for name in (:u,:v,:C)
                         @test norm(gpu[name]-cpu[name])/max(norm(cpu[name]),eps()) <
                             (FT===Float64 ? 1e-12 : 1e-6)
@@ -116,4 +132,23 @@ end
         Dict("preprocessing"=>Dict("spectral_flux_constructon"=>"tm5_spectral")))
     @test_throws ArgumentError common.resolve_spectral_construction(
         Dict("preprocessing"=>Dict("quadrature_refinement_steps"=>2)))
+end
+
+@testset "Streamed CPU surface keeps the full contraction's rounding" begin
+    # A narrow six-row GEMM at atmospheric truncation exercises the CPU
+    # accumulation change that is absent from the small-degree day fixtures.
+    T = 255
+    rng = MersenneTwister(617)
+    rings = SS.SynthesisRings(collect(range(-1.5, 1.5; length=600)), fill(513, 600), fill(-pi, 600))
+    spectra = randn(rng, ComplexF64, T+1, T+1, 3)
+    full = SS.CPURingSynthesis(SS.RingSynthesisPlan(rings, T, 3; stable_poles=true))
+    expected = SS.synthesize_rings(spectra, full)
+    rows = [1:20; 301:305; 596:600]
+    bandrings = SS.SynthesisRings(rings.latitudes[rows], rings.nlon[rows], rings.origins[rows])
+    band = SS.CPURingSynthesis(SS.RingSynthesisPlan(bandrings, T, 3; stable_poles=true))
+    output = similar(expected, bandrings.offsets[end]-1, 3)
+    actual = SS.band_synthesis(spectra, band; out=output, layout=(; rows, total=length(rings.nlon)))
+    samples = reduce(vcat, [collect(rings.offsets[r]:rings.offsets[r+1]-1) for r in rows])
+    @test actual === output
+    @test reinterpret(UInt64, vec(actual)) == reinterpret(UInt64, vec(expected[samples, :]))
 end

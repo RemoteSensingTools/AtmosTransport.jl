@@ -31,8 +31,11 @@ convention used by ECMWF spectral fields (IFS Doc Part III, Eq. 2.3).
 Output: `P` is `(T+1) × (T+1)`, 1-indexed, with `P[n+1, m+1] = P̃_n^m(sin φ)`.
 """
 function compute_legendre_column!(P::AbstractMatrix{<:Real}, T::Int, sin_lat::Real)
-    # cos(φ) from sin(φ) avoids the tan(φ) pole singularity
-    cos_lat = sqrt(1.0 - sin_lat^2)
+    return compute_legendre_column!(P, T, sin_lat, sqrt(1.0-sin_lat^2))
+end
+
+# Supplying cosφ avoids subtractive cancellation at open Gauss polar nodes.
+function compute_legendre_column!(P::AbstractMatrix{<:Real}, T::Int, sin_lat::Real, cos_lat::Real)
 
     fill!(P, 0.0)
     P[1, 1] = 1.0   # P̃_0^0 = 1

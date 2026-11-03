@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Result change for LL/RG `tm5_spectral`:** face quadrature now defaults to
+  `"gauss_fourier"`: Gauss–Legendre latitude nodes and exact Fourier integrals
+  of oversampled longitude products, including cell pressure and divergence
+  forcing. `face_quadrature = "tm5_trapezoid"` selects the prior rule with
+  `quadrature_refinement_steps = 2`. The refinement-16 proposal is reverted;
+  CS retains its existing method and default refinement 2. The two O24
+  golden configs pin trapezoid/2 because their warmed spectral cost exceeds
+  2×. LL72 follows Gauss/Fourier with stated numerical deltas; C24 quadrature
+  is unchanged. See the spectral-flux manual §1/§13/§17 for
+  measured accuracy, cost, memory and the scope of the balanced-flux change.
+  LL/RG Float32 trapezoids now use Float32 surfaces and integrands, and the
+  shared CPU synthesis builder honors explicit Float32 for CS. These selected
+  precision calculations can change; the verified trapezoid bitwise match is
+  the prior CPU Float64 payload with matched settings, excluding headers.
+  Gauss/Fourier now streams latitude tables and transform buffers in cell
+  bands, reuses sample storage and shares sequential Fourier scratch. CPU
+  band workers share the bounded cell budget and use plan-local FFT threads
+  without changing the global FFTW setting; the retained CPU Float64 payload
+  is checked bitwise.
+
 - **AutoTape CPU margin capped.** Automatic CPU selection now holds back
   `min(10% of host/cgroup capacity, 2 GiB)` plus reverse-pass workspace,
   instead of an uncapped 10% capacity margin. This avoids rejecting small

@@ -15,18 +15,16 @@ const SCALE=RV/AtmosTransport.Parameters.STANDARD_GRAVITY
 BLAS.set_num_threads(1)
 const CSV_HEADER="hour,level,component,rms_delta_kg_s,rms_reference_kg_s,relative_l2_percent,cap_rms_delta_kg_s,cap_rms_reference_kg_s,cap_relative_l2_percent,nonpolar_rms_delta_kg_s,nonpolar_relative_l2_percent,innercap_rms_delta_kg_s,innercap_relative_l2_percent"
 
-function gauss(n)
- e=eigen(SymTridiagonal(zeros(n),[i/sqrt(4i*i-1) for i in 1:n-1]));e.values,2e.vectors[1,:].^2
-end
 function plans(T,ng=16,Jv=5760)
- t,w=gauss(ng)
+ t,w=S.gauss_legendre(ng)
  latu=vcat(deg2rad.(collect(-90.:.125:90.)),[deg2rad(-90+j+(x+1)/2) for j in 0:179 for x in t])
  latv=deg2rad.(collect(-89.:89.))
  ru=S.SynthesisRings(latu,fill(1440,length(latu)),zeros(length(latu)))
  rv=S.SynthesisRings(latv,fill(Jv,length(latv)),zeros(length(latv)))
  su=S.CPURingSynthesis(ru,T+1,3);sv=S.CPURingSynthesis(rv,T+1,3)
  hu=S.surface_synthesis(su,1);hv=S.surface_synthesis(sv,1)
- (;su,sv,hu,hv,w,ng,Jv)
+ longitude=S.fourier_integral_plan(rv,fill(360,length(latv)),sv,3)
+ (;su,sv,hu,hv,w,ng,Jv,longitude)
 end
 function surfaces(pl,H,T)
  h=zeros(ComplexF64,T+2,T+2,1);h[1:T+1,1:T+1,1].=H
@@ -57,12 +55,12 @@ function u_integrals(samples,ps,da,db,pl)
 end
 function v_integrals(samples,ps,da,db,pl)
  J=pl.Jv;r=J÷360;old=zeros(360,181,3);exact=copy(old);L=pi/180
- freq=[i<=J÷2 ? i : i-J for i in 0:J-1]
- factors=[L*sinc(m*L/(2pi))*cis(m*L/2) for m in freq]
+ values=reshape(samples,J,:,3).*(reshape(da,1,1,3).+reshape(db,1,1,3).*ps)
+ # The diagnostic and production use the same exact Fourier integrator.
+ integrals=S.fourier_integrals!(reshape(values,:,3),pl.longitude,3)
+ exact[:,2:180,:].=SCALE.*reshape(integrals,360,179,3)
  for k in 1:3
-  f=reshape(view(samples,:,k),J,:).*(da[k].+db[k].*ps)
-  integral=real.(ifft(fft(f,1).*factors,1))
-  exact[:,2:180,k].=SCALE.*integral[1:r:end,:]
+  f=view(values,:,:,k)
   for j in 1:179, i in 1:360
    first=1+(i-1)*r
    old[i,j+1,k]=SCALE*L/8*(.5f[first,j]+sum(f[first+q*(r÷8),j] for q in 1:7)+.5f[mod1(first+r,J),j])
