@@ -84,3 +84,8 @@ Moist/unpinned paths do not assert a zero global change.
 TM5 spectral target validation dispatches separately on global LL, RG and CS
 geometry. Direct CS shares dry basis, hourly cadence, window mean and complete
 native-column requirements with LL/RG. Legacy strategy validation is unchanged.
+
+`AbstractFaceQuadrature`, `GaussFourier` and `TM5Trapezoid` select LL/RG
+integration at config parsing; `face_quadrature_name` records their identity.
+
+# shared: AbstractFaceQuadrature, GaussFourier, TM5Trapezoid, face_quadrature_name

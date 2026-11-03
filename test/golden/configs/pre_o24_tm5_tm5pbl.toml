@@ -32,5 +32,8 @@ enable           = true
 
 [preprocessing]
 spectral_flux_construction = "tm5_spectral"
+# Coarse regression workload: warmed Gauss/Fourier stage costs 2.57× (§13).
+face_quadrature = "tm5_trapezoid"
+quadrature_refinement_steps = 2
 spectral_synthesis = "cpu"
 include_tm5_pbl = true

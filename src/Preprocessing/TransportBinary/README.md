@@ -58,3 +58,8 @@ The four-value constructor retains the uniform default.
 
 The day driver consumes `PreverifiedWindow` events from topology hooks. Writers
 read `ReadyWindow.payload` explicitly; verification happens before publication.
+
+`tm5_construction_revision` distinguishes LL/RG Gauss/Fourier (2) from the
+explicit trapezoid construction (1).
+
+# shared: tm5_construction_revision

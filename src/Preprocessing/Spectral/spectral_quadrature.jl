@@ -27,7 +27,9 @@ function latitude_quadrature(south::Real, north::Real, n::Integer)
 end
 
 """Target boxes, refined rows, latitude rules and boundary-segment geometry."""
-struct SpectralQuadrature
+struct SpectralQuadrature{Q<:AbstractFaceQuadrature}
+    rule::Q
+    interval_counts::Vector{Int}
     rings::SynthesisRings
     nlon::Vector{Int}
     cell_offsets::Vector{Int}
@@ -49,32 +51,41 @@ quadrature_geometry(g::ReducedGaussianTargetGeometry) =
     (g.mesh.nlon_per_ring, deg2rad.(Float64.(g.mesh.lat_faces)), 0.0,
      g.mesh.boundary_counts, Float64(g.mesh.radius))
 
-function SpectralQuadrature(grid, T::Integer, steps::Integer = 2)
+SpectralQuadrature(grid, T::Integer, steps::Integer=2) = SpectralQuadrature(grid, T, TM5Trapezoid(), steps)
+
+latitude_rule(::TM5Trapezoid, south, north, T, steps) =
+    latitude_quadrature(south, north, quadrature_refinement(T, rad2deg(north-south), steps))
+latitude_rule(rule::GaussFourier, south, north, T, steps) = gauss_latitude_quadrature(south, north, T, rule)
+ring_length(::TM5Trapezoid, nx, T, steps) =
+    oversampled_ring_length(nx*quadrature_refinement(T, 360/nx, steps), T+1)
+ring_length(rule::GaussFourier, nx, T, steps) = nx*cld(rule.oversampling*(T+2)+1, nx)
+
+function SpectralQuadrature(grid, T::Integer, rule::AbstractFaceQuadrature, steps::Integer=2)
     nlon, faces, origin, counts, R = quadrature_geometry(grid)
     lats = Float64[]
     lengths = Int[]
+    interval_counts = Int[]
     origins = Float64[]
     weights = Float64[]
     cosweights = Float64[]
     node_offsets = [1]
     areas = Float64[]
     node_rows = Int[]
-    ring_ids = Dict{Tuple{Float64, Int}, Int}()
-    function ring_row(phi, J)
-        return get!(ring_ids, (phi, J)) do
+    ring_ids = Dict{Tuple{Float64, Int, Int}, Int}()
+    function ring_row(phi, J, count)
+        return get!(ring_ids, (phi, J, count)) do
             push!(lats, phi)
             push!(lengths, J)
+            push!(interval_counts, count)
             push!(origins, origin)
             length(lats)
         end
     end
     for j in eachindex(nlon)
         nx = nlon[j]
-        refine_lon = quadrature_refinement(T, 360/nx, steps)
-        J = oversampled_ring_length(nx*refine_lon, T+1)
-        refine_lat = quadrature_refinement(T, rad2deg(faces[j+1]-faces[j]), steps)
-        nodes, w, cw = latitude_quadrature(faces[j], faces[j+1], refine_lat)
-        append!(node_rows, [ring_row(phi, J) for phi in nodes])
+        J = ring_length(rule, nx, T, steps)
+        nodes, w, cw = latitude_rule(rule, faces[j], faces[j+1], T, steps)
+        append!(node_rows, [ring_row(phi, J, nx) for phi in nodes])
         append!(weights, w)
         append!(cosweights, cw)
         push!(node_offsets, length(node_rows)+1)
@@ -84,10 +95,10 @@ function SpectralQuadrature(grid, T::Integer, steps::Integer = 2)
     for b in eachindex(faces)
         # LCM segments need no LCM-sized FFT: prefix primitives evaluate any segment.
         nx = b == 1 ? nlon[1] : b > length(nlon) ? nlon[end] : max(nlon[b-1], nlon[b])
-        J = oversampled_ring_length(nx*quadrature_refinement(T, 360/nx, steps), T+1)
-        push!(boundary_rows, ring_row(faces[b], J))
+        J = ring_length(rule, nx, T, steps)
+        push!(boundary_rows, ring_row(faces[b], J, counts[b]))
     end
-    return SpectralQuadrature(SynthesisRings(lats, lengths, origins), Int.(nlon),
+    return SpectralQuadrature(rule, interval_counts, SynthesisRings(lats, lengths, origins), Int.(nlon),
         cumsum([1; nlon]), node_offsets, node_rows, weights, cosweights, boundary_rows, Int.(counts),
         cumsum([1; counts]), areas, R)
 end
@@ -95,12 +106,13 @@ end
 # The primitive of a periodic piecewise-linear ring. Prefix entry i is the
 # integral up to sample i; partial intervals include the exact quadratic term.
 @inline function ring_primitive(values, prefix, start, J, k, x)
-    t = clamp(x, 0.0, Float64(J))
+    FT = eltype(values)
+    t = clamp(x, zero(FT), FT(J))
     i = min(floor(Int, t), J-1)
     a = t-i
-    f0 = Float64(values[start+i, k])
-    f1 = Float64(values[start+mod(i+1, J), k])
-    return prefix[start+i, k] + (2pi/J)*(a*f0+0.5a*a*(f1-f0))
+    f0 = FT(values[start+i, k])
+    f1 = FT(values[start+mod(i+1, J), k])
+    return prefix[start+i, k] + (FT(2pi)/J)*(a*f0+FT(0.5)*a*a*(f1-f0))
 end
 
 # Each workgroup scans one 256-sample tile. The second pass adds the (short)
@@ -108,29 +120,31 @@ end
 @kernel function ring_prefix_tiles!(prefix, totals, values, offsets, lengths, nf)
     tile, row, k = @index(Group, NTuple)
     lane = @index(Local, Linear)
-    scratch = @localmem Float64 (256, )
-    next = @localmem Float64 (256, )
+    scratch = @localmem eltype(prefix) (256, )
+    next = @localmem eltype(prefix) (256, )
     J = lengths[row]
     i = (tile-1)*256+lane
     start = offsets[row]
-    value = 0.0
+    FT = eltype(prefix)
+    value = zero(FT)
     if i <= J && k <= nf
-        value = (pi/J)*(Float64(values[start+i-1, k])+Float64(values[start+mod(i, J), k]))
+        value = (FT(pi)/J)*(FT(values[start+i-1, k])+FT(values[start+mod(i, J), k]))
     end
     scratch[lane] = value
     @synchronize
     for shift in (1, 2, 4, 8, 16, 32, 64, 128)
-        next[lane] = scratch[lane] + (lane > shift ? scratch[lane-shift] : 0.0)
+        next[lane] = scratch[lane] + (lane > shift ? scratch[lane-shift] : zero(eltype(prefix)))
         @synchronize
         scratch[lane] = next[lane]
         @synchronize
     end
     # Recompute index-derived scalars after barriers for the KA CPU lowering.
+    FT = eltype(prefix)
     J = lengths[row]
     i = (tile-1)*256+lane
     start = offsets[row]
     if i <= J && k <= nf
-        value = (pi/J)*(Float64(values[start+i-1, k])+Float64(values[start+mod(i, J), k]))
+        value = (FT(pi)/J)*(FT(values[start+i-1, k])+FT(values[start+mod(i, J), k]))
         prefix[start+i-1, k] = scratch[lane]-value
     end
     if lane == 256
@@ -142,7 +156,7 @@ end
     i, row, k = @index(Global, NTuple)
     if row <= length(lengths) && i <= lengths[row] && k <= nf
         tile = (i-1)÷256+1
-        offset = 0.0
+        offset = zero(eltype(prefix))
         for t in 1:tile-1
             offset += totals[t, row, k]
         end
@@ -155,7 +169,7 @@ function ring_prefix!(prefix, values, geometry, nf, max_length)
     backend = get_backend(values)
     nr = length(geometry.lengths)
     ntile = cld(max_length, 256)
-    totals = similar(values, Float64, ntile, nr, nf)
+    totals = similar(values, eltype(values), ntile, nr, nf)
     ring_prefix_tiles!(backend, (256, 1, 1))(prefix, totals, values, geometry.offsets, geometry.lengths, nf;
         ndrange = (ntile*256, nr, nf))
     ring_prefix_offsets!(backend, 256)(prefix, totals, geometry.offsets, geometry.lengths, nf;

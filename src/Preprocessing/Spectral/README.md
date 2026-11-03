@@ -50,12 +50,34 @@ scatter and gather), and `spectral_quadrature.jl` (refinement, linear/cos-linear
 latitude rules, open polar nodes and periodic prefix primitives).
 `CPURingSynthesis` is the reference; `GPUSpectralSynthesis` keeps samples on
 the device. CUDA selection, automatic precision and the TF32 guard live in
-`ext/AtmosTransportCUDAExt.jl`; core never loads CUDA. Surface fields and
-quadrature accumulation use Float64. This exception to runtime Float32 kernel
-policy applies only to offline spectral preprocessing.
+`ext/AtmosTransportCUDAExt.jl`; core never loads CUDA. LL/RG surface fields
+and quadrature follow the selected precision throughout; the existing host
+pin/closure uses Float64 endpoint pressure after transfer. CS retains Float64
+surface fields and selected-precision three-dimensional integration.
 
 - `spectral_hour_io.jl`: indexed one-hour reads and per-hour atomic caches.
 - `spectral_integral_fluxes.jl`: PS, face and C integration and independent W.
+- `latitude_band_integrals.jl`: Gauss/Fourier execution in complete latitude
+  cell bands (a total budget of 32 cells), sliced from the original quadrature. Packed native coefficients
+  are reused across bands; compatible bands reuse synthesis/FFT buffers and
+  refill bounded Legendre tables. Sequential Fourier operations share scratch.
+- `cpu_band_synthesis.jl`: host scheduling for small bands. A reusable single
+  mode panel preserves the original surface GEMM dimensions and column positions
+  so that streaming does not change its accumulation order. Native fields use
+  fixed 32-column GEMMs anchored to global latitude indices, with padded partial
+  panels in both full and streamed execution. This prevents CPU edge
+  microkernels from changing rounding with band size, including Float32.
+  Gauss/Fourier CPU FFTs use a fixed one-ring batch through aligned scratch,
+  including Fourier integrals; changing latitude batch shapes cannot select
+  different FFTW codelets. This correction can change default Gauss/Fourier
+  golden payloads at rounding level. Explicit trapezoids are unchanged.
+
+CPU Gauss/Fourier uses up to four band workers, dividing the cell budget
+between them, with a fixed two FFT threads per worker, independent of Julia
+thread count or host capacity. Plan-local thread counts
+preserve the global FFTW setting. CPU trapezoids
+retain their existing FFT threading policy. GPU execution is not established
+by the CPU memory and bitwise measurements.
 - `tm5_endpoint.jl`: one daily `TM5EndpointPlan`, dry pin and moist reduction;
   endpoints discard native C after constructing retained W.
 
@@ -127,3 +149,13 @@ uses checked Int8 bit offsets to reproduce rounding of each original Float64
 geometry product without Float64 device arithmetic.
 
 # shared: CSFaceGather
+
+`gauss_fourier.jl` owns the Gauss–Legendre rule and Fourier interval factors
+shared by production and the §13 diagnostic. Its portable FFT pack/fold/gather
+integrates periodic products on arbitrary LL/RG longitude segments.
+
+# shared: gauss_legendre, fourier_interval_factor, fourier_integral_plan, fourier_integrals!
+
+The Gauss/Fourier path packs U/V/D coefficients into one transform batch,
+sharing Legendre work and launch overhead while keeping the native-level
+batch bound. Explicit trapezoids retain their historical transform sequence.

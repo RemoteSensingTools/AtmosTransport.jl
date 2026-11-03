@@ -51,7 +51,7 @@ end
 const FLUX_CONSTRUCTION_KEYS = ("column_balance_weights", "face_lengths", "face_fluxes",
                                  "face_interpolation", "wind_regrid")
 const SPECTRAL_CONSTRUCTION_KEYS = ("spectral_flux_construction", "spectral_synthesis",
-    "spectral_synthesis_float", "quadrature_refinement_steps")
+    "spectral_synthesis_float", "quadrature_refinement_steps", "face_quadrature")
 # Keys of the ERA5 spectral `[preprocessing]` table.
 const SPECTRAL_PREPROCESSING_KEYS = (SPECTRAL_CONSTRUCTION_KEYS..., "include_tm5_pbl")
 const ALL_FLUX_KEYS = (FLUX_CONSTRUCTION_KEYS..., "flux_thickness", "flux_time_sampling",

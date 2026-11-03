@@ -8,6 +8,7 @@ import ..MassClosure: DirectRingPoisson, balance_compressed_level!
 import ..Common: validate_spectral_vertical
 import ..Spectral: read_day_spectral_streaming
 import ..TransportBinary: tm5_construction_metadata, settings_include_surface
+import ..TransportBinary: tm5_construction_metadata, tm5_construction_revision
 import ...MetDrivers.BinaryFormat: TM5SpectralFluxesHeader, write_streaming_window!, close_streaming_transport_binary!, abandon_streaming_transport_binary!
 
 import ..Spectral: era5_thermo_path

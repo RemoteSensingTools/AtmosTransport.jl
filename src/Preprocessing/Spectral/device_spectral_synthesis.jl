@@ -12,6 +12,7 @@ struct RingSynthesisPlan{A, L, C, S, G, O, D}
     groups::G
     phases::O
     offsets::D
+    fft_threads::Int
 end
 
 """Reference ring synthesis using host GEMM and unnormalised FFTW."""
@@ -19,7 +20,7 @@ struct CPURingSynthesis{P} <: AbstractSpectralSynthesis
     plan::P
 end
 
-"""Device ring synthesis; FT controls 3-D fields, surface synthesis is Float64."""
+"""Device ring synthesis in the selected precision; surfaces may choose it too."""
 struct GPUSpectralSynthesis{FT, A} <: AbstractSpectralSynthesis
     plan::A
 end
@@ -32,47 +33,94 @@ spectral_gpu_math_guard() = spectral_gpu_math_guard(Val(:cuda))
 spectral_gpu_math_guard(::Val) = nothing
 with_spectral_math(f, backend) = f()
 with_spectral_math(f, ::KernelAbstractions.CPU) = f()
-build_ring_synthesis(::CPUSynthesis, rings, T, batch, precision) = CPURingSynthesis(rings, T, batch)
-build_ring_synthesis(::GPUSynthesis, rings, T, batch, precision) = GPUSpectralSynthesis(rings, T, batch; precision)
+cpu_band_workers() = min(4, max(1, Threads.nthreads()÷4))
+# Keep FFTW's plan choice independent of Julia worker count and host capacity.
+cpu_band_fft_threads() = 2
+
+# FFTW may select different codelets when the number of latitude rows changes.
+# Gauss/Fourier CPU plans transform one ring of fields at a time through aligned
+# scratch, preserving SIMD without depending on the band's batch shape.
+struct FixedRingFFT{P, I, O}
+    plan::P
+    input::I
+    output::O
+end
+
+function ring_fft_plan(input, output, n, fft_threads; inverse)
+    if fft_threads == 0
+        return inverse ? plan_brfft(input, n, 1) : plan_rfft(input, 1)
+    end
+    source = similar(input, size(input, 1), size(input, 2), 1)
+    target = similar(output, size(output, 1), size(output, 2), 1)
+    plan = inverse ? plan_brfft(source, n, 1; num_threads=fft_threads) :
+        plan_rfft(source, 1; num_threads=fft_threads)
+    return FixedRingFFT(plan, source, target)
+end
+
+ring_fft_mul!(output, plan, input) = mul!(output, plan, input)
+function ring_fft_mul!(output, fft::FixedRingFFT, input)
+    for row in axes(input, 3)
+        copyto!(fft.input, view(input, :, :, row:row))
+        mul!(fft.output, fft.plan, fft.input)
+        copyto!(view(output, :, :, row:row), fft.output)
+    end
+    return output
+end
+
+build_ring_synthesis(::CPUSynthesis, rings, T, batch, precision; stable_poles=false) =
+    CPURingSynthesis(RingSynthesisPlan(rings, T, batch, precision isa AutoSynthesisPrecision ? Float64 : precision;
+        stable_poles, fft_threads=stable_poles ? cpu_band_fft_threads() : 0))
+build_ring_synthesis(::GPUSynthesis, rings, T, batch, precision; stable_poles=false) = GPUSpectralSynthesis(rings, T, batch; precision, stable_poles)
 
 function RingSynthesisPlan(rings::SynthesisRings, T::Integer, batch::Integer,
                            ::Type{FT} = Float64;
-                           adapter = identity, legendre = nothing) where FT
+                           adapter = identity, legendre = nothing, stable_poles=false, fft_threads=0) where FT
     nr = length(rings.nlon)
     tables = legendre
     if tables === nothing
         tables = [zeros(FT, T-m+1, nr) for m in 0:T]
-        columns = [zeros(T+1, T+1) for _ in 1:Threads.maxthreadid()]
-        Threads.@threads :static for j in 1:nr
-            P = columns[Threads.threadid()]
-            compute_legendre_column!(P, Int(T), sin(rings.latitudes[j]))
-            for m in 0:T, n in m:T
-                tables[m+1][n-m+1, j] = FT(P[n+1, m+1])
-            end
-        end
+        fill_ring_legendre!(tables, rings, T; stable_poles)
         tables = adapter.(tables)
     end
     groups = map(sort(unique(rings.nlon))) do J
         rows = findall(==(J), rings.nlon)
         half = adapter(zeros(Complex{FT}, J÷2+1, batch, length(rows)))
-        plan = plan_brfft(half, J, 1)
         samples = adapter(zeros(FT, J, batch, length(rows)))
+        plan = ring_fft_plan(half, samples, J, fft_threads; inverse=true)
         (; J, rows = adapter(rows), half, plan, samples)
     end
     return RingSynthesisPlan(rings, Int(T), Int(batch), adapter, tables,
         adapter(zeros(FT, 2batch, T+1)), adapter(zeros(FT, 2batch, nr)), groups,
-        adapter(Complex{FT}.([cis(m*origin) for m in 0:T, origin in rings.origins])), adapter(rings.offsets))
+        adapter(Complex{FT}.([cis(m*origin) for m in 0:T, origin in rings.origins])), adapter(rings.offsets), Int(fft_threads))
+end
+
+function fill_ring_legendre!(tables, rings, T; stable_poles=false)
+    nr = length(rings.nlon)
+    FT = eltype(first(tables))
+    columns = [zeros(T+1, T+1) for _ in 1:Threads.maxthreadid()]
+    Threads.@threads :static for j in 1:nr
+        P = columns[Threads.threadid()]
+        if stable_poles
+            compute_legendre_column!(P, Int(T), sin(rings.latitudes[j]), cos(rings.latitudes[j]))
+        else
+            compute_legendre_column!(P, Int(T), sin(rings.latitudes[j]))
+        end
+        for m in 0:T, n in m:T
+            tables[m+1][n-m+1, j] = FT(P[n+1, m+1])
+        end
+    end
+    return tables
 end
 
 CPURingSynthesis(rings::SynthesisRings, T::Integer, batch::Integer = 1) =
     CPURingSynthesis(RingSynthesisPlan(rings, T, batch))
 
 function GPUSpectralSynthesis(rings::SynthesisRings, T::Integer, batch::Integer = 1;
-                              precision = AutoSynthesisPrecision())
+                              precision = AutoSynthesisPrecision(), stable_poles=false)
     FT = precision isa AutoSynthesisPrecision ? spectral_gpu_precision() : precision
     FT in (Float32, Float64) || throw(ArgumentError("GPU spectral precision must be Float32 or Float64"))
-    plan = RingSynthesisPlan(rings, T, batch, FT; adapter = spectral_gpu_adapter())
-    @info "GPU spectral synthesis" float_type = FT surface_float_type = Float64 batch
+    plan = RingSynthesisPlan(rings, T, batch, FT; adapter = spectral_gpu_adapter(), stable_poles)
+    @info "GPU spectral synthesis" float_type = FT batch
     return GPUSpectralSynthesis{FT, typeof(plan)}(plan)
 end
 
@@ -82,12 +130,13 @@ Evaluate a batch by real/imaginary Legendre GEMM, then unnormalised inverse FFT.
 Rings sharing a longitude count share an FFT batch. Phase factors account for
 each ring's origin; the returned samples remain on the plan's backend.
 """
-function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSynthesis})
+function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSynthesis}; out=nothing)
     p = synthesis.plan
     size(spec) == (p.T+1, p.T+1, p.batch) || throw(DimensionMismatch("ring spectral batch"))
     return with_spectral_math(get_backend(p.coeffs)) do
         spectral_synthesis_guard(synthesis)
-        source = p.adapter(spec)
+        CT = Complex{eltype(p.coeffs)}
+        source = p.adapter(eltype(spec) === CT ? spec : CT.(spec))
         backend = get_backend(p.coeffs)
         nf = p.batch
         for group in p.groups
@@ -104,10 +153,10 @@ function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSy
                     ndrange = (length(group.rows), nf))
             end
         end
-        out = similar(p.coeffs, eltype(p.coeffs), p.rings.offsets[end]-1, nf)
+        out === nothing && (out = similar(p.coeffs, eltype(p.coeffs), p.rings.offsets[end]-1, nf))
         for group in p.groups
             synchronize(backend)
-            mul!(group.samples, group.plan, group.half)
+            ring_fft_mul!(group.samples, group.plan, group.half)
             gather_ring_samples!(backend, 256)(out, group.samples, group.rows, p.offsets,
                 group.J, nf;
                 ndrange = (group.J, nf, length(group.rows)))
@@ -120,42 +169,86 @@ spectral_synthesis_guard(::CPURingSynthesis) = nothing
 spectral_synthesis_guard(s::GPUSpectralSynthesis) = spectral_gpu_math_guard(get_backend(s.plan.coeffs))
 spectral_gpu_math_guard(::KernelAbstractions.CPU) = nothing
 
-"""Surface coefficients always use Float64, including on reduced-FP64 GPUs."""
-function surface_synthesis(s::GPUSpectralSynthesis, batch::Integer = 3)
+"""Surface plan shares the selected tables when its precision matches the field plan."""
+function surface_synthesis(s::GPUSpectralSynthesis, batch::Integer = 3; precision=Float64)
     p = s.plan
-    plan = RingSynthesisPlan(p.rings, p.T, batch, Float64; adapter = p.adapter,
-        legendre = eltype(p.coeffs) === Float64 ? p.legendre : nothing)
-    return GPUSpectralSynthesis{Float64, typeof(plan)}(plan)
+    plan = RingSynthesisPlan(p.rings, p.T, batch, precision; adapter = p.adapter,
+        legendre = eltype(p.coeffs) === precision ? p.legendre : nothing)
+    return GPUSpectralSynthesis{precision, typeof(plan)}(plan)
 end
-surface_synthesis(s::CPURingSynthesis, batch::Integer = 3) =
-    CPURingSynthesis(RingSynthesisPlan(s.plan.rings, s.plan.T, batch; legendre = s.plan.legendre))
+surface_synthesis(s::CPURingSynthesis, batch::Integer = 3; precision=Float64) =
+    CPURingSynthesis(RingSynthesisPlan(s.plan.rings, s.plan.T, batch, precision;
+        legendre = eltype(s.plan.coeffs) === precision ? s.plan.legendre : nothing,
+        fft_threads=s.plan.fft_threads))
 
 """Synthesize native winds and divergence, using the portable vector kernel on devices."""
-function synthesize_native_fields(vo, d, T, radius, s::CPURingSynthesis)
-    u, v = complete_wind_coefficients(vo, d, T, radius)
-    padded = zeros(ComplexF64, T+2, T+2, s.plan.batch)
-    padded[1:T+1, 1:T+1, :] .= d
-    return synthesize_rings(u, s), synthesize_rings(v, s), synthesize_rings(padded, s)
-end
-function synthesize_native_fields(vo, d, T, radius, s::GPUSpectralSynthesis{FT}) where FT
-    adapt = s.plan.adapter
-    nf = s.plan.batch
-    vv = adapt(Complex{FT}.(vo))
-    dd = adapt(Complex{FT}.(d))
-    u = similar(s.plan.coeffs, Complex{FT}, T+2, T+2, nf)
-    v = similar(u)
-    divergence = similar(u)
-    backend = get_backend(u)
-    complete_wind_spectral_kernel!(backend, 256)(u, v, divergence, vv, dd, T, radius, nf;
-        ndrange = (T+2, T+2, nf))
-    synchronize(backend)
+function synthesize_native_fields(vo, d, T, radius, s::Union{CPURingSynthesis,GPUSpectralSynthesis})
+    u, v, divergence = native_spectral_components(vo, d, T, radius, s)
     return synthesize_rings(u, s), synthesize_rings(v, s), synthesize_rings(divergence, s)
 end
 
 synthesis_provenance(::CPURingSynthesis) = "cpu"
 synthesis_provenance(::GPUSpectralSynthesis) = "gpu"
 function spectral_synthesis_metadata(ws)
-    return Dict{String, Any}("spectral_synthesis" => synthesis_provenance(ws.synthesis),
+    metadata = Dict{String, Any}("spectral_synthesis" => synthesis_provenance(ws.synthesis),
         "spectral_synthesis_float" => string(eltype(ws.synthesis.plan.coeffs)),
-        "spectral_surface_float" => "Float64")
+        "spectral_surface_float" => string(eltype(ws.surface.plan.coeffs)))
+    return metadata
+end
+
+# The Gauss/Fourier path transforms three components together. This gives the
+# same Legendre operator a wider GEMM and removes two sets of per-mode launches.
+native_transform_batch(::TM5Trapezoid, batch) = batch
+native_transform_batch(::GaussFourier, batch) = 3batch
+synthesize_quadrature_fields(::TM5Trapezoid, vo, d, T, radius, s) =
+    synthesize_native_fields(vo, d, T, radius, s)
+
+function native_spectral_components(vo, d, T, radius, s::CPURingSynthesis)
+    u, v = complete_wind_coefficients(vo, d, T, radius)
+    divergence = zeros(ComplexF64, T+2, T+2, size(vo, 3))
+    divergence[1:T+1, 1:T+1, :] .= d
+    return u, v, divergence
+end
+function native_spectral_components(vo, d, T, radius, s::GPUSpectralSynthesis{FT}) where FT
+    nf = size(vo, 3)
+    u = similar(s.plan.coeffs, Complex{FT}, T+2, T+2, nf)
+    v = similar(u)
+    divergence = similar(u)
+    backend = get_backend(u)
+    complete_wind_spectral_kernel!(backend, 256)(u, v, divergence,
+        s.plan.adapter(Complex{FT}.(vo)), s.plan.adapter(Complex{FT}.(d)), T, FT(radius), nf;
+        ndrange=(T+2, T+2, nf))
+    synchronize(backend)
+    return u, v, divergence
+end
+
+@kernel function pack_native_components!(spectra, u, v, divergence, nf)
+    n, m, k = @index(Global, NTuple)
+    if n <= size(u, 1) && m <= size(u, 2) && k <= nf
+        spectra[n, m, k] = u[n, m, k]
+        spectra[n, m, nf+k] = v[n, m, k]
+        spectra[n, m, 2nf+k] = divergence[n, m, k]
+    end
+end
+
+function quadrature_spectra(vo, d, T, radius, s)
+    nf = size(vo, 3)
+    u, v, divergence = native_spectral_components(vo, d, T, radius, s)
+    FT = eltype(s.plan.coeffs)
+    spectra = similar(s.plan.coeffs, Complex{FT}, T+2, T+2, 3nf)
+    backend = get_backend(spectra)
+    # Host coefficients are converted before adapting, so Float32 device
+    # kernels never read Float64 arrays, including the component pack.
+    adapt = s.plan.adapter
+    pack_native_components!(backend, 256)(spectra, adapt(Complex{FT}.(u)),
+        adapt(Complex{FT}.(v)), adapt(Complex{FT}.(divergence)), nf;
+        ndrange=(T+2, T+2, nf))
+    synchronize(backend)
+    return spectra
+end
+
+function synthesize_quadrature_fields(::GaussFourier, vo, d, T, radius, s)
+    nf = size(vo, 3)
+    samples = band_synthesis(quadrature_spectra(vo, d, T, radius, s), s; native_panels=true)
+    return view(samples, :, 1:nf), view(samples, :, nf+1:2nf), view(samples, :, 2nf+1:3nf)
 end

@@ -4,17 +4,44 @@ abstract type AbstractSpectralFluxConstruction end
 """Legacy centre/face sampling; the default keeps the existing arithmetic."""
 struct PointSampledSpectralFluxes <: AbstractSpectralFluxConstruction end
 
-"""Retained-spectrum target quadrature with independent vertical forcing."""
-struct TM5SpectralFluxes <: AbstractSpectralFluxConstruction
-    refinement_steps::Int
-    vod2uv_radius::Float64
-    function TM5SpectralFluxes(refinement_steps::Integer=2,
-                              vod2uv_radius::Real=IFS_EARTH_RADIUS)
-        refinement_steps > 0 || throw(ArgumentError("quadrature_refinement_steps must be positive"))
-        vod2uv_radius == IFS_EARTH_RADIUS || throw(ArgumentError("TM5 spectral winds require IFS_EARTH_RADIUS"))
-        new(Int(refinement_steps), Float64(vod2uv_radius))
+"""Face integration strategy, resolved once during config parsing."""
+abstract type AbstractFaceQuadrature end
+
+"""Gauss latitude nodes and Fourier integrals of oversampled longitude products."""
+struct GaussFourier <: AbstractFaceQuadrature
+    order::Int
+    oversampling::Int
+    function GaussFourier(order::Integer=8, oversampling::Integer=10)
+        order > 0 && oversampling >= 2 || throw(ArgumentError("invalid Gauss/Fourier resolution"))
+        new(Int(order), Int(oversampling))
     end
 end
+
+"""TM5's composite trapezoid integration with ShRefinement subdivisions."""
+struct TM5Trapezoid <: AbstractFaceQuadrature end
+
+"""
+    TM5SpectralFluxes(; face_quadrature=GaussFourier(), refinement_steps=2)
+
+Retained-spectrum target quadrature with independent vertical forcing.
+LL/RG default to Gauss/Fourier integration; CS keeps its existing arc rule.
+`TM5SpectralFluxes(steps)` explicitly selects the historical trapezoid rule.
+"""
+struct TM5SpectralFluxes{Q<:AbstractFaceQuadrature} <: AbstractSpectralFluxConstruction
+    face_quadrature::Q
+    refinement_steps::Int
+    vod2uv_radius::Float64
+    function TM5SpectralFluxes(; face_quadrature::AbstractFaceQuadrature=GaussFourier(),
+                              refinement_steps::Integer=2, vod2uv_radius::Real=IFS_EARTH_RADIUS)
+        refinement_steps > 0 || throw(ArgumentError("quadrature_refinement_steps must be positive"))
+        vod2uv_radius == IFS_EARTH_RADIUS || throw(ArgumentError("TM5 spectral winds require IFS_EARTH_RADIUS"))
+        new{typeof(face_quadrature)}(face_quadrature, Int(refinement_steps), Float64(vod2uv_radius))
+    end
+end
+TM5SpectralFluxes(steps::Integer, radius::Real=IFS_EARTH_RADIUS) =
+    TM5SpectralFluxes(; face_quadrature=TM5Trapezoid(), refinement_steps=steps, vod2uv_radius=radius)
+face_quadrature_name(::GaussFourier) = "gauss_fourier"
+face_quadrature_name(::TM5Trapezoid) = "tm5_trapezoid"
 
 """Synthesis implementation; device arrays are owned by the concrete plan."""
 abstract type AbstractSpectralSynthesis end
@@ -43,8 +70,8 @@ function resolve_spectral_construction(cfg)
     c = parse_choice(get(table, "spectral_flux_construction", "point_sampled_spectral"),
         (point_sampled_spectral=PointSampledSpectralFluxes(), tm5_spectral=TM5SpectralFluxes()),
         "[preprocessing].spectral_flux_construction")
-    c isa PointSampledSpectralFluxes && haskey(table, "quadrature_refinement_steps") &&
-        throw(ArgumentError("quadrature_refinement_steps requires tm5_spectral"))
+    c isa PointSampledSpectralFluxes && any(k -> haskey(table, k), ("quadrature_refinement_steps", "face_quadrature")) &&
+        throw(ArgumentError("face_quadrature and quadrature_refinement_steps require tm5_spectral"))
     # Do not add fields to historical settings: repr(settings) is fingerprinted.
     c isa PointSampledSpectralFluxes && !haskey(table, "spectral_synthesis") &&
         !haskey(table, "spectral_synthesis_float") && return NamedTuple()
@@ -52,8 +79,13 @@ function resolve_spectral_construction(cfg)
         (cpu=CPUSynthesis(), gpu=GPUSynthesis()), "[preprocessing].spectral_synthesis")
     precision = parse_choice(get(table, "spectral_synthesis_float", "auto"),
         (auto=AutoSynthesisPrecision(), float64=Float64, float32=Float32), "[preprocessing].spectral_synthesis_float")
-    c isa TM5SpectralFluxes && (c = TM5SpectralFluxes(
-        config_int(get(table, "quadrature_refinement_steps", 2), "[preprocessing].quadrature_refinement_steps"; min=1)))
+    if c isa TM5SpectralFluxes
+        rule = parse_choice(get(table, "face_quadrature", "gauss_fourier"),
+            (gauss_fourier=GaussFourier(), tm5_trapezoid=TM5Trapezoid()), "[preprocessing].face_quadrature")
+        c = TM5SpectralFluxes(; face_quadrature=rule,
+            refinement_steps=config_int(get(table, "quadrature_refinement_steps", 2),
+                "[preprocessing].quadrature_refinement_steps"; min=1))
+    end
     return (; spectral_flux_construction=c, spectral_synthesis=synthesis,
               spectral_synthesis_float=precision)
 end
