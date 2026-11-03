@@ -34,7 +34,39 @@ spectral_gpu_math_guard(::Val) = nothing
 with_spectral_math(f, backend) = f()
 with_spectral_math(f, ::KernelAbstractions.CPU) = f()
 cpu_band_workers() = min(4, max(1, Threads.nthreads()÷4))
-cpu_band_fft_threads() = min(2, Threads.nthreads()÷cpu_band_workers())
+# Keep FFTW's plan choice independent of Julia worker count and host capacity.
+cpu_band_fft_threads() = 2
+
+# FFTW may select different codelets when the number of latitude rows changes.
+# Gauss/Fourier CPU plans transform one ring of fields at a time through aligned
+# scratch, preserving SIMD without depending on the band's batch shape.
+struct FixedRingFFT{P, I, O}
+    plan::P
+    input::I
+    output::O
+end
+
+function ring_fft_plan(input, output, n, fft_threads; inverse)
+    if fft_threads == 0
+        return inverse ? plan_brfft(input, n, 1) : plan_rfft(input, 1)
+    end
+    source = similar(input, size(input, 1), size(input, 2), 1)
+    target = similar(output, size(output, 1), size(output, 2), 1)
+    plan = inverse ? plan_brfft(source, n, 1; num_threads=fft_threads) :
+        plan_rfft(source, 1; num_threads=fft_threads)
+    return FixedRingFFT(plan, source, target)
+end
+
+ring_fft_mul!(output, plan, input) = mul!(output, plan, input)
+function ring_fft_mul!(output, fft::FixedRingFFT, input)
+    for row in axes(input, 3)
+        copyto!(fft.input, view(input, :, :, row:row))
+        mul!(fft.output, fft.plan, fft.input)
+        copyto!(view(output, :, :, row:row), fft.output)
+    end
+    return output
+end
+
 build_ring_synthesis(::CPUSynthesis, rings, T, batch, precision; stable_poles=false) =
     CPURingSynthesis(RingSynthesisPlan(rings, T, batch, precision isa AutoSynthesisPrecision ? Float64 : precision;
         stable_poles, fft_threads=stable_poles ? cpu_band_fft_threads() : 0))
@@ -53,8 +85,8 @@ function RingSynthesisPlan(rings::SynthesisRings, T::Integer, batch::Integer,
     groups = map(sort(unique(rings.nlon))) do J
         rows = findall(==(J), rings.nlon)
         half = adapter(zeros(Complex{FT}, J÷2+1, batch, length(rows)))
-        plan = fft_threads == 0 ? plan_brfft(half, J, 1) : plan_brfft(half, J, 1; num_threads=fft_threads)
         samples = adapter(zeros(FT, J, batch, length(rows)))
+        plan = ring_fft_plan(half, samples, J, fft_threads; inverse=true)
         (; J, rows = adapter(rows), half, plan, samples)
     end
     return RingSynthesisPlan(rings, Int(T), Int(batch), adapter, tables,
@@ -124,7 +156,7 @@ function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSy
         out === nothing && (out = similar(p.coeffs, eltype(p.coeffs), p.rings.offsets[end]-1, nf))
         for group in p.groups
             synchronize(backend)
-            mul!(group.samples, group.plan, group.half)
+            ring_fft_mul!(group.samples, group.plan, group.half)
             gather_ring_samples!(backend, 256)(out, group.samples, group.rows, p.offsets,
                 group.J, nf;
                 ndrange = (group.J, nf, length(group.rows)))
@@ -217,6 +249,6 @@ end
 
 function synthesize_quadrature_fields(::GaussFourier, vo, d, T, radius, s)
     nf = size(vo, 3)
-    samples = synthesize_rings(quadrature_spectra(vo, d, T, radius, s), s)
+    samples = band_synthesis(quadrature_spectra(vo, d, T, radius, s), s; native_panels=true)
     return view(samples, :, 1:nf), view(samples, :, nf+1:2nf), view(samples, :, 2nf+1:3nf)
 end

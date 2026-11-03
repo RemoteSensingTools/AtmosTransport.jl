@@ -176,7 +176,7 @@ function integrate_face_fluxes!(ws::SpectralIntegralWorkspace, H, vo, d, T, dA, 
     for firstlevel in 1:nf:nz
         levels = firstlevel:min(firstlevel+nf-1, nz)
         nb = length(levels)
-        U, V, D = integral_field_samples(ws, vo, d, T, c, levels, spectra, samples)
+        U, V, D = integral_field_samples(ws, vo, d, T, c, levels, spectra, samples, surface_layout)
         # Samples are consumed once; form the three integrands in place.
         fu, fv, forcing = U, V, D
         aa = zeros(FT, nf)

@@ -74,11 +74,11 @@ function fourier_integral_plan(rings, counts, synthesis, batch;
         size(buffers.samples, 2) >= batch && size(buffers.samples, 3) >= length(rows) ||
             throw(DimensionMismatch("Fourier scratch capacity"))
         samples = fourier_scratch_view(buffers.samples, J, batch, length(rows))
-        forward = p.fft_threads == 0 ? plan_rfft(samples, 1) : plan_rfft(samples, 1; num_threads=p.fft_threads)
         spectrum = fourier_scratch_view(buffers.spectrum, J÷2+1, batch, length(rows))
+        forward = ring_fft_plan(samples, spectrum, J, p.fft_threads; inverse=false)
         half = fourier_scratch_view(buffers.half, n÷2+1, batch, length(rows))
-        inverse = p.fft_threads == 0 ? plan_brfft(half, n, 1) : plan_brfft(half, n, 1; num_threads=p.fft_threads)
         integrals = fourier_scratch_view(buffers.integrals, n, batch, length(rows))
+        inverse = ring_fft_plan(half, integrals, n, p.fft_threads; inverse=true)
         factors = [fourier_interval_factor(m, 2pi/n)/J for m in -(J÷2):J÷2]
         # Split the real Nyquist cosine into its positive and negative modes.
         if iseven(J)
@@ -99,11 +99,11 @@ function fourier_integrals!(values, plan, nf)
         pack_fourier_rings!(backend, 256)(g.samples, values, g.rows, plan.source_offsets, g.J, nf;
             ndrange=(g.J, nf, length(g.rows)))
         synchronize(backend)
-        mul!(g.spectrum, g.forward, g.samples)
+        ring_fft_mul!(g.spectrum, g.forward, g.samples)
         fold_fourier_integrals!(backend, 256)(g.half, g.spectrum, g.factors, g.J, g.n, nf;
             ndrange=size(g.half))
         synchronize(backend)
-        mul!(g.integrals, g.inverse, g.half)
+        ring_fft_mul!(g.integrals, g.inverse, g.half)
         unpack_fourier_integrals!(backend, 256)(out, g.integrals, g.rows, plan.offsets, g.n, nf;
             ndrange=size(g.integrals))
     end

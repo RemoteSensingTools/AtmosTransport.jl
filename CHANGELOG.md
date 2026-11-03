@@ -19,8 +19,11 @@
   Gauss/Fourier now streams latitude tables and transform buffers in cell
   bands, reuses sample storage and shares sequential Fourier scratch. CPU
   band workers share the bounded cell budget and use plan-local FFT threads
-  without changing the global FFTW setting; the retained CPU Float64 payload
-  is checked bitwise.
+  without changing the global FFTW setting. Native GEMMs now use fixed
+  32-column panels anchored to global ring indices, and CPU FFTs use fixed
+  per-ring batches: band size no longer selects different BLAS reductions
+  or FFTW codelets. This rounding correction can change default Gauss/Fourier
+  golden payloads; explicit trapezoid arithmetic is unchanged.
 
 - **AutoTape CPU margin capped.** Automatic CPU selection now holds back
   `min(10% of host/cgroup capacity, 2 GiB)` plus reverse-pass workspace,

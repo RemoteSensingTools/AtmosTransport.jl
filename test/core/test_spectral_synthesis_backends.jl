@@ -152,3 +152,56 @@ end
     @test actual === output
     @test reinterpret(UInt64, vec(actual)) == reinterpret(UInt64, vec(expected[samples, :]))
 end
+
+@testset "Native CPU panels preserve global column positions" begin
+    # Dense spectra catch edge GEMM reductions even when low-degree wind
+    # fixtures have zero coefficients there. Include a one-level native
+    # batch (three packed fields), tile edges, gaps and the padded final tile.
+    rng = MersenneTwister(718)
+    T = 63
+    rings = SS.SynthesisRings(collect(range(-1.5, 1.5; length=70)), fill(135, 70), fill(-pi, 70))
+    for FT in (Float32, Float64), nf in (3, 6, 24)
+        spectra = randn(rng, Complex{FT}, T+1, T+1, nf)
+        full = SS.CPURingSynthesis(SS.RingSynthesisPlan(rings, T, nf, FT; stable_poles=true, fft_threads=2))
+        expected = SS.band_synthesis(spectra, full; native_panels=true)
+        for rows in ([1:7; 31:34; 69:70], collect(28:66))
+            bandrings = SS.SynthesisRings(rings.latitudes[rows], rings.nlon[rows], rings.origins[rows])
+            band = SS.CPURingSynthesis(SS.RingSynthesisPlan(bandrings, T, nf, FT; stable_poles=true, fft_threads=2))
+            actual = SS.band_synthesis(spectra, band; layout=(; rows, total=70), native_panels=true)
+            samples = reduce(vcat, [collect(rings.offsets[r]:rings.offsets[r+1]-1) for r in rows])
+            UT = FT === Float32 ? UInt32 : UInt64
+            @test reinterpret(UT, vec(actual)) == reinterpret(UT, vec(expected[samples, :]))
+        end
+    end
+end
+
+@testset "CPU Fourier integrals keep their FFT shape across bands" begin
+    PP = AtmosTransport.Preprocessing
+    grid = PP.build_target_geometry(Val(:synthetic_reduced_gaussian),
+        Dict("gaussian_number"=>8, "nlon_mode"=>"octahedral"), Float64)
+    T = 31
+    c = PP.TM5SpectralFluxes()
+    q = SS.SpectralQuadrature(grid, T, c.face_quadrature)
+    rng = MersenneTwister(910)
+    for FT in (Float32, Float64), threads in (1, 2)
+        values = randn(rng, FT, q.rings.offsets[end]-1, 2)
+        s = SS.CPURingSynthesis(SS.RingSynthesisPlan(q.rings, T+1, 2, FT; fft_threads=threads))
+        plan = SS.fourier_integral_plan(q.rings, q.interval_counts, s, 2; selected_rows=unique(q.boundary_rows))
+        expected = SS.fourier_integrals!(values, plan, 2)
+        for cells in (1:1, 2:3, 4:8)
+            band = SS.quadrature_band(q, cells)
+            bq = band.quadrature
+            bs = SS.CPURingSynthesis(SS.RingSynthesisPlan(bq.rings, T+1, 2, FT; fft_threads=threads))
+            bp = SS.fourier_integral_plan(bq.rings, bq.interval_counts, bs, 2; selected_rows=unique(bq.boundary_rows))
+            samples = reduce(vcat, [collect(q.rings.offsets[r]:q.rings.offsets[r+1]-1) for r in band.rows])
+            actual = SS.fourier_integrals!(values[samples, :], bp, 2)
+            for row in unique(bq.boundary_rows)
+                globalrow = band.rows[row]
+                a = actual[bp.offsets[row]:bp.offsets[row+1]-1, :]
+                b = expected[plan.offsets[globalrow]:plan.offsets[globalrow+1]-1, :]
+                UT = FT === Float32 ? UInt32 : UInt64
+                @test reinterpret(UT, vec(a)) == reinterpret(UT, vec(b))
+            end
+        end
+    end
+end

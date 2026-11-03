@@ -63,10 +63,18 @@ surface fields and selected-precision three-dimensional integration.
   refill bounded Legendre tables. Sequential Fourier operations share scratch.
 - `cpu_band_synthesis.jl`: host scheduling for small bands. A reusable single
   mode panel preserves the original surface GEMM dimensions and column positions
-  so that streaming does not change its accumulation order.
+  so that streaming does not change its accumulation order. Native fields use
+  fixed 32-column GEMMs anchored to global latitude indices, with padded partial
+  panels in both full and streamed execution. This prevents CPU edge
+  microkernels from changing rounding with band size, including Float32.
+  Gauss/Fourier CPU FFTs use a fixed one-ring batch through aligned scratch,
+  including Fourier integrals; changing latitude batch shapes cannot select
+  different FFTW codelets. This correction can change default Gauss/Fourier
+  golden payloads at rounding level. Explicit trapezoids are unchanged.
 
 CPU Gauss/Fourier uses up to four band workers, dividing the cell budget
-between them, with up to two FFT threads per worker. Plan-local thread counts
+between them, with a fixed two FFT threads per worker, independent of Julia
+thread count or host capacity. Plan-local thread counts
 preserve the global FFTW setting. CPU trapezoids
 retain their existing FFT threading policy. GPU execution is not established
 by the CPU memory and bitwise measurements.

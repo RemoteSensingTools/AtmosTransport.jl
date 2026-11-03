@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **166986 bytes / 47710.3 tokens**. Public names: **52**.
+Size: **169653 bytes / 48472.3 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1073,19 +1073,19 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 Files:
 
 - `Spectral.jl` (3400 bytes)
-- `cpu_band_synthesis.jl` (2452 bytes)
+- `cpu_band_synthesis.jl` (3964 bytes)
 - `cs_face_gather.jl` (2856 bytes)
 - `cs_point_synthesis.jl` (2623 bytes)
 - `cs_polar_synthesis.jl` (3758 bytes)
 - `cs_spectral_integrals.jl` (7025 bytes)
-- `device_spectral_synthesis.jl` (10129 bytes)
+- `device_spectral_synthesis.jl` (11275 bytes)
 - `discovery.jl` (1527 bytes)
-- `gauss_fourier.jl` (5238 bytes)
-- `latitude_band_integrals.jl` (7430 bytes)
+- `gauss_fourier.jl` (5195 bytes)
+- `latitude_band_integrals.jl` (7466 bytes)
 - `mass_support.jl` (41507 bytes)
 - `reduced_spectral_synthesis.jl` (7032 bytes)
 - `spectral_hour_io.jl` (4471 bytes)
-- `spectral_integral_fluxes.jl` (14568 bytes)
+- `spectral_integral_fluxes.jl` (14584 bytes)
 - `spectral_io.jl` (13730 bytes)
 - `spectral_quadrature.jl` (7107 bytes)
 - `spectral_synthesis.jl` (24329 bytes)

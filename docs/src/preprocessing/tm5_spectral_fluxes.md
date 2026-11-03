@@ -790,7 +790,7 @@ end
   T/q merge weights use each construction's stored window-start total surface
   pressure. Merged T/q can therefore differ between constructions beyond
   rounding, consistent with each binary's hybrid layers.
-- The default path stays bitwise unchanged; every flux pull request gates the
+- The point-sampled construction stays bitwise unchanged; every flux pull request gates the
   `pre_ll72`, `pre_o24` and `pre_c24` goldens.
 
 ```@docs
@@ -918,7 +918,8 @@ error reported above. Explicit `tm5_trapezoid`, steps 2 reproduces the previous
 job's **complete one-window binary payload bitwise at both T255 and T639**, excluding the
 updated metadata header.
 
-**Wall time and memory.** The 00–01 UTC window includes decode, planning,
+**Wall time and memory before the fixed-shape correction in §17.**
+The 00–01 UTC window includes decode, planning,
 hourly humidity, both changing endpoints, pin, merge, balance, closure, replay,
 positivity and write; package/process startup is excluded from wall time.
 Settings: Julia threads **16**, BLAS **1**, native batch **8**, L137→L117 at
@@ -941,9 +942,10 @@ it is not the second arm's process-lifetime high-water mark in a paired run.
 Both warmed cost ratios satisfy the ≤1.5× target. T639 Gauss/Fourier peaks at
 **16.20 GB**, **1.095×** its isolated trapezoid peak,
 below the approximately 1.2× target and down from the reviewed **33.28 GB**.
-At each truncation, every **609,094,080-byte** one-window payload matches the
-retained pre-streaming Gauss/Fourier result bitwise (headers excluded); both
-measured repetitions and the isolated run were checked. Explicit CPU Float64
+Before the fixed-shape correction, at each truncation, every
+**609,094,080-byte** one-window payload matched the retained pre-streaming
+Gauss/Fourier result bitwise (headers excluded); both measured repetitions
+and the isolated run were checked. Explicit CPU Float64
 trapezoid payloads also match their retained counterparts. These checks cover
 the measured input, precision, backend and window.
 
@@ -1263,9 +1265,23 @@ reuse synthesis/sample buffers. Sequential surface, boundary and forcing
 Fourier transforms share scratch. Each cell retains its original node order.
 CPU surface synthesis uses a reusable single-mode panel with the original
 GEMM dimensions and column positions, preserving its accumulation order
-without retaining all latitude tables. CPU band pack/scatter/gather uses host
-loops around the same GEMM/FFT arithmetic. Up to four CPU workers divide the
-cell budget between them, with up to two FFT threads each. Plans preserve
+without retaining all latitude tables. Native CPU transforms use fixed
+32-column GEMMs anchored to global latitude indices, padding partial tiles
+in both full and streamed execution. Thus band boundaries retain the same
+GEMM dimensions, leading dimensions and column positions. This avoids the
+OpenBLAS edge microkernel reductions that otherwise change Float32 and
+Float64 rounding with band size. CPU streaming retains bitwise equality on
+the tested CPU/BLAS configurations; this is not a promise of identical bits
+between different CPU architectures, BLAS versions or FFT libraries.
+Gauss/Fourier CPU FFTs use aligned scratch for one ring of fields at a time,
+so their plan shapes also remain independent of band size. This includes
+the forward and inverse transforms used for Fourier face integrals.
+These fixed-shape contractions and FFTs can change existing default
+Gauss/Fourier golden payloads at rounding level; references are not
+regenerated as part of this correction. Explicit trapezoids retain their
+existing arithmetic.
+CPU band pack/scatter/gather uses host loops. Up to four CPU workers divide the
+cell budget between them, with a fixed two FFT threads each. Plans preserve
 the global FFTW thread setting; explicit
 trapezoids keep their existing policy. These CPU measurements do not establish
 GPU memory fit, bitwise behavior or performance.
@@ -1273,6 +1289,34 @@ Bands also limit interior rows to 128, allowing one complete larger cell;
 the CPU reduces concurrent workers when needed to keep their aggregate
 interior-row budget at 512 (or one larger cell). Thus coarse cells with more
 Gauss nodes also stream their tables.
+The default 32-cell budget is a constant; its division among workers depends
+on the explicitly configured Julia thread count, never runtime timing or
+CPU detection. Julia thread count changes scheduling; the two-thread FFT
+plan setting and native GEMM tiles remain fixed regardless of that division.
+Golden comparisons must
+still specify the CPU, precision and library/thread configuration.
+
+After this correction, fresh CPU runs warmed both complete rules before
+measuring A B A B, with Julia/BLAS/global FFTW threads 16/1/1 and native batch 8:
+
+| Input | Trapezoid reps (s) | Gauss/Fourier reps (s) | Ratio of means |
+|---|---:|---:|---:|
+| T255 | 19.656 / 19.539 | 29.189 / 28.960 | 1.484× |
+| T639 | 101.688 / 103.043 | 106.405 / 101.953 | 1.018× |
+
+Both ratios meet the ≤1.5× target. A fresh isolated T639 Gauss/Fourier run
+peaked at **16.575 GB**, **1.120×** the retained isolated trapezoid peak of
+14.802 GB. Repeated payloads match bitwise, including warmed versus isolated
+T639 Gauss/Fourier. Explicit Float64 trapezoid payloads at both truncations
+and the T255 Gauss/Fourier payload retain their prior bits. T639 Gauss/Fourier
+changes only `am`, `bm`, `cm`, with relative L2 differences of
+2.79e-16, 3.06e-16, 1.23e-15 against the prior payload; mass, pressure,
+humidity and stored time-delta fields remain bitwise equal in this window.
+The frozen-input default LL72 non-PBL window also changes only `am`, `bm`, `cm`
+(relative L2 2.15e-16, 2.80e-16, 6.89e-16); other fields and its six-substep
+schedule are bitwise equal to the retained result. References were not regenerated.
+These are shared-host, one-window CPU measurements with the §13 inputs;
+they do not establish full-day or GPU performance.
 
 `CPURingSynthesis` uses batched host GEMM and unnormalised FFTW;
 `GPUSpectralSynthesis` uses the same portable KernelAbstractions pack/scatter/

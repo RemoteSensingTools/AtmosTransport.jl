@@ -39,7 +39,7 @@ function quadrature_band(q, latitudes)
     return (; quadrature=band, cells, faces, active, rows)
 end
 
-function integral_field_samples(ws, vo, d, T, c, levels, spectra, samples)
+function integral_field_samples(ws, vo, d, T, c, levels, spectra, samples, layout)
     nf = ws.batch
     if spectra === nothing
         vb = zeros(ComplexF64, T+1, T+1, nf)
@@ -49,7 +49,7 @@ function integral_field_samples(ws, vo, d, T, c, levels, spectra, samples)
         return synthesize_quadrature_fields(ws.quadrature.rule, vb, db, T, c.vod2uv_radius, ws.synthesis)
     end
     source = spectra[cld(first(levels), nf)]
-    values = band_synthesis(source, ws.synthesis; out=samples)
+    values = band_synthesis(source, ws.synthesis; out=samples, layout, native_panels=true)
     return view(values, :, 1:nf), view(values, :, nf+1:2nf), view(values, :, 2nf+1:3nf)
 end
 
