@@ -152,7 +152,9 @@ import ..Vertical: ConvectionInterfaceFlux,
     plan_vertical
 
 import ...Regridding: coarsen_area_weighted!,
+    coarsen_area_weighted_vector!,
     coarsen_sum!,
+    cs_east_north_basis,
     coarsen_xface_sum!,
     coarsen_yface_sum!
 

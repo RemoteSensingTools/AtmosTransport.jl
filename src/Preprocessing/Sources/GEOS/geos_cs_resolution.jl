@@ -82,6 +82,11 @@ function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
         ) : nothing,
         vdiff_weights_native = settings.include_vdiff_fields ?
             panels_3d_dst(Nz_native) : nothing,
+        # East/north basis at the source and target cell centres: the VDIFF
+        # winds are coarsened as vectors (`coarsen_area_weighted_vector!`).
+        vdiff_wind_basis = settings.include_vdiff_fields ?
+            (fine = cs_east_north_basis(source_mesh),
+             coarse = cs_east_north_basis(grid.mesh)) : nothing,
     )
 end
 
@@ -196,10 +201,13 @@ _geos_vdiff_native_weights!(::GEOSCSIdentityStrategy, _ws, raw,
 function _geos_vdiff_native_target!(::GEOSCSBlockCoarsenStrategy{R}, ws, raw) where R
     raw.vdiff === nothing && return nothing
     for p in 1:CS_PANEL_COUNT
-        coarsen_area_weighted!(ws.vdiff_native.u[p], raw.vdiff.u[p],
-                               ws.source_cell_areas, R)
-        coarsen_area_weighted!(ws.vdiff_native.v[p], raw.vdiff.v[p],
-                               ws.source_cell_areas, R)
+        # U, V are eastward/northward components at the cell centres; the
+        # local axes turn across a block, so average them as a vector.
+        coarsen_area_weighted_vector!(ws.vdiff_native.u[p], ws.vdiff_native.v[p],
+                                      raw.vdiff.u[p], raw.vdiff.v[p],
+                                      ws.source_cell_areas, R,
+                                      ws.vdiff_wind_basis.fine[p],
+                                      ws.vdiff_wind_basis.coarse[p])
         coarsen_area_weighted!(ws.vdiff_native.t[p], raw.vdiff.t[p],
                                ws.source_cell_areas, R)
         coarsen_area_weighted!(ws.vdiff_native.qv[p], raw.vdiff.qv[p],

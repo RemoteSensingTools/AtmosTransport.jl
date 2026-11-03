@@ -275,3 +275,60 @@ const NEST_DEFINITIONS = (equiangular = EquiangularCubedSphereDefinition(),
         end
     end
 end
+
+# `coarsen_area_weighted_vector!`: east/north winds averaged as Cartesian
+# vectors. Against an independent 3-vector reference, a uniform 3-D flow
+# (V(x) = V₀ − (V₀·x)x, tangent everywhere), the 2-D/3-D agreement, and the
+# basis of `cs_east_north_basis` (unit, orthogonal east/north axes).
+@testset "coarsen_area_weighted_vector!" begin
+    unitx(λ, φ) = (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ))
+    east(λ, φ) = (-sin(λ), cos(λ), 0.0)
+    north(λ, φ) = (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ))
+    d3(a, b) = a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+    for def in (NEST_DEFINITIONS.gmao, NEST_DEFINITIONS.equiangular), R in (2, 3)
+        Ndst, Nz = 4, 2
+        fine = nest_mesh(Ndst * R, def)
+        coarse = nest_mesh(Ndst, def; FT = Float32)          # basis is Float64 anyway
+        fb, cb = cs_east_north_basis(fine), cs_east_north_basis(coarse)
+        @test length(fb) == 6 && eltype(cb[1].sinλ) == Float64
+        V0 = (4.0, -7.0, 9.0)
+        for p in 1:6
+            flon, flat = AtmosTransport.Grids.panel_cell_center_lonlat(fine, p)
+            clon, clat = AtmosTransport.Grids.panel_cell_center_lonlat(nest_mesh(Ndst, def), p)
+            u = zeros(Ndst * R, Ndst * R, Nz); v = similar(u)
+            for j in axes(u, 2), i in axes(u, 1)
+                λ, φ = deg2rad(flon[i, j]), deg2rad(flat[i, j])
+                for k in 1:Nz
+                    u[i, j, k] = k * d3(V0, east(λ, φ))
+                    v[i, j, k] = k * d3(V0, north(λ, φ))
+                end
+            end
+            ud, vd = zeros(Ndst, Ndst, Nz), zeros(Ndst, Ndst, Nz)
+            coarsen_area_weighted_vector!(ud, vd, u, v, fine.cell_areas, R, fb[p], cb[p])
+            err = 0.0
+            for j in 1:Ndst, i in 1:Ndst
+                X = (0.0, 0.0, 0.0); A = 0.0
+                for jj in 1:R, ii in 1:R
+                    fi, fj = (i - 1) * R + ii, (j - 1) * R + jj
+                    λ, φ = deg2rad(flon[fi, fj]), deg2rad(flat[fi, fj])
+                    a = fine.cell_areas[fi, fj]
+                    X = X .+ a .* (u[fi, fj, 1] .* east(λ, φ) .+ v[fi, fj, 1] .* north(λ, φ))
+                    A += a
+                end
+                λ, φ = deg2rad(clon[i, j]), deg2rad(clat[i, j])
+                err = max(err, abs(ud[i, j, 1] - d3(X ./ A, east(λ, φ))),
+                               abs(vd[i, j, 1] - d3(X ./ A, north(λ, φ))))
+            end
+            @test err < 1e-12
+            @test ud[:, :, 2] ≈ 2 .* ud[:, :, 1] rtol = 1e-14     # linear, level by level
+            u2, v2 = zeros(Ndst, Ndst), zeros(Ndst, Ndst)
+            coarsen_area_weighted_vector!(u2, v2, u[:, :, 2], v[:, :, 2], fine.cell_areas, R, fb[p], cb[p])
+            @test u2 == ud[:, :, 2] && v2 == vd[:, :, 2]
+            b = cb[p]
+            @test all(@. abs(b.sinλ^2 + b.cosλ^2 - 1) < 1e-14 && abs(b.sinφ^2 + b.cosφ^2 - 1) < 1e-14)
+        end
+    end
+    @test_throws DimensionMismatch coarsen_area_weighted_vector!(zeros(4, 4), zeros(4, 4),
+        zeros(8, 8), zeros(8, 8), ones(4, 4), 2,
+        (sinλ = ones(8, 8),), (sinλ = ones(4, 4),))
+end

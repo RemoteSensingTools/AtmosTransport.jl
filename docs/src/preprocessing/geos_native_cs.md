@@ -217,6 +217,22 @@ four extra payload sections:
 | `:vdiff_u`, `:vdiff_v` | Substep-cadence horizontal wind components |
 | `:vdiff_t`, `:vdiff_qv` | Substep-cadence temperature and specific humidity |
 
+`vdiff_u`, `vdiff_v` are the A3dyn `U`, `V`: eastward and northward
+components at the cell centre. When the target is a nested coarser cube
+(C180 → C90), they are coarsened as a vector, as GCHP's MAPL regrids
+`U;V`: each fine wind is written in Cartesian components
+``\mathbf{X} = u\,\hat e + v\,\hat n`` with
+``\hat e = (-\sin\lambda, \cos\lambda, 0)`` and
+``\hat n = (-\sin\varphi\cos\lambda, -\sin\varphi\sin\lambda, \cos\varphi)``
+at the fine cell centre, the area-weighted block mean of ``\mathbf{X}`` is
+taken, and it is projected on ``\hat e``, ``\hat n`` at the coarse cell
+centre (`Regridding.coarsen_area_weighted_vector!`). Averaging `U` and `V`
+one by one is wrong where the local axes turn across a block: for the
+2021-12-01 GEOS-IT C180 → C90 day it differs from GCHP's C90 `Met_U`/`Met_V`
+by 1e-2 m/s RMS and up to 2.6 m/s next to the poles, while the vector mean
+agrees to about 1e-5 m/s RMS. `vdiff_t` and `vdiff_qv` are scalars and keep
+the plain area-weighted mean.
+
 These feed the `LocalHoltslagBovilleKzField` local Kz at runtime.
 The binary's capability surface advertises `gchp_vdiff = true` once all
 four are present. The runtime's `[diffusion].kind =

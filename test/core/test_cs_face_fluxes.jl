@@ -329,6 +329,29 @@ interior_divergence(am, bm, Nc) =
         end
         @test polar_error[1] > 0.05 * hypot(V...)      # u and v remapped separately: > 5 % of |V|
         @test polar_error[2] < 0.1 * polar_error[1]   # the vector remap recovers the flow
+        # Solid-body rotation V = Ω × x about a tilted axis (the VDIFF winds
+        # regridded lat-lon -> CS take this path): exact answer Ω × x_c at the
+        # cube-cell centre, up to the O(Δ²) curvature of the cell mean.
+        Ω = (2.0, -3.0, 10.0)
+        for j in 1:ny, i in 1:nx
+            λ, φ = deg2rad(src.λᶜ[i]), deg2rad(src.φᶜ[j])
+            e, n = en(λ, φ)
+            Vx = G.cross3(Ω, (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
+            u[i, j, 1], v[i, j, 1] = G.dot3(Vx, e), G.dot3(Vx, n)
+        end
+        rotation_error = map((P.ScalarWindRegrid(), P.CartesianWindRegrid(src, mesh, Nz, Float64))) do w
+            P.regrid_winds!(w, pipe.u, pipe.v, regrid!, u, v)
+            maximum(Iterators.product(1:Nc, 1:Nc, (3, 6))) do (i, j, p)   # both polar panels
+                lon, lat = G.panel_cell_center_lonlat(mesh, p)
+                λ, φ = deg2rad(lon[i, j]), deg2rad(lat[i, j])
+                e, n = en(λ, φ)
+                Vc = G.cross3(Ω, (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ)))
+                hypot(pipe.u[p][i, j, 1] - G.dot3(Vc, e), pipe.v[p][i, j, 1] - G.dot3(Vc, n))
+            end
+        end
+        @test rotation_error[1] > 0.03 * hypot(Ω...)       # components remapped separately
+        @test rotation_error[2] < 0.01 * hypot(Ω...)       # vector remap: 5° source, C12 cells
+        @test rotation_error[2] < 0.2 * rotation_error[1]
         @test P.build_wind_regrid(:scalar, src, mesh, Nz, Float64) isa P.ScalarWindRegrid
         # Float32 buffers, as in production
         ws32 = P.allocate_cs_preprocess_workspace(Nc, nx, ny, Nz, length(R.src_areas), length(R.dst_areas), Float32)
