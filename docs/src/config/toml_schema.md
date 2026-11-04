@@ -554,6 +554,8 @@ kind  = "constant"              # "none" | "constant" |
 value = 1.0                     # m²/s — broadcast Kz when kind="constant"
 surface_flux_boundary = false   # LL/CS: true selects S(dt)->V(dt).
                                 # false selects V/2->S->V/2; RG requires false.
+                                # With [advection] scheme = "none", surface
+                                # fluxes need true and a cubed-sphere grid.
 
 [convection]
 kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"

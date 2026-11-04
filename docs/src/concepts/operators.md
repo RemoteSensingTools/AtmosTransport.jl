@@ -123,7 +123,14 @@ operators (e.g. convection-only timing, regression). Select with
 `[advection] scheme = "none"`. `StepPlans.transport_step!` composes it
 without sweeps; Advection has no `apply!` method for it. Diffusion-only runs
 are supported as a single mass-conserving vertical solve. Surface fluxes
-require an advection palindrome and are therefore rejected with `NoAdvection`.
+normally sit inside the advection palindrome and are rejected with
+`NoAdvection`. The exception is the cubed sphere with
+`DiffusiveSurfaceFluxBoundary` (`[diffusion] surface_flux_boundary = true`,
+always on for `kind = "geoschem_nonlocal_vdiff"`): its palindrome center is
+`S(dt) → V(dt)` with no half-steps, so the no-advection step runs that same
+center, with the diffusion scheme's emission deposit. It equals an advection
+step with zero mass fluxes and adds exactly the emitted mass, which makes a
+PBL-only run with a surface source possible.
 
 ## Diffusion
 

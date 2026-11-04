@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Cubed sphere: surface emissions with advection off** when the diffusion
+  owns the surface boundary (`DiffusiveSurfaceFluxBoundary`:
+  `[diffusion] surface_flux_boundary = true`, always on for
+  `kind = "geoschem_nonlocal_vdiff"`). `NoAdvection` (`scheme = "none"`)
+  rejected every surface-flux operator because emissions sit inside the
+  advection palindrome; with this coupling the palindrome center is
+  `S(dt) → V(dt)` with no half-steps, so the cubed-sphere `NoAdvection` step
+  now runs that same center (`TransportMidpoint`, with the scheme's emission
+  deposit). It equals an advection step with zero mass fluxes (Upwind, PPM,
+  Lin–Rood) to round-off and adds exactly the emitted mass
+  (`test/core/test_no_advection.jl`). The split coupling, `NoDiffusion` and
+  lat-lon / reduced-Gaussian grids still reject emissions, with a message that
+  names the supported setup. Makes a PBL-only run with a surface source
+  possible (e.g. Rn-222 against GCHP). Golden impact: none (no golden case
+  runs `scheme = "none"`).
+
 - **Result change for LL/RG `tm5_spectral`:** face quadrature now defaults to
   `"gauss_fourier"`: Gauss–Legendre latitude nodes and exact Fourier integrals
   of oversampled longitude products, including cell pressure and divergence

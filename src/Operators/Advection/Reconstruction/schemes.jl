@@ -242,11 +242,15 @@ When `NoAdvection` is selected:
   kernels, which are mass-conserving on their own and need no
   Strang palindrome. This is the natural "diffusion-only"
   experimental setup.
-- Surface emissions are *rejected* with an actionable
-  `ArgumentError`. They are integrated as Strang half-steps
-  wrapping the advection block, so running them without advection
-  silently drops 2nd-order accuracy. To run a convection-only
-  configuration omit `[tracers.*.surface_flux]` blocks.
+- Surface emissions run only on the cubed sphere with
+  `DiffusiveSurfaceFluxBoundary`: its palindrome center is
+  S(dt) → V(dt) with no half-steps, so `transport_step!` runs that
+  same center (with the diffusion scheme's emission deposit) and the
+  step equals an advection step with zero mass fluxes. Every other
+  coupling and the lat-lon / reduced-Gaussian grids reject emissions
+  with an actionable `ArgumentError`: there the emission sits inside
+  the advection palindrome. To run a convection-only configuration
+  omit `[tracers.*.surface_flux]` blocks.
 - The advection workspace is `nothing` on CS. `TransportModel` allocates
   the independent diffusion workspace when diffusion is active.
 
