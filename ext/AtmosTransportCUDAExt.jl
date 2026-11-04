@@ -118,6 +118,11 @@ function AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(::Val{:cu
     return nothing
 end
 
+# KA launches, CUBLAS handles and CUFFT plans all use CUDA.stream() for the
+# current task. Stream ordering covers pack -> GEMM -> scatter -> FFT without
+# a host wait for each order. synthesize_rings retains its completion wait.
+AtmosTransport.Preprocessing.Spectral.synthesis_stream_barrier(::CUDABackend) = nothing
+
 function AtmosTransport.Preprocessing.Spectral.with_spectral_math(f, ::CUDABackend)
     AtmosTransport.Preprocessing.Spectral.spectral_gpu_math_guard(Val(:cuda))
     previous = CUDA.math_mode()

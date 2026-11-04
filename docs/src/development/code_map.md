@@ -12,7 +12,7 @@ Dependencies include static imports, qualified references, shared-module name us
 
 ## `ext`
 
-Size: **66506 bytes / 19001.7 tokens**. Public names: **0**.
+Size: **66825 bytes / 19092.9 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/Extras/Visualization`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/Spectral`, `src/Tape`.
 
@@ -21,7 +21,7 @@ Used by: none.
 Files:
 
 - `AtmosTransportAMDGPUExt.jl` (2997 bytes)
-- `AtmosTransportCUDAExt.jl` (5934 bytes)
+- `AtmosTransportCUDAExt.jl` (6253 bytes)
 - `AtmosTransportMakieExt.jl` (52491 bytes)
 - `AtmosTransportMetalExt.jl` (4094 bytes)
 - `AtmosTransportNVTXExt.jl` (990 bytes)
@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **169653 bytes / 48472.3 tokens**. Public names: **52**.
+Size: **183257 bytes / 52359.1 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1072,20 +1072,21 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 
 Files:
 
-- `Spectral.jl` (3400 bytes)
+- `Spectral.jl` (3437 bytes)
 - `cpu_band_synthesis.jl` (3964 bytes)
-- `cs_face_gather.jl` (2856 bytes)
+- `cs_face_gather.jl` (3097 bytes)
 - `cs_point_synthesis.jl` (2623 bytes)
-- `cs_polar_synthesis.jl` (3758 bytes)
-- `cs_spectral_integrals.jl` (7025 bytes)
-- `device_spectral_synthesis.jl` (11275 bytes)
+- `cs_polar_synthesis.jl` (5549 bytes)
+- `cs_spectral_integrals.jl` (7862 bytes)
+- `device_face_quadrature.jl` (5600 bytes)
+- `device_spectral_synthesis.jl` (12096 bytes)
 - `discovery.jl` (1527 bytes)
-- `gauss_fourier.jl` (5195 bytes)
-- `latitude_band_integrals.jl` (7466 bytes)
+- `gauss_fourier.jl` (5442 bytes)
+- `latitude_band_integrals.jl` (10311 bytes)
 - `mass_support.jl` (41507 bytes)
 - `reduced_spectral_synthesis.jl` (7032 bytes)
 - `spectral_hour_io.jl` (4471 bytes)
-- `spectral_integral_fluxes.jl` (14584 bytes)
+- `spectral_integral_fluxes.jl` (15769 bytes)
 - `spectral_io.jl` (13730 bytes)
 - `spectral_quadrature.jl` (7107 bytes)
 - `spectral_synthesis.jl` (24329 bytes)

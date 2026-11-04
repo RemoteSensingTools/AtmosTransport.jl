@@ -30,20 +30,21 @@ function cs_gather_operator(matrix, adapter, ::Type{FT}) where FT
         weights=adapter(FT.(rows.nzval)))
 end
 
-@kernel function cs_apply_integral_kernel!(out, values, offsets, indices, weights)
+@kernel function cs_apply_integral_kernel!(out, values, offsets, indices, weights, accumulation=Val(false))
     c, k = @index(Global, NTuple)
     if c <= size(out, 1) && k <= size(out, 2)
         total = zero(eltype(out))
+        correction = zero(total)
         for t in offsets[c]:offsets[c+1]-1
-            total += weights[t]*values[indices[t], k]
+            total, correction = face_product_step(total, correction, weights[t],values[indices[t], k], accumulation)
         end
-        out[c, k] = total
+        out[c, k] = face_sum_result(total, correction, accumulation)
     end
 end
 
-function cs_apply_integral!(out, values, op)
+function cs_apply_integral!(out, values, op; accumulation=face_accumulation(get_backend(out), eltype(out)))
     backend = get_backend(out)
-    cs_apply_integral_kernel!(backend, 256)(out, values, op.offsets, op.indices, op.weights; ndrange=size(out))
+    cs_apply_integral_kernel!(backend, 256)(out, values, op.offsets, op.indices, op.weights, accumulation; ndrange=size(out))
     return out
 end
 
@@ -59,7 +60,7 @@ end
 function CSSpectralIntegralWorkspace(q::CSSpectralQuadrature, T::Integer, face_matrix, overlap;
                                      synthesis=CPUSynthesis(), precision=AutoSynthesisPrecision(), batch=8)
     s = build_ring_synthesis(synthesis, q.rings, T+1, batch, precision)
-    surface = surface_synthesis(s, 3)
+    surface = surface_synthesis(s, 3; precision=s isa CPURingSynthesis ? Float64 : eltype(s.plan.coeffs))
     p = s.plan
     FT = eltype(p.coeffs)
     adapt = p.adapter
@@ -69,7 +70,7 @@ function CSSpectralIntegralWorkspace(q::CSSpectralQuadrature, T::Integer, face_m
     # PS is an intensive box mean; C density is integrated over the CS area.
     means = spdiagm(0 => 1 ./ overlap.dst_areas)*overlap.intersections
     g = (; face=cs_gather_operator(face_matrix, adapt, FT),
-        mean=cs_gather_operator(means, adapt, Float64),
+        mean=cs_gather_operator(means, adapt, eltype(surface.plan.coeffs)),
         area=cs_gather_operator(spdiagm(0 => q.areas)*means, adapt, FT),
         sinlon=adapt(FT.(sin.(lon))), coslon=adapt(FT.(cos.(lon))),
         sinlat=adapt(FT.(sin.(lat))), coslat=adapt(FT.(cos.(lat))))
@@ -101,20 +102,16 @@ end
 
 """Synthesize PS and exact LNSP gradients on the open refined CS rings."""
 function integrate_surface_pressure!(ws::CSSpectralIntegralWorkspace, H, T)
-    gradients = lnsp_gradient(H, T)
-    spectra = zeros(ComplexF64, T+2, T+2, 3)
-    spectra[1:T+1, 1:T+1, 1] .= H
-    spectra[:, :, 2] .= gradients[1]
-    spectra[:, :, 3] .= gradients[2]
+    spectra, pressure_scale = surface_pressure_spectra(H, T, ws.surface)
     surface = synthesize_rings(spectra, ws.surface)
     ps = similar(surface, size(surface, 1), 1)
     backend = get_backend(ps)
-    surface_pressure_samples!(backend, 256)(ps, surface; ndrange=length(ps))
+    surface_pressure_samples!(backend, 256)(ps, surface, pressure_scale; ndrange=length(ps))
     return (; surface, ps)
 end
 
 """Great-circle face rates and conservative box means; samples stay on device."""
-function integrate_face_fluxes!(ws::CSSpectralIntegralWorkspace, H, vo, d, T, dA, dB, c::TM5SpectralFluxes)
+function integrate_backend_face_fluxes!(ws::CSSpectralIntegralWorkspace, H, vo, d, T, dA, dB, c::TM5SpectralFluxes; host_output=true)
     q, g, p = ws.quadrature, ws.geometry, ws.synthesis.plan
     FT = eltype(p.coeffs)
     backend = get_backend(p.coeffs)
@@ -124,14 +121,14 @@ function integrate_face_fluxes!(ws::CSSpectralIntegralWorkspace, H, vo, d, T, dA
     nfaces = length(g.face.offsets)-1
     ps_out = similar(surf.ps, nc, 1)
     cs_apply_integral!(ps_out, surf.ps, g.mean)
-    u_out, C_out = zeros(nfaces, nz), zeros(nc, nz)
+    # Retain the historical Float64 host result type for CPU construction.
+    OT = ws.synthesis isa CPURingSynthesis ? Float64 : FT
+    u_out, C_out = similar(p.coeffs, OT, nfaces, nz), similar(p.coeffs, OT, nc, nz)
     for firstlevel in 1:nf:nz
         levels = firstlevel:min(firstlevel+nf-1, nz)
         nb = length(levels)
-        vb = zeros(ComplexF64, T+1, T+1, nf)
-        db = zeros(ComplexF64, T+1, T+1, nf)
-        vb[:, :, 1:nb] .= view(vo, :, :, levels)
-        db[:, :, 1:nb] .= view(d, :, :, levels)
+        vb = spectral_level_batch(vo, levels, nf, p)
+        db = spectral_level_batch(d, levels, nf, p)
         U, V, D = synthesize_native_fields(vb, db, T, c.vod2uv_radius, ws.synthesis)
         cs_stable_polar_winds!(U, V, vb, db, c.vod2uv_radius, ws.polar)
         xyz = similar(p.coeffs, FT, 3ns, nf)
@@ -147,11 +144,20 @@ function integrate_face_fluxes!(ws::CSSpectralIntegralWorkspace, H, vo, d, T, dA
         cs_apply_integral!(faces, xyz, g.face)
         cs_apply_integral!(cells, forcing, g.area)
         synchronize(backend)
-        u_out[:, levels] .= Array(faces)[:, 1:nb]
-        C_out[:, levels] .= Array(cells)[:, 1:nb]
+        view(u_out, :, levels) .= view(faces, :, 1:nb)
+        view(C_out, :, levels) .= view(cells, :, 1:nb)
     end
     synchronize(backend)
     # A zero-row v keeps the common endpoint/balance interface, with all
     # unique CS faces in u (their canonical orientation is in the face table).
-    return (; ps=vec(Array(ps_out)), u=u_out, v=zeros(0, nz), C=C_out)
+    raw = (; ps=vec(ps_out), u=u_out, v=similar(p.coeffs, OT, 0, nz), C=C_out)
+    return host_output ? face_host_result(raw, Float64) : raw
+end
+
+# Scope pedantic math over transforms, Fourier products and all reductions.
+# Array backends choose the hook, including CPU execution of portable plans.
+function integrate_face_fluxes!(ws::Union{SpectralIntegralWorkspace,CSSpectralIntegralWorkspace}, args...; kwargs...)
+    return with_spectral_math(get_backend(ws.synthesis.plan.coeffs)) do
+        integrate_backend_face_fluxes!(ws, args...; kwargs...)
+    end
 end

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- TM5 spectral face construction keeps LL/RG Gauss–Fourier and CS cardinal-16
+  results on the selected backend through level batches and latitude bands.
+  Float32 devices use pressure-anomaly synthesis, stable polar winds and
+  compensated sums with FMA product residuals. CUDA pedantic math covers
+  complete face construction; Float32-kernel PTX contains no Float64
+  instructions. L40S T639 ERA5 maximum face error / level RMS is 1.74e-6
+  on LL 1° and 9.23e-6 on C90. Edge harmonics still exceed the 1e-5 maximum
+  target; per-face relative errors near cancelling zeros remain diagnostic.
+  T639 balanced cm relative L2 is 1.87e-07 on LL 1° and 1.97e-07
+  on C90 against CPU Float64. Warmed complete-window speedups are
+  1.39× / 3.72× vs CPU16. Per-level errors, repeated/fresh-process
+  bits, timings and device-memory peaks are in the spectral manual §17.
+  Streamed Float32 polar plans and sample buffers persist across endpoints;
+  band shapes share bounded latitude tables and reuse per-level coefficients.
+  Qualification rejects nonfinite data and incomplete native-level reports;
+  isolated KA.CPU tests exercise the complete device precision policy.
+  Full-day LL72/O24/C24 CPU goldens are bitwise identical to `origin/main`
+  (`38af9aca7`).
+
 - **Result change for LL/RG `tm5_spectral`:** face quadrature now defaults to
   `"gauss_fourier"`: Gauss–Legendre latitude nodes and exact Fourier integrals
   of oversampled longitude products, including cell pressure and divergence

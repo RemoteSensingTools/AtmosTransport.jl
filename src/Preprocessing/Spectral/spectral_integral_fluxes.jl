@@ -2,9 +2,9 @@
 # 2428–2473. R*Rv/g (not R²/g) follows the two-radius Gauss identity.
 
 """Convert synthesized log surface pressure to pressure [Pa] at each sample."""
-@kernel function surface_pressure_samples!(ps, surface)
+@kernel function surface_pressure_samples!(ps, surface, scale=nothing)
     i = @index(Global)
-    i <= length(ps) && (ps[i, 1] = exp(surface[i, 1]))
+    i <= length(ps) && (ps[i, 1] = surface_pressure_value(surface[i, 1],scale))
 end
 
 """
@@ -92,7 +92,7 @@ end
 end
 
 """Reusable quadrature and synthesis plans. Batches bound the refined-grid working set."""
-struct SpectralIntegralWorkspace{S, F, Q, L, G, B}
+struct SpectralIntegralWorkspace{S, F, Q, L, G, B, P}
     quadrature::G
     synthesis::S
     surface::F
@@ -100,7 +100,10 @@ struct SpectralIntegralWorkspace{S, F, Q, L, G, B}
     longitude::L
     batch::Int
     bands::B
+    polar_cache::P
 end
+SpectralIntegralWorkspace(q, s, surface, geometry, longitude, batch, bands) =
+    SpectralIntegralWorkspace(q, s, surface, geometry, longitude, batch, bands, nothing)
 
 function SpectralIntegralWorkspace(grid, T, c::TM5SpectralFluxes; synthesis = CPUSynthesis(),
                                    precision = AutoSynthesisPrecision(), batch::Integer = 8,
@@ -111,23 +114,28 @@ function SpectralIntegralWorkspace(grid, T, c::TM5SpectralFluxes; synthesis = CP
         max(1, latitude_band_cells÷cpu_band_workers()) : latitude_band_cells
     bands = quadrature_bands(q.rule, q, cells)
     work = spectral_integral_workspace(bands === nothing ? q : first(bands).quadrature,
-        T, c; synthesis, precision, batch)
+        T, c; synthesis, precision, batch, plan_polar=bands === nothing)
+    polar_cache = bands === nothing ? nothing : band_polar_cache(bands, work.synthesis, T, batch)
     return SpectralIntegralWorkspace(q, work.synthesis, work.surface, work.geometry,
-        work.longitude, Int(batch), bands)
+        work.longitude, Int(batch), bands, polar_cache)
 end
 
-function spectral_integral_workspace(q, T, c; synthesis, precision, batch)
+function spectral_integral_workspace(q, T, c; synthesis, precision, batch, plan_polar=true)
     s = build_ring_synthesis(synthesis, q.rings, T+1, native_transform_batch(q.rule, batch), precision;
         stable_poles=c.face_quadrature isa GaussFourier)
     surface = surface_synthesis(s, 3; precision=eltype(s.plan.coeffs))
     longitude = longitude_plans(q.rule, q, s, surface, batch)
-    return SpectralIntegralWorkspace(q, s, surface, integral_geometry(q, s), longitude, Int(batch), nothing)
+    return SpectralIntegralWorkspace(q, s, surface, integral_geometry(q, s; plan_polar), longitude, Int(batch), nothing)
 end
 
-function integral_geometry(q, s)
+function integral_geometry(q, s; plan_polar=true)
     FT = eltype(s.plan.coeffs)
     adapt = s.plan.adapter
-    g = (; lengths = adapt(q.rings.nlon), offsets = adapt(q.rings.offsets),
+    # Float32 scalar vector transforms lose small polar winds to cancellation.
+    # Reuse CS's stable vector harmonics on device plans only; CPU bits stay fixed.
+    polar = plan_polar && s isa GPUSpectralSynthesis && FT === Float32 ?
+        cs_polar_synthesis(s, s.plan.T-1; batch=s.plan.batch÷native_transform_batch(q.rule, 1), rings=q.rings, threshold=0.5) : nothing
+    g = (; polar, lengths = adapt(q.rings.nlon), offsets = adapt(q.rings.offsets),
         coslatitudes = adapt(FT.(cos.(q.rings.latitudes))), node_offsets = adapt(q.node_offsets), node_rows = adapt(q.node_rows),
         cell_offsets = adapt(q.cell_offsets), nlon = adapt(q.nlon),
         weights = adapt(FT.(q.plain_weights)), cosweights = adapt(FT.(q.cosine_weights)),
@@ -139,26 +147,22 @@ end
 
 """Sample exp(LNSP), then integrate cell means with the selected longitude rule."""
 function integrate_surface_pressure!(ws::SpectralIntegralWorkspace, H, T; layout=nothing)
-    gradients = lnsp_gradient(H, T)
-    spectra = zeros(ComplexF64, T+2, T+2, 3)
-    spectra[1:T+1, 1:T+1, 1] .= H
-    spectra[:, :, 2] .= gradients[1]
-    spectra[:, :, 3] .= gradients[2]
+    spectra, pressure_scale = surface_pressure_spectra(H, T, ws.surface)
     surface = layout === nothing ? synthesize_rings(spectra, ws.surface) :
         band_synthesis(spectra, ws.surface; layout)
     p = ws.synthesis.plan
     ps = similar(p.coeffs, eltype(p.coeffs), size(surface, 1), 1)
     backend = get_backend(ps)
-    surface_pressure_samples!(backend, 256)(ps, surface; ndrange = length(ps))
+    surface_pressure_samples!(backend, 256)(ps, surface, pressure_scale; ndrange = length(ps))
     prefix = longitude_integrals!(ws.quadrature.rule, ps, ws, 1, ws.longitude.surface)
     synchronize(backend)
     return (; surface, ps, prefix)
 end
 
 """Integrate native-level face rates and independent spectral divergence C_k."""
-function integrate_face_fluxes!(ws::SpectralIntegralWorkspace, H, vo, d, T, dA, dB, c::TM5SpectralFluxes;
-                                spectra=nothing, samples=nothing, surface_layout=nothing)
-    ws.bands === nothing || return integrate_latitude_bands!(ws, H, vo, d, T, dA, dB, c)
+function integrate_backend_face_fluxes!(ws::SpectralIntegralWorkspace, H, vo, d, T, dA, dB, c::TM5SpectralFluxes;
+                                spectra=nothing, samples=nothing, surface_layout=nothing, host_output=true)
+    ws.bands === nothing || return integrate_latitude_bands!(ws, H, vo, d, T, dA, dB, c; host_output)
     q = ws.quadrature
     g = ws.geometry
     p = ws.synthesis.plan
@@ -168,9 +172,9 @@ function integrate_face_fluxes!(ws::SpectralIntegralWorkspace, H, vo, d, T, dA, 
     nz = length(dA)
     FT = eltype(p.coeffs)
     ps_out = similar(p.coeffs, FT, nc)
-    u_out = zeros(FT, nc, nz)
-    v_out = zeros(FT, nv, nz)
-    C_out = zeros(FT, nc, nz)
+    u_out = similar(p.coeffs, FT, nc, nz)
+    v_out = similar(p.coeffs, FT, nv, nz)
+    C_out = similar(p.coeffs, FT, nc, nz)
     backend = get_backend(ps_out)
     nf = ws.batch
     for firstlevel in 1:nf:nz
@@ -193,11 +197,12 @@ function integrate_face_fluxes!(ws::SpectralIntegralWorkspace, H, vo, d, T, dA, 
         cc = similar(p.coeffs, FT, nc, nf)
         integrate_rows!(q.rule, backend, ps_out, uu, vv, cc, surf, fu, forcing, fv, cp, fp, g, q, nf)
         synchronize(backend)
-        u_out[:, levels] .= Array(uu)[:, 1:nb]
-        v_out[:, levels] .= Array(vv)[:, 1:nb]
-        C_out[:, levels] .= Array(cc)[:, 1:nb]
+        view(u_out, :, levels) .= view(uu, :, 1:nb)
+        view(v_out, :, levels) .= view(vv, :, 1:nb)
+        view(C_out, :, levels) .= view(cc, :, 1:nb)
     end
-    return (; ps = Array(ps_out), u = u_out, v = v_out, C = C_out)
+    raw = (; ps=ps_out, u=u_out, v=v_out, C=C_out)
+    return host_output ? face_host_result(raw) : raw
 end
 
 """Upward independent interface flux W_e = Σ_{k<e} C_k − B_e Σ_k C_k."""
@@ -246,24 +251,25 @@ end
 
 @kernel function integrate_gauss_cells!(ps_out, u_out, C_out, pressure, fu, forcing,
                                        lengths, offsets, integral_offsets, node_offsets, node_rows,
-                                       cell_offsets, nlon, weights, cosweights, areas, R, nf)
+                                       cell_offsets, nlon, weights, cosweights, areas, R, nf, accumulation=Val(false))
     i, j, k = @index(Global, NTuple)
     if j <= length(nlon) && i <= nlon[j] && k <= nf
         cell = cell_offsets[j]+i-1
         ps = zero(eltype(ps_out))
         u = zero(eltype(u_out))
         C = zero(eltype(C_out))
+        ep, eu, ec = zero(ps), zero(u), zero(C)
         for node in node_offsets[j]:node_offsets[j+1]-1
             row = node_rows[node]
             interval = integral_offsets[row]+i-1
             sample = offsets[row]+(i-1)*(lengths[row]÷nlon[j])
-            k == 1 && (ps += cosweights[node]*pressure[interval, 1])
-            u += weights[node]*fu[sample, k]
-            C += weights[node]*forcing[interval, k]
+            k == 1 && ((ps, ep) = face_product_step(ps, ep, cosweights[node],pressure[interval, 1], accumulation))
+            u, eu = face_product_step(u, eu, weights[node],fu[sample, k], accumulation)
+            C, ec = face_product_step(C, ec, weights[node],forcing[interval, k], accumulation)
         end
-        k == 1 && (ps_out[cell] = ps*R^2/areas[cell])
-        u_out[cell, k] = u
-        C_out[cell, k] = C
+        k == 1 && (ps_out[cell] = face_sum_result(ps, ep, accumulation)*R^2/areas[cell])
+        u_out[cell, k] = face_sum_result(u, eu, accumulation)
+        C_out[cell, k] = face_sum_result(C, ec, accumulation)
     end
 end
 
@@ -278,7 +284,8 @@ end
 function integrate_rows!(::GaussFourier, backend, ps_out, uu, vv, cc, surf, fu, forcing, fv, cp, fp, g, q, nf)
     integrate_gauss_cells!(backend, 256)(ps_out, uu, cc, surf.prefix, fu, cp,
         g.lengths, g.offsets, g.integral_offsets, g.node_offsets, g.node_rows, g.cell_offsets,
-        g.nlon, g.weights, g.cosweights, g.areas, eltype(ps_out)(q.radius), nf;
+        g.nlon, g.weights, g.cosweights, g.areas, eltype(ps_out)(q.radius), nf,
+        face_accumulation(backend, eltype(ps_out));
         ndrange=(maximum(q.nlon), length(q.nlon), nf))
     integrate_fourier_boundaries!(backend, 256)(vv, fp, g.integral_offsets, g.rows, g.counts, g.bounds, g.boundary_active, nf;
         ndrange=(maximum(q.boundary_counts), length(q.boundary_counts), nf))

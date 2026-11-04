@@ -375,6 +375,8 @@ files = [
 paths = [
     "src/Preprocessing/**",
     "config/met_sources/**",
+    "scripts/validation/gpu_face_*.jl",
+    "scripts/validation/summarize_gpu_face_quadrature.py",
 ]
 
 [topics.runner]
