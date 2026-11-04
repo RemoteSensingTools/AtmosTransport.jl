@@ -1,5 +1,6 @@
 # Reference digests of test/helpers/cs_adjoint_tape_harness.jl (--record),
-# recorded from main (cbc2e18a2) on the [host] below; see test/README.md.
+# recorded from PR #152 (51988367d), integrated with main (4e73d5b8a),
+# on the [host] below; see test/README.md.
 
 [cases.captured_cw84_tm5win_boundary_vmr.footprint]
 footprints = "2409503a14d9f1b2495e43cb7cf607d87bc04886"
@@ -25,27 +26,27 @@ footprints = "bba633bff27160e0ed9d19e77df48cc120e89c20"
 initial_adjoint = "9927b8d12e4a0a110697abc7120cc8fac6730689"
 
 [cases.captured_monotone_cmfmcsub_split_mass_cfl.footprint]
-footprints = "ca04e3f2fe957cb7edd24cef1efa4e3a6d3f0fec"
-initial_adjoint = "596bece02b102917be12a51002f8ee6bca2007fc"
+footprints = "757233d38a0ac0b414224475c44186e7245ca0f4"
+initial_adjoint = "f25b9c83a3d61b8b3fa0d1eadbe8ebec7fff5d34"
 
 [cases.captured_monotone_cmfmcsub_split_mass_cfl.fourdvar]
-cost = "890466d086463b76209a6911439a6ab9ef9802ec"
-gradients = "74284e74e1161d5396250dc735928ee1cd2fc455"
-simulated = "9669642111178f2e7e9585fc41dc7993a30afba6"
+cost = "7b28fd36c093146627cb519fc20fb5aa4fb095aa"
+gradients = "12924760fa7142b251d37c0c4f83f3768f64ef5d"
+simulated = "f669d219e14de44c4100767bedb028d9f5f0a094"
 
 [cases.captured_monotone_cmfmcsub_split_mass_cfl.jacobian]
-footprints = "b0f138938bbbd8e610f6b6795e00b844a82d8251"
-initial_adjoint = "0e6925ca01323fffa6af100b3787b3efb49fff87"
-windows = "3d8c2422f8945b6a7386af9e8096dafc8591cae4"
+footprints = "e5c0b656506107c7e7ed6687a10a581754bce4b8"
+initial_adjoint = "5f7e302a85e6ac46e9836e8e89ca16317550aa3e"
+windows = "8ff6bfd06d4528cad368e2ac5ca49b6b969e0310"
 
 [cases.captured_monotone_cmfmcsub_split_mass_cfl.optimize]
-controls = "e6c4cfd74a64e37e3aee72cfdf0c6bf2958e987a"
-cost_history = "02a5edfa20aa03a5b1b662746cf7e89dc2ab4afd"
-gradients = "9ed5c68b41cf144ca5041bcbdcbebbe90d291118"
+controls = "a19201e087a169cabe08e98a2201950ec41ac671"
+cost_history = "0b95a20bdeb22ef021e801ac3f9daabe7185cbfc"
+gradients = "4d094fadade9f0cac3c2010265b0c4d769f592cf"
 
 [cases.captured_monotone_cmfmcsub_split_mass_cfl.seeded]
-footprints = "e7fc7ca724272e0e85be04bb853f0b8802fe3e1b"
-initial_adjoint = "f44a50f7e8de1eff38aa0e6c7ec6814161074e4f"
+footprints = "5d1f10964c2159e6488766ecff7a57da86f0fdf1"
+initial_adjoint = "52ab471419ff03b45fba2f6ba459f13ff9d79cee"
 
 [cases.f32_cw84_matrixwin_split_none.footprint]
 footprints = "9f036e24e0d090e6872045b0e11bf7ac31c61d33"
@@ -170,34 +171,34 @@ footprints = "de171bb1b27fd98e0bc352d6844421634cf00d7b"
 initial_adjoint = "657e4f3c8ab66299ba63091ed73d0991406abf05"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.footprint]
-footprints = "976380b00132cfeec852396c14dc927adf235fcd"
-initial_adjoint = "2f3a7519dca85ec3e0f97ac357f379ee392f6a50"
+footprints = "de070ad630369b32408cf4cbe067112940551a16"
+initial_adjoint = "02a4771e54ca7b1e2703127c825cef476cbd520e"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.fourdvar]
-cost = "841ecefceb5ec9761e82b18e8a4fa6dd5f3eb573"
-gradients = "21dac29fdf4c0a00eb4b3fc66f581f11b182579b"
-simulated = "ad81545094775ffe5f2c8a3e511a8faeaccbce56"
+cost = "a60f2d1ab24a20b6690db742fe83bcca86f8f361"
+gradients = "274f1a33726c8be3d5ecc5f557d4410617f67868"
+simulated = "61e49760cf6fe55e0ac69a1e8e19c71ead756b6a"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.fourdvar_operators]
-chi_cost = "4d4cf1b5442d23151a47ba3d0ea66c63e98029bc"
-chi_gradients = "3b6e09719d195e65cb47df2c49e2cae6e119a159"
-cost = "57bcbc9c769b3dda091ec03aa7a535092ce75024"
-gradients = "5d0dafb7705bcd0f53d2565c0aad5c7255c4dc85"
-simulated = "54054ff797a9e2dcc98f5d4a4b63319d88daea6b"
+chi_cost = "2359a9acd4eb94af5ca009c52202f6564d772bdf"
+chi_gradients = "f7342c7d53b97bc8756c4e3ae2b0a53e5aced9f5"
+cost = "d35a3ca0eb6cad7ee80e1fe7d8add8d045d95744"
+gradients = "3898194ade655624a148e7a217f2c1bbd3c2e988"
+simulated = "5a888b540b16062cf2910f55b9e93856e7c2787c"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.jacobian]
-footprints = "34187f55ede1e6a4c40477defbde8d4dac93d56e"
-initial_adjoint = "24420dc951dffb323c285c3cbfdadbc79c80c574"
-windows = "71c89f287b6215a8684f422e3f847c7205325612"
+footprints = "3f1a37baa8a9d90d454df5b14a1334da0cd9de3e"
+initial_adjoint = "22c300889ec297751cffa6f0ef9bf591d09d7da2"
+windows = "b239bad0727849c2302c105e689619db67c56f9b"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.optimize]
-controls = "8a208ccdb704235141e2b43c7f7198deedbf0cd6"
-cost_history = "444220833f12b91898510cabc4a5970d77d2599e"
-gradients = "b5d5863f7c09f42acb407f7bfe9f1a629f909b5f"
+controls = "ca8dff6e855cc4c90086eea0d373f9f60ed871ec"
+cost_history = "d1f648f782626d8726ade763b02b852b25da0e1f"
+gradients = "df7e95b427a1b7093531d8822fff70eefcd4ae3d"
 
 [cases.f64_monotone_cmfmcsub_split_mass_cfl.seeded]
-footprints = "3d353448e3c20e2a39a60e518c8a7813788ae587"
-initial_adjoint = "d168d249a36ed54bae9755c382aab641737cb97a"
+footprints = "a31d9ae31732ec6aecb5689cb9c51e0c07931bfa"
+initial_adjoint = "903631649bc0bca666b597c082ce597b32f9ccfa"
 
 [cases.f64_slopes_tm5sub_boundary_none_cfl.footprint]
 footprints = "85f8c2d8698a67098f397a58f73341c40e6ab452"
@@ -223,27 +224,27 @@ footprints = "ba6e263ff9ce8638b3f5d43e5d98f991503b12df"
 initial_adjoint = "ded68a4bf1f341c6fa3254911b0271bb330924af"
 
 [cases.f64_upwind_cmfmcwin_split_vmr.footprint]
-footprints = "c6e4d2b3c96e07c0f39a935325b612b55a900631"
-initial_adjoint = "5be15d641853a7f5c1c8ea9f406bcc8d8658cd3c"
+footprints = "3fd4c5e18cdaad99b3a51fce49f0b3339625e267"
+initial_adjoint = "42b4e3203575abf40dbace5a4abb8c550f6d0fb2"
 
 [cases.f64_upwind_cmfmcwin_split_vmr.fourdvar]
-cost = "d049d0cfd4fe3f29ad67452b1d698ad8038cbdce"
-gradients = "60e0cf18b6a8aedeb79ea6be8aaf74fe68d4fe7e"
-simulated = "5470fc51fa70a4797139ee703ca6d1fd79d5f866"
+cost = "1b67efd2752e4790b9937c48617182731f7b37ba"
+gradients = "1cb666703d0a3ed7adf226af6532660fbe77b4a1"
+simulated = "ffc3a6ccc001bdeb95d74a1dbcb8be5c96364876"
 
 [cases.f64_upwind_cmfmcwin_split_vmr.jacobian]
-footprints = "e654d3e17a5c77772a9c05b5f28ac374a7c59587"
-initial_adjoint = "58c7facba98136a354e13871a33002292df04277"
-windows = "1a5856683a76e4b5a41e78ec7b66daf7f5ff892c"
+footprints = "a849b3676367d4bd10a64a3a5b6b3c1c51bcacdf"
+initial_adjoint = "99d8bf116cca716ab9a4e9aa39a0a11f82c100fe"
+windows = "f95dd154537e48775e160c1e141d32148e4f619e"
 
 [cases.f64_upwind_cmfmcwin_split_vmr.optimize]
-controls = "a4e0935a4cd5dd3a9d6d8e6ab3053b545f6030cb"
-cost_history = "81c57a80c3c81e80db62519bcf5799bfe424c8d0"
-gradients = "9bd7b10de1a1ef3431da60d17cbd1d94c15aa9b2"
+controls = "00b19f0d12cad7aa52194ce6f0007e0b321ad032"
+cost_history = "a293fc8802113b553d0f2260e0427a50aafdada0"
+gradients = "e3c1e6f570b63454a26085499fac9146f1be9383"
 
 [cases.f64_upwind_cmfmcwin_split_vmr.seeded]
-footprints = "334bd8f3cdd40052685203e2348b564ff38f636b"
-initial_adjoint = "a5d6c8016da69a594f14c6cd145d066b8d1106d5"
+footprints = "654f679e3fecbd7300a78176e7f39b929b21e7c3"
+initial_adjoint = "ef37585b1b8e02eae48a3d935ae62bc086bc0096"
 [host]
 arch = "x86_64"
 cpu = "sapphirerapids"
