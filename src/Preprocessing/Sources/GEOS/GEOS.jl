@@ -18,6 +18,8 @@ import ...Grids: CSGlobalFaceTable,
     GEOSNativePanelConvention,
     HybridSigmaPressure,
     cell_areas,
+    cs_definition,
+    cs_definition_tag,
     cs_geometry_tags,
     cs_panel_ij,
     cs_total_area,
@@ -152,7 +154,10 @@ import ..Vertical: ConvectionInterfaceFlux,
     plan_vertical
 
 import ...Regridding: coarsen_area_weighted!,
+    coarsen_area_weighted_vector!,
+    meshes_nested,
     coarsen_sum!,
+    cs_east_north_basis,
     coarsen_xface_sum!,
     coarsen_yface_sum!
 

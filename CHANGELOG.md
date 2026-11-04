@@ -44,6 +44,31 @@
   or FFTW codelets. This rounding correction can change default Gauss/Fourier
   golden payloads; explicit trapezoid arithmetic is unchanged.
 
+- **GEOS VDIFF winds coarsened as vectors.** GEOS native C(2n) → C(n)
+  preprocessing (e.g. GEOS-IT C180 → C90) block-averaged `vdiff_u` and
+  `vdiff_v` (A3dyn `U`, `V`, eastward/northward at the cell centre) one
+  component at a time, which is wrong where the local east/north axes turn
+  across a block. They are now averaged as Cartesian vectors and projected on
+  the east/north axes at the coarse cell centre, as GCHP's MAPL regrids `U;V`
+  (`Regridding.coarsen_area_weighted_vector!`, bases from
+  `cs_east_north_basis`). On 2021-12-01 GEOS-IT C180 → C90 the old winds
+  differed from GCHP's C90 `Met_U`/`Met_V` by 1e-2 m/s RMS and up to 2.6 m/s
+  next to the poles; the vector mean matches to about 1e-6 m/s RMS (at most 3e-5 m/s). Only
+  binaries written with `include_vdiff_fields = true` and a coarser target
+  change (`vdiff_u`, `vdiff_v` sections; every other section is bitwise
+  unchanged); native-resolution passthrough and the MERRA-2 / ERA5 lat-lon →
+  CS wind remaps (already vector, `wind_regrid = "cartesian"`) are unchanged.
+  Golden impact: none expected. No case in `test/golden/cases.toml` writes
+  GEOS VDIFF winds (`pre_geosit_c45` has no VDIFF payload);
+  `pre_merra2_c90` writes VDIFF winds through the unchanged MERRA-2 Cartesian
+  remap, and `run_c90_merra2_hbvdiff_gpu_f32` reads that binary.
+- **GEOS native block coarsening checks that the target cube is nested.** The
+  C(n·R) → C(n) strategy was chosen from `Nc` alone, so a target with another
+  cube definition (e.g. `definition = "equiangular_gnomonic"`) was silently
+  block-averaged onto cells that do not contain the native ones. It now fails
+  with an error naming the target definition. No golden impact (all GEOS
+  golden targets are nested).
+
 - **AutoTape CPU margin capped.** Automatic CPU selection now holds back
   `min(10% of host/cgroup capacity, 2 GiB)` plus reverse-pass workspace,
   instead of an uncapped 10% capacity margin. This avoids rejecting small
