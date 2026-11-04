@@ -12,7 +12,7 @@ Dependencies include static imports, qualified references, shared-module name us
 
 ## `ext`
 
-Size: **66506 bytes / 19001.7 tokens**. Public names: **0**.
+Size: **66825 bytes / 19092.9 tokens**. Public names: **0**.
 
 Depends on: `src`, `src/Extras/Visualization`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Preprocessing`, `src/Preprocessing/Core`, `src/Preprocessing/Spectral`, `src/Tape`.
 
@@ -21,7 +21,7 @@ Used by: none.
 Files:
 
 - `AtmosTransportAMDGPUExt.jl` (2997 bytes)
-- `AtmosTransportCUDAExt.jl` (5934 bytes)
+- `AtmosTransportCUDAExt.jl` (6253 bytes)
 - `AtmosTransportMakieExt.jl` (52491 bytes)
 - `AtmosTransportMetalExt.jl` (4094 bytes)
 - `AtmosTransportNVTXExt.jl` (990 bytes)
@@ -667,7 +667,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Advection/Reconstruction`
 
-Size: **76886 bytes / 21967.4 tokens**. Public names: **18**.
+Size: **77153 bytes / 22043.7 tokens**. Public names: **18**.
 
 Depends on: `src/Operators`, `src/Parameters`.
 
@@ -678,7 +678,7 @@ Files:
 - `limiters.jl` (7673 bytes)
 - `ppm_subgrid_distributions.jl` (12048 bytes)
 - `reconstruction.jl` (36358 bytes)
-- `schemes.jl` (20807 bytes)
+- `schemes.jl` (21074 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -745,7 +745,7 @@ None recorded.
 
 ## `src/Operators/Convection/CMFMC`
 
-Size: **99600 bytes / 28457.1 tokens**. Public names: **9**.
+Size: **98242 bytes / 28069.1 tokens**. Public names: **9**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/Operators`, `src/Operators/Convection`, `src/Operators/Convection/TM5`, `src/State`.
 
@@ -754,10 +754,10 @@ Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models/Physics`, `src/Mo
 Files:
 
 - `CMFMC.jl` (1262 bytes)
-- `CMFMCConvection.jl` (18748 bytes)
-- `CMFMCMatrixConvection.jl` (13780 bytes)
-- `adjoint_kernels.jl` (8988 bytes)
-- `cmfmc_kernels.jl` (44444 bytes)
+- `CMFMCConvection.jl` (18785 bytes)
+- `CMFMCMatrixConvection.jl` (13269 bytes)
+- `adjoint_kernels.jl` (7606 bytes)
+- `cmfmc_kernels.jl` (44942 bytes)
 - `cmfmc_matrix_kernels.jl` (7578 bytes)
 - `workspace.jl` (4800 bytes)
 
@@ -823,7 +823,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/StepPlan`
 
-Size: **41198 bytes / 11770.9 tokens**. Public names: **31**.
+Size: **43319 bytes / 12376.9 tokens**. Public names: **31**.
 
 Depends on: `src`, `src/Grids`, `src/Operators`, `src/Operators/Advection`, `src/Operators/Advection/CubedSphere`, `src/Operators/Advection/Reconstruction`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -831,8 +831,8 @@ Used by: `src/Adjoints`, `src/Adjoints/Footprint`, `src/Models`, `src/Models/Cor
 
 Files:
 
-- `StepPlan.jl` (31118 bytes)
-- `midpoint.jl` (10080 bytes)
+- `StepPlan.jl` (31167 bytes)
+- `midpoint.jl` (12152 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -1019,7 +1019,7 @@ None recorded.
 
 ## `src/Preprocessing/Sources/GEOS`
 
-Size: **192002 bytes / 54857.7 tokens**. Public names: **16**.
+Size: **193223 bytes / 55206.6 tokens**. Public names: **16**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/MassClosure`, `src/Preprocessing/PhysicsInputs`, `src/Preprocessing/Spectral`, `src/Preprocessing/Targets/CubedSphere`, `src/Preprocessing/TransportBinary`, `src/Preprocessing/Vertical`, `src/Regridding`, `src/State`.
 
@@ -1027,13 +1027,13 @@ Used by: `src/Preprocessing`.
 
 Files:
 
-- `GEOS.jl` (4981 bytes)
+- `GEOS.jl` (5102 bytes)
 - `configuration.jl` (3542 bytes)
 - `cubed_sphere_geos.jl` (26820 bytes)
 - `geos.jl` (24721 bytes)
 - `geos_cs_mass_helpers.jl` (4019 bytes)
 - `geos_cs_omega.jl` (31158 bytes)
-- `geos_cs_resolution.jl` (12839 bytes)
+- `geos_cs_resolution.jl` (13939 bytes)
 - `geos_cs_window.jl` (36648 bytes)
 - `geos_panels.jl` (19152 bytes)
 - `geos_read_window.jl` (23786 bytes)
@@ -1064,7 +1064,7 @@ None recorded.
 
 ## `src/Preprocessing/Spectral`
 
-Size: **169653 bytes / 48472.3 tokens**. Public names: **52**.
+Size: **183257 bytes / 52359.1 tokens**. Public names: **52**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Core`, `src/Preprocessing/Vertical`.
 
@@ -1072,20 +1072,21 @@ Used by: `ext`, `src/Preprocessing`, `src/Preprocessing/PhysicsInputs`, `src/Pre
 
 Files:
 
-- `Spectral.jl` (3400 bytes)
+- `Spectral.jl` (3437 bytes)
 - `cpu_band_synthesis.jl` (3964 bytes)
-- `cs_face_gather.jl` (2856 bytes)
+- `cs_face_gather.jl` (3097 bytes)
 - `cs_point_synthesis.jl` (2623 bytes)
-- `cs_polar_synthesis.jl` (3758 bytes)
-- `cs_spectral_integrals.jl` (7025 bytes)
-- `device_spectral_synthesis.jl` (11275 bytes)
+- `cs_polar_synthesis.jl` (5549 bytes)
+- `cs_spectral_integrals.jl` (7862 bytes)
+- `device_face_quadrature.jl` (5600 bytes)
+- `device_spectral_synthesis.jl` (12096 bytes)
 - `discovery.jl` (1527 bytes)
-- `gauss_fourier.jl` (5195 bytes)
-- `latitude_band_integrals.jl` (7466 bytes)
+- `gauss_fourier.jl` (5442 bytes)
+- `latitude_band_integrals.jl` (10311 bytes)
 - `mass_support.jl` (41507 bytes)
 - `reduced_spectral_synthesis.jl` (7032 bytes)
 - `spectral_hour_io.jl` (4471 bytes)
-- `spectral_integral_fluxes.jl` (14584 bytes)
+- `spectral_integral_fluxes.jl` (15769 bytes)
 - `spectral_io.jl` (13730 bytes)
 - `spectral_quadrature.jl` (7107 bytes)
 - `spectral_synthesis.jl` (24329 bytes)
@@ -1225,7 +1226,7 @@ None recorded.
 
 ## `src/Regridding`
 
-Size: **62165 bytes / 17761.4 tokens**. Public names: **18**.
+Size: **67070 bytes / 19162.9 tokens**. Public names: **20**.
 
 Depends on: `src`, `src/Grids`, `src/Quantities`.
 
@@ -1233,8 +1234,8 @@ Used by: `src`, `src/Extras/Visualization`, `src/Models`, `src/Models/InitialCon
 
 Files:
 
-- `Regridding.jl` (5140 bytes)
-- `cs_nesting.jl` (17705 bytes)
+- `Regridding.jl` (5309 bytes)
+- `cs_nesting.jl` (22441 bytes)
 - `identity_regrid.jl` (4043 bytes)
 - `quantity_regrid.jl` (7286 bytes)
 - `treeify_meshes.jl` (17957 bytes)

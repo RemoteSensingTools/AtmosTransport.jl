@@ -441,9 +441,10 @@ cell-centred rings without pole nodes. The CS target prepares the shared
 then supplies them to Spectral without a reverse dependency on MassClosure.
 `CSSpectralIntegralWorkspace` applies face and overlap maps on the synthesis
 backend with portable KernelAbstractions gathers. Refined three-dimensional
-samples remain there through integration; only reduced target fields return
-per batch. Surface PS uses Float64; the CS three-dimensional kernels use the
-selected synthesis precision with typed constants, without Float64 promotion.
+samples remain there through integration; completed reduced target fields
+return at the endpoint boundary. CPU surface PS uses Float64; GPU surfaces
+and three-dimensional kernels follow the selected synthesis precision with
+typed constants, without Float64 promotion in Float32 kernels.
 
 `Targets/CubedSphere/tm5_spectral_day.jl` orchestrates the shared post-integral
 pin and moist merge, per-layer CS balance, adjacent-cell face humidity,
@@ -485,8 +486,9 @@ PS, mass, humidity, face rates and W, without native C. Only two endpoints
 survive at a time. RG closes and writes each window immediately. LL closes
 each window and keeps one completed lookahead window to form the historical
 delta payload; it retains neither a day of outputs nor a day of pristine rates.
-Synthesis batches bound the refined-grid field buffers. Float64 surface and
-3-D plans share Legendre tables; duplicate face rings share their synthesis.
+Synthesis batches bound the refined-grid field buffers. Surface and 3-D plans
+share Legendre tables when their precision matches; duplicate face rings
+share their synthesis.
 The coefficient working set at T639/L137 is approximately 1.80 GB per hour,
 plus the required next-day hour (3.60 GB combined), versus 43.25 GB for the
 previous 24-hour source allocation alone. These decimal sizes exclude plans,
@@ -1336,8 +1338,8 @@ does not change the accumulation precision. Batches are limited to eight field
 levels in the day driver. LL/RG Gauss/Fourier packs U/V/D into one transform
 batch (24 component columns for eight native levels), reusing the Legendre
 operator and reducing per-mode launches. Explicit trapezoids keep their
-historical transform sequence. CS surface LNSP, both surface gradients and surface PS
-integration retain Float64. Core does not load CUDA. With CUDA loaded,
+historical transform sequence. CPU CS surface LNSP, gradients and PS retain
+Float64; GPU CS surface work follows selected precision. Core does not load CUDA. With CUDA loaded,
 automatic precision uses Float64 on A100/H100/B200-class devices and Float32
 for 3-D fields on
 L40S-class devices. `FAST_MATH` is rejected and the CUDA extension selects
@@ -1354,6 +1356,224 @@ checks require a GPU session; the CPU-array version exercises the portable
 kernels in ordinary CI. The spike's mirrored-table optimization, pinned
 staging and copy-free cuFFT execution are performance follow-ups; this
 implementation uses bounded batches and standard array/FFT APIs.
+
+### Device face construction and qualification
+
+Backend-dispatched kernels pad native coefficients, construct LNSP gradients
+and form stable CS polar potentials. Samples, Fourier products and reduced
+face/cell outputs remain on the selected backend across all native-level
+batches and latitude bands. The default endpoint API transfers the completed
+reduced fields to the existing Float64 host pin, vertical merge, Poisson
+balance and closure. `host_output=false` exposes the resident arrays for
+validation. Geometry, cardinal-16 sparse assembly and accurate Legendre table
+precomputation remain host setup; the legacy nonspectral line-integral API
+is outside this device path. CPU outputs retain the aligned panels, fixed
+FFT batches and historical reduction order.
+
+On Float32 device arrays, Neumaier compensation is applied to Gauss latitude
+sums, Fourier alias folding (real and imaginary parts independently), CS
+cardinal-16 gathers and conservative overlap sums. Float32 FMA also retains
+multiplication residuals in these reductions and complex Fourier products.
+Surface pressure transforms first remove the large constant LNSP mode, then
+restore its pressure factor when exponentiating the small anomaly. This
+avoids rounding the full logarithm at every FFT butterfly; scalar host setup
+prepares the pressure factor. All device correction variables
+and constants are Float32. Float32 LL/RG device plans also use stable vector
+harmonics at polar rows. CS GPU surface pressure and gradients now use the
+selected precision, removing the former compulsory Float64 device surface
+transform. Pedantic CUDA math wraps the complete operation; FAST_MATH/TF32
+remains forbidden. CPU CS surface precision is unchanged.
+
+For a fixed device, library stack and plan shape, deterministic GEMM/FFT
+algorithms and ordered per-face sums are expected to repeat. Actual bitwise
+repeatability must be measured on the GPU. Band size changes the device
+GEMM/FFT batch shapes, so bitwise band independence is **not guaranteed**;
+the runner reports both bitwise equality and numerical sensitivity. Neither
+property is established by CPU emulation.
+
+Float32 compensation cannot recover errors in input conversion, vector
+coefficients, GEMM, FFT or `exp(LNSP)`. A small retained-mode fixture with a
+nearly cancelling northward longitude integral has approximately 2.2e-5
+relative Float32 error before device compensation. This is an observed
+residual, not a relaxed scientific bound. The LL/RG Gauss/Fourier CPU Float64 retained-harmonic
+bound remains 1e-6 per face. CS parity uses the existing cardinal-16 CPU
+quadrature, with its separately documented arc-discretization error. Actual
+L40S qualification measures scale-aware raw-face errors and end-to-end
+balanced fluxes separately.
+
+`/temp1/cfranken/jobs/gpuquad/run_gpu_validation.sh` runs Float32-only L40S
+qualification under `gpu1.lock`. It compares retained rotation, sectoral and
+off-sectoral edge harmonics and all 137 levels of ERA5 2021-12-01 00 UTC at
+T255/T639, for LL 1°, reduced Gaussian and C90. CSV files report absolute
+errors, field-peak-scaled errors, resolved-face relative errors and counts
+outside `1e-6*abs(reference) + 2e-14*max(field_peak,1)`; the small absolute term
+handles symmetry zeros. It also measures repeated results, shape-qualified SHA-256 equality across
+two fresh Julia GPU processes, and LL/RG band budgets 32 versus 4. Two warmed full production windows per backend cover
+LL 1° and C90, with 16 Julia CPU threads, BLAS 1, global FFTW 1, production
+native batches and two FFT threads per CPU band worker. These window times
+include setup, IO, both endpoints, humidity, balance, closure/replay, positivity
+and binary writing. CUDA pool high-water marks and whole-device sampled
+memory peaks have separate labels. See `scripts/validation/README.md`.
+For each native level, the face scale is
+``s_k = \sqrt{\sum_f (F_{f,k}^{\rm CPU})^2/N_f}``, combining both LL/RG
+directions and using unique canonical faces on CS. The scale-aware maximum
+is ``\max_f|F^{\rm GPU}_{f,k}-F^{\rm CPU}_{f,k}|/s_k``; combined horizontal
+relative L2 is ``\|F^{\rm GPU}_k-F^{\rm CPU}_k\|_2/\|F^{\rm CPU}_k\|_2``.
+This gives a meaningful scale even when one direction vanishes by symmetry.
+The per-level CSV retains directional relative L2 as an additional diagnostic.
+The qualification targets are maximum scale-aware face error ≤1e-5 and
+balanced T639 cm relative L2 ≤1e-4. The latter compares the actual dry,
+merged, balanced am/bm/cm binary payloads with the CPU Float64 build of the
+identical 00–01 UTC window, including the same substep schedule. Historical
+`1e-6` mixed per-face bounds remain diagnostic and do not replace these
+production criteria. CPU correctness jobs finish before timed windows begin.
+
+### L40S qualification (2026-11-03)
+
+Actual GPU1 measurements on wurst use an NVIDIA L40S (46068 MiB), driver
+615.71.10, Julia 1.12.6, CUDA.jl 5.11.3, CUDA runtime 13.2, CUBLAS 13.4
+and CUFFT 12.2. All fields and surfaces use Float32 on the device under
+pedantic math. The CPU Float64 reference uses the identical quadrature and
+input coefficients. The real hour is ERA5 2021-12-01 00 UTC, all 137 native
+levels. Targets are LL 360×180, octahedral RG N64 and C90.
+
+| T | Target | Harmonic max error / level RMS | Harmonic max level relative L2 | ERA5 max error / level RMS | ERA5 max level relative L2 |
+|---|---|---:|---:|---:|---:|
+| 255 | LL 1° | 1.06186e-05 | 4.45574e-07 | 1.9502e-06 | 2.16804e-07 |
+| 255 | RG N64 | 4.35975e-05 | 3.7818e-07 | 1.10534e-05 | 1.71609e-07 |
+| 255 | C90 | 5.1813e-06 | 2.67717e-07 | 9.41364e-06 | 2.80534e-07 |
+| 639 | LL 1° | 1.52054e-05 | 4.89434e-07 | 1.73748e-06 | 2.05081e-07 |
+| 639 | RG N64 | 3.37549e-05 | 2.88527e-07 | 9.07991e-06 | 1.73287e-07 |
+| 639 | C90 | 2.25479e-05 | 7.81774e-07 | 9.2329e-06 | 3.13005e-07 |
+
+The requested 1e-5 scale-aware maximum is met by all T639 ERA5 targets.
+The edge-harmonic fixtures exceed it on LL/RG and T639 C90; the largest
+observed value is 4.36e-5 (T255 RG). T255 RG ERA5 is slightly above it at
+1.105e-5. The strict all-case maximum criterion therefore **fails**. This
+is retained in the launcher exit status. Resolved per-face relative errors
+can reach 156.7 on small cancelling T639 LL ERA5 faces, while its maximum
+error / level RMS is 1.74e-6. Per-level directional and joint L2 values and
+all historical mixed-bound violation counts remain available in CSV.
+
+Same-plan and two-fresh-process PS/u/v/C arrays match **bitwise in every
+case**. LL/RG bands 32 versus 4 change bits; worst face sensitivity is
+3.65e-7 of the field peak. CS has no band mode. Captured small LL/CS
+Float32-kernel PTX (397045 bytes) contains no `.f64` registers or instructions.
+GEMM arrays and FFT plans are Float32; scalar pressure-factor preparation,
+accurate Legendre tables, geometry, pin, Poisson balance and closure remain
+host work.
+
+Removing the constant LNSP mode before synthesis reduced T255 LL ERA5
+maximum error / level RMS from 2.323e-5 to 1.950e-6 in the pressure-only
+pilot. PS maximum absolute error fell from 0.2158 to 0.02917 Pa. The final
+measurements also include FMA product-residual compensation. Both changes
+are confined to the device Float32 path. Full-day CPU LL72, O24 and C24
+goldens retain bitwise equality with `origin/main` (`38af9aca7`); eight
+focused files, quick gate and the structure check pass.
+
+#### Balanced fluxes, complete-window cost and memory
+
+The actual written T639 00–01 UTC dry binaries use 137 native input levels,
+34 merged output levels, merge threshold 100 Pa and Float64 storage. CPU/GPU
+schedules match: 108 substeps on LL and 8 on C90. Each measured GPU binary
+is compared with the CPU Float64 build of that same window, after humidity,
+pin, merge, balance, closure/replay, positivity and write.
+
+| Target | Repetition | am relative L2 | bm relative L2 | cm relative L2 |
+|---|---|---:|---:|---:|
+| LL | measured_1 | 1.62832e-07 | 4.33507e-07 | 1.86881e-07 |
+| LL | measured_2 | 1.62832e-07 | 4.33507e-07 | 1.86881e-07 |
+| CS | measured_1 | 1.70303e-07 | 2.07081e-07 | 1.9714e-07 |
+| CS | measured_2 | 1.70303e-07 | 2.07081e-07 | 1.9714e-07 |
+
+Worst balanced cm relative L2 is 1.86881e-07 on LL and 1.9714e-07 on
+C90; both meet the requested ≤1e-4 target. This supports accepting the
+measured Float32 GPU synthesis and face-product path for these ERA5 windows;
+there is no measured cm-accuracy need for CPU Float64 face products. The
+strict all-case raw-face maximum still fails. A workflow requiring that
+universal bound should retain CPU Float64; an optional GPU-synthesis/CPU-
+Float64-product split needs its own qualification before claiming the bound.
+
+One warmup precedes two measured complete jobs per backend. Both use 16
+Julia threads, BLAS 1 and global FFTW 1; CPU Gauss bands retain two FFT
+threads each. GPU runs use GPU1 plus 16 host threads. CPU correctness jobs
+finish before timing. Setup, geometry/table preparation, IO and the full
+production window are included; these are shared-host complete-job costs.
+
+| Target | CPU16 reps (s) | GPU reps (s) | CPU/GPU mean ratio | Active pool peak (GiB) | Reserved pool peak (GiB) | Sampled device peak (MiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| LL | 116.632, 119.965 | 84.939, 84.671 | 1.395x | 14.074 | 14.375 | 15699 |
+| CS | 153.678, 155.063 | 42.022, 40.979 | 3.720x | 15.508 | 15.562 | 16847 |
+
+CUDA pool high-water marks are exact over the process lifetime, including
+warmup; vendor allocations outside that pool are excluded. Whole-device
+usage is sampled every 100 ms and includes context, reservations and vendor
+allocations; short transients can be missed. Decimal and hexadecimal TOML
+pool counters are both parsed correctly. All accuracy-process peaks and
+per-field errors remain in the run's `RESULTS.md` and CSV files.
+
+#### Streamed polar plans and LL host costs
+
+Float32 LL/RG workspaces build polar derivative/divided FFT plans once for
+each compatible band shape. Shapes share one pair of latitude tables sized
+for the largest polar band; accurate host recurrences refill those tables
+before the next band executes. Polar sample scratch persists, and native
+VO/D staging prepares polar coefficients once per endpoint/level batch.
+This retains bounded latitude-table storage across repeated endpoints.
+Each shape retains its FFT/sample scratch, while cached polar coefficients
+scale with the native spectral levels. Other integration temporaries still
+use backend allocation and GC; the measured pool high-water remains the
+authoritative memory result.
+
+A GPU1 LL profile after plan reuse captured 8,733 main-thread samples:
+42.4% included ring synthesis, 7.4% included CUDA synchronization, and
+20.7% included the daily humidity preload. These are overlapping stack
+fractions from a complete job on the shared host, not isolated phase times.
+CUDA KA launches, CUBLAS handles and CUFFT plans use the task's current
+stream. Synthesis now relies on that ordering between pack, GEMM, scatter
+and FFT, retaining one completion wait per synthesis call; other backends
+keep their existing barriers.
+
+The matching profile after this change captured 8,768 main-thread samples:
+35.1% included ring synthesis, 1.0% CUDA synchronization and 23.0% the
+humidity preload. Written am/bm/cm payloads were bitwise identical across
+the scheduling change. Complete profiled jobs took 103.436/104.127 s before/
+after with concurrent CPU correctness work, so these profiles establish
+reduced synchronization overhead, not a complete-job speedup. Final warmed
+window timings above wait for those correctness jobs to finish.
+
+Remaining performance follow-ups are the host-driven per-order launch/GEMM
+loop, repeated bounded latitude-table transfers and daily humidity/input IO.
+The daily preload still reads all 24 hours for a one-window benchmark because
+that is the production day setup. Chunking inputs or batching spectral orders
+would need separate implementation and qualification; the 108/8 substep
+schedules alone do not establish proportional replay cost.
+
+Qualification checks exact case/field/native-level coverage and rejects
+nonfinite metrics, payloads and timings. Joint horizontal reference RMS must
+be positive; exact zero references in other fields pass only with zero
+error and zero scaled metrics. An isolated KA.CPU subprocess enables device
+staging, polar coefficients, pressure anomalies and Float32 compensation
+together, including non-unit-product cancellation in a launched gather.
+
+### Earlier CPU emulation
+
+CPU execution of the complete portable Float32 kernel path on six LL 1°
+latitude cells (both poles and equator, all longitudes) gives the following
+maxima across sampled regions. The real hour includes all 137 native levels;
+these are bounded investigations using BLAS/FFTW, not GPU measurements.
+
+| Truncation | Harmonic face peak-scaled error | Harmonic resolved-face relative error | Real-hour face peak-scaled error | Real-hour resolved-face relative error |
+|---|---:|---:|---:|---:|
+| T255 | 8.19e-7 | 1.46e-5 | 2.51e-6 | 1.89e-1 |
+| T639 | 7.52e-7 | 1.79e-4 | 4.67e-6 | 4.57e-2 |
+
+Resolved faces exceed `1e-12*max(field_peak,1)` in magnitude. Large relative
+errors occur in small cancelling fluxes; the per-face bound fails despite
+small peak-scaled errors. Compensation and stable polar winds are enabled.
+These earlier CPU-emulation results precede the pressure-anomaly and
+FMA-product corrections. Actual CUBLAS/CUFFT measurements use the updated
+qualification runner. The progress file retains absolute errors and counts.
 
 Measured synthetic divergence-identity residuals with explicit trapezoids ``||C + H||₂ / ||C||₂`` with refinement
 steps 2, 4, 8 are 0.0322, 0.00778, 0.00252 on LL and 0.0138, 0.00453,

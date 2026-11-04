@@ -13,7 +13,9 @@ contract.
   `source_coverage` gives the covered area of each source cell.
 - `coarsen_sum!`, `coarsen_area_weighted!`, `coarsen_xface_sum!` and
   `coarsen_yface_sum!` are the cubed-sphere cell and face restriction
-  kernels of the transport-binary coarseners.
+  kernels of the transport-binary coarseners;
+  `coarsen_area_weighted_vector!` (with `cs_east_north_basis`) coarsens
+  cell-centre east/north winds as vectors.
 - `default_regrid_cache_dir` is the shared weight cache.
 
 ```@autodocs

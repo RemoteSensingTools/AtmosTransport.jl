@@ -123,11 +123,21 @@ operators (e.g. convection-only timing, regression). Select with
 `[advection] scheme = "none"`. `StepPlans.transport_step!` composes it
 without sweeps; Advection has no `apply!` method for it. Diffusion-only runs
 are supported as a single mass-conserving vertical solve. Surface fluxes
-require an advection palindrome and are therefore rejected with `NoAdvection`.
+normally sit inside the advection palindrome and are rejected with
+`NoAdvection`. The exception is the cubed sphere with
+`DiffusiveSurfaceFluxBoundary` (`[diffusion] surface_flux_boundary = true`,
+always on for `kind = "geoschem_nonlocal_vdiff"`): its palindrome center is
+`S(dt) → V(dt)` with no half-steps, so the no-advection step runs that same
+center, with the diffusion scheme's emission deposit. It equals an advection
+step with zero mass fluxes and adds exactly the emitted mass, which makes a
+PBL-only run with a surface source possible.
+
 Without advection nothing moves the air mass inside a met window, so by
 default every step starts by resetting it to the window's air mass at the
 end of that step (`[run] air_mass_update = "step"`, see
 [Air mass in runs without advection](@ref noadvection-air-mass)).
+With `air_mass_reset_mode = "preserve_vmr"`, each reset also rescales tracer
+mass added earlier in the window, including surface emissions.
 
 ## Diffusion
 

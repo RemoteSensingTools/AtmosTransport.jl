@@ -43,7 +43,8 @@ using ..Advection: fill_panel_halos!, AbstractAdvectionScheme, LinRoodPPMScheme,
                    AbstractBinaryCFLCheck, NoBinaryCFLCheck, BinaryCFLCheck
 using ..Diffusion: AbstractDiffusion, NoDiffusion, DiffusionWorkspace,
                    apply_vertical_diffusion_vmr!, preflight_diffusion,
-                   uses_diffusive_surface_flux_boundary, surface_flux_coupling, surface_flux_center!
+                   uses_diffusive_surface_flux_boundary, surface_flux_coupling, surface_flux_center!,
+                   DiffusiveSurfaceFluxBoundary
 using ..SurfaceFlux: AbstractSurfaceFluxOperator, NoSurfaceFlux, SurfaceFluxOperator,
                      apply_surface_flux!, center_emission_deposit
 using ..Convection: AbstractConvection, NoConvection

@@ -457,3 +457,112 @@ end
         end
     end
 end
+
+# GCHP-VDIFF winds (A3dyn U, V: eastward/northward components at the cell
+# centres) are coarsened C(2n) -> C(n) as vectors. A solid-body rotation
+# V(x) = Ω × x has the exact block mean Ω × x̄, so the coarse east/north
+# components are known analytically; averaging u and v separately is off by
+# O(|V|) in the polar-panel cells, where the local axes turn by up to 90°
+# across a block. Scalars (T, QV) keep the plain area-weighted block mean.
+@testset "GEOS block coarsening averages VDIFF winds as vectors" begin
+    P = AtmosTransport.Preprocessing
+    G = AtmosTransport.Grids
+    Nsrc, Ndst, Nz = 32, 16, 2
+    settings = GEOSITSettings(root_dir = mktempdir(), Nc = Nsrc, include_vdiff_fields = true)
+    grid = build_target_geometry(
+        Dict{String,Any}("type" => "cubed_sphere", "Nc" => Ndst,
+                          "panel_convention" => "geos_native"), Float64)
+    strategy = P.GEOS._geos_cs_resolution_strategy(settings, grid)
+    @test strategy isa P.GEOS.GEOSCSBlockCoarsenStrategy{2}
+    ws = P.GEOS._geos_strategy_workspace(strategy, settings, grid, Float64, Nz, Nz)
+    fine_mesh = ws.source_mesh
+    Ω = (0.3, -0.5, 1.1) .* 1e-5 .* 6.371e6     # tilted rotation axis, |V| up to ~8 m/s
+    en(λ, φ) = ((-sin(λ), cos(λ), 0.0), (-sin(φ) * cos(λ), -sin(φ) * sin(λ), cos(φ)))
+    function rotation_uv(mesh)
+        ntuple(6) do p
+            lon, lat = G.panel_cell_center_lonlat(mesh, p)
+            u = zeros(mesh.Nc, mesh.Nc, Nz); v = zeros(mesh.Nc, mesh.Nc, Nz)
+            for j in 1:mesh.Nc, i in 1:mesh.Nc
+                λ, φ = deg2rad(lon[i, j]), deg2rad(lat[i, j])
+                x = (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ))
+                e, n = en(λ, φ)
+                V = G.cross3(Ω, x)
+                for k in 1:Nz
+                    u[i, j, k] = k * G.dot3(V, e)
+                    v[i, j, k] = k * G.dot3(V, n)
+                end
+            end
+            (u, v)
+        end
+    end
+    fine = rotation_uv(fine_mesh)
+    t = ntuple(p -> 250 .+ rand(Nsrc, Nsrc, Nz), 6)
+    qv = ntuple(p -> 1e-3 .* rand(Nsrc, Nsrc, Nz), 6)
+    raw = (vdiff = (u = ntuple(p -> fine[p][1], 6), v = ntuple(p -> fine[p][2], 6),
+                    t = t, qv = qv),)
+    out = P.GEOS._geos_vdiff_native_target!(strategy, ws, raw)
+
+    # Exact answer: the area-weighted mean of the fine Cartesian vectors
+    # Ω × x_f is Ω × x̄, projected on the coarse-centre east/north axes.
+    coarse_mesh = grid.mesh
+    area = fine_mesh.cell_areas
+    max_err = 0.0; max_err_polar = 0.0; max_scalar_err = 0.0
+    for p in 1:6
+        flon, flat = G.panel_cell_center_lonlat(fine_mesh, p)
+        clon, clat = G.panel_cell_center_lonlat(coarse_mesh, p)
+        for j in 1:Ndst, i in 1:Ndst
+            xbar = (0.0, 0.0, 0.0); A = 0.0
+            for jj in 1:2, ii in 1:2
+                fi, fj = 2(i - 1) + ii, 2(j - 1) + jj
+                λ, φ = deg2rad(flon[fi, fj]), deg2rad(flat[fi, fj])
+                a = area[fi, fj]
+                xbar = xbar .+ a .* (cos(φ) * cos(λ), cos(φ) * sin(λ), sin(φ))
+                A += a
+            end
+            Vbar = G.cross3(Ω, xbar ./ A)
+            e, n = en(deg2rad(clon[i, j]), deg2rad(clat[i, j]))
+            for k in 1:Nz
+                err = hypot(out.u[p][i, j, k] - k * G.dot3(Vbar, e),
+                            out.v[p][i, j, k] - k * G.dot3(Vbar, n))
+                max_err = max(max_err, err)
+                abs(clat[i, j]) > 60 && (max_err_polar = max(max_err_polar, err))
+            end
+        end
+        ref_t = AtmosTransport.Regridding.coarsen_area_weighted!(zeros(Ndst, Ndst, Nz), t[p], area, 2)
+        ref_q = AtmosTransport.Regridding.coarsen_area_weighted!(zeros(Ndst, Ndst, Nz), qv[p], area, 2)
+        max_scalar_err = max(max_scalar_err, maximum(abs, out.t[p] .- ref_t),
+                             maximum(abs, out.qv[p] .- ref_q))
+    end
+    @test max_err < 1e-12          # vector mean: exact up to round-off
+    @test max_err_polar < 1e-12    # including the polar-panel cells
+    @test max_scalar_err == 0      # T, QV: unchanged plain area means
+
+    # The component mean that the vector mean replaces is O(1 m/s) wrong
+    # near the poles for this flow (the regression this test guards).
+    comp_err = maximum(1:6) do p
+        cu = AtmosTransport.Regridding.coarsen_area_weighted!(zeros(Ndst, Ndst, Nz), fine[p][1], area, 2)
+        maximum(abs, cu .- out.u[p])
+    end
+    @test comp_err > 0.1
+
+    # Float32 panels, as in production: same answer to Float32 rounding
+    # (|V| up to ~16 m/s at level 2, eps(16f0) ≈ 1.9e-6).
+    ws32 = P.GEOS._geos_strategy_workspace(strategy, settings, grid, Float32, Nz, Nz)
+    raw32 = (vdiff = map(f -> map(x -> Float32.(x), f), raw.vdiff),)
+    out32 = P.GEOS._geos_vdiff_native_target!(strategy, ws32, raw32)
+    @test maximum(p -> maximum(abs, out32.u[p] .- out.u[p]), 1:6) < 3e-5
+    @test maximum(p -> maximum(abs, out32.v[p] .- out.v[p]), 1:6) < 3e-5
+end
+
+@testset "GEOS block coarsening rejects a target cube not nested in the native one" begin
+    P = AtmosTransport.Preprocessing
+    settings = GEOSITSettings(root_dir = mktempdir(), Nc = 32, include_vdiff_fields = true)
+    grid = build_target_geometry(
+        Dict{String,Any}("type" => "cubed_sphere", "Nc" => 16, "panel_convention" => "geos_native",
+                          "definition" => "equiangular_gnomonic"), Float64)
+    strategy = P.GEOS._geos_cs_resolution_strategy(settings, grid)
+    @test_throws ArgumentError P.GEOS._geos_strategy_workspace(strategy, settings, grid, Float64, 2, 2)
+    nested = build_target_geometry(
+        Dict{String,Any}("type" => "cubed_sphere", "Nc" => 16, "panel_convention" => "geos_native"), Float64)
+    @test P.GEOS._geos_strategy_workspace(strategy, settings, nested, Float64, 2, 2) !== nothing
+end

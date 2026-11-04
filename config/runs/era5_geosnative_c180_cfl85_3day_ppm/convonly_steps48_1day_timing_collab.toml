@@ -5,11 +5,10 @@
 # Lets us measure the lower bound of "what does P6 buy us" without any
 # Strang-split overhead from neighbouring operators.
 #
-# NoAdvection is a typed no-op that hard-rejects non-NoDiffusion /
-# non-NoSurfaceFlux companion operators, so this config also doubles as
-# the smoke test for that contract: if anyone re-enables `[diffusion]`
-# or `[tracers.*.surface_flux]` here, the run will fail loudly with a
-# pointer to the right TOML knob.
+# NoAdvection is a typed no-op. It rejects `[tracers.*.surface_flux]`
+# unless the cubed-sphere diffusion uses `surface_flux_boundary = true`
+# (S(dt)->V(dt), no half-steps), so re-enabling emissions here fails
+# loudly with a pointer to the right TOML knob.
 #
 # Runner:
 #   ATMOSTR_TIMERS=1 julia --project=. scripts/run_transport.jl \

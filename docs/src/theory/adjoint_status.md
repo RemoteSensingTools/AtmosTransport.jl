@@ -87,7 +87,9 @@ run on the array backend; the tape path does not require host scalar reads.
 
 The CS reverse pass also supports the default, unclamped/full-column/unmerged
 forms of `TM5Convection`, `CMFMCConvection`, and `CMFMCMatrixConvection`.
-CMFMC and CMFMC-matrix have column adjoint-identity tests; the TM5/CMFMC
+CMFMC and CMFMC-matrix have column adjoint-identity tests (for CMFMC also the
+transpose of the forward column matrix, sub-cloud mixing included, in
+`test_cmfmc_ras_cloud_base.jl`); the TM5/CMFMC
 footprint paths are checked against finite-difference emission gradients in
 `test_cs_ppm_adjoint_footprint.jl`.
 

@@ -141,6 +141,12 @@ test and so missed the index errors of issue #54 (see
 slopes advection; a prognostic-moment scheme is postponed (see
 [Advection schemes](@ref)).
 
+### Model parity (GEOS-Chem)
+
+| What | Tests | Status |
+|---|---|---|
+| CMFMC (RAS) column update against GEOS-Chem's `DO_RAS_CLOUD_CONVECTION` | `test/core/test_cmfmc_ras_cloud_base.jl` against a literal port of the GEOS-Chem routine (cubed sphere, lat-lon, reduced Gaussian; CMFMC-edge and DQRCU cloud base; Float64 and Float32) | green; before the cloud-base order fix the cloud-base layer went negative (−1.0e-4 in the test column) |
+
 ## Remaining end-to-end validation gaps
 
 The following gaps remain even where production comparisons now exist:

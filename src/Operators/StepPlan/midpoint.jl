@@ -161,16 +161,21 @@ end
 
 # NoAdvection is a diffusion-only composition, with no palindrome or midpoint
 # records. Advection has no `apply!` method for it: this is its only path, and
-# it holds the emission rejection and the CS recorder guard.
+# it holds the emission check and the CS recorder guard. Surface emissions run
+# only where the palindrome center has no half-steps to drop: on the cubed
+# sphere with `DiffusiveSurfaceFluxBoundary`, whose center is S(dt) → V(dt).
+# There the step runs that same center (`TransportMidpoint`, with the scheme's
+# emission deposit) on the state's own buffers.
 function transport_step!(state, fluxes, grid, scheme::NoAdvection, dt;
                           workspace = nothing, diffusion_workspace = nothing,
                           diffusion_op = NoDiffusion(), emissions_op = NoSurfaceFlux(),
                           meteo = nothing, recorder::AbstractStepRecorder = NoStepRecorder(),
                           kwargs...)
     _check_noadvection_recorder(state, recorder)
-    _noadvection_reject_emissions_op(emissions_op)
+    _check_noadvection_emissions(state, diffusion_op, emissions_op)
     _preflight_transport!(state, fluxes, diffusion_op, diffusion_workspace, dt)
-    _diffusion_only!(state, diffusion_op, diffusion_workspace, dt, meteo)
+    _noadvection_step!(state, grid, dt, workspace, diffusion_op, diffusion_workspace,
+                       emissions_op, meteo)
     return nothing
 end
 
@@ -181,14 +186,41 @@ function _check_noadvection_recorder(::CubedSphereState, recorder)
     return nothing
 end
 
-@inline _noadvection_reject_emissions_op(::NoSurfaceFlux) = nothing
-function _noadvection_reject_emissions_op(::AbstractSurfaceFluxOperator)
+@inline _check_noadvection_emissions(state, diffusion_op, ::NoSurfaceFlux) = nothing
+@inline _check_noadvection_emissions(state, diffusion_op, ::AbstractSurfaceFluxOperator) =
+    _noadvection_emissions_supported(state, surface_flux_coupling(diffusion_op))
+
+@inline _noadvection_emissions_supported(::CubedSphereState, ::DiffusiveSurfaceFluxBoundary) = nothing
+function _noadvection_emissions_supported(state, coupling)
     throw(ArgumentError(
-        "NoAdvection is incompatible with non-NoSurfaceFlux: surface " *
-        "emissions are applied as Strang half-steps wrapping the " *
-        "advection palindrome, so running them without advection " *
-        "drops the symmetric splitting. Remove `[tracers.*.surface_flux]` " *
-        "blocks for a convection-only or diffusion-only run."))
+        "NoAdvection (scheme = \"none\") with surface emissions is supported only on " *
+        "the cubed sphere with DiffusiveSurfaceFluxBoundary (`[diffusion] " *
+        "surface_flux_boundary = true`, always on for kind = \"geoschem_nonlocal_vdiff\"), " *
+        "whose palindrome center S(dt) → V(dt) has no half-steps. This run has " *
+        "$(nameof(typeof(coupling))) on $(_noadvection_topology(state)), where the " *
+        "emission belongs inside the advection palindrome. Remove the " *
+        "`[tracers.*.surface_flux]` blocks, switch advection on, or use that " *
+        "coupling on a cubed-sphere grid."))
+end
+
+_noadvection_topology(::CubedSphereState) = "the cubed sphere"
+_noadvection_topology(::CellState) = "a lat-lon or reduced-Gaussian grid"
+
+@inline _noadvection_step!(state, grid, dt, workspace, diffusion_op, ws,
+                           ::NoSurfaceFlux, meteo) =
+    _diffusion_only!(state, diffusion_op, ws, dt, meteo)
+@inline _noadvection_step!(state, grid, dt, workspace, diffusion_op, ws,
+                           emissions_op::AbstractSurfaceFluxOperator, meteo) =
+    _noadvection_center!(state, grid, dt, workspace, diffusion_op, ws, emissions_op, meteo)
+
+# Only reached after `_check_noadvection_emissions` (CS + DiffusiveSurfaceFluxBoundary).
+@inline function _noadvection_center!(state::CubedSphereState, grid, dt, workspace,
+                                      diffusion_op, ws, emissions_op, meteo)
+    hook = TransportMidpoint(; dt, workspace, diffusion_op, diffusion_workspace = ws,
+                              emissions_op, tracer_names = state.tracer_names, meteo, grid,
+                              halo_width = state.halo_width)
+    apply_midpoint!(hook, state.tracers_raw, state.air_mass)
+    return nothing
 end
 
 @inline _diffusion_only!(state::CellState, ::NoDiffusion, ws, dt, meteo) = nothing

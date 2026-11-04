@@ -60,8 +60,11 @@ only after the forward half has changed the state. Direct Advection `apply!`
 with its default `NoMidpoint()` is the advection-only API.
 
 `NoAdvection` has no Advection `apply!` method. Its `transport_step!` method
-skips the sweeps, rejects surface fluxes, rejects a recorder on the cubed
-sphere and applies a single `V(dt)`. To add a midpoint operator, extend the
+skips the sweeps, rejects a recorder on the cubed sphere and applies a single
+`V(dt)`. Surface fluxes are rejected except on the cubed sphere with
+`DiffusiveSurfaceFluxBoundary`, where the step runs the palindrome center
+`S(dt) → V(dt)` through `TransportMidpoint` on the state's own buffers (the
+same composition and emission deposit as with advection). To add a midpoint operator, extend the
 composition here with its recorder/transpose; keep Advection independent of
 that physics.
 

@@ -33,6 +33,9 @@ spectral_gpu_math_guard() = spectral_gpu_math_guard(Val(:cuda))
 spectral_gpu_math_guard(::Val) = nothing
 with_spectral_math(f, backend) = f()
 with_spectral_math(f, ::KernelAbstractions.CPU) = f()
+# Backends conservatively wait between KA kernels and vendor operations.
+# CUDA specializes this: its KA, BLAS and FFT calls share a task-local stream.
+synthesis_stream_barrier(backend) = synchronize(backend)
 cpu_band_workers() = min(4, max(1, Threads.nthreads()÷4))
 # Keep FFTW's plan choice independent of Julia worker count and host capacity.
 cpu_band_fft_threads() = 2
@@ -71,6 +74,15 @@ build_ring_synthesis(::CPUSynthesis, rings, T, batch, precision; stable_poles=fa
     CPURingSynthesis(RingSynthesisPlan(rings, T, batch, precision isa AutoSynthesisPrecision ? Float64 : precision;
         stable_poles, fft_threads=stable_poles ? cpu_band_fft_threads() : 0))
 build_ring_synthesis(::GPUSynthesis, rings, T, batch, precision; stable_poles=false) = GPUSpectralSynthesis(rings, T, batch; precision, stable_poles)
+
+# Rebuild streamed plans from their array adapter, including CPU emulation of
+# a device plan. Do not rediscover CUDA or silently switch to a CPU transform.
+build_ring_synthesis(::CPURingSynthesis, rings, T, batch, precision; stable_poles=false) =
+    build_ring_synthesis(CPUSynthesis(), rings, T, batch, precision; stable_poles)
+function build_ring_synthesis(s::GPUSpectralSynthesis{FT}, rings, T, batch, precision; stable_poles=false) where FT
+    p = RingSynthesisPlan(rings, T, batch, FT; adapter=s.plan.adapter, stable_poles)
+    return GPUSpectralSynthesis{FT,typeof(p)}(p)
+end
 
 function RingSynthesisPlan(rings::SynthesisRings, T::Integer, batch::Integer,
                            ::Type{FT} = Float64;
@@ -145,7 +157,7 @@ function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSy
         for m in 0:p.T
             pack_ring_coefficients!(backend, 256)(p.coeffs, source, m, p.T, nf;
                 ndrange = (p.T-m+1, nf))
-            synchronize(backend)
+            synthesis_stream_barrier(backend)
             mul!(p.sums, view(p.coeffs, :, 1:p.T-m+1), p.legendre[m+1])
             for group in p.groups
                 scatter_ring_spectrum!(backend, 256)(group.half, p.sums, group.rows,
@@ -155,7 +167,7 @@ function synthesize_rings(spec, synthesis::Union{CPURingSynthesis, GPUSpectralSy
         end
         out === nothing && (out = similar(p.coeffs, eltype(p.coeffs), p.rings.offsets[end]-1, nf))
         for group in p.groups
-            synchronize(backend)
+            synthesis_stream_barrier(backend)
             ring_fft_mul!(group.samples, group.plan, group.half)
             gather_ring_samples!(backend, 256)(out, group.samples, group.rows, p.offsets,
                 group.J, nf;
