@@ -1,26 +1,23 @@
 # ---------------------------------------------------------------------------
-# CMFMCConvection — GCHP-audited two-pass CMFMC convective transport.
+# CMFMCConvection — two-pass CMFMC convective transport in GEOS-Chem's RAS order.
 # Basis-polymorphic, with well-mixed sub-cloud treatment, mandatory CFL
 # sub-cycling, and no positivity clamp to preserve adjoint structure.
 #
 # Intentional divergences from line-by-line GCHP RAS (`convection_mod.F90`):
-#   1. Cloud-base detection uses the lowest non-zero `cmfmc[k+1]` rather
-#      than `DQRCU(K) > 0` (GCHP RAS proxy). Our binary contract delivers
-#      cmfmc + dtrain only — no DQRCU — so we proxy from the available
-#      mass flux. Same physical intent (lowest level with updraft inflow),
-#      different signal source. See cmfmc_kernels.jl:493.
-#   2. Pass-0 adds a local cloud-base mass-closing tracer update for
-#      column self-consistency (kg/m²-weighted well-mix). GCHP RAS does
-#      not have this step in the column kernel; it relies on the
-#      dynamics-core PBL air-mass rescale to absorb residual imbalance.
-#      In standalone offline transport this rescale is absent, so the
-#      added closure exists to keep our env-only column update truthful.
-#      See cmfmc_kernels.jl:559.
+#   1. By default the cloud base is the lowest layer with non-zero
+#      `cmfmc[k+1]` (`CMFMCEdgeCloudBase`) rather than `DQRCU(K) > 0`; the
+#      DQRCU base is available on the cubed sphere (`ArchivedCloudBase`)
+#      when the binary carries it.
+#   2. No `Q + DELQ < 0` clip (by default; see `clamp`), and the model-top
+#      layer is updated (GEOS-Chem stops at KTOP = NLAY - 1).
 #
-# These divergences are documented in the audit memo
-# `convection_reference_audit_2026_05_24.md`. The label is
-# "GCHP-audited" (matches the high-level operator design + ~95% of the
-# kernel mechanics) rather than "GCHP-faithful" (line-by-line parity).
+# The sub-cloud mixing, the updraft and the level update follow GEOS-Chem's
+# order: the updraft entrains the cloud-base layer as it was, and the layer
+# takes the sub-cloud exchange through its bottom edge in the level update
+# (`T1 + T4`). GEOS-Chem's routine conserves column tracer mass apart from
+# its clip, and so does this one. Equations: "The RAS column update" in
+# docs/src/for_tm5_gchp_users/operators_on_binaries.md; a literal port of the
+# GEOS-Chem routine is the reference of test/core/test_cmfmc_ras_cloud_base.jl.
 # ---------------------------------------------------------------------------
 
 
@@ -50,9 +47,10 @@ struct ArchivedCloudBase <: AbstractCloudBase end
 """
     CMFMCConvection()
 
-GCHP-audited CMFMC convective transport operator (env + qc two-pass).
-NOT line-by-line GCHP RAS — see the module-top comment for the two
-intentional divergences (cloud-base proxy + Pass-0 closure).
+CMFMC convective transport in the order of GEOS-Chem's RAS
+(`DO_RAS_CLOUD_CONVECTION`): sub-cloud mixing, updraft, flux-form level
+update. See the module-top comment for the differences from GEOS-Chem
+(default cloud base, no positivity clip).
 
 No struct fields — the forcing arrays (`cmfmc`, optionally `dtrain`)
 arrive via `TransportModel.convection_forcing`, populated at the first substep
@@ -91,15 +89,17 @@ matches `n_sub` manual calls with `sdt = dt / n_sub`.
 # Well-mixed sub-cloud layer
 
 Applies GCHP's pressure-weighted well-mixed treatment below cloud
-base (`convection_mod.F90:742-782`). Absent in legacy Julia;
-deliberate improvement for surface-source tracers. See the kernel
+base (`convection_mod.F90:738-782`). As in GEOS-Chem the updraft then
+entrains the cloud-base layer as it was, and the layer takes the
+sub-cloud exchange through its bottom edge in the level update: the
+column is conserved, and the inflow is not counted twice in the
+cloud-base layer (which could drive it negative). See the kernel
 Pass-0 block in `cmfmc_kernels.jl`.
 
 # Column mass ledger
 
 The update conserves column tracer mass by construction, but each
-layer's new mass is rounded when it is written (the cloud-base layer
-twice, by the sub-cloud closure and by the flux update). A
+layer's new mass is rounded when it is written. A
 compensated column ledger returns that rounding to the column's
 largest layer and keeps the sub-ulp remainder as a per-column,
 per-tracer carry in `CMFMCWorkspace` (as for TM5 convection; see the

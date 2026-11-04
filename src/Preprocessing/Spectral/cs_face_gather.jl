@@ -41,26 +41,27 @@ end
     return reinterpret(Float32,bits+Int32(rounding[t,d]))
 end
 
-@kernel function cs_apply_face_kernel!(out, values, offsets, indices, weights, normals, rounding, nsource)
+@kernel function cs_apply_face_kernel!(out, values, offsets, indices, weights, normals, rounding, nsource, accumulation=Val(false))
     f, k = @index(Global, NTuple)
     if f <= size(out,1) && k <= size(out,2)
         total = zero(eltype(out))
+        correction = zero(total)
         # Preserve every multiplication and addition in the expanded map,
         # including its X, Y, Z order and explicit zero-normal entries.
         for d in 1:3
             normal = normals[d,f]
             for t in offsets[f]:offsets[f+1]-1
                 w = cs_face_weight(weights[t], normal, rounding, t, d)
-                total += w*values[(d-1)*nsource+indices[t],k]
+                total, correction = face_product_step(total, correction, w,values[(d-1)*nsource+indices[t],k], accumulation)
             end
         end
-        out[f,k] = total
+        out[f,k] = face_sum_result(total, correction, accumulation)
     end
 end
 
-function cs_apply_integral!(out, values, op::CSFaceGather)
+function cs_apply_integral!(out, values, op::CSFaceGather; accumulation=face_accumulation(get_backend(out), eltype(out)))
     backend = get_backend(out)
     cs_apply_face_kernel!(backend, 256)(out, values, op.offsets, op.indices, op.weights,
-        op.normals, op.rounding, op.nsource; ndrange=size(out))
+        op.normals, op.rounding, op.nsource, accumulation; ndrange=size(out))
     return out
 end

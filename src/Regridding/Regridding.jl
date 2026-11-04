@@ -10,7 +10,8 @@ optionally cache it to disk, and reuse it. Equivalent meshes get an
 an exact `NestedCubedSphereRegrid`, neither of which needs weights. Fields are
 regridded by quantity kind (`apply_regridder!(dst, r, src, kind)`): intensive
 fields directly, per-cell totals through their density. The module also owns
-the cubed-sphere block kernels (`coarsen_sum!`, `coarsen_area_weighted!`) that
+the cubed-sphere block kernels (`coarsen_sum!`, `coarsen_area_weighted!`,
+`coarsen_area_weighted_vector!` for east/north winds) that
 the transport-binary coarseners use. Callers are `Preprocessing` (met
 data to target grids), `Models.InitialConditionIO` (initial conditions and
 surface-flux inventories at run setup) and `Visualization` (cubed-sphere to
@@ -85,7 +86,8 @@ using ..Grids: LatLonMesh, CubedSphereMesh, ReducedGaussianMesh,
                nrings, cell_index,
                nx, ny, ncells, panel_cell_corner_lonlat,
                cs_definition, coordinate_law, center_law, longitude_offset_deg,
-               cs_definition_tag, coordinate_law_tag, center_law_tag, cs_corner_xyz
+               cs_definition_tag, coordinate_law_tag, center_law_tag, cs_corner_xyz,
+               panel_cell_center_lonlat, CS_PANEL_COUNT
 using ..Quantities: QuantityKind, IntensiveCellField, ExtensiveCellField,
                     HorizontalVectorField, HorizontalFluxField
 using ..AtomicFiles: atomic_publish
@@ -111,6 +113,7 @@ export IdentityRegrid, meshes_equivalent
 export meshes_nested, AbstractNestingDirection, Restriction, Prolongation,
        NestedCubedSphereRegrid
 export coarsen_sum!, coarsen_area_weighted!, coarsen_xface_sum!, coarsen_yface_sum!
+export coarsen_area_weighted_vector!, cs_east_north_basis
 
 include("treeify_meshes.jl")
 include("identity_regrid.jl")

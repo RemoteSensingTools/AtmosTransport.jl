@@ -18,6 +18,40 @@
   possible (e.g. Rn-222 against GCHP). Golden impact: none (no golden case
   runs `scheme = "none"`).
 
+- **Result change for `convection.kind = "cmfmc"` (RAS):** the cloud-base layer
+  now follows GEOS-Chem's `DO_RAS_CLOUD_CONVECTION` order on every topology
+  (cubed sphere, lat-lon, reduced Gaussian). The updraft entrains the
+  cloud-base layer as it was and the layer takes the sub-cloud exchange through
+  its bottom edge in the level update (GEOS-Chem's `T1 + T4`). Before, the
+  layer took the exchange first and the updraft entrained the exchanged air,
+  which counted the inflow twice in that layer: the column stayed conservative,
+  but the cloud-base layer went negative (to −2.3e-3 on MERRA-2 C90 and −8.5e-3
+  on GEOS-IT C90 with CO₂ = 1 in the lowest layer after 1 h). The column now
+  equals a literal port of the GEOS-Chem routine to rounding. The CS adjoint is
+  the transpose of the new update. `CMFMCMatrixConvection` and TM5 convection
+  are unchanged. The old order is not kept as an option. Comments and docs that
+  called GEOS-Chem's sub-cloud step non-conservative are corrected; equations in
+  the manual ("The RAS column update"). Golden cases `run_c90_merra2_*` change.
+
+- TM5 spectral face construction keeps LL/RG Gauss–Fourier and CS cardinal-16
+  results on the selected backend through level batches and latitude bands.
+  Float32 devices use pressure-anomaly synthesis, stable polar winds and
+  compensated sums with FMA product residuals. CUDA pedantic math covers
+  complete face construction; Float32-kernel PTX contains no Float64
+  instructions. L40S T639 ERA5 maximum face error / level RMS is 1.74e-6
+  on LL 1° and 9.23e-6 on C90. Edge harmonics still exceed the 1e-5 maximum
+  target; per-face relative errors near cancelling zeros remain diagnostic.
+  T639 balanced cm relative L2 is 1.87e-07 on LL 1° and 1.97e-07
+  on C90 against CPU Float64. Warmed complete-window speedups are
+  1.39× / 3.72× vs CPU16. Per-level errors, repeated/fresh-process
+  bits, timings and device-memory peaks are in the spectral manual §17.
+  Streamed Float32 polar plans and sample buffers persist across endpoints;
+  band shapes share bounded latitude tables and reuse per-level coefficients.
+  Qualification rejects nonfinite data and incomplete native-level reports;
+  isolated KA.CPU tests exercise the complete device precision policy.
+  Full-day LL72/O24/C24 CPU goldens are bitwise identical to `origin/main`
+  (`38af9aca7`).
+
 - **Result change for LL/RG `tm5_spectral`:** face quadrature now defaults to
   `"gauss_fourier"`: Gauss–Legendre latitude nodes and exact Fourier integrals
   of oversampled longitude products, including cell pressure and divergence
@@ -40,6 +74,31 @@
   per-ring batches: band size no longer selects different BLAS reductions
   or FFTW codelets. This rounding correction can change default Gauss/Fourier
   golden payloads; explicit trapezoid arithmetic is unchanged.
+
+- **GEOS VDIFF winds coarsened as vectors.** GEOS native C(2n) → C(n)
+  preprocessing (e.g. GEOS-IT C180 → C90) block-averaged `vdiff_u` and
+  `vdiff_v` (A3dyn `U`, `V`, eastward/northward at the cell centre) one
+  component at a time, which is wrong where the local east/north axes turn
+  across a block. They are now averaged as Cartesian vectors and projected on
+  the east/north axes at the coarse cell centre, as GCHP's MAPL regrids `U;V`
+  (`Regridding.coarsen_area_weighted_vector!`, bases from
+  `cs_east_north_basis`). On 2021-12-01 GEOS-IT C180 → C90 the old winds
+  differed from GCHP's C90 `Met_U`/`Met_V` by 1e-2 m/s RMS and up to 2.6 m/s
+  next to the poles; the vector mean matches to about 1e-6 m/s RMS (at most 3e-5 m/s). Only
+  binaries written with `include_vdiff_fields = true` and a coarser target
+  change (`vdiff_u`, `vdiff_v` sections; every other section is bitwise
+  unchanged); native-resolution passthrough and the MERRA-2 / ERA5 lat-lon →
+  CS wind remaps (already vector, `wind_regrid = "cartesian"`) are unchanged.
+  Golden impact: none expected. No case in `test/golden/cases.toml` writes
+  GEOS VDIFF winds (`pre_geosit_c45` has no VDIFF payload);
+  `pre_merra2_c90` writes VDIFF winds through the unchanged MERRA-2 Cartesian
+  remap, and `run_c90_merra2_hbvdiff_gpu_f32` reads that binary.
+- **GEOS native block coarsening checks that the target cube is nested.** The
+  C(n·R) → C(n) strategy was chosen from `Nc` alone, so a target with another
+  cube definition (e.g. `definition = "equiangular_gnomonic"`) was silently
+  block-averaged onto cells that do not contain the native ones. It now fails
+  with an error naming the target definition. No golden impact (all GEOS
+  golden targets are nested).
 
 - **AutoTape CPU margin capped.** Automatic CPU selection now holds back
   `min(10% of host/cgroup capacity, 2 GiB)` plus reverse-pass workspace,

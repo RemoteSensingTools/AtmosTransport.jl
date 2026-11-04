@@ -54,8 +54,10 @@ and the stepping loop do not call it.
   `~/.cache/AtmosTransport/cr_regridding`.
 - `meshes_nested(a, b)`, `NestedCubedSphereRegrid{Restriction|Prolongation}`
   (`AbstractNestingDirection`), `coarsen_sum!(dst, src, ratio)` and
-  `coarsen_area_weighted!(dst, src, area, ratio)` in
-  [`cs_nesting.jl`](cs_nesting.jl).
+  `coarsen_area_weighted!(dst, src, area, ratio)`,
+  `coarsen_area_weighted_vector!(u_dst, v_dst, u_src, v_src, area, ratio,
+  fine_basis, coarse_basis)` (east/north winds averaged as Cartesian vectors)
+  and `cs_east_north_basis(mesh)` in [`cs_nesting.jl`](cs_nesting.jl).
 - `save_regridder(path, r)` and `load_regridder(path)` round-trip a regridder
   through JLD2.
 - `IdentityRegrid` and `meshes_equivalent(src, dst)` are in
@@ -76,7 +78,8 @@ and the stepping loop do not call it.
   `meshes_equivalent`, `_same_cs_definition` (shared with `meshes_nested`),
   `identity_regrid_or_nothing`, and a `copyto!` `apply_regridder!`
 - [`cs_nesting.jl`](cs_nesting.jl): the block kernels `coarsen_sum!`,
-  `coarsen_area_weighted!`, `coarsen_xface_sum!`, `coarsen_yface_sum!`, `meshes_nested` (with the corner check),
+  `coarsen_area_weighted!`, `coarsen_area_weighted_vector!` (with
+  `cs_east_north_basis`), `coarsen_xface_sum!`, `coarsen_yface_sum!`, `meshes_nested` (with the corner check),
   the nesting directions, `NestedCubedSphereRegrid` and its
   `apply_regridder!`, `nested_regrid_or_nothing`
 - [`weights_io.jl`](weights_io.jl): cache key (`_hash_mesh!`,

@@ -119,6 +119,99 @@ function coarsen_area_weighted!(dst::AbstractArray{<:Real, N}, src::AbstractArra
     return dst
 end
 
+"""
+    cs_east_north_basis(mesh::CubedSphereMesh) -> NTuple{6, NamedTuple}
+
+Trigonometry of the local east/north basis at every cell centre of `mesh`:
+one `(sinλ, cosλ, sinφ, cosφ)` named tuple of `(Nc, Nc)` Float64 matrices per
+panel, for [`coarsen_area_weighted_vector!`](@ref). The centres follow the
+mesh definition (coordinate law, centre law, panel convention, longitude
+offset) and are evaluated in Float64 whatever the mesh precision.
+"""
+function cs_east_north_basis(mesh::CubedSphereMesh)
+    mesh64 = CubedSphereMesh(; FT = Float64, Nc = mesh.Nc,
+                               definition = cs_definition(mesh))
+    return ntuple(CS_PANEL_COUNT) do p
+        lon, lat = panel_cell_center_lonlat(mesh64, p)
+        λ, φ = deg2rad.(lon), deg2rad.(lat)
+        (sinλ = sin.(λ), cosλ = cos.(λ), sinφ = sin.(φ), cosφ = cos.(φ))
+    end
+end
+
+"""
+    coarsen_area_weighted_vector!(u_dst, v_dst, u_src, v_src, area, ratio,
+                                  fine_basis, coarse_basis) -> (u_dst, v_dst)
+
+Area-weighted block mean of a horizontal vector field given by its eastward
+`u` and northward `v` components at the cell centres (m s⁻¹), from the fine
+panel arrays `u_src`, `v_src` onto the coarse panel arrays `u_dst`, `v_dst`.
+
+The components cannot be averaged one by one: the east and north directions
+turn from one fine cell to the next (by up to 90° across a C90 cell next to
+a pole). Each fine vector is written in fixed Cartesian components,
+
+```math
+\\mathbf{X}_f = u_f\\,\\hat{e}_f + v_f\\,\\hat{n}_f,\\qquad
+\\hat{e} = (-\\sin λ, \\cos λ, 0),\\quad
+\\hat{n} = (-\\sin φ \\cos λ, -\\sin φ \\sin λ, \\cos φ),
+```
+
+the Cartesian vectors are averaged with the area weights of
+[`coarsen_area_weighted!`](@ref), and the mean is projected on the east and
+north unit vectors at the coarse cell centre:
+``u_c = \\bar{\\mathbf{X}} \\cdot \\hat{e}_c``,
+``v_c = \\bar{\\mathbf{X}} \\cdot \\hat{n}_c``. This is how GCHP (MAPL) regrids
+`U;V` as a vector; the small radial part of the mean is dropped. A
+solid-body rotation is reproduced to the curvature error of the block
+mean, while component averaging is off by O(1) near the poles.
+
+`fine_basis` and `coarse_basis` are the panel entries of
+[`cs_east_north_basis`](@ref) for the fine and the coarse mesh. Sums are in
+Float64, results rounded once to `eltype(u_dst)`; arrays are 2-D `(Nc, Nc)`
+or 3-D `(Nc, Nc, Nz)` as in [`coarsen_area_weighted!`](@ref).
+"""
+function coarsen_area_weighted_vector!(u_dst::AbstractArray{<:Real, N},
+                                       v_dst::AbstractArray{<:Real, N},
+                                       u_src::AbstractArray{<:Real, N},
+                                       v_src::AbstractArray{<:Real, N},
+                                       area::AbstractMatrix{<:Real}, ratio::Int,
+                                       fine_basis, coarse_basis) where N
+    N in (2, 3) || throw(ArgumentError(
+        "coarsen_area_weighted_vector! takes 2-D or 3-D panel arrays; got $(N)-D"))
+    _check_block_shapes(u_dst, u_src, ratio)
+    size(v_dst) == size(u_dst) && size(v_src) == size(u_src) || throw(DimensionMismatch(
+        "u/v shapes differ: dst $(size(u_dst)) vs $(size(v_dst)), src $(size(u_src)) vs $(size(v_src))"))
+    size(area) == (size(u_src, 1), size(u_src, 2)) || throw(DimensionMismatch(
+        "area $(size(area)) does not match the fine panel $((size(u_src, 1), size(u_src, 2)))"))
+    size(fine_basis.sinλ) == size(area) && size(coarse_basis.sinλ) == (size(u_dst, 1), size(u_dst, 2)) ||
+        throw(DimensionMismatch("east/north bases do not match the fine and coarse panels"))
+    FTu, FTv = eltype(u_dst), eltype(v_dst)
+    fs, fc, gs, gc = fine_basis.sinλ, fine_basis.cosλ, fine_basis.sinφ, fine_basis.cosφ
+    cs, cc, hs, hc = coarse_basis.sinλ, coarse_basis.cosλ, coarse_basis.sinφ, coarse_basis.cosφ
+    @inbounds for k in 1:size(u_dst, 3), j in 1:size(u_dst, 2), i in 1:size(u_dst, 1)
+        x = y = z = 0.0
+        denominator = 0.0
+        i0 = (i - 1) * ratio
+        j0 = (j - 1) * ratio
+        for jj in 1:ratio, ii in 1:ratio
+            fi, fj = i0 + ii, j0 + jj
+            a = Float64(area[fi, fj])
+            uu = Float64(u_src[fi, fj, k])
+            vv = Float64(v_src[fi, fj, k])
+            x += a * (-fs[fi, fj] * uu - gs[fi, fj] * fc[fi, fj] * vv)
+            y += a * ( fc[fi, fj] * uu - gs[fi, fj] * fs[fi, fj] * vv)
+            z += a * (gc[fi, fj] * vv)
+            denominator += a
+        end
+        x /= denominator
+        y /= denominator
+        z /= denominator
+        u_dst[i, j, k] = FTu(-cs[i, j] * x + cc[i, j] * y)
+        v_dst[i, j, k] = FTv(-hs[i, j] * (cc[i, j] * x + cs[i, j] * y) + hc[i, j] * z)
+    end
+    return u_dst, v_dst
+end
+
 # ---------------------------------------------------------------------------
 # Nesting test
 # ---------------------------------------------------------------------------

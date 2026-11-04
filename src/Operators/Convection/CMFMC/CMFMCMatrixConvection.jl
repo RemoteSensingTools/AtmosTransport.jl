@@ -4,16 +4,9 @@
 #
 # Motivation
 #
-# The GCHP-audited "two-pass on the env reservoir + qc cloud reservoir"
-# CMFMC update (our `CMFMCConvection`) is not column-conservative under
-# our state variables when run in isolation. GCHP itself relies on a
-# dynamics-core PBL air-mass rescale that lives outside this operator.
-# Our kernel also intentionally diverges from line-by-line GCHP in two
-# places (cloud-base proxied from cmfmc rather than DQRCU, plus an added
-# Pass-0 cloud-base mass-closure update for column self-consistency), so
-# the label is "GCHP-audited" not "GCHP-faithful". Empirically, on the
-# C180/L72 4-tracer convection-only experiment, this kernel drifts
-# `Σ tracer_mass` by ~1–10% per 3-day run.
+# `CMFMCConvection` is GEOS-Chem's explicit RAS update in flux form: it
+# conserves column tracer mass, but being explicit it needs CFL sub-steps.
+# This operator uses the same forcing with implicit numerics instead.
 #
 # This operator preserves `Σ tracer_mass` to roundoff for inert tracers by
 # (a) deriving non-negative entrainment/detrainment rates from the GEOS
@@ -24,9 +17,8 @@
 # not be nonnegative, so the matrix itself is not column-stochastic.
 #
 # It is NOT GCHP RAS numerics — it is GEOS-derived rates through TM5
-# transport numerics. Use it where the conservation contract is required
-# (4D-Var inversion adjoint, long integrations) and use `CMFMCConvection`
-# for parity comparison.
+# transport numerics. Use it where implicit numerics are wanted (no CFL
+# sub-steps) and `CMFMCConvection` for GEOS-Chem parity.
 # ---------------------------------------------------------------------------
 
 """

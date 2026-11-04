@@ -22,7 +22,11 @@ dispatch or the sibling family; the forward implementation owns their arithmetic
 ## Forward<->adjoint mirrors
 
 `adjoint_kernels.jl` transposes the forward column in `cmfmc_kernels.jl`. The reverse
-keeps the forward tiny-mass guards, cloud-base scan and Kahan sums. LL/RG
+keeps the forward tiny-mass guards, cloud-base scan and Kahan sums, and GEOS-Chem's
+cloud-base order (the cloud-base layer takes the sub-cloud exchange through its bottom
+edge after the updraft has entrained it; manual: "The RAS column update").
+`test/core/test_cmfmc_ras_cloud_base.jl` checks the forward against a literal port of
+GEOS-Chem's routine and the reverse against the forward's column matrix. LL/RG
 columns stay separate from CS because clamp and archived cloud-base support
 differ. Those differences require a stated-delta follow-up.
 

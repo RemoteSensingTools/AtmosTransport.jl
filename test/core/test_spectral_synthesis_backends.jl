@@ -205,3 +205,137 @@ end
         end
     end
 end
+
+# The device branch is deliberately invoked on KA.CPU: these checks execute
+# every new kernel without requiring CUDA or changing CPU production policy.
+@testset "Device face staging and compensated reductions on KA CPU" begin
+    KA = SS.KernelAbstractions
+    backend = KA.CPU()
+    rng = MersenneTwister(996)
+    T, nf = 7, 2
+    rings = SS.SynthesisRings([0.3], [19], [0.0])
+    for FT in (Float32, Float64)
+        p = SS.RingSynthesisPlan(rings, T, 2nf, FT)
+        H = randn(rng, ComplexF64, T+1, T+1)
+        vo, d = randn(rng, ComplexF64, T+1, T+1, nf), randn(rng, ComplexF64, T+1, T+1, nf)
+        # Spectral inputs have a triangular support.
+        for m in 1:T+1, n in 1:m-1
+            H[n,m] = 0
+            vo[n,m,:] .= 0
+            d[n,m,:] .= 0
+        end
+        source = Complex{FT}.(H)
+        staged = invoke(SS.surface_spectra, Tuple{Any,Any,Any,Any}, backend, H, T, p)
+        reference = SS.surface_spectra(H, T, p)
+        @test eltype(staged) === Complex{FT}
+        @test staged ≈ reference rtol=(FT === Float32 ? 3e-7 : 1e-14)
+        batch = invoke(SS.spectral_level_batch, Tuple{Any,Any,Any,Any,Any}, backend, vo, 2:2, 3, p)
+        @test batch[:,:,1] == Complex{FT}.(vo[:,:,2])
+        @test all(iszero, batch[:,:,2:3])
+        actual = invoke(SS.cs_polar_coefficients, Tuple{Any,Any,Any,Any,Any}, backend, vo, d, 6.371f6, p)
+        expected = SS.cs_polar_coefficients(backend, vo, d, 6.371f6, p)
+        @test actual == expected
+    end
+    # Cancellation fixture: Float32 alone loses the middle unit. Neumaier
+    # retains it using Float32 correction, including both complex components.
+    for CT in (Float32, ComplexF32)
+        total, correction = zero(CT), zero(CT)
+        for x in CT.([1e8, 1, -1e8])
+            total, correction = SS.face_sum_step(total, correction, x, Val(true))
+        end
+        @test SS.face_sum_result(total, correction, Val(true)) === one(CT)
+    end
+    op = (; offsets=[1,4], indices=[1,2,3], weights=ones(Float32,3))
+    values = reshape(Float32[1e8,1,-1e8],3,1)
+    output = zeros(Float32,1,1)
+    SS.cs_apply_integral!(output, values, op; accumulation=Val(true))
+    @test output[1] === 1f0
+    SS.cs_apply_integral!(output, values, op)
+    @test output[1] === 0f0 # historical CPU policy
+    compact = SS.CSFaceGather([1,4], [1,2,3], ones(Float32,3), ones(Float32,3,1), nothing, 3)
+    SS.cs_apply_integral!(output, repeat(values,3,1), compact; accumulation=Val(true))
+    @test output[1] === 3f0
+    # Three latitude nodes exercise all three compensated Gauss sums.
+    pressure, u, C = zeros(Float32,1), zeros(Float32,1,1), zeros(Float32,1,1)
+    SS.integrate_gauss_cells!(backend, 256)(pressure,u,C,values,values,values,
+        [1,1,1],[1,2,3],[1,2,3],[1,4],[1,2,3],[1,2],[1],
+        ones(Float32,3),ones(Float32,3),ones(Float32,1),1f0,1,Val(true); ndrange=(1,1,1))
+    @test pressure == u[:] == C[:] == [1f0]
+    # Complex frequency folding uses the same compensated primitive.
+    folded = zeros(ComplexF32,1,1,1)
+    SS.fold_fourier_integrals!(backend,256)(folded,reshape(ComplexF32[1,1,1],3,1,1),
+        ComplexF32[1e8,1,-2e8,1,1e8],4,1,1,Val(true);ndrange=(1,1,1))
+    @test folded[1] == ComplexF32(2)
+end
+
+struct HostFaceDevice{FT} <: AtmosTransport.Preprocessing.Common.AbstractSynthesisBackend end
+function SS.build_ring_synthesis(::HostFaceDevice{FT},rings,T,batch,precision;stable_poles=false) where FT
+    plan = SS.RingSynthesisPlan(rings,T,batch,FT;stable_poles)
+    return SS.GPUSpectralSynthesis{FT,typeof(plan)}(plan)
+end
+@testset "Portable LL/RG complete face construction, streamed and resident" begin
+    PP = AtmosTransport.Preprocessing
+    T = 7
+    h = zeros(ComplexF64,T+1,T+1); h[1] = log(100000.); h[3,2] = 0.02
+    vo = zeros(ComplexF64,T+1,T+1,3); d = copy(vo)
+    vo[2,1,:] .= 1e-6; d[T+1,T,:] .= 1e-8
+    for grid in (PP.build_target_geometry(Dict("nlon"=>12,"nlat"=>6),Float64),
+                 PP.build_target_geometry(Val(:synthetic_reduced_gaussian),Dict("gaussian_number"=>4,"nlon_mode"=>"octahedral"),Float64))
+        c = PP.TM5SpectralFluxes()
+        args = (h,vo,d,T,[2000.,0.,-2000.],[0.2,0.3,0.5],c)
+        reference = SS.integrate_face_fluxes!(SS.SpectralIntegralWorkspace(grid,T,c;batch=2),args...)
+        for FT in (Float32,Float64), cells in (0,1,3)
+            ws = SS.SpectralIntegralWorkspace(grid,T,c;batch=2,latitude_band_cells=cells,synthesis=HostFaceDevice{FT}())
+            actual = SS.integrate_face_fluxes!(ws,args...;host_output=false)
+            repeated = SS.integrate_face_fluxes!(ws,args...)
+            for name in keys(reference)
+                @test reinterpret(UInt8,vec(actual[name])) == reinterpret(UInt8,vec(repeated[name]))
+                error = norm(actual[name]-reference[name])/max(norm(reference[name]),eps())
+                # This m=6 cosine nearly cancels on 12 longitude intervals;
+                # Float32 retains ~2.2e-5 relative in the small covariance flux.
+                # Qualification reports per-face residuals, without treating
+                # this smoke tolerance as a 1e-6 accuracy certificate.
+                @test error < (FT === Float32 ? 3e-5 : 1e-12)
+                @test eltype(actual[name]) === FT
+            end
+        end
+    end
+end
+
+@testset "Float32 pressure retains the log-pressure anomaly" begin
+    T = 7
+    rings = SS.SynthesisRings([-0.4,0.2],fill(31,2),zeros(2))
+    H = zeros(ComplexF64,T+1,T+1)
+    H[1,1] = log(100000.)
+    H[3,2] = 0.01+0.003im
+    cpu = SS.CPURingSynthesis(SS.RingSynthesisPlan(rings,T+1,3,Float64))
+    plan = SS.RingSynthesisPlan(rings,T+1,3,Float32)
+    device = SS.GPUSpectralSynthesis{Float32,typeof(plan)}(plan)
+    spectra, scale = SS.surface_pressure_spectra(H,T,device)
+    @test iszero(spectra[1,1,1])
+    @test scale isa Float32
+    samples = SS.synthesize_rings(spectra,device)
+    pressure = zeros(Float32,size(samples,1),1)
+    SS.surface_pressure_samples!(SS.KernelAbstractions.CPU(),256)(pressure,samples,scale;ndrange=length(pressure))
+    expected = exp.(SS.synthesize_rings(SS.surface_spectra(H,T,cpu.plan),cpu)[:,1])
+    @test maximum(abs.(vec(pressure).-expected)./expected) < 2e-7
+end
+
+@testset "Compensated Float32 products retain multiplication residuals" begin
+    total,correction = SS.face_product_step(0f0,0f0,4097f0,4097f0,Val(true))
+    total,correction = SS.face_sum_step(total,correction,-16785408f0,Val(true))
+    @test SS.face_sum_result(total,correction,Val(true)) === 1f0
+    total,correction = SS.face_product_step(0f0,0f0,4097f0,4097f0,Val(false))
+    total,correction = SS.face_sum_step(total,correction,-16785408f0,Val(false))
+    @test SS.face_sum_result(total,correction,Val(false)) === 0f0
+    total,correction = SS.face_product_step(0f0+0f0im,0f0+0f0im,4097f0+4097f0im,4097f0+0f0im,Val(true))
+    total,correction = SS.face_sum_step(total,correction,-16785408f0-16785408f0im,Val(true))
+    @test SS.face_sum_result(total,correction,Val(true)) === 1f0+1f0im
+end
+
+@testset "Isolated complete Float32 device policy" begin
+    driver = normpath(joinpath(@__DIR__, "../helpers/spectral_face_device_policy.jl"))
+    project = dirname(Base.active_project())
+    command = `$(Base.julia_cmd()) --startup-file=no --project=$project $driver`
+    @test success(pipeline(addenv(command, "CUDA_VISIBLE_DEVICES"=>"", "OPENBLAS_NUM_THREADS"=>"1"); stdout=stdout, stderr=stderr))
+end
