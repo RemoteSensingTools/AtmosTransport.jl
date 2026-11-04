@@ -8,15 +8,16 @@ Why this exists:
   Strang-half-stepping.
 - NoAdvection must therefore be a *typed* no-op (`transport_step!` dispatches
   on it at compile time and bypasses the sweep kernels entirely) and must
-  hard-reject non-NoSurfaceFlux companion operators. StepPlan composes
-  standalone diffusion when advection is disabled.
+  reject surface fluxes wherever they sit inside the advection palindrome.
+  StepPlan composes standalone diffusion when advection is disabled, and on the
+  cubed sphere with DiffusiveSurfaceFluxBoundary the S(dt) -> V(dt) center.
 """
 
 using Test
 using AtmosTransport.Operators.StepPlans: transport_step!
 using AtmosTransport
 using AtmosTransport: CellState, CubedSphereState, DryBasis,
-                      NoAdvection, UpwindScheme,
+                      NoAdvection, UpwindScheme, PPMScheme, LinRoodPPMScheme,
                       AdvectionWorkspace, StructuredFaceFluxState,
                       allocate_face_fluxes,
                       NoDiffusion, ImplicitVerticalDiffusion, DiffusionWorkspace,
@@ -273,6 +274,155 @@ end
                                                   ntuple(_ -> fill(FT(1.0), cs_N, cs_N), 6)))
     @test_throws ArgumentError transport_step!(cs_state, cs_fluxes, cs_grid, NoAdvection(),
                                       FT(1800); emissions_op=cs_em)
+end
+
+# ---------------------------------------------------------------------------
+# Emissions with advection off: supported only where the palindrome center has
+# no half-steps (cubed sphere + DiffusiveSurfaceFluxBoundary, S(dt) -> V(dt))
+# ---------------------------------------------------------------------------
+
+const _SFB = AtmosTransport.Operators.Diffusion
+
+# A C4 cube with three tracers (two emitted) and four layers. `kz = :gchp` uses
+# GEOS-Chem's non-local field with a fixed exchange and an emission profile that
+# spreads the emission over three layers (`ProfileDeposit`); `kz = :constant` a
+# constant Kz (surface-layer deposit). Air mass varies by column and layer.
+function _noadv_cs_case(; kz = :gchp, coupling = _SFB.DiffusiveSurfaceFluxBoundary(),
+                        dkg_value = 5e3)
+    Nc, Hp, Nz = 4, 3, 4
+    N = Nc + 2Hp
+    mesh = CubedSphereMesh(; Nc, Hp, FT)
+    grid = AtmosGrid(mesh, HybridSigmaPressure(FT[0, 100, 200, 300, 400], FT[0, 0, 0, 0, 1]),
+                     AtmosTransport.CPU(); FT)
+    air = ntuple(p -> [FT(1e4) * (1 + 0.1p + 0.01i + 0.02j + 0.3k) for i in 1:N, j in 1:N, k in 1:Nz], 6)
+    vmr(p, base) = [base * (1 + 0.05sin(i + 2j + 3k + p)) for i in 1:N, j in 1:N, k in 1:Nz]
+    new_state() = CubedSphereState(DryBasis, mesh, map(copy, air);
+                                   CO2 = ntuple(p -> air[p] .* vmr(p, FT(400e-6)), 6),
+                                   SF6 = ntuple(p -> air[p] .* vmr(p, FT(1e-11)), 6),
+                                   RN  = ntuple(p -> air[p] .* vmr(p, FT(1e-20)), 6))
+    if kz === :gchp
+        field = AtmosTransport.State.GCHPNonlocalPBLField(Nc, Nz, FT)
+        for p in 1:6
+            field.dkg.panels[p].data[:, :, 1:(Nz - 1)] .= FT(dkg_value)   # zero below the surface layer
+            field.emission_profile[p] .= reshape(FT[0, 0.2, 0.3, 0.5], 1, 1, Nz)
+        end
+    else
+        field = AtmosTransport.State.CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(FT(1.0)), 6))
+    end
+    diff = ImplicitVerticalDiffusion(; kz_field = field, surface_flux_coupling = coupling)
+    rates(scale) = ntuple(p -> [FT(scale * (p + 0.1i + 0.01j)) for i in 1:Nc, j in 1:Nc], 6)
+    em = SurfaceFluxOperator(SurfaceFluxSource(:CO2, rates(1e-6)),
+                             SurfaceFluxSource(:RN, rates(1e-18)))
+    function diffusion_ws(state)
+        ws = DiffusionWorkspace(state)
+        foreach(p -> fill!(ws.layer_thickness[p], one(FT)), 1:6)
+        return ws
+    end
+    return (; Nc, Hp, Nz, mesh, grid, new_state, diff, em, rates, diffusion_ws,
+            fluxes = allocate_face_fluxes(mesh, Nz; FT, basis = DryBasis))
+end
+
+_interior(c, x, p) = x[p][(c.Hp + 1):(c.Hp + c.Nc), (c.Hp + 1):(c.Hp + c.Nc), ntuple(_ -> :, ndims(x[p]) - 2)...]
+# Exact (BigFloat) sums, so the budget checks see the step, not the summation.
+_tracer_total(c, state, t) = sum(sum(big, _interior(c, state.tracers_raw, p)[:, :, :, t]) for p in 1:6)
+
+function _noadv_step!(c, scheme; kz_dt = FT(1800), kwargs...)
+    state = c.new_state()
+    ws = AtmosTransport.Operators.StepPlans._cs_advection_workspace_for(scheme, state, c.grid)
+    transport_step!(state, c.fluxes, c.grid, scheme, kz_dt; workspace = ws,
+                    diffusion_workspace = c.diffusion_ws(state), diffusion_op = c.diff,
+                    emissions_op = c.em, kwargs...)
+    return state
+end
+
+@testset "NoAdvection CS + DiffusiveSurfaceFluxBoundary: emissions run S(dt) -> V(dt)" begin
+    for kz in (:gchp, :constant)
+        c = _noadv_cs_case(; kz)
+        dt = FT(1800)
+        s0 = c.new_state()
+        s_none = _noadv_step!(c, NoAdvection())
+
+        # Exactly the emitted mass is added to each emitted tracer; the other
+        # tracer and the air mass are untouched.
+        emitted(scale) = sum(sum(r) for r in c.rates(scale)) * dt
+        @test isapprox(_tracer_total(c, s_none, 1) - _tracer_total(c, s0, 1), emitted(1e-6); rtol = 1e-13)
+        @test isapprox(_tracer_total(c, s_none, 3) - _tracer_total(c, s0, 3), emitted(1e-18); rtol = 1e-13)
+        @test isapprox(_tracer_total(c, s_none, 2), _tracer_total(c, s0, 2); rtol = 1e-14)
+        @test all(s_none.air_mass[p] == s0.air_mass[p] for p in 1:6)
+
+        # Same composition as the advection palindrome center: equal to an
+        # advection step with zero mass fluxes, through the packed midpoint
+        # (Upwind, PPM) and the single-tracer-panel midpoint (Lin–Rood).
+        for scheme in (UpwindScheme(), PPMScheme(), LinRoodPPMScheme(5))
+            s_adv = _noadv_step!(c, scheme)
+            @test all(_interior(c, s_adv.air_mass, p) ≈ _interior(c, s0.air_mass, p) for p in 1:6)
+            for t in 1:3, p in 1:6
+                a = _interior(c, s_none.tracers_raw, p)[:, :, :, t]
+                b = _interior(c, s_adv.tracers_raw, p)[:, :, :, t]
+                @test maximum(abs.(a .- b)) <= 1e-13 * maximum(abs.(b))
+            end
+        end
+    end
+
+    # The deposit is the scheme's: with no exchange (dkg = 0) the emission stays
+    # where GEOS-Chem's non-local profile puts it, 0 / 0.2 / 0.3 / 0.5 top-down.
+    c = _noadv_cs_case(; kz = :gchp, dkg_value = 0)
+    dt = FT(1800)
+    s0, s_none = c.new_state(), _noadv_step!(c, NoAdvection())
+    rate = c.rates(1e-6)
+    for p in 1:6
+        added = _interior(c, s_none.tracers_raw, p)[:, :, :, 1] .- _interior(c, s0.tracers_raw, p)[:, :, :, 1]
+        expected = rate[p] .* dt .* reshape(FT[0, 0.2, 0.3, 0.5], 1, 1, c.Nz)
+        @test isapprox(added, expected; rtol = 1e-9)
+    end
+end
+
+@testset "NoAdvection emissions: every other coupling and topology is rejected" begin
+    # Cubed sphere with the split coupling, or with no diffusion: the emission sits
+    # between two diffusion half-steps, so the step throws before touching the state.
+    for diff in (_noadv_cs_case(; coupling = _SFB.SplitSurfaceFluxCoupling()).diff, NoDiffusion())
+        c = _noadv_cs_case()
+        state = c.new_state()
+        before = deepcopy(state.tracers_raw)
+        err = try
+            transport_step!(state, c.fluxes, c.grid, NoAdvection(), FT(1800);
+                            diffusion_workspace = c.diffusion_ws(state), diffusion_op = diff,
+                            emissions_op = c.em)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("DiffusiveSurfaceFluxBoundary", err.msg)
+        @test occursin("SplitSurfaceFluxCoupling", err.msg)
+        @test state.tracers_raw == before
+    end
+
+    # Lat-lon keeps the rejection even with DiffusiveSurfaceFluxBoundary.
+    Nx, Ny, Nz = 6, 4, 2
+    mesh = LatLonMesh(; Nx, Ny, FT)
+    grid = AtmosGrid(mesh, HybridSigmaPressure(FT[0, 100, 300], FT[0, 0, 1]), AtmosTransport.CPU(); FT)
+    air = ones(FT, Nx, Ny, Nz)
+    state = CellState(DryBasis, copy(air); CO2 = air .* FT(400e-6))
+    fluxes = StructuredFaceFluxState{DryBasis}(zeros(FT, Nx + 1, Ny, Nz), zeros(FT, Nx, Ny + 1, Nz),
+                                               zeros(FT, Nx, Ny, Nz + 1))
+    diff = ImplicitVerticalDiffusion(; kz_field = ConstantField{FT, 3}(FT(1.0)),
+                                     surface_flux_coupling = _SFB.DiffusiveSurfaceFluxBoundary())
+    dws = DiffusionWorkspace(state)
+    fill!(dws.layer_thickness, one(FT))
+    em = SurfaceFluxOperator(SurfaceFluxSource(:CO2, fill(FT(1.0), Nx, Ny)))
+    before = copy(state.tracers_raw)
+    err = try
+        transport_step!(state, fluxes, grid, NoAdvection(), FT(1800);
+                        workspace = AdvectionWorkspace(state.air_mass), diffusion_workspace = dws,
+                        diffusion_op = diff, emissions_op = em)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("lat-lon or reduced-Gaussian", err.msg)
+    @test state.tracers_raw == before
 end
 
 # ---------------------------------------------------------------------------

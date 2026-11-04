@@ -310,7 +310,10 @@ Matching that placement alone does not establish full GCHP VDIFF parity.
 On lat-lon and cubed-sphere grids, use
 `surface_flux_boundary = true` for the supported GCHP-style placement.
 Reduced-Gaussian transport currently supports the midpoint split only and
-rejects that setting. Treat exact discrete VDIFF parity as unvalidated
+rejects that setting. Because `S(dt) → V(dt)` has no half-steps, the cubed
+sphere also runs it with advection off (`[advection] scheme = "none"`); every
+other coupling and grid rejects surface fluxes without advection. Treat exact
+discrete VDIFF parity as unvalidated
 until the full-model comparison listed in [Validation status](@ref) exists.
 
 ## Convection
