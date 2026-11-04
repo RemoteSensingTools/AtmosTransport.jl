@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **Result change for runs without advection (`[advection] scheme = "none"`):**
+  the air mass now follows the met window every step. Each step starts by
+  resetting it (in `[run] air_mass_reset_mode`, tracer mass kept by default) to
+  the window's air mass at the end of that step, `m + (n/N) dm`, so diffusion,
+  convection and chemistry weight the layers by the step's masses, as
+  GEOS-Chem recomputes its air mass before every step (`AirQnt`). Before, the
+  air mass stayed at the window start for the whole window. In the GCHP
+  convection comparison (MERRA-2 C90, advection off) this took the lowest
+  layer from 1.9e-5 to 9.8e-8 RMS of GCHP at 24 h. New `[run] air_mass_update`:
+  `"step"` (default without advection, unless `air_mass_reset_mode = "none"`)
+  or `"window"` (the advection-on default; reproduces earlier advection-off
+  results); `"step"` with advection is an error. Recorded in the output as
+  `physics_air_mass_update`. Changes every advection-off configuration (the
+  `convonly_*` and `diffonly_*` process-isolation runs); advection-on runs are
+  bit-identical (same step plan), no golden case runs without advection. No
+  adjoint: `NoAdvection` has none, and the new `AirMassResetStage(mode,
+  StepEndAirMass())` is also rejected by `require_adjoint_support`. See
+  "Air mass in runs without advection" in the operators-on-binaries manual.
+
 - **Result change for LL/RG `tm5_spectral`:** face quadrature now defaults to
   `"gauss_fourier"`: Gauss–Legendre latitude nodes and exact Fourier integrals
   of oversampled longitude products, including cell pressure and divergence

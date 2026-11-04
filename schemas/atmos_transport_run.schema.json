@@ -120,6 +120,11 @@
           "default": "window",
           "description": "On binaries with a per-window physics contract: convection and chemistry once per met window, or every advection substep."
         },
+        "air_mass_update": {
+          "type": "string",
+          "enum": ["window", "step"],
+          "description": "When the air mass follows the met data inside a window. step: every step starts by resetting the air mass (in air_mass_reset_mode) to the window's air mass at the end of that step, as GEOS-Chem does before every step; only for advection.scheme = \"none\" with an air_mass_reset_mode other than none. window: only the window-boundary resets; without advection the air mass then stays at the window start for the whole window (the behaviour before 2026-11). Default: step without advection (unless air_mass_reset_mode = none), window with advection."
+        },
         "prefetch_windows": {
           "type": "boolean",
           "default": true,

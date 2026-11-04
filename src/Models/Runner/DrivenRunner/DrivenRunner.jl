@@ -149,7 +149,8 @@ using ....Models.Physics: advection_spec, diffusion_spec, convection_spec, chemi
                  _ADVECTION_SPEC_KEYS,
                  _advection_section, _diffusion_section, _convection_section,
                  _chemistry_section, binary_cfl_check
-using ....Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence
+using ....Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence,
+                                resolve_air_mass_update, advects_air_mass
 
 export run_driven_simulation, validate_config, TransportTracerSpec
 
@@ -512,6 +513,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
+    air_mass_update = get(run_cfg, "air_mass_update", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
     callbacks = run_checks(cfg)
 
@@ -661,6 +663,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                         initialize_air_mass = initialize_air_mass,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
+                                        air_mass_update = air_mass_update,
                                         prefetch_windows = prefetch_windows,
                                         callbacks = callbacks,
                                         surface_sources = surface_sources,
@@ -829,6 +832,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                             "\"preserve_vmr\", or \"preserve_tracer_mass\""))
     air_mass_reset_mode = get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)
     physics_cadence = get(run_cfg, "physics_cadence", nothing)
+    air_mass_update = get(run_cfg, "air_mass_update", nothing)
     prefetch_windows = _config_bool(run_cfg, "prefetch_windows", true, "[run].prefetch_windows")
     callbacks = run_checks(cfg)
 
@@ -1040,6 +1044,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                         initialize_air_mass = initialize_air_mass,
                                         air_mass_reset_mode = air_mass_reset_mode,
                                         physics_cadence = physics_cadence,
+                                        air_mass_update = air_mass_update,
                                         prefetch_windows = prefetch_windows,
                                         callbacks = callbacks,
                                         surface_sources = surface_sources,

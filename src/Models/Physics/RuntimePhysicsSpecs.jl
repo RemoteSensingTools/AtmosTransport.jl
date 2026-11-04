@@ -159,6 +159,11 @@ PPMAdvectionSpec(vertical::AbstractVerticalReconstruction = SameAsHorizontal()) 
     PPMAdvectionSpec(MonotoneLimiter(), vertical)
 struct NoAdvectionSpec     <: AbstractAdvectionSpec end
 
+# Whether the scheme a spec materializes moves the air mass every step
+# (`StepPlans.advects_air_mass`): the default of `[run] air_mass_update`.
+StepPlans.advects_air_mass(::NoAdvectionSpec) = false
+StepPlans.advects_air_mass(::AbstractAdvectionSpec) = true
+
 # Lin–Rood is cubed-sphere only. `order` selects its PPM edge-value family,
 # `vertical` the scheme of its vertical sweeps.
 struct LinRoodAdvectionSpec{Z <: AbstractAdvectionScheme} <: AbstractAdvectionSpec

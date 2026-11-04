@@ -4,7 +4,8 @@
 using ...Operators.SurfaceFlux: _check_surface_source_compatibility,
                                 stage_surface_flux_window!
 using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _reset_air_mass!,
-                              _refresh_state_halos!
+                              _refresh_state_halos!, resolve_air_mass_update,
+                              advects_air_mass
 
 function _load_window(driver::D, win::Int) where {D <: AbstractMetDriver}
     return load_transport_window(driver, win)
@@ -42,11 +43,22 @@ function _maybe_advance_window!(sim::DrivenSimulation)
 end
 
 # The air-mass reset targets of the plan's `AirMassResetStage`s: the air mass
-# of the window just entered, and the binary's authoritative window-end mass.
+# of the window just entered, the binary's authoritative window-end mass, and
+# the window's air mass at the end of the current step.
 air_mass_reset_target(::WindowStartAirMass, sim::DrivenSimulation) = sim.window.air_mass
 
 function air_mass_reset_target(::WindowEndAirMass, sim::DrivenSimulation)
     expected_air_mass!(sim.expected_air_mass, sim.window, one(typeof(sim.Δt)))
+    return sim.expected_air_mass
+end
+
+# `air_mass_update = :step` (runs without advection): `m + λ dm` at the end of
+# the step being run, `λ = substep / steps_per_window`. The stage runs before
+# the clock advances, so `substep_index` is that step's index; on the window's
+# last step `λ` is exactly one and the target equals the window-end target.
+function air_mass_reset_target(::StepEndAirMass, sim::DrivenSimulation)
+    λ = substep_index(sim) / sim.steps_per_window
+    expected_air_mass!(sim.expected_air_mass, sim.window, convert(typeof(sim.Δt), λ))
     return sim.expected_air_mass
 end
 
@@ -79,6 +91,17 @@ Keyword arguments:
   reset is the same for both. Other binaries run the full operator suite every
   substep either way. The resulting [`StepPlan`](@ref) is `sim.plan`; the
   cubed-sphere adjoint replays the same plan (`CSStepSchedule`).
+- `air_mass_update=nothing` — when the air mass follows the met data inside a
+  window ([`resolve_air_mass_update`](@ref)). `nothing` selects `:step` for a
+  model without advection (`NoAdvection`) and a reset mode other than `:none`:
+  every step starts by resetting the air mass (in `air_mass_reset_mode`) to
+  the window's air mass at the end of that step, `m + λ dm`, so diffusion,
+  convection and chemistry act on the step's layer masses, as GEOS-Chem
+  recomputes its air mass before every step. With advection, or with
+  `air_mass_update = :window`, the air mass changes inside a window only
+  through advection; without advection it then stays at the window-start air
+  mass until the window-end reset (the behaviour before 2026-11). `:step` with
+  advection is an error.
 - `prefetch_windows=true` — on a device backend with more than one Julia
   thread, load the next met window on a second thread while the current one
   runs. `false` loads each window when it is needed and keeps one device
@@ -114,6 +137,7 @@ function DrivenSimulation(model::TransportModel,
                           interpolate_fluxes_within_window = nothing,
                           air_mass_reset_mode = :preserve_tracer_mass,
                           physics_cadence = nothing,
+                          air_mass_update = nothing,
                           prefetch_windows::Bool = true,
                           surface_sources = (),
                           chemistry::AbstractChemistryOperator = NoChemistry(),
@@ -189,8 +213,11 @@ function DrivenSimulation(model::TransportModel,
     flux_interp = interpolate_fluxes_within_window === nothing ?
                   (flux_interpolation_mode(driver) === :interpolate) : Bool(interpolate_fluxes_within_window)
     reset_mode = _normalize_air_mass_reset_mode(air_mass_reset_mode)
+    update = resolve_air_mass_update(air_mass_update;
+                                     advects_air_mass = advects_air_mass(model.advection),
+                                     air_mass_reset = reset_mode)
     plan = StepPlan(; physics_cadence, window_contract = uses_binary_substep_contract(driver),
-                    air_mass_reset = reset_mode)
+                    air_mass_reset = reset_mode, air_mass_update = update)
 
     sim = DrivenSimulation{typeof(model), typeof(driver), typeof(window),
                            typeof(expected_air_mass), typeof(qv_buffer), FT,

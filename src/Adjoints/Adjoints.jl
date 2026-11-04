@@ -29,8 +29,8 @@ using ..Operators: AbstractAdvectionScheme
 using ..Operators.SurfaceFlux: NoSurfaceFlux, SurfaceFluxOperator
 using ..Operators.Chemistry: AbstractChemistryOperator, NoChemistry
 using ..Operators.StepPlans: AbstractStepStage, AirMassResetStage, ChemistryAfterStage,
-    ChemistryBeforeStage, ConvectionStage, StepOperators, StepPlan, TransportStage, operator_state,
-    plan_stages, restore_operator_state!
+    ChemistryBeforeStage, ConvectionStage, StepEndAirMass, StepOperators, StepPlan, TransportStage,
+    operator_state, plan_stages, restore_operator_state!
 using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractUnplacedPolicy,
     ErrorOnUnplaced, RetrievalColumn, VERTICAL_PLACEMENT_CODES, VerticalPlacement
 using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AutoTape,

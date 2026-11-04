@@ -69,6 +69,58 @@ flowchart LR
     CONV --> CHEM[Chemistry]
 ```
 
+### [Air mass in runs without advection](@id noadvection-air-mass)
+
+With advection on, the air mass of each cell changes every step by the
+divergence of the mass fluxes, and the binary's continuity closure brings it
+to the window's end mass `m_w + dm_w`; the window-end reset
+(`[run] air_mass_reset_mode`) only removes the round-off. With
+`[advection] scheme = "none"` nothing moves the air mass inside a window.
+Therefore an advection-off run starts every step `n` of the `N` steps of
+window `w` with an air-mass reset to the window's air mass at the end of that
+step,
+
+```math
+m_n = m_w + \frac{n}{N}\, dm_w ,
+```
+
+in the run's `air_mass_reset_mode` (`preserve_tracer_mass`, the default: the
+tracer masses stay and the mixing ratios `rm / m` follow the air mass;
+`preserve_vmr`: the mixing ratios stay). The step's diffusion, convection and
+chemistry then weight the layers by `m_n`. The reset is the step's first stage
+(`AirMassResetStage(mode, StepEndAirMass())` in the [`StepPlan`](@ref
+AtmosTransport.Operators.StepPlans.StepPlan)); convection at the default
+window cadence runs after the window-end reset as before, on `m_w + dm_w`. At
+the last step `n / N = 1`, so the step target equals the window-end target
+bit for bit. Tracer mass is conserved exactly under `preserve_tracer_mass`.
+
+`[run] air_mass_update` selects this: `"step"` is the default without
+advection (unless `air_mass_reset_mode = "none"`, which has nothing to reset
+with), `"window"` keeps only the window-boundary resets. Before 2026-11 every
+advection-off run used `"window"`: the air mass stayed at the window start for
+all steps of the window, so convection and PBL mixing weighted the layers by
+masses up to a window old (tracer mass was conserved, the mixing ratios were
+not those of the met data). `"window"` reproduces those results. `"step"` with
+advection on is an error: advection already updates the air mass every step,
+and a reset would discard its flux divergence.
+
+**GEOS-Chem / GCHP.** GEOS-Chem recomputes the dry air mass from the met
+fields before every step (`AirQnt`, `DELP_DRY`), so its convection and PBL
+mixing see that step's layer masses; the per-step reset is the
+AtmosTransport equivalent for runs without advection. In the GCHP convection
+comparison on MERRA-2 C90 (CMFMC RAS, 240 s steps, advection off in both
+models), holding the window-start air mass left the sub-cloud layers unequal
+by exactly the ratio of their hourly mass changes (2.4e-4 RMS, predicted from
+the masses to 9e-16) and the lowest layer 1.4e-5 from GCHP after 1 h; with the
+air mass updated every step the run matched GCHP at the comparison's floor
+(lowest-layer RMS 9.8e-8 at 24 h, from 1.9e-5). That comparison also used
+GEOS-Chem conventions that are not on `main` (moist CMFMC, GEOS-Chem's
+cloud-base order).
+
+**Adjoint.** `NoAdvection` has no cubed-sphere adjoint, so advection-off runs
+have none; `require_adjoint_support` also names the per-step reset, which has
+no adjoint record.
+
 ## Advection
 
 ### Scheme selection by type

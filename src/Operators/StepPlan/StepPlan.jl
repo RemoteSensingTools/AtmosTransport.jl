@@ -5,7 +5,9 @@ The model step as data: which operators run, in which order, with which time
 step, at every advection step and at the met-window boundaries.
 
 A [`StepPlan`](@ref) is built once from the run configuration (physics
-cadence, the transport binary's window contract, the air-mass reset mode).
+cadence, the transport binary's window contract, the air-mass reset mode and
+when the air mass follows the met data: per window, or per step for runs
+without advection).
 Production executes it: `TransportModel.step!` runs its `step` stages and
 `DrivenSimulation` runs all four phases. The cubed-sphere adjoint executes the
 same plan with a tape recorder (`AbstractStepRecorder`) and walks the recorded
@@ -52,7 +54,8 @@ include("midpoint.jl")
 export StepPlan, StepOperators, StepTiming
 export AbstractStepStage, TransportStage, ConvectionStage, ChemistryBeforeStage,
        ChemistryAfterStage, AirMassResetStage
-export AbstractStageDt, StepDt, WindowDt, WindowStartAirMass, WindowEndAirMass
+export AbstractStageDt, StepDt, WindowDt, WindowStartAirMass, WindowEndAirMass, StepEndAirMass
+export resolve_air_mass_update, advects_air_mass
 export AbstractPhysicsCadence, SubstepPhysics, WindowPhysics
 export execute_stage!, execute_stages!, execute_window_advance!, execute_window_start!,
        execute_step_stages!, execute_window_end!
@@ -87,6 +90,57 @@ _normalize_air_mass_reset_mode(value) =
     parse_choice(value === nothing ? "none" : value,
                  NamedTuple{_AIR_MASS_RESET_MODES}(_AIR_MASS_RESET_MODES),
                  "air_mass_reset_mode"; case_sensitive = true, allow_symbol = true)
+
+# `[run] air_mass_update`: when the air mass follows the met data inside a
+# window. `nothing` (the key omitted) selects it from the advection scheme.
+const _AIR_MASS_UPDATES = (:window, :step)
+
+"""
+    advects_air_mass(advection) -> Bool
+
+Whether the advection scheme evolves the air mass every step through the mass
+fluxes: `false` for `NoAdvection` only. A run whose scheme does not leaves the
+air mass where the last reset put it, so [`resolve_air_mass_update`](@ref)
+updates it every step by default.
+"""
+advects_air_mass(::NoAdvection) = false
+advects_air_mass(::AbstractAdvectionScheme) = true
+
+"""
+    resolve_air_mass_update(value; advects_air_mass::Bool, air_mass_reset) -> Symbol
+
+`[run] air_mass_update` as `:window` or `:step` for a run whose advection does
+(`advects_air_mass = true`) or does not evolve the air mass, with air-mass reset
+mode `air_mass_reset`.
+
+- `nothing` (the key omitted): `:step` for a run without advection and with a
+  reset mode other than `:none`, `:window` otherwise.
+- `:window` / `"window"`: the air mass follows the met data at window
+  boundaries only (window-start and window-end resets). Without advection it
+  stays at the window-start air mass for the whole window, the behaviour
+  before 2026-11; kept to reproduce earlier results.
+- `:step` / `"step"`: at the start of every step the air mass is reset to the
+  met air mass at the end of that step ([`StepEndAirMass`](@ref)). Only for a
+  run without advection (advection already moves the air mass every step) and
+  a reset mode other than `:none`.
+
+Anything else is an `ArgumentError`.
+"""
+function resolve_air_mass_update(value; advects_air_mass::Bool, air_mass_reset)
+    mode = _normalize_air_mass_reset_mode(air_mass_reset)
+    value === nothing && return !advects_air_mass && mode !== :none ? :step : :window
+    update = parse_choice(value, NamedTuple{_AIR_MASS_UPDATES}(_AIR_MASS_UPDATES),
+                          "air_mass_update"; case_sensitive = true, allow_symbol = true)
+    update === :step || return update
+    advects_air_mass && throw(ArgumentError(
+        "air_mass_update = \"step\" applies only to runs without advection " *
+        "([advection] scheme = \"none\"); advection moves the air mass every step " *
+        "through the mass fluxes."))
+    mode === :none && throw(ArgumentError(
+        "air_mass_update = \"step\" needs an air_mass_reset_mode other than \"none\"; " *
+        "the per-step update is a reset in that mode."))
+    return update
+end
 
 # ---------------------------------------------------------------------------
 # Stages
@@ -174,15 +228,21 @@ end
 struct WindowStartAirMass end
 """    WindowEndAirMass()  — the reset target is the window's authoritative end air mass."""
 struct WindowEndAirMass end
+"""
+    StepEndAirMass()  — the reset target is the met air mass at the end of the
+    current step, `m + λ dm` with `λ` the step's end as a fraction of its
+    window (the window's end air mass at its last step).
+"""
+struct StepEndAirMass end
 
 """
     AirMassResetStage(mode, target)
 
-Replace the prognostic air mass by the met target (`WindowStartAirMass()` or
-`WindowEndAirMass()`), preserving the tracer mass (`:preserve_tracer_mass`)
-or the mixing ratio (`:preserve_vmr`).
+Replace the prognostic air mass by the met target (`WindowStartAirMass()`,
+`WindowEndAirMass()` or `StepEndAirMass()`), preserving the tracer mass
+(`:preserve_tracer_mass`) or the mixing ratio (`:preserve_vmr`).
 """
-struct AirMassResetStage{P <: Union{WindowStartAirMass, WindowEndAirMass}} <: AbstractStepStage
+struct AirMassResetStage{P <: Union{WindowStartAirMass, WindowEndAirMass, StepEndAirMass}} <: AbstractStepStage
     mode   :: Symbol
     target :: P
 end
@@ -205,7 +265,7 @@ struct WindowPhysics <: AbstractPhysicsCadence end
 
 """
     StepPlan(; physics_cadence = nothing, window_contract = false,
-             air_mass_reset = :none)
+             air_mass_reset = :none, air_mass_update = :window)
 
 The model step of a run: the stages of its four phases (`window_advance`,
 `window_start`, `step`, `window_end`).
@@ -221,6 +281,15 @@ The model step of a run: the stages of its four phases (`window_advance`,
 - `air_mass_reset` other than `:none` resets the air mass to each newly
   entered window (`window_advance`) and, with a window contract, to the
   window's end mass before the window-end physics.
+- `air_mass_update = :step` (needs `air_mass_reset` other than `:none`) also
+  resets it, in the same mode, at the start of every step to the met air mass
+  at the end of that step (`AirMassResetStage(mode, StepEndAirMass())`, the
+  step's first stage), so the step's diffusion, convection and chemistry act
+  on the layer masses of the step, as GEOS-Chem recomputes its air mass
+  before every step (`AirQnt`). It is for runs without advection, where
+  nothing else moves the air mass inside a window; `DrivenSimulation` selects
+  it for them ([`resolve_air_mass_update`](@ref)). The default `:window` adds
+  no stage.
 
 `TransportModel.step!` executes the `step` stages of the default plan;
 `DrivenSimulation` executes all phases of the plan of its configuration; the
@@ -235,21 +304,26 @@ struct StepPlan{C <: AbstractPhysicsCadence, A <: Tuple, S <: Tuple, T <: Tuple,
 end
 
 function StepPlan(; physics_cadence = nothing, window_contract::Bool = false,
-                  air_mass_reset = :none)
+                  air_mass_reset = :none, air_mass_update = :window)
     cadence = _resolve_physics_cadence(physics_cadence)
     mode = _normalize_air_mass_reset_mode(air_mass_reset)
+    update = parse_choice(air_mass_update, NamedTuple{_AIR_MASS_UPDATES}(_AIR_MASS_UPDATES),
+                          "air_mass_update"; case_sensitive = true, allow_symbol = true)
+    update === :step && mode === :none && throw(ArgumentError(
+        "air_mass_update = :step needs an air_mass_reset other than :none"))
     advance = mode === :none ? () : (AirMassResetStage(mode, WindowStartAirMass()),)
     end_reset = mode !== :none && window_contract ?
         (AirMassResetStage(mode, WindowEndAirMass()),) : ()
+    step_reset = update === :step ? (AirMassResetStage(mode, StepEndAirMass()),) : ()
     if window_contract && cadence === :window
         return StepPlan(WindowPhysics(), advance,
                         (ChemistryBeforeStage(WindowDt()),),
-                        (TransportStage(),),
+                        (step_reset..., TransportStage()),
                         (end_reset..., ConvectionStage(WindowDt()),
                          ChemistryAfterStage(WindowDt())))
     end
     return StepPlan(SubstepPhysics(), advance, (),
-                    (ChemistryBeforeStage(StepDt()), TransportStage(),
+                    (step_reset..., ChemistryBeforeStage(StepDt()), TransportStage(),
                      ConvectionStage(StepDt()), ChemistryAfterStage(StepDt())),
                     end_reset)
 end
@@ -269,6 +343,7 @@ _stage_label(s::ChemistryBeforeStage) = "ChemistryBefore(" * _dt_label(s.dt) * "
 _stage_label(s::ChemistryAfterStage) = "ChemistryAfter(" * _dt_label(s.dt) * ")"
 _stage_label(s::AirMassResetStage{WindowStartAirMass}) = "AirMassReset($(s.mode), window start)"
 _stage_label(s::AirMassResetStage{WindowEndAirMass}) = "AirMassReset($(s.mode), window end)"
+_stage_label(s::AirMassResetStage{StepEndAirMass}) = "AirMassReset($(s.mode), step end)"
 _dt_label(::StepDt) = "dt"
 _dt_label(::WindowDt) = "window_dt"
 _phase_label(stages) = isempty(stages) ? "—" : join(map(_stage_label, stages), " → ")
@@ -441,9 +516,11 @@ end
     air_mass_reset_target(target, meteo) -> air mass
 
 The air mass an [`AirMassResetStage`](@ref) installs: the air mass of the met
-window just entered (`WindowStartAirMass()`) or the window's end air mass
-(`WindowEndAirMass()`), as the run context `meteo` provides it
-(`DrivenSimulation`, or the adjoint's replay meteorology).
+window just entered (`WindowStartAirMass()`), the window's end air mass
+(`WindowEndAirMass()`) or the met air mass at the end of the current step
+(`StepEndAirMass()`), as the run context `meteo` provides it
+(`DrivenSimulation`, or the adjoint's replay meteorology, which has no
+`StepEndAirMass()` target: that stage has no adjoint).
 """
 function air_mass_reset_target end
 

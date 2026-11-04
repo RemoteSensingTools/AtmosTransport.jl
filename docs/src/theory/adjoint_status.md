@@ -54,7 +54,9 @@ The adjoint supports the following advection schemes (full union in
   [the adjoint of the FV3 vertical sweep](@ref fv3-vertical-adjoint)
 
 The split-sweep `PPMScheme` with the FV3 vertical profile has no adjoint;
-neither do limited `SlopesScheme` and `NoAdvection`.
+neither do limited `SlopesScheme` and `NoAdvection`. The per-step air-mass
+reset of advection-off runs (`[run] air_mass_update = "step"`, their default)
+has no adjoint record either; the setup guard names both.
 `require_adjoint_support(scheme)` returns a supported scheme and otherwise
 throws an error that names the missing piece. The inversion driver applies it
 to its `[advection]` table; a Lin–Rood table without `vertical` selects
