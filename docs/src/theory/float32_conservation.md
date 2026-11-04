@@ -136,9 +136,8 @@ share per layer, with random sign.
 The TM5 convection matrix and the `dkg` diffusion exchange conserve column
 mass exactly: their columns sum to one. Their `Float32` solves do not. CMFMC
 convection's explicit update conserves too, since its interface fluxes cancel
-in the column sum, but it writes each layer's new mass `q·m` in `Float32`
-(the cloud-base layer twice), and a change below half an ulp of the stored
-mass vanishes. Around each solve or update, the ledger
+in the column sum, but it writes each layer's new mass `q·m` in `Float32`,
+and a change below half an ulp of the stored mass vanishes. Around each solve or update, the ledger
 
 1. sums the participating cells before and after with compensated summation
    (Neumaier, 1974, in the branch-free `TwoSum` form of Ogita et al., 2005);

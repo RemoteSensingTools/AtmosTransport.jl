@@ -1,17 +1,21 @@
 # ---------------------------------------------------------------------------
 # CMFMCConvection kernel + inline helpers.
 #
-# Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION`.
-# Two deliberate departures from the earlier Julia port:
+# Ports from GEOS-Chem `convection_mod.F90:DO_RAS_CLOUD_CONVECTION` in its
+# update order (equations: "The RAS column update" in
+# docs/src/for_tm5_gchp_users/operators_on_binaries.md):
 #
-#   1. **ADD well-mixed sub-cloud layer** — pressure-weighted
-#      below-cloud-base treatment from GCHP
-#      convection_mod.F90:742-782. The legacy Julia port skipped this;
-#      git commit ec2d2c0 preserves it at
-#      src_legacy/Convection/ras_convection.jl for comparison.
-#   2. **KEEP no positivity clamp**. Legacy already has no clamp
-#      (git commit ec2d2c0, src_legacy/Convection/ras_convection.jl:208-214);
-#      preserving linearity is important for the adjoint path.
+#   1. **Well-mixed sub-cloud layer**: the layers below the cloud base mix
+#      with the cloud-base inflow (convection_mod.F90:738-782); the cloud-base
+#      layer itself is left as it is.
+#   2. **Updraft**: enters the cloud base with the mixed sub-cloud air and
+#      entrains the cloud-base layer as it was before the exchange (776, 917).
+#   3. **Level update** in flux form; the cloud-base layer takes the sub-cloud
+#      exchange through its bottom edge (`T1 + T4`, 991-999).
+#
+# No positivity clamp by default: GEOS-Chem's `Q + DELQ < 0` clip is not
+# conservative and makes the operator nonlinear, which the adjoint cannot
+# transpose (`clamp = true`, cubed sphere, adds it with a column rescale).
 #
 # Convention: `k=1=TOA`, `k=Nz=surface`.
 # CMFMC is stored at interfaces: `cmfmc[i, j, k]` = flux at the TOP
@@ -112,8 +116,7 @@ end
 # Column mass ledger (see `_ledger_deposit` and the TM5 ledger in
 # tm5_column_solve.jl, whose helpers are shared). The flux-form update below
 # conserves column tracer mass by construction, but each layer's new mass is
-# written as `q · m` in the working precision (the cloud-base layer twice, by
-# the sub-cloud closure and by the flux update): a change below half an ulp of
+# written as `q · m` in the working precision: a change below half an ulp of
 # the stored mass vanishes, with one sign where the mixing ratio falls with
 # height. Compensated column sums before and after the update give the
 # residual, which goes to the largest layer; what that layer cannot hold is the
@@ -491,8 +494,10 @@ panel, all `Nt` packed tracers. The six-panel kernel
             end
         end
 
-        # Well-mixed sub-cloud, kg/m² accumulator + column-closing
-        # cloud-base update — see LL kernel for the full derivation.
+        # Well-mixed sub-cloud, kg/m² accumulator; the cloud-base layer takes
+        # its exchange in Pass 2 (see the LL kernel for the derivation).
+        cb_inflow = false
+        qc_inflow = zero(FT)
         if cldbase_k < Nz
             m_cb = air_mass[ii, jj, cldbase_k]
             q_cldbase = m_cb > tiny ? tracers_raw[ii, jj, cldbase_k, t_idx] / m_cb : zero(FT)
@@ -514,12 +519,8 @@ panel, all `Nt` packed tracers. The six-panel kernel
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[ii, jj, k, t_idx] = qc_mixed * air_mass[ii, jj, k]
                     end
-                    m_cb_pa = m_cb / cell_area
-                    if m_cb_pa > tiny
-                        q_cldbase_new = q_cldbase +
-                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
-                        tracers_raw[ii, jj, cldbase_k, t_idx] = q_cldbase_new * m_cb
-                    end
+                    cb_inflow = true
+                    qc_inflow = qc_mixed
                 end
             end
         end
@@ -540,6 +541,10 @@ panel, all `Nt` packed tracers. The six-panel kernel
             cmout = cmfmc_top + dtrain_k
             entrn = cmout - cmfmc_bot
 
+            # The updraft enters the cloud base with the mixed sub-cloud air.
+            if cb_inflow && k == cldbase_k
+                qc_below = qc_inflow
+            end
             if entrn >= zero(FT) && cmout > tiny
                 qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
                                                   cmfmc_bot, entrn, cmout, tiny)
@@ -553,7 +558,8 @@ panel, all `Nt` packed tracers. The six-panel kernel
         # Pass 2: conservative interface-flux divergence over the cloud
         # (k = 1 … cldbase). See the LL kernel for the full derivation —
         # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)), update by Φ(k+1) − Φ(k),
-        # cloud-base bottom interface closed (Φ = 0). Telescopes to exact
+        # the cloud-base bottom edge carries the sub-cloud exchange
+        # Φ = cmfmc·(qc_inflow − q_cldbase). Telescopes to exact
         # column-mass conservation. With do_clamp, q_new<0 is clamped to 0
         # (GCHP positivity) and conservation is restored by the whole-column
         # rescale below.
@@ -566,7 +572,8 @@ panel, all `Nt` packed tracers. The six-panel kernel
 
             phi_top = cmfmc[i, j, k] * (qc_scratch[ii, jj, k] - q_env_above)
             phi_bot = k < cldbase_k ?
-                cmfmc[i, j, k + 1] * (qc_scratch[ii, jj, k + 1] - q_k) : zero(FT)
+                cmfmc[i, j, k + 1] * (qc_scratch[ii, jj, k + 1] - q_k) :
+                (cb_inflow ? cmfmc[i, j, k + 1] * (qc_inflow - q_k) : zero(FT))
 
             q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
             if do_clamp && q_new < zero(FT)
@@ -691,18 +698,16 @@ end
         # are commensurable. We accumulate `mb_pa` in kg/m² by
         # dividing each layer's per-cell mass by `cell_area_j`.
         #
-        # Deliberate improvement over GCHP: GCHP's step leaves
-        # `Q(CLDBASE)` unchanged, so the "extra mass" implicit in
-        # `(mb_pa + cmfmc·dt)` is never debited to the cloud-base
-        # layer — column tracer mass drifts by `cmfmc·dt·(q_new -
-        # q_cldbase)·cell_area` per call. GCHP relies on its dynamics
-        # core to absorb that residual; our convection-only operator
-        # has no such absorber. We therefore close the budget locally
-        # by updating `Q(CLDBASE) += cmfmc·dt·(qc_mixed - q_cldbase) /
-        # m_cb_pa`, which by construction makes Pass 0 strictly
-        # mass-conserving. The downstream Pass 1 entrainment then
-        # reads the updated `q_cldbase`, which is the physically
-        # correct value of the well-mixed air entering the updraft.
+        # The cloud-base layer is left as it is here, as in GEOS-Chem: the
+        # updraft (Pass 1) enters it with `qc_mixed` and entrains it as it
+        # was, and Pass 2 gives it the sub-cloud exchange through its bottom
+        # edge, `cmfmc·dt·(qc_mixed − q_cldbase)` (GEOS-Chem's `T1 + T4`,
+        # convection_mod.F90:991-999). That is the mass the layers below lose,
+        # `mb_pa·(qb − qc_mixed)`, so the column is conserved. (Giving the
+        # layer the exchange here, before the updraft entrains it, counts the
+        # inflow twice in that layer and can drive it negative.)
+        cb_inflow = false
+        qc_inflow = zero(FT)
         if cldbase_k < Nz
             m_cb = air_mass[i, j, cldbase_k]
             q_cldbase = m_cb > tiny ?
@@ -725,13 +730,8 @@ end
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[i, j, k, t_idx] = qc_mixed * air_mass[i, j, k]
                     end
-                    # Close the column budget at the cloud-base layer.
-                    m_cb_pa = m_cb / cell_area_j
-                    if m_cb_pa > tiny
-                        q_cldbase_new = q_cldbase +
-                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
-                        tracers_raw[i, j, cldbase_k, t_idx] = q_cldbase_new * m_cb
-                    end
+                    cb_inflow = true
+                    qc_inflow = qc_mixed
                 end
             end
         end
@@ -740,6 +740,9 @@ end
         # The updraft rises from the surface upward. In our convention,
         # "rising" = decreasing k. At the base (k=Nz), no updraft from
         # below, so we start with qc_below = 0.
+        #
+        # With sub-cloud inflow the updraft enters the cloud base with the
+        # mixed sub-cloud air (`QC = QC_mixed`, convection_mod.F90:776).
         #
         # Match GCHP `convection_mod.F90:917`: only update qc when
         # `entrn ≥ 0 .and. cmout > tiny`; otherwise keep qc unchanged.
@@ -761,6 +764,9 @@ end
             cmout = cmfmc_top + dtrain_k
             entrn = cmout - cmfmc_bot
 
+            if cb_inflow && k == cldbase_k
+                qc_below = qc_inflow
+            end
             if entrn >= zero(FT) && cmout > tiny
                 qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
                                                    cmfmc_bot, entrn, cmout, tiny)
@@ -781,10 +787,13 @@ end
         # (machine-precision) conservation, the GCHP scheme written in true
         # flux form. dtrain enters only through `cmout`/`qc` in Pass 1 (matching
         # GCHP, whose T-terms use CMFMC, not CMOUT); there is no separate dtrain
-        # tendency term. The cloud-base bottom interface cmfmc[cldbase+1] is
-        # already settled by the conservative sub-cloud step above, so it is
-        # treated as closed (Φ = 0) and Pass 2 runs only over the cloud
-        # (k = 1 … cldbase). `q_env_above` carries the PRE-tendency environment
+        # tendency term. Pass 2 runs over the cloud (k = 1 … cldbase); the
+        # layers below are settled by the sub-cloud step. Through the
+        # cloud-base bottom edge the updraft brings `qc_inflow` and the
+        # subsidence takes the cloud-base air down,
+        #   Φ(cldbase+1) = cmfmc[cldbase+1] · (qc_inflow − q_cldbase)
+        # (GEOS-Chem's T1 + T4), the mass the sub-cloud layers gave up; Φ = 0
+        # without sub-cloud inflow. `q_env_above` carries the PRE-tendency environment
         # value of the layer above; cmfmc[1] = 0 at the TOA, so the k=1 top flux
         # vanishes. The deliberate non-conservative GCHP clamp (Q+DELQ<0 → −Q,
         # convection_mod.F90:1002-1004) is omitted to keep this exactly
@@ -798,7 +807,8 @@ end
 
             phi_top = cmfmc[i, j, k] * (qc_scratch[i, j, k] - q_env_above)
             phi_bot = k < cldbase_k ?
-                cmfmc[i, j, k + 1] * (qc_scratch[i, j, k + 1] - q_k) : zero(FT)
+                cmfmc[i, j, k + 1] * (qc_scratch[i, j, k + 1] - q_k) :
+                (cb_inflow ? cmfmc[i, j, k + 1] * (qc_inflow - q_k) : zero(FT))
 
             q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
             q_env_above = q_k     # PRE-tendency env value, for next level's Φ
@@ -855,8 +865,10 @@ end
         column = view(tracers_raw, c, :, t_idx)
         before = ledgered ? _tm5_column_sum(column, 1, Nz, 1) : (zero(FT), zero(FT))
 
-        # Well-mixed sub-cloud, kg/m² accumulator + column-closing
-        # cloud-base update — see LL kernel for the full derivation.
+        # Well-mixed sub-cloud, kg/m² accumulator; the cloud-base layer takes
+        # its exchange in Pass 2 (see the LL kernel for the derivation).
+        cb_inflow = false
+        qc_inflow = zero(FT)
         if cldbase_k < Nz
             m_cb = air_mass[c, cldbase_k]
             q_cldbase = m_cb > tiny ? tracers_raw[c, cldbase_k, t_idx] / m_cb : zero(FT)
@@ -878,12 +890,8 @@ end
                     for k in (cldbase_k + 1):Nz
                         tracers_raw[c, k, t_idx] = qc_mixed * air_mass[c, k]
                     end
-                    m_cb_pa = m_cb / cell_area
-                    if m_cb_pa > tiny
-                        q_cldbase_new = q_cldbase +
-                            cmfmc_at_cldbase * dt * (qc_mixed - q_cldbase) / m_cb_pa
-                        tracers_raw[c, cldbase_k, t_idx] = q_cldbase_new * m_cb
-                    end
+                    cb_inflow = true
+                    qc_inflow = qc_mixed
                 end
             end
         end
@@ -904,6 +912,10 @@ end
             cmout = cmfmc_top + dtrain_k
             entrn = cmout - cmfmc_bot
 
+            # The updraft enters the cloud base with the mixed sub-cloud air.
+            if cb_inflow && k == cldbase_k
+                qc_below = qc_inflow
+            end
             if entrn >= zero(FT) && cmout > tiny
                 qc, _qc_scav = _cmfmc_updraft_mix(qc_below, q_k,
                                                   cmfmc_bot, entrn, cmout, tiny)
@@ -917,7 +929,8 @@ end
         # Pass 2: conservative interface-flux divergence over the cloud
         # (k = 1 … cldbase). See the LL kernel for the full derivation —
         # Φ(k) = cmfmc[k]·(qc[k] − q_env_orig(k−1)), update by Φ(k+1) − Φ(k),
-        # cloud-base bottom interface closed (Φ = 0). Telescopes to exact
+        # the cloud-base bottom edge carries the sub-cloud exchange
+        # Φ = cmfmc·(qc_inflow − q_cldbase). Telescopes to exact
         # column-mass conservation.
         q_env_above = zero(FT)
 
@@ -928,7 +941,8 @@ end
 
             phi_top = cmfmc[c, k] * (qc_scratch[c, k] - q_env_above)
             phi_bot = k < cldbase_k ?
-                cmfmc[c, k + 1] * (qc_scratch[c, k + 1] - q_k) : zero(FT)
+                cmfmc[c, k + 1] * (qc_scratch[c, k + 1] - q_k) :
+                (cb_inflow ? cmfmc[c, k + 1] * (qc_inflow - q_k) : zero(FT))
 
             q_new = bmass > tiny ? q_k + (dt / bmass) * (phi_bot - phi_top) : q_k
             q_env_above = q_k

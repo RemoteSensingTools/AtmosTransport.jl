@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Result change for `convection.kind = "cmfmc"` (RAS):** the cloud-base layer
+  now follows GEOS-Chem's `DO_RAS_CLOUD_CONVECTION` order on every topology
+  (cubed sphere, lat-lon, reduced Gaussian). The updraft entrains the
+  cloud-base layer as it was and the layer takes the sub-cloud exchange through
+  its bottom edge in the level update (GEOS-Chem's `T1 + T4`). Before, the
+  layer took the exchange first and the updraft entrained the exchanged air,
+  which counted the inflow twice in that layer: the column stayed conservative,
+  but the cloud-base layer went negative (to −2.3e-3 on MERRA-2 C90 and −8.5e-3
+  on GEOS-IT C90 with CO₂ = 1 in the lowest layer after 1 h). The column now
+  equals a literal port of the GEOS-Chem routine to rounding. The CS adjoint is
+  the transpose of the new update. `CMFMCMatrixConvection` and TM5 convection
+  are unchanged. The old order is not kept as an option. Comments and docs that
+  called GEOS-Chem's sub-cloud step non-conservative are corrected; equations in
+  the manual ("The RAS column update"). Golden cases `run_c90_merra2_*` change.
+
 - TM5 spectral face construction keeps LL/RG Gauss–Fourier and CS cardinal-16
   results on the selected backend through level batches and latitude bands.
   Float32 devices use pressure-anomaly synthesis, stable polar winds and
