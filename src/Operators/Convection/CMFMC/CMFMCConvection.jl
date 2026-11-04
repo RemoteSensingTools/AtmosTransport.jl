@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# CMFMCConvection — GCHP-audited two-pass CMFMC convective transport.
+# CMFMCConvection — two-pass CMFMC convective transport in GEOS-Chem's RAS order.
 # Basis-polymorphic, with well-mixed sub-cloud treatment, mandatory CFL
 # sub-cycling, and no positivity clamp to preserve adjoint structure.
 #

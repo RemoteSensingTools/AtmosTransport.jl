@@ -529,9 +529,14 @@ only in its ``Q + ΔQ < 0`` clip and in never updating its top layer
 
 With ``d_b = 0`` the inflow cancels in the cloud-base layer,
 ``q_b \leftarrow q_b (1 - c_b Δt/m_b) + (c_b Δt/m_b)\, q_{b-1}``: the air that
-enters from below leaves in the updraft. In general every coefficient of the
-cloud-base update is non-negative when ``(c_b + d_b) Δt \le m_b`` and
-``c_{b+1} Δt \le m_b``, so a non-negative field stays non-negative there.
+enters from below leaves in the updraft. In general all coefficients of the
+cloud-base update except that of ``q_b`` itself are non-negative, and that one is
+``1 - Δt\,(c_b + c_{b+1} d_b/(c_b + d_b))/m_b`` when the layer entrains
+(``e_b \ge 0``) and ``1 - c_{b+1} Δt/m_b`` when it does not. Both are
+non-negative when ``(c_b + c_{b+1})\, Δt \le m_b``, which the operator's
+interface CFL sub-stepping guarantees (each interface flux at most half the
+thinner neighbouring layer per sub-step), for any detrainment ``d_b``. So a
+non-negative field stays non-negative at the cloud base, in exact arithmetic.
 
 **The earlier order.** Before this was corrected, the cloud-base layer took
 its exchange ``c_{b+1} Δt\,(q_\mathrm{mix} - q_b)`` in step 1, and step 2
