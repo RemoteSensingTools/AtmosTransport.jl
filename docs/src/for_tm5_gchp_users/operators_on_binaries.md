@@ -474,6 +474,81 @@ runs the GCHP-style upwind moist convection scheme. This is the
 path for GEOS-driven runs. The CFL substep is chosen at met-window
 start from the maximum cell-relative mass flux.
 
+#### The RAS column update
+
+The update is GEOS-Chem's `DO_RAS_CLOUD_CONVECTION` (`convection_mod.F90`)
+for an insoluble tracer, in flux form. Layers are counted from the model top,
+``k = 1 … N``; ``c_k`` is CMFMC through the top edge of layer ``k`` (so
+``c_{k+1}`` enters it from below), ``d_k`` is DTRAIN and ``m_k`` the layer's air
+mass per area (kg m⁻², on the basis of CMFMC). ``b`` is the cloud base: the
+lowest layer with inflow through its bottom edge, or GEOS-Chem's DQRCU base
+(`cloud_base = "dqrcu"`, cubed sphere). One CFL sub-step ``Δt``, on the mixing
+ratios ``q_k`` at its start:
+
+1. **Below the cloud base** (GEOS-Chem lines 738–782). If ``b < N`` and
+   ``c_{b+1}`` is above the noise threshold, the layers below ``b`` (air mass
+   ``M = \sum_{k>b} m_k``, mean ``\bar q``) mix with the inflow:
+
+   ```math
+   q_\mathrm{mix} = \frac{M \bar q + c_{b+1} Δt\, q_b}{M + c_{b+1} Δt},
+   \qquad q_k \leftarrow q_\mathrm{mix} \quad (k > b).
+   ```
+
+   The cloud-base layer keeps ``q_b`` for now.
+2. **Updraft**, from the cloud base up. It enters the cloud base with
+   ``q^c_{b+1} = q_\mathrm{mix}`` and entrains ``e_k = c_k + d_k - c_{k+1}``:
+
+   ```math
+   q^c_k = \frac{c_{k+1} q^c_{k+1} + e_k q_k}{c_k + d_k}
+   \quad \text{if } e_k \ge 0 \text{ and } c_k + d_k > 0,
+   \qquad q^c_k = q^c_{k+1} \text{ otherwise}.
+   ```
+
+   At the cloud base the updraft entrains ``q_b``, the layer as it was before
+   the exchange.
+3. **Level update**, ``k = 1 … b``. With the net upward tracer flux through
+   the top edge of layer ``k``, ``Φ_k = c_k (q^c_k - q_{k-1})`` (updraft up,
+   subsidence down), and through the cloud-base bottom edge
+   ``Φ_{b+1} = c_{b+1} (q_\mathrm{mix} - q_b)``:
+
+   ```math
+   q_k \leftarrow q_k + \frac{Δt}{m_k}\,(Φ_{k+1} - Φ_k).
+   ```
+
+   This is GEOS-Chem's ``T_1 + T_2 + T_3 + T_4``: at the cloud base
+   ``T_1 + T_4 = c_{b+1}(q_\mathrm{mix} - q_b)``, at the levels above
+   ``T_1 + T_4`` and the ``T_2 + T_3`` of the level below are the same edge
+   flux.
+
+The column conserves tracer mass: the layers below the cloud base lose
+``M(\bar q - q_\mathrm{mix}) = c_{b+1} Δt\,(q_\mathrm{mix} - q_b) = Δt\,Φ_{b+1}``,
+which the cloud-base layer gains, and every edge flux above it enters one layer
+and leaves the next. GEOS-Chem's routine conserves the same way; it differs
+only in its ``Q + ΔQ < 0`` clip and in never updating its top layer
+(`KTOP = NLAY - 1`).
+
+With ``d_b = 0`` the inflow cancels in the cloud-base layer,
+``q_b \leftarrow q_b (1 - c_b Δt/m_b) + (c_b Δt/m_b)\, q_{b-1}``: the air that
+enters from below leaves in the updraft. In general every coefficient of the
+cloud-base update is non-negative when ``(c_b + d_b) Δt \le m_b`` and
+``c_{b+1} Δt \le m_b``, so a non-negative field stays non-negative there.
+
+**The earlier order.** Before this was corrected, the cloud-base layer took
+its exchange ``c_{b+1} Δt\,(q_\mathrm{mix} - q_b)`` in step 1, and step 2
+entrained the exchanged value. The inflow then entered the layer twice, through
+the exchange and through the updraft that leaves it, and the subsidence did not
+return it. With ``d_b = 0`` and no tracer in the cloud-base layer and the
+layer above, the cloud-base layer ended at
+``-c_{b+1} e_b Δt^2 q_\mathrm{mix} / m_b^2`` instead of zero: still
+conservative, but negative. In the
+single-column case of `test/core/test_cmfmc_ras_cloud_base.jl` (tracer only in
+the surface layer, 240 s) it went to ``-1.0 \times 10^{-4}``; the current order
+keeps it at zero and equals a literal port of the GEOS-Chem routine to
+rounding, on every topology.
+
+The adjoint (`adjoint_kernels.jl`, cubed sphere, CMFMC-edge cloud base) is the
+exact transpose of this update.
+
 ### `CMFMCMatrixConvection`
 
 Consumes `:cmfmc` and `:dtrain`, derives TM5-style entrainment and detrainment
