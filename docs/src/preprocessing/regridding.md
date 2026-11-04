@@ -116,7 +116,11 @@ The same module holds the block kernels of the transport-binary coarseners:
 `coarsen_sum!` (extensive amounts, summed in the data precision) and
 `coarsen_area_weighted!` (intensive fields,
 ``\mathrm{fl}\big(\sum A_f s_f / \sum A_f\big)`` with Float64 sums and one
-rounding).
+rounding). Cell-centre east/north winds go through
+`coarsen_area_weighted_vector!` instead: the fine vectors are averaged in
+Cartesian components and the mean is projected on the east/north axes at
+the coarse cell centre (bases from `cs_east_north_basis`), because the local
+axes turn across a block, most near the poles.
 
 ## The JLD2 weights cache
 

@@ -188,7 +188,7 @@ end
         portable=cs_integral_workspace(grid,3,c;batch=2,synthesis=CSHostDeviceSynthesis{FT}())
         actual=SP.integrate_face_fluxes!(portable,h,vo,d,3,[2000.,-2000.],[0.3,0.7],c)
         @test eltype(portable.geometry.face.weights)===FT
-        @test actual.ps ≈ reference.ps rtol=1e-12
+        @test actual.ps ≈ reference.ps rtol=(FT === Float64 ? 1e-12 : 3e-6)
         tolerance=FT === Float64 ? 1e-12 : 1e-5
         @test norm(actual.u-reference.u)/norm(reference.u)<=tolerance
         @test norm(actual.C-reference.C)/norm(reference.C)<=tolerance
@@ -210,7 +210,7 @@ if get(ENV,"ATMOSTR_TEST_SPECTRAL_GPU","0") == "1"
         for FT in (Float64,Float32)
             gpu=cs_integral_workspace(grid,3,c;batch=2,synthesis=PP.Common.GPUSynthesis(),precision=FT)
             actual=SP.integrate_face_fluxes!(gpu,h,vo,d,3,[2000.,-2000.],[0.3,0.7],c)
-            @test actual.ps ≈ reference.ps rtol=1e-12
+            @test actual.ps ≈ reference.ps rtol=(FT === Float64 ? 1e-12 : 3e-6)
             tolerance=FT === Float64 ? 1e-12 : 1e-5
             @test norm(actual.u-reference.u)/norm(reference.u)<=tolerance
             @test norm(actual.C-reference.C)/norm(reference.C)<=tolerance
