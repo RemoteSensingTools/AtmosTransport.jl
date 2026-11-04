@@ -45,22 +45,25 @@ None.
 
 TM5 ring evaluation uses `synthesis_rings.jl` (geometry, exact LNSP gradient and
 complete T+1 wind transform), `device_spectral_synthesis.jl` (bounded batch
-GEMM and unnormalised FFT plans), `synthesis_kernels.jl` (portable pack,
+GEMM and unnormalised FFT plans; CUDA orders KA/GEMM/FFT on the task stream
+with one completion wait per synthesis call), `synthesis_kernels.jl` (portable pack,
 scatter and gather), and `spectral_quadrature.jl` (refinement, linear/cos-linear
 latitude rules, open polar nodes and periodic prefix primitives).
 `CPURingSynthesis` is the reference; `GPUSpectralSynthesis` keeps samples on
 the device. CUDA selection, automatic precision and the TF32 guard live in
 `ext/AtmosTransportCUDAExt.jl`; core never loads CUDA. LL/RG surface fields
 and quadrature follow the selected precision throughout; the existing host
-pin/closure uses Float64 endpoint pressure after transfer. CS retains Float64
-surface fields and selected-precision three-dimensional integration.
+pin/closure uses Float64 endpoint pressure after transfer. CPU CS retains Float64 surface fields; device CS surfaces follow selected precision.
 
 - `spectral_hour_io.jl`: indexed one-hour reads and per-hour atomic caches.
 - `spectral_integral_fluxes.jl`: PS, face and C integration and independent W.
 - `latitude_band_integrals.jl`: Gauss/Fourier execution in complete latitude
   cell bands (a total budget of 32 cells), sliced from the original quadrature. Packed native coefficients
   are reused across bands; compatible bands reuse synthesis/FFT buffers and
-  refill bounded Legendre tables. Sequential Fourier operations share scratch.
+  refill bounded Legendre tables. Float32 device polar plans are built once per
+  compatible band shape and share bounded latitude tables across shapes; sample
+  scratch persists, and each endpoint stages its polar coefficients once per
+  level batch. Sequential Fourier operations share scratch.
 - `cpu_band_synthesis.jl`: host scheduling for small bands. A reusable single
   mode panel preserves the original surface GEMM dimensions and column positions
   so that streaming does not change its accumulation order. Native fields use
@@ -131,8 +134,9 @@ projection arithmetic; only column calls select compensated projection dispatch.
   `CSSpectralIntegralWorkspace` applies great-circle midpoint/cardinal16 Cartesian face maps and
   conservative box-overlap maps with KernelAbstractions gathers. The target
   supplies geometry matrices, keeping this stage independent of MassClosure
-  and Regridding. Only reduced target fields return from the device per batch.
-- Surface synthesis and PS integration use Float64. CS 3-D integrands and
+  and Regridding. Only completed reduced target fields return from the device at the endpoint boundary.
+- CPU CS surface synthesis and PS integration use Float64; device surface work
+  follows selected precision. CS 3-D integrands and
   gathers use the selected plan precision, including typed constants; the
   new kernels introduce no Float64 promotion. The forcing is a density per
   square metre before conservative area integration, with the IFS/target
@@ -159,3 +163,46 @@ integrates periodic products on arbitrary LL/RG longitude segments.
 The Gauss/Fourier path packs U/V/D coefficients into one transform batch,
 sharing Legendre work and launch overhead while keeping the native-level
 batch bound. Explicit trapezoids retain their historical transform sequence.
+
+## Device face quadrature
+
+`device_face_quadrature.jl` owns backend-dispatched level padding and surface
+gradient coefficients, and a typed Neumaier accumulator. Gauss latitude sums,
+Fourier frequency folds and CS cardinal/overlap gathers use compensation for
+Float32 device arrays. CPU arrays retain their previous reduction arithmetic,
+aligned GEMM panels and fixed FFT batches. All new kernels are exercised on
+the KA CPU backend, including explicit compensated-reduction tests.
+
+Reduced outputs stay on the synthesis backend across level batches and latitude
+bands. `integrate_face_fluxes!(...; host_output=false)` retains backend arrays;
+the default transfers completed PS/face/forcing fields once for the established
+Float64 host pin, balance and closure. Host geometry, sparse stencil assembly
+and Float64 Legendre precomputation remain setup work. CS polar coefficients
+are formed in a device kernel. Float32 device LL/RG plans reuse the stable
+polar vector-harmonic correction; CPU production plans retain their bits.
+CS GPU surface synthesis and overlap means now follow selected precision,
+so an L40S plan performs no Float64 device work. CPU CS surfaces retain Float64.
+Pedantic CUDA math spans the complete face construction, including Fourier
+integration; FAST_MATH/TF32 is rejected.
+
+GPU repeatability is scoped to the same device, library stack and plan shapes;
+no cross-device bitwise claim is made. Changing bands can select different
+CUBLAS/CUFFT algorithms: band-size independence is measured numerically, not
+promised bitwise. Compensation does not remove coefficient, GEMM, FFT or
+pressure-exponential rounding. A near-cancelling small harmonic fixture has
+about 2.2e-5 relative Float32 face error; its smoke tolerance is not a 1e-6
+certificate. The qualification driver reports every face outside the bound.
+See manual §17 and `scripts/validation/README.md` for the L40S procedure.
+
+Float32 device pressure synthesis separates the constant LNSP coefficient
+before transforming the anomaly, then restores its pressure factor. This
+avoids losing small spatial pressure signals to rounding the full logarithm.
+The scalar reference exponential is prepared on the host; device arithmetic
+remains Float32. Compensated face sums also retain real multiplication
+residuals with Float32 `fma`, including complex Fourier products. CPU dispatch
+retains the original products and additions.
+
+Measured L40S complete-window CPU/GPU means are 118.30/84.81 s
+for LL 1° and 154.37/41.50 s for C90. Balanced T639 cm relative L2
+is 1.87e-07/1.97e-07. [Qualification details and memory scopes](../../../docs/src/preprocessing/tm5_spectral_fluxes.md#l40s-qualification-2026-11-03)
+also retain the failing edge-harmonic maximum bounds.

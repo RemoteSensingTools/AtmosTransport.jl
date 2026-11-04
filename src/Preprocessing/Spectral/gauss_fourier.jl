@@ -28,18 +28,19 @@ end
     end
 end
 
-@kernel function fold_fourier_integrals!(out, spectrum, factors, J, n, nf)
+@kernel function fold_fourier_integrals!(out, spectrum, factors, J, n, nf, accumulation=Val(false))
     qi, k, r = @index(Global, NTuple)
     if qi <= size(out, 1) && k <= nf && r <= size(out, 3)
         q = qi-1
         total = zero(eltype(out))
+        correction = zero(total)
         half = J÷2
         firstmode = -half+mod(q+half, n)
         for m in firstmode:n:half
             z = m >= 0 ? spectrum[m+1, k, r] : conj(spectrum[1-m, k, r])
-            total += z*factors[m+half+1]
+            total, correction = face_product_step(total, correction, z,factors[m+half+1], accumulation)
         end
-        out[qi, k, r] = total
+        out[qi, k, r] = face_sum_result(total, correction, accumulation)
     end
 end
 
@@ -92,7 +93,7 @@ function fourier_integral_plan(rings, counts, synthesis, batch;
               size=sum(counts), prototype=p.coeffs)
 end
 
-function fourier_integrals!(values, plan, nf)
+function fourier_integrals!(values, plan, nf; accumulation=face_accumulation(get_backend(values), eltype(values)))
     backend = get_backend(values)
     out = similar(plan.prototype, eltype(values), plan.size, nf)
     for g in plan.groups
@@ -100,7 +101,7 @@ function fourier_integrals!(values, plan, nf)
             ndrange=(g.J, nf, length(g.rows)))
         synchronize(backend)
         ring_fft_mul!(g.spectrum, g.forward, g.samples)
-        fold_fourier_integrals!(backend, 256)(g.half, g.spectrum, g.factors, g.J, g.n, nf;
+        fold_fourier_integrals!(backend, 256)(g.half, g.spectrum, g.factors, g.J, g.n, nf, accumulation;
             ndrange=size(g.half))
         synchronize(backend)
         ring_fft_mul!(g.integrals, g.inverse, g.half)

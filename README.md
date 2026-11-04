@@ -366,6 +366,12 @@ prognostic-moment scheme is postponed (see
   compares releases, grids and devices on real MERRA-2 runs; the
   [benchmarks page](https://RemoteSensingTools.github.io/AtmosTransport.jl/dev/development/benchmarks)
   of the manual explains what is measured.
+- **GPU spectral face quadrature:** L40S Float32 checks compare T255/T639
+  harmonics and a complete ERA5 hour with CPU Float64, including per-level
+  face errors, balanced production fluxes, complete-window timing and memory.
+  [Measured results and precision limits](docs/src/preprocessing/tm5_spectral_fluxes.md#l40s-qualification-2026-11-03)
+  retain the failing edge-harmonic maximum bounds. CPU LL72/O24/C24 golden
+  outputs remain bitwise identical to `origin/main`.
 - **Real-data preprocessing:** opt-in ERA5 and GEOS workflows exercise the
   write-time replay contract; these are not a substitute for a full
   cross-model validation campaign.
