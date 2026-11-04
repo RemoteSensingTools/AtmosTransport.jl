@@ -37,7 +37,7 @@ ignored.
 `validate_config(cfg)` checks runtime table shapes, input path existence,
 precision/backend compatibility, and window bounds without opening binary
 readers or allocating model state. It also parses the physics sections,
-`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows`, `[logging]`,
+`air_mass_reset_mode`, `physics_cadence`, `air_mass_update`, `prefetch_windows`, `[logging]`,
 `[checks]` and `[output]` as the run does, so their errors are reported
 together; decay half-lives must name a tracer, and an enabled `[output]` needs
 both a path and snapshot times (`hours = []` means deliberately none). Nested
@@ -191,6 +191,9 @@ stop_window  = 24             # default: nothing — uses the binary's full rang
 air_mass_reset_mode = "preserve_tracer_mass"
 # physics_cadence = "window"  # default; "substep" runs convection and chemistry
                               # every advection substep (cadence comparisons)
+# air_mass_update = "step"   # default without advection: the air mass follows
+                              # the met data every step; "window" only at window
+                              # boundaries (the advection-on default)
 # prefetch_windows = true     # default; false loads each met window when needed
 ```
 
@@ -204,7 +207,15 @@ Both indices must be integers: Boolean and floating-point values are rejected.
 `start_window` must be at least 1, and `stop_window` must not precede it.
 Cubed-sphere runs currently require `start_window = 1`.
 `air_mass_reset_mode` is one of
-`"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. GPU runs with at
+`"none"`, `"preserve_vmr"`, or `"preserve_tracer_mass"`. `air_mass_update`
+says when the air mass follows the met data inside a window: `"step"` resets
+it (in `air_mass_reset_mode`) at the start of every step to the window's air
+mass at the end of that step, `"window"` only at the window boundaries. The
+default is `"step"` for `[advection] scheme = "none"` (unless
+`air_mass_reset_mode = "none"`) and `"window"` otherwise; `"step"` with
+advection, or with `air_mass_reset_mode = "none"`, is an error. Before 2026-11
+advection-off runs used `"window"`; set it to reproduce their results (see
+[Air mass in runs without advection](@ref noadvection-air-mass)). GPU runs with at
 least two Julia threads load the next met window on a second thread while the
 current one runs; `prefetch_windows = false` turns that off (for debugging; the
 results are the same). Advection belongs in the separate `[advection]` table.

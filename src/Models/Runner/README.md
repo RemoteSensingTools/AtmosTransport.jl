@@ -20,6 +20,9 @@ No lower sibling imports Runner.
 - `driven_stepping.jl`: driven constructor, plan phases, window advance,
   source staging, clock transition, `step!`, `run_window!` and `run!`; imports
   the StepPlans reset/halo helpers and SurfaceFlux staging helpers it calls.
+  The constructor resolves `air_mass_update` from the model's advection (a
+  per-step air-mass reset for `NoAdvection`); `air_mass_reset_target` supplies
+  the window-start, window-end and step-end (`m + λ dm`) targets.
 - `adjoint_schedule.jl`: `CSStepSchedule(sim)`, `cs_adjoint_inputs`, fresh-state
   checks and production forcing capture (one copy of the face fluxes each time
   production rewrites them, shared by the steps of a met window).

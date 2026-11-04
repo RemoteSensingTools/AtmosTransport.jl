@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Result change for runs without advection (`[advection] scheme = "none"`):**
+  the air mass now follows the met window every step. Each step starts by
+  resetting it (in `[run] air_mass_reset_mode`, tracer mass kept by default) to
+  the window's air mass at the end of that step, `m + (n/N) dm`, so diffusion,
+  convection and chemistry weight the layers by the step's masses, as
+  GEOS-Chem recomputes its air mass before every step (`AirQnt`). Before, the
+  air mass stayed at the window start for the whole window. In the GCHP
+  convection comparison (MERRA-2 C90, advection off) this took the lowest
+  layer from 1.9e-5 to 9.8e-8 RMS of GCHP at 24 h. New `[run] air_mass_update`:
+  `"step"` (default without advection, unless `air_mass_reset_mode = "none"`)
+  or `"window"` (the advection-on default; reproduces earlier advection-off
+  results); `"step"` with advection is an error. Recorded in the output of
+  runs without advection as `physics_air_mass_update` (advection-on outputs keep
+  their attribute set). Changes advection-off results wherever the air mass is
+  read during a window: the `diffonly_*` process-isolation runs, and convection
+  with `physics_cadence = "substep"`; the `convonly_*` runs at the default window
+  cadence keep their hourly snapshots (convection runs after the window-end
+  reset). Advection-on runs are bit-identical (same step plan, same output
+  attributes); no golden case runs without advection. No
+  adjoint: `NoAdvection` has none, and the new `AirMassResetStage(mode,
+  StepEndAirMass())` is also rejected by `require_adjoint_support`. See
+  "Air mass in runs without advection" in the operators-on-binaries manual.
+
 - **Cubed sphere: surface emissions with advection off** when the diffusion
   owns the surface boundary (`DiffusiveSurfaceFluxBoundary`:
   `[diffusion] surface_flux_boundary = true`, always on for

@@ -25,6 +25,7 @@ const _NUMERICS_KEYS = ("float_type",)                   # `_cfg_float_type`
 # `[run]`. `reset_air_mass_each_window` and the advection keys, which moved to
 # `[advection]`, are read only to reject them (`_advection_section`).
 const _RUN_KEYS = ("start_window", "stop_window", "air_mass_reset_mode", "physics_cadence",
+                   "air_mass_update",
                    "prefetch_windows", "Hp", "halo_padding", "tracer_name",
                    "reset_air_mass_each_window")
 const _ADVECTION_KEYS = _ADVECTION_SPEC_KEYS                              # `advection_spec`

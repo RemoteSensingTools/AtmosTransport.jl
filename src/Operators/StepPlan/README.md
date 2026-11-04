@@ -10,16 +10,25 @@ it differentiates is the production step by construction.
 ## Entry Points
 
 - `StepPlan(; physics_cadence = nothing, window_contract = false,
-  air_mass_reset = :none)` — the plan of a run configuration, with four
-  phases of stages:
+  air_mass_reset = :none, air_mass_update = :window)` — the plan of a run
+  configuration, with four phases of stages:
 
   | phase | runs | stages |
   | --- | --- | --- |
   | `window_advance` | on entering a met window after the first | `AirMassResetStage(mode, WindowStartAirMass())` |
   | `window_start` | before the first step of each window | `ChemistryBeforeStage(WindowDt())` (`:window` cadence) |
-  | `step` | every advection step | `TransportStage()`; with `:substep` cadence (or no window contract) also `ChemistryBeforeStage(StepDt())`, `ConvectionStage(StepDt())`, `ChemistryAfterStage(StepDt())` |
+  | `step` | every advection step | `TransportStage()`; with `:substep` cadence (or no window contract) also `ChemistryBeforeStage(StepDt())`, `ConvectionStage(StepDt())`, `ChemistryAfterStage(StepDt())`; with `air_mass_update = :step` first `AirMassResetStage(mode, StepEndAirMass())` |
   | `window_end` | after the last step of each window | `AirMassResetStage(mode, WindowEndAirMass())` (window contract), then `ConvectionStage(WindowDt())`, `ChemistryAfterStage(WindowDt())` (`:window` cadence) |
 
+- `resolve_air_mass_update(value; advects_air_mass, air_mass_reset)` — the
+  `[run] air_mass_update` of a run: `nothing` selects `:step` for a run
+  without advection (`advects_air_mass(NoAdvection()) == false`) and a reset
+  mode other than `:none`, `:window` otherwise; `:step` with advection or
+  without a reset mode is an error. `:step` resets the air mass at the start
+  of every step to the window's air mass at the step end, as GEOS-Chem
+  recomputes its air mass every step; without advection nothing else moves it
+  inside a window (`docs/src/for_tm5_gchp_users/operators_on_binaries.md`,
+  "Air mass in runs without advection"). The stage has no adjoint record.
 - `StepOperators(; state, fluxes, grid, advection, advection_workspace, ...)`
   — what the stages act on (`step_operators(model)` for a `TransportModel`).
 - `execute_stages!`, `execute_window_advance!`, `execute_window_start!`,
@@ -64,7 +73,8 @@ that physics.
 - [`midpoint.jl`](midpoint.jl) — typed transport midpoint, physics preflight,
   `transport_step!` and diffusion-only composition.
 - [`StepPlan.jl`](StepPlan.jl) — module `Operators.StepPlans`: the cadence and
-  reset vocabulary (`_resolve_physics_cadence`, `_normalize_air_mass_reset_mode`),
+  reset vocabulary (`_resolve_physics_cadence`, `_normalize_air_mass_reset_mode`,
+  `resolve_air_mass_update`, `advects_air_mass`),
   stage types and `StepPlan`, `StepOperators`, the stage executors, the
   air-mass reset (`_reset_air_mass!`, `_refresh_state_halos!`), the
   cubed-sphere advection workspace constructor shared with the adjoint

@@ -180,7 +180,8 @@ or allocating model state. Checks cover runtime table shapes (including
 numeric type, backend/float compatibility, the `[output.observations]`
 contract, and integer run-window bounds. The `[advection]`, `[diffusion]`,
 `[convection]`, `[chemistry]`, `[logging]` and `[checks]` sections,
-`air_mass_reset_mode`, `physics_cadence`, `prefetch_windows` and `[output]` are
+`air_mass_reset_mode`, `physics_cadence`, `air_mass_update` (against the
+advection scheme and reset mode), `prefetch_windows` and `[output]` are
 parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
@@ -267,6 +268,24 @@ function validate_config(cfg::AbstractDict)
     return isempty(errors), errors
 end
 
+# `[run] air_mass_update` against the advection scheme and the reset mode, as
+# `DrivenSimulation` resolves it. An `[advection]` table or reset mode that does
+# not parse is reported by its own check; the value is not checked then.
+function _check_air_mass_update!(cfg, run_cfg, errors)
+    advects, mode = try
+        (advects_air_mass(advection_spec(_advection_section(cfg))),
+         _normalize_air_mass_reset_mode(get(run_cfg, "air_mass_reset_mode",
+                                            DEFAULT_AIR_MASS_RESET_MODE)))
+    catch err
+        err isa ArgumentError || rethrow()
+        return errors
+    end
+    return _capture_config_error!(errors) do
+        resolve_air_mass_update(get(run_cfg, "air_mass_update", nothing);
+                                advects_air_mass = advects, air_mass_reset = mode)
+    end
+end
+
 # The physics, run and output settings, parsed as the run would parse them so
 # that their errors appear with the others, before any binary is opened.
 function _check_physics_and_output_settings!(cfg, FT, errors)
@@ -298,6 +317,7 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
         end
         _capture_config_error!(() -> _resolve_physics_cadence(get(run_cfg, "physics_cadence", nothing)),
                                errors)
+        _check_air_mass_update!(cfg, run_cfg, errors)
         _capture_config_error!(() -> _config_bool(run_cfg, "prefetch_windows", true,
                                                   "[run].prefetch_windows"), errors)
     end

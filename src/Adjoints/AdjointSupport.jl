@@ -30,6 +30,13 @@ adjoint_support(::ChemistryAfterStage) = nothing
 adjoint_support(stage::AirMassResetStage) =
     stage.mode in (:preserve_tracer_mass, :preserve_vmr) ? nothing :
     "air-mass reset mode $(repr(stage.mode)) has no adjoint."
+# The per-step reset of runs without advection (`[run] air_mass_update =
+# "step"`): the replay meteorology has no step-end target. Such runs are
+# rejected for `NoAdvection` already; the stage is unsupported on its own so a
+# future NoAdvection adjoint has to add its target (and test it) first.
+adjoint_support(::AirMassResetStage{StepEndAirMass}) =
+    "the per-step air-mass reset of runs without advection ([run] air_mass_update = " *
+    "\"step\", AirMassResetStage(mode, StepEndAirMass())) has no adjoint record."
 adjoint_support(stage::AbstractStepStage) =
     "step-plan stage $(nameof(typeof(stage))) has no adjoint record."
 

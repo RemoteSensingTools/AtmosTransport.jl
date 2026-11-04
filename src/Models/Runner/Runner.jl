@@ -20,7 +20,7 @@ using ...Operators.Diffusion: TM5CalcKzzCSField
 # The step plan (Operators/StepPlan): `TransportModel.step!` and
 # `DrivenSimulation` execute it; the cubed-sphere adjoint records the same plan.
 using ...Operators.StepPlans: window_clock, window_step_dt,
-                             WindowStartAirMass, WindowEndAirMass,
+                             WindowStartAirMass, WindowEndAirMass, StepEndAirMass,
                              execute_window_advance!, execute_window_start!,
                              execute_step_stages!, execute_window_end!
 import ...Operators.StepPlans: air_mass_reset_target

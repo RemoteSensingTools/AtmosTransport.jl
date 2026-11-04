@@ -291,8 +291,8 @@ _refreshes_fluxes(sim::DrivenSimulation, substep::Int) =
 # forcing change only with the window: the operators read the model's copies
 # and never write them, so they are copied (and the fluxes scaled) at the
 # window's first step only. `sim.expected_air_mass` is not refreshed here: its
-# only reader, the window-end air-mass reset (`air_mass_reset_target`),
-# computes it itself.
+# only readers, the window-end and step-end air-mass resets
+# (`air_mass_reset_target`), compute it themselves.
 function _refresh_forcing!(sim::DrivenSimulation, substep::Int)
     λ = _substep_fraction(substep, sim.steps_per_window, typeof(sim.Δt), sim.use_midpoint_forcing)
     if _refreshes_fluxes(sim, substep)

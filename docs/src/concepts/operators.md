@@ -132,6 +132,13 @@ center, with the diffusion scheme's emission deposit. It equals an advection
 step with zero mass fluxes and adds exactly the emitted mass, which makes a
 PBL-only run with a surface source possible.
 
+Without advection nothing moves the air mass inside a met window, so by
+default every step starts by resetting it to the window's air mass at the
+end of that step (`[run] air_mass_update = "step"`, see
+[Air mass in runs without advection](@ref noadvection-air-mass)).
+With `air_mass_reset_mode = "preserve_vmr"`, each reset also rescales tracer
+mass added earlier in the window, including surface emissions.
+
 ## Diffusion
 
 `AbstractDiffusion` is the root; concrete subtypes:

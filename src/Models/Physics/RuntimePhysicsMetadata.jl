@@ -2,7 +2,8 @@
 # that materialize the operators, so metadata cannot drift into a second string
 # switch over TOML values.
 
-using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence
+using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_cadence,
+                              resolve_air_mass_update, advects_air_mass
 
 _physics_limiter(::NoLimiter) = "none"
 _physics_limiter(::MonotoneLimiter) = "monotone"
@@ -141,8 +142,15 @@ function runtime_physics_attributes(cfg, driver, surface_sources, mass_basis::Sy
     run_cfg = get(cfg, "run", Dict{String, Any}())
     attributes["physics_cadence"] = String(_resolve_physics_cadence(
         get(run_cfg, "physics_cadence", nothing)))
-    attributes["physics_air_mass_reset_mode"] = String(_normalize_air_mass_reset_mode(
-        get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE)))
+    reset_mode = _normalize_air_mass_reset_mode(
+        get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE))
+    attributes["physics_air_mass_reset_mode"] = String(reset_mode)
+    # Recorded only for runs without advection, where the choice applies; with
+    # advection the attribute set (and so every advection-on output) is unchanged.
+    advects = advects_air_mass(advection_spec(_advection_section(cfg)))
+    advects || (attributes["physics_air_mass_update"] = String(resolve_air_mass_update(
+        get(run_cfg, "air_mass_update", nothing);
+        advects_air_mass = advects, air_mass_reset = reset_mode)))
     return attributes
 end
 
