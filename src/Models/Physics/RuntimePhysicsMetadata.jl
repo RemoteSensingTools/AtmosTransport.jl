@@ -145,10 +145,12 @@ function runtime_physics_attributes(cfg, driver, surface_sources, mass_basis::Sy
     reset_mode = _normalize_air_mass_reset_mode(
         get(run_cfg, "air_mass_reset_mode", DEFAULT_AIR_MASS_RESET_MODE))
     attributes["physics_air_mass_reset_mode"] = String(reset_mode)
-    attributes["physics_air_mass_update"] = String(resolve_air_mass_update(
+    # Recorded only for runs without advection, where the choice applies; with
+    # advection the attribute set (and so every advection-on output) is unchanged.
+    advects = advects_air_mass(advection_spec(_advection_section(cfg)))
+    advects || (attributes["physics_air_mass_update"] = String(resolve_air_mass_update(
         get(run_cfg, "air_mass_update", nothing);
-        advects_air_mass = advects_air_mass(advection_spec(_advection_section(cfg))),
-        air_mass_reset = reset_mode))
+        advects_air_mass = advects, air_mass_reset = reset_mode)))
     return attributes
 end
 

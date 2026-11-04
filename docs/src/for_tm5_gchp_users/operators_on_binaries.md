@@ -92,7 +92,10 @@ chemistry then weight the layers by `m_n`. The reset is the step's first stage
 AtmosTransport.Operators.StepPlans.StepPlan)); convection at the default
 window cadence runs after the window-end reset as before, on `m_w + dm_w`. At
 the last step `n / N = 1`, so the step target equals the window-end target
-bit for bit. Tracer mass is conserved exactly under `preserve_tracer_mass`.
+bit for bit. Tracer mass is conserved exactly under `preserve_tracer_mass`;
+under `preserve_vmr` the mixing ratios are kept at every step reset, so any
+tracer mass added during a window (e.g. surface emissions) is rescaled with the
+air at each step, not only at the window end.
 
 `[run] air_mass_update` selects this: `"step"` is the default without
 advection (unless `air_mass_reset_mode = "none"`, which has nothing to reset

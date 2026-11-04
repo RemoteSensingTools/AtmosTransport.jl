@@ -103,7 +103,7 @@ surface sources, not copied from unvalidated configuration strings:
 | `physics_mass_basis` | carrier-air basis used by the physics |
 | `physics_cadence` | resolved convection/chemistry cadence (`window` or `substep`) |
 | `physics_air_mass_reset_mode` | resolved window-boundary air-mass reset policy |
-| `physics_air_mass_update` | resolved `[run] air_mass_update`: `step` (air mass reset to the met data every step; runs without advection) or `window` |
+| `physics_air_mass_update` | runs without advection only: resolved `[run] air_mass_update`, `step` (air mass reset to the met data every step) or `window` |
 | `physics_met_source` | transport binary source family |
 | `physics_binary_provenance`, `physics_binary_inputs` | producing code/fingerprint fields and input binary names |
 

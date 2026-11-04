@@ -13,10 +13,14 @@
   layer from 1.9e-5 to 9.8e-8 RMS of GCHP at 24 h. New `[run] air_mass_update`:
   `"step"` (default without advection, unless `air_mass_reset_mode = "none"`)
   or `"window"` (the advection-on default; reproduces earlier advection-off
-  results); `"step"` with advection is an error. Recorded in the output as
-  `physics_air_mass_update`. Changes every advection-off configuration (the
-  `convonly_*` and `diffonly_*` process-isolation runs); advection-on runs are
-  bit-identical (same step plan), no golden case runs without advection. No
+  results); `"step"` with advection is an error. Recorded in the output of
+  runs without advection as `physics_air_mass_update` (advection-on outputs keep
+  their attribute set). Changes advection-off results wherever the air mass is
+  read during a window: the `diffonly_*` process-isolation runs, and convection
+  with `physics_cadence = "substep"`; the `convonly_*` runs at the default window
+  cadence keep their hourly snapshots (convection runs after the window-end
+  reset). Advection-on runs are bit-identical (same step plan, same output
+  attributes); no golden case runs without advection. No
   adjoint: `NoAdvection` has none, and the new `AirMassResetStage(mode,
   StepEndAirMass())` is also rejected by `require_adjoint_support`. See
   "Air mass in runs without advection" in the operators-on-binaries manual.

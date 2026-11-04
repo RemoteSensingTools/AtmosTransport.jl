@@ -246,15 +246,16 @@ end
         @test any(contains("air_mass_reset_mode"),
                   errors(cfg(Dict{String, Any}("air_mass_update" => "step", "air_mass_reset_mode" => "none"))))
     end
-    # The resolved choice is recorded with the run's physics metadata.
+    # The resolved choice is recorded with the run's physics metadata, only for
+    # runs without advection (advection-on outputs keep their attribute set).
     fake_driver = (; reader = (; header = (; raw_header = Dict{String, Any}(), format_version = 1)))
-    attribute(scheme, run) = AtmosTransport.Models.Physics.runtime_physics_attributes(
+    attribute(scheme, run) = get(AtmosTransport.Models.Physics.runtime_physics_attributes(
         Dict{String, Any}("advection" => Dict{String, Any}("scheme" => scheme), "run" => run),
-        fake_driver, (), :dry, String[])["physics_air_mass_update"]
+        fake_driver, (), :dry, String[]), "physics_air_mass_update", nothing)
     @test attribute("none", Dict{String, Any}()) == "step"
     @test attribute("none", Dict{String, Any}("air_mass_update" => "window")) == "window"
     @test attribute("none", Dict{String, Any}("air_mass_reset_mode" => "none")) == "window"
-    @test attribute("upwind", Dict{String, Any}()) == "window"
+    @test attribute("upwind", Dict{String, Any}()) === nothing
 end
 
 include(joinpath(@__DIR__, "..", "helpers", "cs_adjoint_step_plan.jl"))
