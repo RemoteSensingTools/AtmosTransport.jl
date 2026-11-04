@@ -52,6 +52,13 @@ function _geos_strategy_workspace(::GEOSCSBlockCoarsenStrategy{R},
                                   ::Type{FT}, Nz_native::Int,
                                   Nz_out::Int) where {FT, R}
     source_mesh = source_grid(settings; FT = FT)
+    # Block coarsening assumes every native cell lies in one target cell; the
+    # strategy is chosen from Nc alone, so check the meshes really nest.
+    meshes_nested(source_mesh, grid.mesh) || throw(ArgumentError(
+        "GEOS-CS block coarsening C$(settings.Nc) -> C$(grid.Nc) needs a target cube " *
+        "nested in the GEOS native one (same definition, e.g. definition = " *
+        "\"gmao_equal_distance\", panel_convention = \"geos_native\"); got " *
+        "$(cs_definition_tag(cs_definition(grid.mesh)))."))
     Nsrc = settings.Nc
     Nc = grid.Nc
     panels_3d_src() = ntuple(_ -> zeros(FT, Nsrc, Nsrc, Nz_native), CS_PANEL_COUNT)

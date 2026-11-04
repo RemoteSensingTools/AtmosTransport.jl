@@ -553,3 +553,16 @@ end
     @test maximum(p -> maximum(abs, out32.u[p] .- out.u[p]), 1:6) < 3e-5
     @test maximum(p -> maximum(abs, out32.v[p] .- out.v[p]), 1:6) < 3e-5
 end
+
+@testset "GEOS block coarsening rejects a target cube not nested in the native one" begin
+    P = AtmosTransport.Preprocessing
+    settings = GEOSITSettings(root_dir = mktempdir(), Nc = 32, include_vdiff_fields = true)
+    grid = build_target_geometry(
+        Dict{String,Any}("type" => "cubed_sphere", "Nc" => 16, "panel_convention" => "geos_native",
+                          "definition" => "equiangular_gnomonic"), Float64)
+    strategy = P.GEOS._geos_cs_resolution_strategy(settings, grid)
+    @test_throws ArgumentError P.GEOS._geos_strategy_workspace(strategy, settings, grid, Float64, 2, 2)
+    nested = build_target_geometry(
+        Dict{String,Any}("type" => "cubed_sphere", "Nc" => 16, "panel_convention" => "geos_native"), Float64)
+    @test P.GEOS._geos_strategy_workspace(strategy, settings, nested, Float64, 2, 2) !== nothing
+end
