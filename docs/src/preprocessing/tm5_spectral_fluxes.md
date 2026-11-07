@@ -845,11 +845,9 @@ numerical corrections from modelling or convention choices; unisolated sizes
 are explicitly marked **not measured**.
 
 For this inventory, paired citations identify the two inspected source trees:
-`R/file:line` is relative to
-`deps/tm5-mp-r1112/tm5-moguntia-r1112-revised/base` in the sibling
-`/home/cfranken/code/gitHub/AtmosTransportModel` checkout (this worktree has no
-`deps` directory); `C/file:line` is relative to
-`/temp1/cfranken/external_ref/ct-unified-github/base/trunk/src`.
+`R/file:line` is relative to `tm5-moguntia-r1112-revised/base` in the TM5-MP
+r1112 source tree; `C/file:line` is relative to `base/trunk/src` in the
+CarbonTracker TM5 repository (`ct-unified-github`).
 These prefixes do not change the CarbonTracker abbreviations in Sources above.
 Archive settings and the offline coarsener are configuration choices, not
 universal properties of either base tree; their additional provenance follows
@@ -954,14 +952,12 @@ the measured input, precision, backend and window.
 Reproduce warmed timing with
 `scripts/benchmarks/bench_tm5_refinement_window.jl CONFIG 2021-12-01 OUT`.
 For isolated RSS, add a fourth argument, `tm5_trapezoid` or `gauss_fourier`,
-in a fresh process per rule. Use `TMPDIR=/temp2/cfranken/tmp`, empty
-`CUDA_VISIBLE_DEVICES`, and the settings above. Raw `accepted_warm_t{255,639}/timings.tsv`,
-`final_isolated_t{255,639}_{tm5_trapezoid,gauss_fourier}/timings.tsv`, payload
-SHA256 checks and the summary `FINAL_MEASUREMENTS.json` are retained under
-`/temp2/cfranken/codex_scratch/quaddef/memory_revision/`.
-These warmed/isolated results supersede the earlier ordered cold-pair claim;
-accuracy and balanced-flux evidence remains under `gauss_fourier/`, with the
-full work record in `PROGRESS.md`.
+in a fresh process per rule. Use a `TMPDIR` on fast local disk, empty
+`CUDA_VISIBLE_DEVICES`, and the settings above. Raw timing tables, payload
+SHA256 checks, the summary `FINAL_MEASUREMENTS.json`, the accuracy and
+balanced-flux evidence and the full work record are kept outside the
+repository. These warmed/isolated results supersede the earlier ordered
+cold-pair claim.
 
 **Golden policy.** Only the two O24 configs pin `tm5_trapezoid`, steps 2.
 The following golden stage/window figures predate the memory and CPU
@@ -989,13 +985,26 @@ case's delta needs a separate record/comparison using regenerated inputs.
 An unchanged runtime check does not test the new preprocessing products.
 See `test/golden/README.md` for the case policy.
 
-**Historical impact context.** The retained impact report at
-`/temp1/cfranken/jobs/tm5_quadrature_impact/REPORT.md` measured steps 2 versus
-64 over the full T255 day: balanced cm differs by **4.0879% relative L2**.
-Its owner-run advection-only comparison found differences of about **1–2% of
-the one-day tracer change**. Those are 2-versus-64 results; transport with the
-new Gauss/Fourier default has not been run, and no full-physics ppm claim is
-made. The historical raw trapezoid derivation and day profiles follow.
+**Transport impact.** Over a full T255 day, balanced cm with steps 2 differs
+from the converged steps-64 rule by **4.09% relative L2**. A 62-day
+full-physics run (2021-12-01 to 2022-01-31) compared steps-2 trapezoids with
+the Gauss/Fourier default. It used T255 fluxes on 1° LL L117, conservatively
+regridded to C90, identical convection and PBL inputs, and the CATRINE tracers.
+Hourly cm differs by 4.21% relative L2 on LL and 1.28% on C90. On C90, caps
+poleward of 85° contribute 0.12% of the squared difference, and the largest
+zonal RMS lies near 37°N and 630 hPa. After four weeks the natural-CO2
+difference is 0.031 ppm RMS at the surface and 0.0026 ppm in the column, about
+0.3% of the accumulated change. The differences are local: zonal-mean
+differences stay below 0.06 ppm, while the largest single-cell surface
+differences at week 4 (3.2 ppm natural, 4.5 ppm fossil CO2) lie in one cell
+near Tehran on the Alborz slope; the SF6 and Rn maxima lie over Central Asian
+orography. Surface differences level off within the period; column RMS averaged
+over the final week is 5–11% above that of the preceding week. In monthly means
+the effect exceeds the restart noise floor at least 80-fold but stays below
+3.7% of the difference between the ERA5 and MERRA-2 runs. The error is real and
+is corrected here, but it does not explain ERA5–MERRA-2 transport differences.
+
+The historical raw trapezoid derivation and day profiles follow.
 
 TM5's default face-integration error is the **composite trapezoid error of a
 coarsely sampled oscillation**, not an error in the exact face integral or a
@@ -1401,10 +1410,9 @@ quadrature, with its separately documented arc-discretization error. Actual
 L40S qualification measures scale-aware raw-face errors and end-to-end
 balanced fluxes separately.
 
-`/temp1/cfranken/jobs/gpuquad/run_gpu_validation.sh` runs Float32-only L40S
-qualification under `gpu1.lock`. It compares retained rotation, sectoral and
-off-sectoral edge harmonics and all 137 levels of ERA5 2021-12-01 00 UTC at
-T255/T639, for LL 1°, reduced Gaussian and C90. CSV files report absolute
+`scripts/validation/gpu_face_quadrature.jl` runs the Float32-only L40S
+qualification. It compares retained rotation, sectoral and off-sectoral edge
+harmonics and all 137 levels of ERA5 2021-12-01 00 UTC at T255/T639, for LL 1°, reduced Gaussian and C90. CSV files report absolute
 errors, field-peak-scaled errors, resolved-face relative errors and counts
 outside `1e-6*abs(reference) + 2e-14*max(field_peak,1)`; the small absolute term
 handles symmetry zeros. It also measures repeated results, shape-qualified SHA-256 equality across
@@ -1430,7 +1438,7 @@ production criteria. CPU correctness jobs finish before timed windows begin.
 
 ### L40S qualification (2026-11-03)
 
-Actual GPU1 measurements on wurst use an NVIDIA L40S (46068 MiB), driver
+Actual GPU measurements use an NVIDIA L40S (46068 MiB), driver
 615.71.10, Julia 1.12.6, CUDA.jl 5.11.3, CUDA runtime 13.2, CUBLAS 13.4
 and CUFFT 12.2. All fields and surfaces use Float32 on the device under
 pedantic math. The CPU Float64 reference uses the identical quadrature and
