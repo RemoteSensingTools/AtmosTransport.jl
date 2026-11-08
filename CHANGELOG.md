@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Result change for Float32 CMFMC convection:** the "treat as zero"
+  threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's
+  `TINYNUM`); Float32 used `1f-6`. The threshold decides whether a column
+  convects (and, with the CMFMC-edge cloud base, where the base is) and
+  whether its sub-cloud layers mix, so Float32 and Float64 runs of the same
+  binary were different models: weak-updraft columns
+  (1e-14 < CMFMC ≤ 1e-6 kg m⁻² s⁻¹) convected only in Float64, and the
+  CMFMC-edge cloud base differed in 8.6 % of C24 MERRA-2 column-windows.
+  Float32 now follows Float64: on the C90 MERRA-2 golden day, CO2 from
+  Float32 GPU vs Float64 CPU differs by at most 1.3e-4 of the field maximum
+  (was 0.30). Float64 results are bit-identical; the five Float32
+  CMFMC golden cases change (CO2 RMS 2–3e-4 relative, fossil and Rn222 RMS
+  5–7 % after one day); air mass is bit-identical and tracer mass is
+  conserved as before.
+
 - **Result change for runs without advection (`[advection] scheme = "none"`):**
   the air mass now follows the met window every step. Each step starts by
   resetting it (in `[run] air_mass_reset_mode`, tracer mass kept by default) to

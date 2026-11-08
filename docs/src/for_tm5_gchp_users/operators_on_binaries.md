@@ -544,7 +544,8 @@ lowest layer with inflow through its bottom edge, or GEOS-Chem's DQRCU base
 ratios ``q_k`` at its start:
 
 1. **Below the cloud base** (GEOS-Chem lines 738–782). If ``b < N`` and
-   ``c_{b+1}`` is above the noise threshold, the layers below ``b`` (air mass
+   ``c_{b+1}`` exceeds GEOS-Chem's `TINYNUM` (``10^{-14}`` kg m⁻² s⁻¹, in
+   every precision), the layers below ``b`` (air mass
    ``M = \sum_{k>b} m_k``, mean ``\bar q``) mix with the inflow:
 
    ```math
