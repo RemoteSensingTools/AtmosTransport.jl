@@ -106,8 +106,10 @@ halos, against that serial kernel.
 - [`gchp_nonlocal_pbl.jl`](gchp_nonlocal_pbl.jl) — non-local GEOS-Chem PBL
   physics and refresh. Its field container remains in State/Fields for
   the fenced SurfaceFlux consumer.
-- [`workspace_validation.jl`](workspace_validation.jl) — forward, adjoint
-  and advection workspace checks plus the shared ledger selector
+- [`workspace_validation.jl`](workspace_validation.jl) — forward-solve and
+  advection-preflight workspace checks plus the shared ledger selector (the
+  CS adjoint validates its layer thickness and scratch in
+  `../../Adjoints/DiffusionAdjoint.jl`)
 - [`adjoint_kernels.jl`](adjoint_kernels.jl) — Kz transpose solve and Dkg
   transpose partitions; tape and objective wiring stays in Adjoints
 

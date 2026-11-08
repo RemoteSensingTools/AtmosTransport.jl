@@ -115,12 +115,9 @@ end
 
 function _demo_diffusion(mesh, prototype; kz=5.0, dz=50.0)
     FT = eltype(prototype)
-    ws = DiffusionWorkspace(ntuple(_ -> prototype, 6), mesh.Hp, 0)
-    for p in 1:6
-        fill!(ws.layer_thickness[p], FT(dz))
-    end
+    layer_thickness = ntuple(_ -> fill(FT(dz), mesh.Nc, mesh.Nc, size(prototype, 3)), 6)
     kz_field = CubedSphereField(ntuple(_ -> ConstantField{FT, 3}(FT(kz)), 6))
-    return ImplicitVerticalDiffusion(; kz_field), ws
+    return ImplicitVerticalDiffusion(; kz_field), layer_thickness
 end
 
 function _demo_tm5_convection(mesh, panels_m)
@@ -156,7 +153,7 @@ end
 function _plot(out::AbstractString; Nc::Int, nsteps::Int)
     mesh, panels_m, panels_rm, panels_am, panels_bm, panels_cm =
         _demo_problem(; Nc=Nc, nsteps=nsteps)
-    diffusion_op, diffusion_ws = _demo_diffusion(mesh, panels_rm[1])
+    diffusion_op, layer_thickness = _demo_diffusion(mesh, panels_rm[1])
     convection_op, convection_forcing, convection_ws =
         _demo_tm5_convection(mesh, panels_m)
 
@@ -176,7 +173,7 @@ function _plot(out::AbstractString; Nc::Int, nsteps::Int)
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
             scheme=scheme, dt=dt,
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
+            diffusion_layer_thickness=layer_thickness,
             convection_op=convection_op,
             convection_forcing=convection_forcing,
             convection_workspace=convection_ws)

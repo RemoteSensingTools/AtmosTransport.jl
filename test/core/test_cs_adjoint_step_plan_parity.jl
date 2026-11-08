@@ -12,7 +12,11 @@
 #   (restarts inside met windows).
 # * Capture: `cs_adjoint_inputs` copies the face fluxes each time production
 #   rewrites them (once per met window, every step when interpolated), bit for
-#   bit production's; shared and per-step copies give the same footprints.
+#   bit production's; shared and per-step copies give the same footprints;
+#   the diffusion layer thickness is one copy per met window.
+# * Reset targets: with continuous windows a window's start target is the
+#   previous window's end target (one array), otherwise a copy; shared and
+#   separate targets give the same footprints bit for bit.
 # * OF-114: with `physics_cadence = :window` (the default) production runs
 #   convection once per met window; the replay matches it, and the old
 #   per-step composition does not.
@@ -136,6 +140,13 @@ const EXTRA_CASES = (
     Case(conv = :tm5, diffusion = :split, vary_ps = true, flux_kind = :full_window_mass_amount),
     Case(scheme = AT.LinRoodPPMScheme(), conv = :cmfmc, diffusion = :boundary, vary_ps = true,
          cadence = :substep),
+    # Continuous windows: each window's start reset target is the previous
+    # window's end target, one shared array (both reset modes).
+    Case(conv = :tm5, diffusion = :split, vary_ps = true, continuous = true),
+    Case(scheme = AT.LinRoodPPMScheme(), conv = :cmfmc, diffusion = :boundary, reset = :preserve_vmr,
+         continuous = true),
+    Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :tm5, diffusion = :boundary,
+         reset = :preserve_vmr, cadence = :substep, continuous = true),
 )
 
 @testset "adjoint replay == production, bit for bit (D31 parity matrix)" begin
@@ -173,13 +184,24 @@ _unshared(v) = [map(copy, x) for x in v]
         # the step and the next refresh).
         sim = _simulation(c)
         production = Any[]
+        production_dz = Any[]
         while sim.iteration < sim.final_iteration
             AT.step!(sim)
             push!(production, map(f -> map(copy, f), (sim.model.fluxes.am, sim.model.fluxes.bm,
                                                       sim.model.fluxes.cm)))
+            dws = sim.model.workspace.diffusion_ws
+            dws === nothing || push!(production_dz, map(copy, dws.layer_thickness))
         end
         sets = _flux_sets(inp)
         @test all(isequal(sets[s], production[s]) for s in eachindex(sets))
+        # The layer thickness production's diffusion read at each step: one
+        # copy per met window, shared by the window's steps.
+        if c.diffusion !== :none
+            dz = inp.kw.diffusion_layer_thickness
+            @test all(isequal(dz[s], production_dz[s]) for s in eachindex(dz))
+            @test length(unique(objectid, dz)) == length(c.steps)
+            @test all((dz[s] === dz[s - 1]) == !(s in cumsum([1; c.steps[1:end-1]])) for s in 2:length(dz))
+        end
         # The steps of a window reference one copy; every window has its own.
         window_first = cumsum([1; c.steps[1:end-1]])
         @test all((sets[s] === sets[s - 1]) == !(s in window_first) for s in 2:length(sets))
@@ -236,6 +258,94 @@ end
     end
 end
 
+# ---------------------------------------------------------------------------
+# Reset targets: a window's start target is the previous window's end target
+# (one array) exactly when the two are equal bit for bit
+# ---------------------------------------------------------------------------
+
+@testset "reset targets shared only when equal bit for bit" begin
+    RU = AT.Models.Runner
+    a = ntuple(p -> [0.5p + 0.25i + j + k for i in 1:NP, j in 1:NP, k in 1:NZ], 6)
+    @test RU._bitwise_equal(a, map(copy, a))
+    b = map(copy, a); b[4][2, 3, 1] = nextfloat(b[4][2, 3, 1])
+    @test !RU._bitwise_equal(a, b)
+    z = map(x -> zero(x), a); nz = map(x -> fill!(similar(x), -0.0), a)
+    @test !RU._bitwise_equal(z, nz)                     # -0.0 and 0.0 differ in their bits
+    @test !RU._bitwise_equal(a, map(x -> Float32.(x), a))
+
+    objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
+    for c in (Case(conv = :tm5, diffusion = :split, continuous = true),
+              Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :boundary,
+                   reset = :preserve_vmr, continuous = true),
+              Case(conv = :tm5, diffusion = :split))
+        inp = _adjoint_inputs(c)
+        starts, ends = inp.kw.schedule.window_start_air_mass, inp.kw.schedule.window_end_air_mass
+        nw = length(c.steps)
+        @test length(starts) == length(ends) == nw
+        @test length(unique(objectid, ends)) == nw
+        @test all((starts[w] === ends[w - 1]) == c.continuous for w in 2:nw)
+        @test all(starts[1] !== e for e in ends)
+        c.continuous && @test all(isequal(starts[w], ends[w - 1]) for w in 2:nw)
+        # Shared targets give the footprints of separate copies, bit for bit
+        # (Full and Stride; the resets refresh target halos in place). Each
+        # comparison starts from a fresh capture and copies taken before any
+        # forward run.
+        separate(targets) = [map(copy, t) for t in targets]
+        function footprint(inp, starts, ends, checkpoint)
+            s = inp.kw.schedule
+            schedule = ADJ.CSStepSchedule(s.plan; steps_per_window = c.steps, window_dt = WINDOW_DT,
+                start_time = s.start_time, binary_substeps = s.binary_substeps,
+                chemistry = s.chemistry, window_start_air_mass = starts, window_end_air_mass = ends)
+            return AT.cs_surface_emission_footprint(inp.rm0, inp.m0, inp.am, inp.bm, inp.cm, MESH,
+                objective; _footprint_kwargs(inp)..., schedule, tape = AT.AdjointTape(; checkpoint))
+        end
+        for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+            fresh = _adjoint_inputs(c)
+            s0, e0 = fresh.kw.schedule.window_start_air_mass, fresh.kw.schedule.window_end_air_mass
+            s1, e1 = separate(s0), separate(e0)
+            shared = footprint(fresh, s0, e0, checkpoint)
+            copied = footprint(fresh, s1, e1, checkpoint)
+            @test all(exact(shared.footprints[s][p], copied.footprints[s][p])
+                      for s in eachindex(copied.footprints), p in 1:6)
+            @test all(exact(shared.initial_adjoint[p], copied.initial_adjoint[p]) for p in 1:6)
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Diffusion inputs: the layer thickness a capture keeps, and the reverse
+# scratch the replay owns (never read before it is written)
+# ---------------------------------------------------------------------------
+
+@testset "Dkg diffusion captures no layer thickness" begin
+    inp = _adjoint_inputs(Case(conv = :tm5, diffusion = :dkg))
+    # Dkg carries its exchange: no layer thickness is captured.
+    @test inp.kw.diffusion_layer_thickness === nothing
+end
+
+@testset "reverse diffusion never reads stale scratch: $d" for d in (:split, :tm5_calc_kzz, :dkg)
+    FP = ADJ.Footprint
+    c = Case(; conv = :tm5, diffusion = d)
+    inp = _adjoint_inputs(c)
+    starts = [FP._ObjectiveStart(AT.CSLayerMeanObjective(2, 2, 3, NZ))]
+    for checkpoint in (AT.FullCheckpoint(), AT.StrideCheckpoint(2))
+        function footprint(poison::Bool)
+            r, dt = FP._cs_replay_for_call(inp.rm0, inp.m0, inp.am, inp.bm, inp.cm, MESH;
+                                           _footprint_kwargs(inp)...)
+            @test r.diffusion_scratch isa NTuple{6, AbstractArray}
+            poison && foreach(a -> fill!(a, NaN), r.diffusion_scratch)
+            return FP._with_tape_runtime(AT.AdjointTape(; checkpoint)) do runtime
+                only(FP._collect_footprints(r, starts, dt, runtime))
+            end
+        end
+        clean, poisoned = footprint(false), footprint(true)
+        @test all(p -> all(isfinite, poisoned.initial_adjoint[p]), 1:6)
+        @test all(exact(poisoned.footprints[s][p], clean.footprints[s][p])
+                  for s in eachindex(clean.footprints), p in 1:6)
+        @test all(exact(poisoned.initial_adjoint[p], clean.initial_adjoint[p]) for p in 1:6)
+    end
+end
+
 @testset "TM5 frozen window D equals production" begin
     for d in (:tm5_calc_kzz,:tm5_calc_kzz_boundary),reset in (:preserve_tracer_mass,:none)
         c=Case(;diffusion=d,reset)
@@ -253,7 +363,8 @@ end
         end
         first_steps=cumsum([1;c.steps[1:end-1]])
         @test all((ops[s]===ops[s-1])==!(s in first_steps) for s in 2:length(ops))
-        @test all(ws===first(inp.kw.diffusion_workspace) for ws in inp.kw.diffusion_workspace)
+        # D carries its exchange: no layer thickness is captured.
+        @test inp.kw.diffusion_layer_thickness === nothing
     end
 end
 

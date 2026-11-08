@@ -98,10 +98,20 @@ function _window(w, conv; vary_ps = false,live_tm5=false)
                               dkg = ntuple(_ -> fill(S * 1e-5, NC, NC, NZ), 6))
 end
 
-_driver(; conv = :none, contract = true, steps = [2, 3, 2], vary_ps = false,
-        flux_kind = :substep_mass_amount,live_tm5=false) =
-    (ws = [_window(w, conv; vary_ps,live_tm5) for w in eachindex(steps)];
-     _PlanDriver{Float64, typeof(GRID), eltype(ws)}(GRID, ws, WINDOW_DT, steps, contract, flux_kind))
+# `continuous = true` makes each window's air mass the previous window's end
+# mass `m + dm` (halos included), as a continuous transport binary stores it:
+# the end reset target of a window then equals the next window's start target
+# bit for bit.
+function _driver(; conv = :none, contract = true, steps = [2, 3, 2], vary_ps = false,
+                 flux_kind = :substep_mass_amount, live_tm5 = false, continuous = false)
+    ws = [_window(w, conv; vary_ps, live_tm5) for w in eachindex(steps)]
+    if continuous
+        for w in 2:length(ws), p in 1:6
+            ws[w].air_mass[p] .= ws[w - 1].air_mass[p] .+ ws[w - 1].deltas.dm[p]
+        end
+    end
+    return _PlanDriver{Float64, typeof(GRID), eltype(ws)}(GRID, ws, WINDOW_DT, steps, contract, flux_kind)
+end
 
 const RATES = ntuple(p -> [S * 1e-6 * (1 + 0.3sin(i + 2j + p)) for i in 1:NC, j in 1:NC], 6)
 
@@ -143,18 +153,19 @@ Base.@kwdef struct Case
     kz::Float64 = 30.0
     vary_ps::Bool = false
     flux_kind::Symbol = :substep_mass_amount
+    continuous::Bool = false
 end
 
 _label(c::Case) = "$(nameof(typeof(c.scheme))) $(something(c.cadence, :window)) " *
     "contract=$(c.contract) conv=$(c.conv) diffusion=$(c.diffusion) emissions=$(c.emissions) " *
-    "reset=$(c.reset)" * (c.vary_ps ? " per-window ps" : "") *
+    "reset=$(c.reset)" * (c.vary_ps ? " per-window ps" : "") * (c.continuous ? " continuous" : "") *
     (c.flux_kind === :substep_mass_amount ? "" : " $(c.flux_kind)")
 
 # The production simulation of a case (not yet run) and its initial state;
 # `kw` goes to `DrivenSimulation`.
 function _simulation(c::Case; rate_scale = 1.0, rm_perturbation = nothing, kw...)
     driver = _driver(; conv = c.conv, contract = c.contract, steps = c.steps,
-                     vary_ps = c.vary_ps, flux_kind = c.flux_kind,
+                     vary_ps = c.vary_ps, flux_kind = c.flux_kind, continuous = c.continuous,
                      live_tm5=c.diffusion in (:tm5_calc_kzz,:tm5_calc_kzz_boundary))
     air = ntuple(p -> copy(driver.windows[1].air_mass[p]), 6)
     rm = _initial_rm(air)

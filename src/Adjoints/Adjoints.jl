@@ -12,7 +12,7 @@ using ..Operators.Advection: AbstractLimiter, CSAdjointFV3Vertical, CSAdjointLin
 using ..Operators.Diffusion: ImplicitVerticalDiffusion, LocalHoltslagBovilleKzField, TM5CalcKzzCSField, NoDiffusion,
     _vertical_diffusion_cs_single_direct_dkg_adjoint_kernel!,
     _vertical_diffusion_cs_single_adjoint_kernel!,
-    _vertical_diffusion_cs_single_dkg_adjoint_kernel!, check_diffusion_workspace
+    _vertical_diffusion_cs_single_dkg_adjoint_kernel!
 using ..Operators.Convection.CMFMC: CMFMCConvection, CMFMCEdgeCloudBase, CMFMCMatrixConvection,
     CMFMCMatrixWorkspace, CMFMCWorkspace, _cmfmc_cs_panel_column_single_adjoint_kernel!,
     _cmfmc_dtrain_array, _cmfmc_matrix_synthetic_forcing, _get_or_compute_n_sub!,

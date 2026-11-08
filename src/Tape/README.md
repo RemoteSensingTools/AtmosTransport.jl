@@ -90,7 +90,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
   arena chunk is registered once).
 - Records in [`TapeRecords.jl`](TapeRecords.jl): `_CSSweepRecord`,
   `_CSHaloRecord`, `_CSMidpointRecord` (step and emission interval),
-  `_CSStepEndRecord`, `_CSDiffusionRecord`, `_CSConvectionRecord` (with the
+  `_CSStepEndRecord`, `_CSDiffusionRecord` (with the solve's layer
+  thickness by reference), `_CSConvectionRecord` (with the
   interval it integrated and the forward call's CFL sub-step count),
   `_CSAirMassResetRecord`, handled by the reverse loop. The adjoint's tape
   recorder pushes them from the production step's recorder hooks.

@@ -118,4 +118,36 @@ else
         end
     end
 
+    @testset "CUDA shared reset targets of continuous windows" begin
+        RU = AT.Models.Runner
+        for reset in (:preserve_tracer_mass, :preserve_vmr)
+            c = Case(; conv = :tm5, diffusion = :split, reset, steps = [2, 2], continuous = true)
+            inp = AT.cs_adjoint_inputs(_gpu_reset_simulation(c))
+            s = inp.kwargs.schedule
+            starts, ends = s.window_start_air_mass, s.window_end_air_mass
+            # The device comparison found the start of window 2 equal to the
+            # end of window 1 and shared the array.
+            @test starts[2] === ends[1]
+            @test all(p -> p isa CuArray, ends[1])
+            @test RU._bitwise_equal(ends[1], map(copy, ends[1]))
+            perturbed = map(copy, ends[1]); perturbed[3] .*= 1 + 1e-15
+            @test !RU._bitwise_equal(ends[1], perturbed)
+            objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
+            separate(targets) = [map(copy, t) for t in targets]
+            copies = (separate(starts), separate(ends))
+            footprint(starts, ends) = AT.cs_surface_emission_footprint(inp.panels_rm0, inp.panels_m0,
+                inp.panels_am_steps, inp.panels_bm_steps, inp.panels_cm_steps, inp.mesh, objective;
+                Base.structdiff(inp.kwargs, NamedTuple{(:surface_flux, :emission_rates)})...,
+                base_emission_rates = inp.kwargs.emission_rates,
+                schedule = ADJ.CSStepSchedule(s.plan; steps_per_window = c.steps, window_dt = s.window_dt,
+                    start_time = s.start_time, binary_substeps = s.binary_substeps, chemistry = s.chemistry,
+                    window_start_air_mass = starts, window_end_air_mass = ends))
+            shared = footprint(starts, ends)
+            copied = footprint(copies...)
+            @test all(isapprox(Array(shared.initial_adjoint[p]), Array(copied.initial_adjoint[p]);
+                               rtol = 1e-13) for p in 1:6)
+            @test all(isapprox(Array(shared.footprints[k][p]), Array(copied.footprints[k][p]);
+                               rtol = 1e-13) for k in eachindex(copied.footprints), p in 1:6)
+        end
+    end
 end

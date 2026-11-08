@@ -230,7 +230,7 @@ air_mass_reset_target(::WindowEndAirMass, m::_CSReplayMeteo) = m.window_end_air_
 # The replay
 # ---------------------------------------------------------------------------
 
-mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DU, DW, E, RB, BR, C, CW, CF, CH, ME, RS, RE, FT}
+mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DZ, DW, DS, E, RB, BR, C, CW, CF, CH, ME, RS, RE, FT}
     plan                 :: P
     steps                :: _ResolvedSchedule{FT}
     state                :: ST
@@ -240,8 +240,9 @@ mutable struct _CSReplay{P, ST, G, M, AS, AW, DO, DU, DW, E, RB, BR, C, CW, CF, 
     advection            :: AS
     advection_workspace  :: AW
     diffusion_op         :: DO       # operator or per-step vector
-    diffusion_user_ws    :: DU       # caller's workspace(s): layer thickness, reverse scratch
+    diffusion_layer_thickness :: DZ  # caller's layer thickness: six panels, per-step vector, or nothing
     diffusion_workspace  :: DW       # replay workspace (one tracer), or nothing
+    diffusion_scratch    :: DS       # reverse-solve scratch (six column panels), or nothing
     emissions            :: E
     rate_buffer          :: RB
     base_rates           :: BR
@@ -309,7 +310,7 @@ _sequence_at(v, _s) = v
     _build_cs_replay(panels_rm0, panels_m0, am_steps, bm_steps, cm_steps, mesh;
                      scheme, schedule, nsteps, flux_scale, surface_flux,
                      emission_rates, diffusion_op,
-                     diffusion_workspace, diffusion_meteo, convection_op,
+                     diffusion_layer_thickness, diffusion_meteo, convection_op,
                      convection_forcing, convection_workspace) -> _CSReplay
 
 A single-tracer replay of steps `1:nsteps` of `schedule`, starting from
@@ -318,7 +319,10 @@ surface-flux operator whose per-cell rates at step `s` are
 `emission_rates[s]` (zero when `nothing`); without one the
 palindrome center is one diffusion solve `V(dt)`, as production runs a
 configuration without surface sources. The caller's convection workspace is
-used, with the persistent state of a fresh run.
+used, with the persistent state of a fresh run. The replay owns its diffusion
+workspace and the reverse solves' scratch; `diffusion_layer_thickness` (six
+panels, or one per step: a met window's steps share its tuple) is copied into
+that workspace at each step and is never written.
 """
 function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                           panels_cm_steps, mesh::CubedSphereMesh;
@@ -327,7 +331,7 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
                           surface_flux::Bool = true,
                           emission_rates = nothing,
                           diffusion_op = NoDiffusion(),
-                          diffusion_workspace = nothing,
+                          diffusion_layer_thickness = nothing,
                           diffusion_meteo = nothing,
                           convection_op = NoConvection(),
                           convection_forcing = nothing,
@@ -353,6 +357,10 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
 
     uses_diffusion = any(s -> !(_sequence_at(diffusion_op, s) isa NoDiffusion), 1:nsteps)
     diffusion_ws = uses_diffusion ? DiffusionWorkspace(state) : nothing
+    uses_diffusion && _check_layer_thickness(diffusion_layer_thickness, nsteps, diffusion_ws)
+    # One scratch for every reverse solve: each overwrites a column before it
+    # reads it, so scratch carries nothing between solves (or windows).
+    diffusion_scratch = uses_diffusion ? map(similar, diffusion_ws.factors) : nothing
 
     rate_buffer = surface_flux ? _zero_surface_rates(mesh, panels_m0[1]) : nothing
     emissions = surface_flux ?
@@ -374,9 +382,30 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
     meteo = _CSReplayMeteo(schedule.start_time, schedule.binary_substeps, diffusion_meteo,
                            _first_target(start_targets), _first_target(end_targets))
     return _CSReplay(schedule.plan, steps, state, grid, mesh, fluxes, scheme, advection_ws,
-                     diffusion_op, diffusion_workspace, diffusion_ws, emissions, rate_buffer,
+                     diffusion_op, diffusion_layer_thickness, diffusion_ws, diffusion_scratch,
+                     emissions, rate_buffer,
                      emission_rates, convection_op, convection_workspace,
                      convection_forcing, schedule.chemistry, meteo, start_targets, end_targets)
+end
+
+# Every layer-thickness tuple of steps `1:nsteps` has the replay workspace's
+# panel shapes, element type and backend (checked once per distinct tuple,
+# before the forward run).
+function _check_layer_thickness(layer_thickness, nsteps::Int, workspace)
+    checked = IdDict{Any, Nothing}()
+    for s in 1:nsteps
+        dz = _sequence_at(layer_thickness, s)
+        (dz === nothing || haskey(checked, dz)) && continue
+        checked[dz] = nothing
+        for (src, dst) in zip(dz, workspace.layer_thickness)
+            size(src) == size(dst) && eltype(src) === eltype(dst) &&
+                typeof(get_backend(src)) === typeof(get_backend(dst)) || throw(ArgumentError(
+                "diffusion_layer_thickness at step $s: panels of $(typeof(src)) with shape " *
+                "$(size(src)); expected $(eltype(dst)) panels of shape $(size(dst)) on the " *
+                "state's backend"))
+        end
+    end
+    return nothing
 end
 
 _first_target(::Nothing) = nothing
@@ -404,11 +433,11 @@ function _load_step!(r::_CSReplay, s::Int)
         end
     end
     diffusion_op = _sequence_at(r.diffusion_op, s)
-    if !(diffusion_op isa NoDiffusion)
-        user_ws = _sequence_at(r.diffusion_user_ws, s)
-        for (dst, src) in zip(r.diffusion_workspace.layer_thickness, user_ws.layer_thickness)
+    layer_thickness = _sequence_at(r.diffusion_layer_thickness, s)
+    if !(diffusion_op isa NoDiffusion) && layer_thickness !== nothing
+        for (dst, src) in zip(r.diffusion_workspace.layer_thickness, layer_thickness)
             size(dst) == size(src) || throw(DimensionMismatch(
-                "diffusion_workspace layer_thickness panel has shape $(size(src)); expected $(size(dst))"))
+                "diffusion_layer_thickness panel has shape $(size(src)); expected $(size(dst))"))
             copyto!(dst, src)
         end
     end
@@ -442,7 +471,7 @@ function _replay_steps!(r::_CSReplay, steps::AbstractUnitRange;
         diffusion_op = _load_step!(r, s)
         ops = _replay_operators(r, s, diffusion_op)
         timing = StepTiming(r.steps.dt[s], r.steps.window_dt)
-        _begin_recorded_step!(recorder, s, _sequence_at(r.diffusion_user_ws, s),
+        _begin_recorded_step!(recorder, s, _sequence_at(r.diffusion_layer_thickness, s),
                               current_time(r.meteo))
         if r.steps.first[s]
             r.steps.window[s] > 1 && execute_window_advance!(r.plan, ops, timing, r.meteo, recorder)
@@ -457,7 +486,7 @@ function _replay_steps!(r::_CSReplay, steps::AbstractUnitRange;
     return r
 end
 
-@inline _begin_recorded_step!(::NoStepRecorder, _s, _diffusion_ws, _time) = nothing
+@inline _begin_recorded_step!(::NoStepRecorder, _s, _layer_thickness, _time) = nothing
 @inline _end_recorded_step!(::NoStepRecorder, _s) = nothing
 
 # The single-tracer panels of the replay state, as the reverse pass and the

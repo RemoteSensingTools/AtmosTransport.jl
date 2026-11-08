@@ -131,7 +131,7 @@ hooks of the production step (`AbstractStepRecorder`; production passes
   refreshes them, one copy per met window that the window's steps share, or
   one per step when they are interpolated within the window; per-window
   convection forcing, diffusion layer thickness and Kz, emission rates, the
-  schedule, fresh workspaces). Capture rejects initial nonzero
+  schedule, a fresh convection workspace). Capture rejects initial nonzero
   compensation or carries and valid CMFMC CFL caches, including models continued
   across binaries at iteration zero. `CSStepSchedule(sim)` validates the production
   operators and retains chemistry. Reset windows and targets use the model backend.
@@ -146,7 +146,8 @@ unlimited slopes, monotone PPM and Lin–Rood (plus CW84 PPM, unlimited PPM and
 Lin–Rood ORD 5 with upwind vertical) under `:window` and `:substep` cadence,
 with and without the binary window contract, TM5, CMFMC and CMFMC-matrix
 convection, both diffusion couplings, diffusion without surface sources and
-both reset modes. Each case compares the forward replay, the tape recording and
+both reset modes, also with continuous windows whose shared reset targets give
+the footprints of separate copies bit for bit. Each case compares the forward replay, the tape recording and
 a restart from a checkpoint inside a met window with the production
 `DrivenSimulation` (`==` in one thread), Full/Stride footprints with
 each other, the captured fluxes with production's at every step (one copy per
@@ -155,6 +156,39 @@ subset, footprints and the initial-condition sensitivity
 with central differences of the production simulation (Upwind ``\sim
 10^{-14}``, monotone PPM ``4\times10^{-12}``, Lin–Rood ``5\times10^{-11}``
 relative).
+
+#### Memory of the captured inputs
+
+The captured inputs stay resident for the whole 4D-Var period. Per met window
+they are one set of face fluxes, the convection forcing, the diffusion
+operator (its Kz panels) and layer thickness, and the reset targets; per step
+there are only references. Two duplicates are removed at capture, both
+without changing any result bit:
+
+- **Diffusion.** The adjoint takes the per-window layer thickness
+  (`diffusion_layer_thickness`, six `(Nc, Nc, Nz)` panels, read only). The
+  replay owns its diffusion workspace and one scratch for every reverse
+  solve; each reverse kernel overwrites a column of the scratch before it
+  reads it. Formerly every window held a full `DiffusionWorkspace` (factors,
+  layer thickness, exchange, elimination), four times the data.
+- **Reset targets.** With the window contract and a mass reset the plan
+  resets to window `w`'s end mass `m + dm` and, on entering window `w + 1`,
+  to its start mass. `CSStepSchedule(sim)` stores one array for both when they
+  are equal bit for bit, halos included (`_window_reset_targets`); otherwise
+  two copies. Sharing is exact because the replay writes a target only when a
+  reset refreshes its halos from its interior (`fill_panel_halos!(…; dir =
+  1)` rewrites every halo cell), so both resets install what separate copies
+  would. In the MERRA-2 binaries measured every interior window boundary of a
+  daily binary was bitwise continuous; days captured separately (one
+  `cs_adjoint_inputs` per binary) keep two arrays at the day boundary.
+
+At C90 L72 Float32 a window held 178.5 MB of device inputs before (fluxes
+48.3, convection 28.4, Kz 14.0, diffusion workspace 56.0, reset targets
+31.9) and holds 121.3 MB now (layer thickness 14.0; reset targets 16.6 on
+average over a day). Seven C90 days of inputs fell from 27.97 to 19.01 GiB,
+a 31-day C48 Lin–Rood 4D-Var now fits on a 46 GiB GPU, and C90 Lin–Rood fits
+11 days; costs and gradients are unchanged bit for bit on one CPU thread. The
+measurements are in `docs/memos/2026-11-08_adjoint_input_dedup.md`.
 
 ### The tape: `AdjointTape`
 

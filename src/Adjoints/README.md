@@ -17,6 +17,9 @@ remain available through Adjoints and as qualified AtmosTransport names.
   `tape_dependence` trait (`AirMassDependence`, `TracerDependence`): whether a
   scheme's reverse reads the tracer, which decides `AirMassTape` legality.
 - `DiffusionAdjoint.jl`, `ConvectionAdjoint.jl`: validation and launch wiring.
+  The diffusion reverse takes the solve's layer thickness (read only) and a
+  scratch tuple the replay owns, overwritten column by column before it is
+  read, so one scratch serves every solve.
 - `LinRoodTape.jl`: Lin–Rood horizontal record and reverse composition (fenced).
 - `Footprint/`: production-step replay, recording, reverse walk, checkpointing.
 - `Inversion/`: observation binding/sampling/IO and surface-flux solvers.
@@ -42,6 +45,8 @@ Objective types, `evaluate_objective`, `adjoint_support`,
 The following internal interfaces serve the child modules: objective
 validation/seeding, fixed sparse functionals and forcing injection, panel
 allocation, diffusion/convection validation, and operator reverse launchers.
+`_reads_layer_thickness` (whether a diffusion operator's solve reads layer
+thickness) is shared with Models.Runner's adjoint capture.
 The Lin–Rood record and storage gate are shared without changing that file.
 
 ## Forward<->adjoint mirrors
@@ -52,7 +57,7 @@ floor. Forcing assembly adds entries in a fixed order; one work item owns
 one cell. The step-plan parity, kernel identities, gradient identities and
 finite-difference tests are the numerical gate.
 
-# shared: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence, CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective, CSColumnMeanObjective, CSLayerMeanObjective, CSLinearFunctional, CSPlacedPointObjective, CSRetrievalColumnObjective, CSSeedObjective, NoStepForcing, TracerDependence, _CSLinRoodHorizRecord, _accumulate_surface_footprint!, _apply_cs_convection_adjoint!, _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _assemble_step_forcing, _cell_average_needs_4dvar, _copy_panel_tuple, _inject_step_forcing!, _linear_functional, _linrood_validate_tape_storage, _objective_mass_floor, _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met, _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing, _zero_surface_rates, evaluate_objective, require_adjoint_support, tape_dependence
+# shared: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence, CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective, CSColumnMeanObjective, CSLayerMeanObjective, CSLinearFunctional, CSPlacedPointObjective, CSRetrievalColumnObjective, CSSeedObjective, NoStepForcing, TracerDependence, _CSLinRoodHorizRecord, _accumulate_surface_footprint!, _apply_cs_convection_adjoint!, _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _assemble_step_forcing, _cell_average_needs_4dvar, _copy_panel_tuple, _inject_step_forcing!, _linear_functional, _linrood_validate_tape_storage, _objective_mass_floor, _placed_objective_needs_met, _reads_layer_thickness, _require_cs_convection_workspace, _retrieval_objective_needs_met, _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing, _zero_surface_rates, evaluate_objective, require_adjoint_support, tape_dependence
 
 Architectures.zeros_like owns non-fenced panel zero allocation, shared with
 Footprint and Inversion.Solver. PanelArrays.jl retains dimensioned surface
@@ -66,5 +71,5 @@ and pinned-host-snapshot Stride choices preserve the same reverse order.
 
 Live CS TM5 Calc_Kzz uses a direct-D transpose in Diffusion, validated for
 finite nonnegative D and zero inactive/terminal planes. The runner freezes
-D per window as meteorological forcing; no refresh scratch or tape slots
-are retained. LL/RG Calc_Kzz adjoints remain unsupported.
+D per window as meteorological forcing; no refresh scratch, layer thickness
+or tape slots are retained. LL/RG Calc_Kzz adjoints remain unsupported.

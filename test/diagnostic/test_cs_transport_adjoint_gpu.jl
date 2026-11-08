@@ -53,14 +53,14 @@ else
         @test Array(mmap_result.footprints[1][1]) ==
               Array(pinned_result.footprints[1][1])
 
-        diffusion_op, diffusion_ws = _cs_diffusion_context(
+        diffusion_op, layer_thickness = _cs_diffusion_context(
             mesh, panels_rm_g[1]; kz=2.0f0, dz=50.0f0)
         diff_result = AT.cs_surface_emission_footprint(
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
+            diffusion_layer_thickness=layer_thickness)
         @test diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(diff_result.footprints[1][1])[2, 2] > 0
         pinned_diff_result = AT.cs_surface_emission_footprint(
@@ -68,7 +68,7 @@ else
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
+            diffusion_layer_thickness=layer_thickness,
             tape=AT.AdjointTape(; storage=AT.PinnedHostCSTapeStorage()))
         @test pinned_diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(pinned_diff_result.footprints[1][1]) ≈
@@ -79,7 +79,7 @@ else
             mesh, AT.CSLayerMeanObjective(1, 2, 2, 2);
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(300),
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws,
+            diffusion_layer_thickness=layer_thickness,
             tape=AT.AdjointTape(; storage=AT.MmapCSTapeStorage(mktempdir())))
         @test mmap_diff_result.footprints[1][1] isa CUDA.CuArray
         @test Array(mmap_diff_result.footprints[1][1]) ==

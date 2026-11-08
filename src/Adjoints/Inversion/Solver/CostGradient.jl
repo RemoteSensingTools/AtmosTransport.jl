@@ -517,7 +517,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
                                 flux_scale = one(eltype(panels_rm0[1])),
                                 cfl_limit = DEFAULT_CFL_LIMIT,
                                 diffusion_op = NoDiffusion(),
-                                diffusion_workspace = nothing,
+                                diffusion_layer_thickness = nothing,
                                 diffusion_meteo = nothing,
                                 convection_op = NoConvection(),
                                 convection_forcing = nothing,
@@ -533,7 +533,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
     isempty(control_vec) && throw(ArgumentError("at least one CSSurfaceFluxControl is required"))
     _validate_control_windows(control_vec, nsteps)
     _validate_control_shapes(control_vec, mesh, "surface-flux control")
-    _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, nsteps)
+    _validate_cs_diffusion_inputs(diffusion_op, diffusion_layer_thickness, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # Tape checks before the forward run, not after it.
     _require_tape_supported(scheme, runtime.request)
@@ -574,7 +574,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
         scheme, dt, schedule,
         flux_scale = FT(flux_scale),
         cfl_limit, emission_rates,
-        diffusion_op, diffusion_workspace, diffusion_meteo,
+        diffusion_op, diffusion_layer_thickness, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace,
         column_met)
     physical_gradients = [zeros_like(control.value) for control in physical_controls]

@@ -90,10 +90,12 @@ _initial_adjoint_state(::_ZeroStart, final_m, ::CubedSphereMesh) =
 # where the step's emissions enter, partway through transposing `M_s`; `τ` the
 # emission interval) as the emission footprint. One walk thus gives the
 # gradient of every observation at once. `NoStepForcing` (the default) adds
-# nothing.
+# nothing. The diffusion records carry their solve's layer thickness; their
+# reverse solves share the replay's `diffusion_scratch`.
 function _walk_window_reverse!(footprints, lambda_panels, ops,
                                mesh::CubedSphereMesh, ws;
                                convection_workspace = nothing,
+                               diffusion_scratch = nothing,
                                forcing::AbstractStepForcing = NoStepForcing())
     for op in Iterators.reverse(ops)
         if op isa _CSStepEndRecord
@@ -106,7 +108,7 @@ function _walk_window_reverse!(footprints, lambda_panels, ops,
             _accumulate_surface_footprint!(footprints[op.step], lambda_panels, op.dt, mesh)
         elseif op isa _CSDiffusionRecord
             _apply_cs_diffusion_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()), op.op,
-                                         op.workspace, op.dt,
+                                         op.layer_thickness, diffusion_scratch, op.dt,
                                          _RecordedClock(op.time), mesh)
         elseif op isa _CSConvectionRecord
             _apply_cs_convection_adjoint!(lambda_panels, _tape_panels(op.panels_m, AirMassRead()),
@@ -205,7 +207,7 @@ end
                         nsteps = length(am_steps), surface_flux = true,
                         emission_rates = nothing, base_emission_rates = nothing,
                         flux_scale, cfl_limit,
-                        diffusion_op, diffusion_workspace, diffusion_meteo,
+                        diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                         convection_op, convection_forcing, convection_workspace)
         -> (replay, dt)
 
@@ -226,7 +228,7 @@ function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_s
                              flux_scale = one(eltype(panels_m0[1])),
                              cfl_limit = DEFAULT_CFL_LIMIT,
                              diffusion_op = NoDiffusion(),
-                             diffusion_workspace = nothing,
+                             diffusion_layer_thickness = nothing,
                              diffusion_meteo = nothing,
                              convection_op = NoConvection(),
                              convection_forcing = nothing,
@@ -239,14 +241,14 @@ function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_s
     rates = emission_rates === nothing ? base_emission_rates : emission_rates
     _validate_emission_rates(rates, total, mesh, "emission rates")
     _require_production_cfl_limit(cfl_limit)
-    _validate_cs_diffusion_inputs(diffusion_op, diffusion_workspace, total)
+    _validate_cs_diffusion_inputs(diffusion_op, diffusion_layer_thickness, total)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     convection_op isa NoConvection || _validate_convection_forcing(convection_forcing, total)
     schedule, step_dt = _call_schedule(schedule, dt, FT)
     replay = _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                               panels_cm_steps, mesh; scheme, schedule, nsteps,
                               flux_scale, surface_flux, emission_rates = rates,
-                              diffusion_op, diffusion_workspace, diffusion_meteo,
+                              diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                               convection_op, convection_forcing, convection_workspace)
     require_adjoint_support(replay)
     return replay, step_dt

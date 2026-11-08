@@ -126,7 +126,7 @@ end
         end
         seed=map(a->FT.(randn(rng,size(a))),x)
         back=map(copy,seed)
-        AtmosTransport.Adjoints._apply_cs_diffusion_adjoint!(back,f.mass,op,ws,900.,nothing,f.grid.horizontal)
+        AtmosTransport.Adjoints._apply_cs_diffusion_adjoint!(back,f.mass,op,nothing,ws.factors,900.,nothing,f.grid.horizontal)
         inner(a,b)=sum(sum(view(a[p],3:5,3:5,:).*view(b[p],3:5,3:5,:)) for p in 1:6)
         @test inner(seed,x) ≈ inner(back,before) rtol=(FT==Float64 ? 1e-13 : 3e-6)
         # Capturing omits the bounded scratch, and later refresh cannot mutate D.
@@ -209,7 +209,7 @@ end
     seed=map(m->randn(rng,size(m)),f.mass)
     back=map(copy,seed)
     apply_vertical_diffusion_vmr!(x,f.mass,op,ws,900.;halo_width=2)
-    AtmosTransport.Adjoints._apply_cs_diffusion_adjoint!(back,f.mass,op,ws,900.,nothing,f.grid.horizontal)
+    AtmosTransport.Adjoints._apply_cs_diffusion_adjoint!(back,f.mass,op,nothing,ws.factors,900.,nothing,f.grid.horizontal)
     inner(a,b)=sum(sum(view(a[p],3:5,3:5,:).*view(b[p],3:5,3:5,:)) for p in 1:6)
     @test inner(seed,x) ≈ inner(back,before) rtol=1e-13
     @test all(p->isequal(x[p][3:5,3:5,1:2],before[p][3:5,3:5,1:2]),1:6)

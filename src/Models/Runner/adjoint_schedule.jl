@@ -12,6 +12,11 @@ reset targets the plan reads (each window's air mass and its end air mass
 `expected_air_mass!(…, window, 1)`, from the driver's windows). The adjoint
 replays the same plan; its per-step face fluxes and the per-window convection
 forcing are the caller's (see `cs_surface_emission_footprint`).
+
+Where the plan resets to both targets, window `w + 1`'s start target is
+window `w`'s end target, the same array, when the two are equal bit for bit
+(halos included; continuous binaries store `dm` so that `m + dm` is the next
+window's `m`), and a separate copy otherwise (see `_window_reset_targets`).
 """
 function Adjoints.CSStepSchedule(sim::DrivenSimulation)
     require_adjoint_support(sim)
@@ -19,8 +24,7 @@ function Adjoints.CSStepSchedule(sim::DrivenSimulation)
     plan = sim.plan
     needs_start = any(s -> s isa AirMassResetStage, plan.window_advance)
     needs_end = any(s -> s isa AirMassResetStage, plan.window_end)
-    starts = needs_start ? [_window_air_mass(sim, w, 0) for w in windows] : nothing
-    ends = needs_end ? [_window_air_mass(sim, w, 1) for w in windows] : nothing
+    starts, ends = _window_reset_targets(sim, windows, needs_start, needs_end)
     return CSStepSchedule(plan; steps_per_window = sim.steps_per_window_schedule[windows],
                           window_dt = sim.window_dt, start_time = sim.start_time,
                           binary_substeps = uses_binary_substep_contract(sim.driver),
@@ -38,11 +42,13 @@ refreshes them (`panels_am_steps`, `panels_bm_steps`, `panels_cm_steps`:
 window loading, intra-window interpolation, full-window flux scaling), `mesh`,
 and `kwargs` for the adjoint entry points: `scheme`, `schedule =
 CSStepSchedule(sim)`, `surface_flux`, `emission_rates` (the tracer's static
-surface source per step, or `nothing`), the diffusion operator and a
-workspace with production's layer thickness per met window (`diffusion_op`,
-`diffusion_workspace`; the operator is copied at every window, after
-production refreshed its Kz field), and the convection operator, its forcing
-per step (one object per met window) and a fresh workspace.
+surface source per step, or `nothing`), the diffusion operator and
+production's layer thickness per step (`diffusion_op`,
+`diffusion_layer_thickness`: both copied once per met window, after
+production refreshed them, and shared by the window's steps; `nothing` for
+Dkg fields and TM5 Calc_Kzz, which carry their exchange), and the convection operator,
+its forcing per step (one object per met window) and a fresh workspace. The
+replay allocates its own diffusion workspace and reverse scratch.
 
 The face fluxes are copied each time production rewrites the model's
 fluxes. With window-constant fluxes (`sim.interpolate_fluxes_within_window ==
@@ -60,8 +66,10 @@ met refresh through every window (and production advection for live TM5
 with no mass reset, to advance its carrier mass); it leaves tracers in an
 unspecified state, so `sim` cannot be run afterwards: build a second,
 identical simulation for the production run. Memory grows with the run: one
-set of face fluxes per met window (per step when interpolated), and the
-per-window convection forcing and diffusion operator and workspace. A
+set of face fluxes per met window (per step when interpolated), the
+per-window convection forcing, diffusion operator and layer thickness, and
+the reset targets (two per window, or one where a window's end target equals
+the next window's start target bit for bit, see `CSStepSchedule(sim)`). A
 time-varying surface source of `tracer` is an error (pass its per-step rates
 yourself). Initial persistent operator state must be fresh: nonzero
 surface-source Kahan compensation, diffusion/Dkg or convection ledger
@@ -96,8 +104,8 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
     has_diffusion = !(model.diffusion isa NoDiffusion)
     has_convection = !(model.convection isa NoConvection)
     am, bm, cm = Any[], Any[], Any[]
-    diffusion_op, diffusion_workspace, forcing = Any[], Any[], Any[]
-    fluxes = window_op = window_ws = window_forcing = nothing
+    diffusion_op, layer_thickness, forcing = Any[], Any[], Any[]
+    fluxes = window_op = window_dz = window_forcing = nothing
     try
         while sim.iteration < sim.final_iteration
             _maybe_advance_window!(sim)
@@ -115,12 +123,12 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
                 has_convection && (window_forcing = deepcopy(model.convection_forcing))
                 if has_diffusion
                     window_op = _adjoint_window_operator(model.diffusion)
-                    window_ws = _adjoint_window_workspace(model.diffusion,model,window_ws)
+                    window_dz = _adjoint_window_layer_thickness(model.diffusion, model)
                 end
             end
             push!(forcing, window_forcing)
             push!(diffusion_op, window_op)
-            push!(diffusion_workspace, window_ws)
+            push!(layer_thickness, window_dz)
             _advance_adjoint_carrier!(model.diffusion,sim)
             _advance_clock!(sim)
         end
@@ -130,7 +138,8 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
     kwargs = (; scheme = model.advection, schedule,
               surface_flux = !(model.emissions isa NoSurfaceFlux), emission_rates,
               diffusion_op = has_diffusion ? [diffusion_op...] : NoDiffusion(),
-              diffusion_workspace = has_diffusion ? [diffusion_workspace...] : nothing,
+              diffusion_layer_thickness = has_diffusion && !all(isnothing, layer_thickness) ?
+                                          map(identity, layer_thickness) : nothing,
               convection_op = model.convection,
               convection_forcing = has_convection ? [forcing...] : nothing,
               convection_workspace = convection_workspace_for(model.convection, model.state,
@@ -159,14 +168,12 @@ function _adjoint_window_operator(op::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzC
     frozen = TM5CalcKzzCSField(map(copy,f.dkg),nothing,f.params,nothing,Ref(true))
     return ImplicitVerticalDiffusion(;kz_field=frozen,surface_flux_coupling=op.surface_flux_coupling)
 end
-function _adjoint_window_workspace(op,model,previous)
-    ws = DiffusionWorkspace(model.state.air_mass,model.state.halo_width,0)
-    foreach(copyto!,ws.layer_thickness,model.workspace.diffusion_ws.layer_thickness)
-    return ws
-end
-function _adjoint_window_workspace(::ImplicitVerticalDiffusion{FT,<:TM5CalcKzzCSField},model,previous) where FT
-    return previous === nothing ? DiffusionWorkspace(model.state.air_mass,model.state.halo_width,0) : previous
-end
+# The window's layer thickness [m] as production refreshed it (the replay
+# owns its workspace and the reverse scratch), or `nothing` for an operator
+# whose solve reads none (Dkg fields, TM5 D: `Adjoints._reads_layer_thickness`).
+_adjoint_window_layer_thickness(op, model) =
+    Adjoints._reads_layer_thickness(op) ? map(copy, model.workspace.diffusion_ws.layer_thickness) :
+                                          nothing
 
 # Capture currently supports fresh operator state only. Iteration zero alone
 # does not establish freshness: the runner reuses a model across daily binaries.
@@ -202,16 +209,59 @@ function _adjoint_emission_rates(op, tracer, n)
     return fill(src.cell_mass_rate, n)
 end
 
-# The air mass of window `w` at fraction `λ` (0: start, 1: the end the binary
-# makes authoritative), computed as the simulation computes its reset target.
-function _window_air_mass(sim::DrivenSimulation, w::Int, λ)
-    window = _adapt_window_to_model_backend(_load_window(sim.driver, w),
-                                            sim.model.state.air_mass)
-    dest = _allocate_storage_like(window.air_mass)
-    λ == 0 ? _copy_storage!(dest, window.air_mass) :
-             expected_air_mass!(dest, window, one(typeof(sim.Δt)))
-    return dest
+# The air-mass reset targets of `windows` (vectors of six halo-padded panels on
+# the model backend, or `nothing` for a target the plan does not read),
+# computed as the simulation computes them: each window's air mass (start) and
+# its end air mass `m + 1 * dm` (end, `expected_air_mass!`). Each window is
+# loaded once.
+#
+# A start target equal bit for bit (interior and halos) to the previous
+# window's end target is that array itself; any other is its own copy. The
+# sharing cannot change a result: the replay only reads a target, except that
+# a reset first refreshes its target's halos in place (`fill_panel_halos!(…;
+# dir = 1)`, which writes every halo cell: the edges from the interior, then
+# the corners from those edges, within one call). Both resets of a shared target
+# therefore install the same values the two separate copies would, whichever
+# runs first, and the interior is never written. The one read of a target
+# before its own refresh, the `:preserve_vmr` reset record staging it, may
+# then see refreshed instead of initial halos; the reverse multiplies those
+# halo cells by an adjoint state the next halo record has zeroed (the reason
+# reset-target identity checksums cover interiors only), as for any later
+# forward run of separate targets.
+function _window_reset_targets(sim::DrivenSimulation, windows, needs_start::Bool, needs_end::Bool)
+    needs_start || needs_end || return nothing, nothing
+    starts, ends = Any[], Any[]
+    previous_end = nothing
+    for w in windows
+        window = _adapt_window_to_model_backend(_load_window(sim.driver, w),
+                                                sim.model.state.air_mass)
+        if needs_start
+            if previous_end !== nothing && _bitwise_equal(previous_end, window.air_mass)
+                push!(starts, previous_end)
+            else
+                start = _allocate_storage_like(window.air_mass)
+                push!(starts, _copy_storage!(start, window.air_mass))
+            end
+        end
+        if needs_end
+            previous_end = _allocate_storage_like(window.air_mass)
+            expected_air_mass!(previous_end, window, one(typeof(sim.Δt)))
+            push!(ends, previous_end)
+        end
+    end
+    return needs_start ? [starts...] : nothing, needs_end ? [ends...] : nothing
 end
+
+# Bit-for-bit equality of two six-panel fields (`===` per element: -0.0 and
+# 0.0 differ), as one reduction per panel on the arrays' backend; queued
+# writes to either field are finished first.
+function _bitwise_equal(a::NTuple{6, AbstractArray}, b::NTuple{6, AbstractArray})
+    all(p -> size(a[p]) == size(b[p]) && eltype(a[p]) === eltype(b[p]), 1:6) || return false
+    Architectures.synchronize_storage!(a); Architectures.synchronize_storage!(b)
+    return all(p -> mapreduce(===, &, a[p], b[p]; init = true), 1:6)
+end
+# Storage that is not six panels (e.g. lat-lon): never shared.
+_bitwise_equal(_a, _b) = false
 
 """
     require_adjoint_support(sim::DrivenSimulation) -> sim

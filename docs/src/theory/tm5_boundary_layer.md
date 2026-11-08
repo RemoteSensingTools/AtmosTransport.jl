@@ -615,8 +615,9 @@ K are outside the tracer-only adjoint.
 `cs_adjoint_inputs` executes production's window refresh and freezes a copy
 of the six D panels once per met window. The captured field omits refresh
 scratch and geometry, and steps within a window share its operator. Replay
-uses the same `DkgExchange` forward solver. A single diffusion workspace is
-shared across windows because this solver never reads layer thickness.
+uses the same `DkgExchange` forward solver. The capture keeps no layer
+thickness (`diffusion_layer_thickness = nothing`) because this solver never
+reads one.
 Under `:none`, capture advances carrier mass with production advection
 so the next window sees the same prognostic mass as the forward run.
 Tracers during capture are disposable.
