@@ -54,7 +54,8 @@ include(joinpath(@__DIR__, "..", "helpers", "tm5_ecconv_reference.jl"))
         ddrf = vec(raw.ddrf[p][i,j,:]) .* (1 .- q)
         dz = zeros(FT, Nz)
         dz_hydrostatic_virtual!(dz, vec(thermo.t[p][i,j,:]), q, thermo.ps[p][i,j], A, B, Nz)
-        expected = tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf, ddrf, dz)
+        expected = tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf, ddrf, dz;
+                                        ddrf_layer_above = true)
         column = map(f -> vec(f[p][i,j,:]), (out.entu, out.detu, out.entd, out.detd))
         for (field, reference) in zip(column, expected)
             @test field ≈ reference atol = 1e-15

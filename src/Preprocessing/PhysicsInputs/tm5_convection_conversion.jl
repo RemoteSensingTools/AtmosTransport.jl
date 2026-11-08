@@ -121,7 +121,7 @@ end
 """
     ec2tm_from_rates!(entu, detu, entd, detd,
                        udmf, ddmf, udrf_rate, ddrf_rate,
-                       dz, Nz; stats=nothing) -> nothing
+                       dz, Nz; stats=nothing, ddrf_layer_above=true) -> nothing
 
 Column-level port of TM5's `ECconv_to_TMconv` (see
 `deps/tm5/base/src/phys_convec_ec2tm.F90:87-237`).
@@ -144,12 +144,28 @@ AtmosTransport orientation (k=1=TOA, k=Nz=surface).
 - `udrf_rate::AbstractVector{FT}`, length `Nz` — updraft
   detrainment RATE at layer centers (kg/m³/s).
 - `ddrf_rate::AbstractVector{FT}`, length `Nz` — downdraft
-  detrainment RATE at layer centers (kg/m³/s).
+  detrainment RATE as archived on GRIB level `k` (kg/m³/s). The IFS
+  steps its downdraft from the layer above, so the rate it archives on
+  level `k` is the detrainment of layer `k - 1` (see
+  `ddrf_layer_above`).
 - `dz::AbstractVector{FT}`, length `Nz` — layer thickness (m),
   positive. Compute from `dz_hydrostatic_virtual!`.
 - `Nz::Int` — number of full levels.
 - `stats::Union{Nothing, NamedTuple}` — cleanup-stats counters
   from `TM5CleanupStats()`. When `nothing`, no counter work.
+- `ddrf_layer_above::Bool = true` — read the downdraft detrainment
+  archived on level `k` as that of layer `k - 1`: `detd[k] =
+  ddrf_rate[k + 1] * dz[k + 1]`, `detd[Nz] = 0` (step 5 then gives the
+  lowest layer the flux that reaches the ground), and level 1 has no
+  layer above it and is dropped. The IFS steps the downdraft from the
+  layer above, closing `-pmfd(jk) + pmfd(jk-1) + pmfdde_rate(jk)`
+  (ECMWF `CUCTRACER`; ICON's public IFS port, `mo_cudescn.f90:651`,
+  `mo_cumaster.f90:1778/1784/2326`), so the detrainment archived on
+  level `k` belongs to the layer above level `k`. `false` reads it on its own layer, as TM5's
+  `ECconv_to_TMconv` does; on ERA5 that same-layer reading turns about a
+  quarter of the downdraft detrainment into negative entrainment, which
+  step 5 then moves. The updraft detrainment is always read on its own
+  layer.
 
 # Algorithm (line-for-line match to F90 lines 132-236)
 
@@ -157,7 +173,8 @@ AtmosTransport orientation (k=1=TOA, k=Nz=surface).
    `|ddmf| < 1e-6 → 0` (applied as `ddmf > -1e-6 → 0`),
    `udrf_rate < 1e-10 → 0`, `ddrf_rate < 1e-10 → 0`.
 2. **dz integration** (F90 L146-151): `detu = udrf × dz` (kg/m³/s
-   → kg/m²/s). Same for detd.
+   → kg/m²/s). Same for detd, on the level it was archived on, then
+   moved up one layer unless `ddrf_layer_above = false`.
 3. **Cloud-top search** (F90 L153-173, `do l = 1, lm; if (mflu(l) > 0)`):
    the cloud-top layer `uptop` is the highest layer whose BOTTOM
    interface carries updraft, i.e. `uptop = k - 1` for the first
@@ -195,7 +212,8 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
                             ddrf_rate::AbstractVector{FT},
                             dz::AbstractVector{FT},
                             Nz::Integer;
-                            stats = nothing) where {FT <: AbstractFloat}
+                            stats = nothing,
+                            ddrf_layer_above::Bool = true) where {FT <: AbstractFloat}
     _ec2tm_rates_check_shapes(entu, detu, entd, detd,
                                udmf, ddmf, udrf_rate, ddrf_rate, dz, Nz)
 
@@ -218,12 +236,19 @@ function ec2tm_from_rates!(entu::AbstractVector{FT}, detu::AbstractVector{FT},
         else
             detu[k] = r * dz[k]
         end
+    end
+    # With `ddrf_layer_above`, the downdraft detrainment archived on level k
+    # belongs to layer k - 1 (the IFS steps the downdraft from the layer
+    # above); level 1 has no layer above it, and layer Nz gets none.
+    ddrf_layer_above && (detd[Nz] = zero(FT))
+    @inbounds for k in 1:Nz
         r = ddrf_rate[k]
+        layer = ddrf_layer_above ? k - 1 : k
         if r < FT(1e-10)
-            detd[k] = zero(FT)
             clipped_ddrf += 1
+            layer >= 1 && (detd[layer] = zero(FT))
         else
-            detd[k] = r * dz[k]
+            layer >= 1 && (detd[layer] = r * dz[k])
         end
     end
 
