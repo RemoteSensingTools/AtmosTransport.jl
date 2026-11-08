@@ -54,8 +54,13 @@ contains no transport physics and no reverse-loop logic; recording lives in
     directory, required: no default, never `/tmp` implicitly);
   - checkpoint (`AbstractCheckpointSchedule`, [`CheckpointSchedule.jl`](CheckpointSchedule.jl)):
     `FullCheckpoint()` (default), `StrideCheckpoint(K; resident_tail = 0,
-    snapshots = DeviceCSTapeStorage())`, plus
-    `checkpoint_window_count` and `checkpoint_window_range`.
+    snapshots = DeviceCSTapeStorage())`, `MetWindowCheckpoint(; split_steps = 0,
+    snapshots = PinnedHostCSTapeStorage())` (segments at the met-window
+    boundaries of the step schedule, optionally split, never straddling a
+    window), plus `checkpoint_window_count` and `checkpoint_window_range`
+    (`(schedule, nsteps)`, Full and Stride) and `_met_window_segments`
+    (`(schedule, step_windows)` with the met window of every step: the
+    one-pass segment list of `MetWindowCheckpoint`).
 - Runtime pools (one per reverse-pass call, or per
   `cs_surface_flux_4dvar_optimize` call for all its evaluations; the
   Footprint drivers own them):
@@ -116,15 +121,15 @@ contains no transport physics and no reverse-loop logic; recording lives in
   its pool `_MmapTapeFile` (file-system and free-space checks, unlinked file,
   `fallocate` reservation retried on EINTR, one POSIX mapping unmapped on
   release)
-- [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types and
-  stride window arithmetic
+- [`CheckpointSchedule.jl`](CheckpointSchedule.jl) — schedule types, stride
+  window arithmetic and met-window segments
 - [`TapeReservation.jl`](TapeReservation.jl) — host/cgroup headroom,
   backend memory-query hooks, layout keys and exact-size pool reservations
   (device slab banks, pinned arena chunks, reserved mmap extents)
 - [`AdjointTape.jl`](AdjointTape.jl) — `AutoTape`, typed reservation errors,
   `AbstractTapeContent`,
   `StateTape`, `AirMassTape`, `AdjointTape` (rejects `AirMassTape` with
-  `StrideCheckpoint`)
+  `StrideCheckpoint` or `MetWindowCheckpoint`)
 
 ## Common Tasks
 
@@ -144,7 +149,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
   (`../Adjoints/Footprint/ReverseLoop.jl`).
 - Changing GPU staging: edit the tape hooks in
   `../../ext/AtmosTransportCUDAExt.jl` and `../../ext/AtmosTransportAMDGPUExt.jl`.
-- The drivers that use `FullCheckpoint` / `StrideCheckpoint` and the runtime
+- The drivers that use `FullCheckpoint` / `StrideCheckpoint` /
+  `MetWindowCheckpoint` and the runtime
   that opens and releases the pools are in `../Adjoints/Footprint/`
   (`StrideCheckpoint.jl`, `TapeRuntime.jl`), not here.
 
@@ -223,7 +229,7 @@ contains no transport physics and no reverse-loop logic; recording lives in
   reference the same arrays.
 - Every recorded step starts with production's step-start halo refresh, so
   a window that restarts at a step boundary records the states of the full
-  tape: `StrideCheckpoint` reproduces `FullCheckpoint` bit for bit on one CPU
+  tape: `StrideCheckpoint` and `MetWindowCheckpoint` reproduce `FullCheckpoint` bit for bit on one CPU
   thread for every split-sweep scheme and storage, with diffusion,
   convection and air-mass resets (the bitwise gate), and to `atol = 1e-12`
   with Lin–Rood and several threads (issue #60 was that refresh missing from
@@ -246,7 +252,8 @@ contains no transport physics and no reverse-loop logic; recording lives in
   unregistered on release), the mmap reservation, free-space and overrun
   errors, stale slots, read caches, accepted and rejected `tape` values
 - [`../../test/core/test_cs_stride_checkpoint.jl`](../../test/core/test_cs_stride_checkpoint.jl):
-  Stride parity against `FullCheckpoint`, window arithmetic
+  Stride and MetWindow parity against `FullCheckpoint` (variable met windows,
+  split windows, a run ending inside a window), window and segment arithmetic
 - [`../../test/core/test_cs_4dvar_single_sweep.jl`](../../test/core/test_cs_4dvar_single_sweep.jl):
   one pool per call and per optimization (opens, rewinds, releases; one mmap
   count per optimization), one recording per stride window for all
@@ -286,7 +293,7 @@ Host chunks check current host/cgroup headroom before allocation. Backend
 queries include reclaimable cached CUDA/AMDGPU memory; an unknown backend raises a
 typed error. Host slots use `HostCSTapeSlot{P,A}`; tapes are not persisted.
 
-# shared: _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_bytes, _layout_pooled, _device_tape_memory, _tape_device_margin, _host_tape_budget, _check_tape_schedule, StrideSearch, _host_tape_memory, _is_reservation_failure
+# shared: _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_bytes, _layout_pooled, _device_tape_memory, _tape_device_margin, _host_tape_budget, _check_tape_schedule, StrideSearch, _host_tape_memory, _is_reservation_failure, _met_window_segments
 
 Automatic selection tries device Full, device Stride with device snapshots, device Stride with pinned-host snapshots, then mmap candidates only when `scratch_dir` is set; a resident tail uses the tape’s selected storage.
 

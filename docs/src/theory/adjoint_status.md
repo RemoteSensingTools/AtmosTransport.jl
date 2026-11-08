@@ -204,7 +204,7 @@ constructor defaults are listed below (`src/Tape/AdjointTape.jl`):
 | --- | --- | --- |
 | content: what each record stages, how long a recording serves | `StateTape()` (what each operator's reverse reads of this forward run; recorded by every forward run), `AirMassTape()` (the air mass only; recorded once per call or optimization) | `StateTape()` |
 | storage: where the staged states live | `DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)` | `DeviceCSTapeStorage()` |
-| checkpoint: how much of the run is taped at once | `FullCheckpoint()`, `StrideCheckpoint(K)` | `FullCheckpoint()` |
+| checkpoint: how much of the run is taped at once | `FullCheckpoint()`, `StrideCheckpoint(K)`, `MetWindowCheckpoint()` | `FullCheckpoint()` |
 
 Every storage and schedule is valid for the split-sweep schemes; the Lin–Rood
 tape supports device storage only; `AirMassTape()` takes `FullCheckpoint()` and
@@ -319,8 +319,9 @@ within-runtime guard, not a collision-free fingerprint. Holding the tape
 also rejects records with tracer payloads. A
 difference is an `ArgumentError` naming it. Limited PPM and Lin–Rood
 (`TracerDependence`) with `AirMassTape()` are an `ArgumentError` before any
-forward run, as is `AirMassTape()` with `StrideCheckpoint` (its windows are
-re-recorded from tracer-dependent checkpoints in every reverse pass). On one
+forward run, as is `AirMassTape()` with `StrideCheckpoint` or
+`MetWindowCheckpoint` (their windows are re-recorded from tracer-dependent
+checkpoints in every reverse pass). On one
 CPU thread (C32 L20 Float64, 8 steps, upwind with TM5 convection and diffusion,
 a three-evaluation optimization, before the position-weighted checksum change)
 there was no measurable difference with a CPU device-array tape (min-of-three
@@ -337,8 +338,29 @@ so peak scaled-flux memory is twice one set.
 | `FullCheckpoint` | O(N) state snapshots | none — fastest reverse pass |
 | `StrideCheckpoint(K)` | one K-step window plus N/K checkpoints | one extra forward run |
 | `StrideCheckpoint(K; resident_tail = n, snapshots = PinnedHostCSTapeStorage())` | the resident tail, one head window and host tracer/air-mass checkpoints | re-records the head only |
+| `MetWindowCheckpoint(; split_steps = 0, snapshots = PinnedHostCSTapeStorage())` | the longest met window (or `split_steps`-bounded piece) plus one checkpoint per segment, tracer/air mass on the host by default | one extra forward run |
 
-Both schedules share one driver per policy for every scheme family; a
+`MetWindowCheckpoint` places its checkpoints at the met-window boundaries of
+the step schedule (`CSStepSchedule.steps_per_window`, variable in real
+binaries: 2–3 steps per window at C24, 5–6 at C48 and 8–11 at C90 in the
+first week of December 2021 of the MERRA-2 binaries), so no segment straddles
+two met windows and a segment's tape refers to one window's met inputs only,
+the property a streamed reverse pass needs. `split_steps > 0` cuts a window
+of `n` steps into `cld(n, split_steps)` pieces of nearly equal length, never
+across a window boundary; a run that ends inside a met window ends its last
+segment there. It uses the `StrideCheckpoint` driver with a different segment
+list, built in one pass from the met window of every step. The pool reserves the largest
+per-type count over the segments; there is no resident tail. Explicit
+`AdjointTape(; checkpoint = MetWindowCheckpoint(...))` and
+`AutoTape(; checkpoint = MetWindowCheckpoint(...))` (sized and checked
+against the budget, then reserved) are supported; unconstrained `AutoTape()`
+does not consider it, so its choices are unchanged. On one CPU thread the
+4D-Var cost, simulated values and gradient equal `FullCheckpoint`'s bit for
+bit on 2 days of C24 MERRA-2 binaries (`ppm_linear` and `linrood7`, CMFMC
+convection and Holtslag–Boville diffusion), as do the bitwise gate's
+variants.
+
+The schedules share one driver per policy for every scheme family; a
 checkpoint is a replay snapshot (tracer and air mass with halos plus the
 persistent operator state), so a restart inside a met window runs that
 window's remaining steps and window-end stages exactly as the recording run.
@@ -407,7 +429,9 @@ multi-objective footprints (the Jacobian also under `StrideCheckpoint`, whose
 windows serve both objectives), the 4D-Var cost, simulated values and gradient
 (with a co-sample after the last assimilated step) and a two-iteration
 gradient-descent optimization (whose evaluations share one tape pool) of every
-storage × schedule variant, and for the linear schemes of `AirMassTape()`
+storage × schedule variant (including `MetWindowCheckpoint` with and without
+split met windows, with host and device snapshots, on met windows of 2, 3 and
+2 steps), and for the linear schemes of `AirMassTape()`
 (the optimization's later evaluations reuse the first one's tape), must equal
 the default tape's reference bit for bit, and the reference must equal the
 SHA-1 digests recorded from main on the reference host
@@ -1071,7 +1095,7 @@ that the default sounding file is identical.
 
 | Item | Notes |
 | --- | --- |
-| **Logarithmic-memory checkpointing** | Only `FullCheckpoint` and `StrideCheckpoint(K)` ship; the bisection Revolve was removed. An optimal binomial (Griewank–Walther) schedule will be added when a case needs log-memory snapshots (met streaming). |
+| **Logarithmic-memory checkpointing** | Only `FullCheckpoint`, `StrideCheckpoint(K)` and `MetWindowCheckpoint()` ship; the bisection Revolve was removed. An optimal binomial (Griewank–Walther) schedule will be added when a case needs log-memory snapshots (met streaming). |
 | **Optimized/clamped convection adjoints** | CMFMC `clamp = true` and TM5/CMFMC-matrix collaborative, truncated, or merged solves are rejected by the footprint API until their exact branches are taped and transposed. |
 | **TM5-4DVAR cross-validation** | Synthetic truth-recovery via `test_cs_inversion_truth_recovery.jl` is on CI; a side-by-side parity run against TM5-4DVAR on real data has not been published. |
 | **Inversion driver on transport binaries** | `scripts/inversions/cs_4dvar.jl` binds observation files only on its synthetic meteorology (`synthetic_hydrostatic`); a 4D-Var on transport-binary meteorology is assembled with the Julia API (`bind_to_mesh`, `CSObservationColumnMet`, `cs_surface_flux_4dvar`). |
@@ -1131,7 +1155,9 @@ For the lower-level Julia API, start with the
 Pass `tape = AdjointTape(; checkpoint = StrideCheckpoint(K))` to fix a
 `K`-step re-recording schedule. `resident_tail = n` retains the final `n`
 steps recorded by the forward run; `snapshots = PinnedHostCSTapeStorage()`
-moves the head's tracer/air-mass checkpoints to host memory. Lin–Rood tapes currently
+moves the head's tracer/air-mass checkpoints to host memory.
+`MetWindowCheckpoint()` re-records one met window at a time
+(`split_steps = k` bounds a segment to `k` steps). Lin–Rood tapes currently
 require `DeviceCSTapeStorage()`; split-sweep schemes also support
 `PinnedHostCSTapeStorage()` and `MmapCSTapeStorage(dir)`.
 

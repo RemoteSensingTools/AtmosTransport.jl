@@ -11,7 +11,7 @@
 #   * storage    — where the staged states live (`DeviceCSTapeStorage()`,
 #                  `PinnedHostCSTapeStorage()`, `MmapCSTapeStorage(dir)`);
 #   * checkpoint — how much of the run is taped at once (`FullCheckpoint()`,
-#                  `StrideCheckpoint(K)`).
+#                  `StrideCheckpoint(K)`, `MetWindowCheckpoint()`).
 #
 # `AirMassTape` keeps one tape for the whole run, so it takes `FullCheckpoint`;
 # Lin–Rood takes device storage only; `AirMassTape` needs a scheme whose
@@ -80,9 +80,10 @@ The tape of a cubed-sphere reverse pass, passed as `tape` to
 - `storage` — where the staged states live: [`DeviceCSTapeStorage`](@ref)
   (default), [`PinnedHostCSTapeStorage`](@ref) or
   [`MmapCSTapeStorage`](@ref)`(dir)`;
-- `checkpoint` — [`FullCheckpoint`](@ref) (default; the whole run on one tape)
-  or [`StrideCheckpoint`](@ref)`(K)` (one `K`-step window at a time,
-  re-recorded from checkpoints; one extra forward run).
+- `checkpoint` — [`FullCheckpoint`](@ref) (default; the whole run on one tape),
+  [`StrideCheckpoint`](@ref)`(K)` (one `K`-step window at a time,
+  re-recorded from checkpoints; one extra forward run) or
+  [`MetWindowCheckpoint`](@ref)`()` (the same with one segment per met window).
 
 Every storage works with every schedule and gives the same gradients bit for
 bit on one CPU thread. The Lin–Rood tape supports `DeviceCSTapeStorage` only;
@@ -109,21 +110,26 @@ AdjointTape(; content::AbstractTapeContent = StateTape(),
             checkpoint::AbstractCheckpointSchedule = FullCheckpoint()) =
     AdjointTape(content, storage, checkpoint)
 
-# An air-mass tape is one recording reused for the whole run; a stride
-# schedule re-records its windows from checkpoints in every reverse pass.
+# An air-mass tape is one recording reused for the whole run; a stride or
+# met-window schedule re-records its windows from checkpoints in every
+# reverse pass.
 _check_tape_schedule(::AbstractTapeContent, ::AbstractCheckpointSchedule) = nothing
-_check_tape_schedule(::AirMassTape, ::StrideCheckpoint) = throw(ArgumentError(
-    "AirMassTape keeps one recorded tape for the whole run and reuses it; StrideCheckpoint " *
+_check_tape_schedule(::AirMassTape, s::Union{StrideCheckpoint, MetWindowCheckpoint}) = throw(ArgumentError(
+    "AirMassTape keeps one recorded tape for the whole run and reuses it; $(nameof(typeof(s))) " *
     "re-records each window from its checkpoint in every reverse pass. Use FullCheckpoint() " *
-    "with AirMassTape(), or StateTape() with StrideCheckpoint."))
+    "with AirMassTape(), or StateTape() with $(nameof(typeof(s)))."))
 
 """
     AutoTape(; storage = nothing, checkpoint = nothing, content = nothing,
              budget_bytes = nothing, scratch_dir = nothing)
 
 Resolve and reserve an `AdjointTape` before recording, from the step schedule
-and the available backend and host memory. Supplied axes constrain the search;
-`budget_bytes` replaces the measured device tape and snapshot budget and its
+and the available backend and host memory. Supplied axes constrain the search:
+`checkpoint` may be a concrete schedule (`FullCheckpoint()`,
+`StrideCheckpoint(K)`, `MetWindowCheckpoint()`; sized, checked against the
+budget and reserved as given) or a [`StrideSearch`](@ref). Without a
+constraint the search considers Full and Stride schedules, not
+`MetWindowCheckpoint`. `budget_bytes` replaces the measured device tape and snapshot budget and its
 safety margin; on CPU it also replaces the shared host budget.
 `scratch_dir` enables the mmap candidate. With no fitting reservation, throw
 [`TapeReservationError`](@ref). The default content is `StateTape`.

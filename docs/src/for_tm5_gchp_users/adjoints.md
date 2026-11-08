@@ -323,8 +323,9 @@ The `checkpoint` controls the memory/recompute trade-off:
 | --- | --- | --- |
 | `FullCheckpoint()` | Proportional to the number of steps. | No window replay. |
 | `StrideCheckpoint(k)` | Checkpoints every `k` steps and one `k`-step window. | Re-records one `k`-step window at a time (one extra forward run), walked for every objective. |
+| `MetWindowCheckpoint()` | Checkpoints at every met-window boundary (host by default) and one met window; `split_steps = k` cuts a window into pieces of at most `k` steps. | Like `StrideCheckpoint`, with segments that never straddle a met window. |
 
-Both schedules record the same states: a checkpoint holds the tracer and air
+All schedules record the same states: a checkpoint holds the tracer and air
 mass with their halos and the persistent operator state (the surface sources'
 Kahan compensation, the convection and Dkg diffusion ledger carries, the
 CMFMC CFL cache), so a window that restarts at a step boundary, also inside a

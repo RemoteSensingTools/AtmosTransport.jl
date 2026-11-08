@@ -29,8 +29,10 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
   `cs_tape_byte_estimate`.
 - `ReverseLoop.jl`: adjoint start states, reverse walk and objective forward replay.
 - `AutoTape.jl`: closed-form binary schedule sizes, cached CFL/Lin–Rood
-  counts, constrained candidate selection, memory budgets, reserve-before-run
-  setup and preallocated snapshot capture. Convection owns the lazy carry
+  counts (`_TapeSizing` also keeps the met window of every sized step, from
+  which `MetWindowCheckpoint`'s segments are sized), constrained candidate
+  selection (a concrete schedule, `StrideSearch`), memory budgets,
+  reserve-before-run setup and preallocated snapshot capture. Convection owns the lazy carry
   shapes through `convection_checkpoint_state`.
   CPU budgets subtract `min(10% of host/cgroup capacity, 2 GiB)` plus reverse
   workspace from available headroom; `Tape._CPU_TAPE_MARGIN_MAX_BYTES` owns
@@ -44,10 +46,14 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
   mmap bytes (once per runtime); the `AirMassTape` recording it holds and
   its identity (`_TapeIdentity`, `_held_air_mass_tape`); explicit release of
   checkpoints and Lin–Rood records.
-- `StrideCheckpoint.jl`: Full/Stride drivers in four phases on one replay
-  (`_begin_taped_run`, the forward run `_run_forward!`, `_reverse_taped_run`,
-  `_end_taped_run!`; Full records, or with `AirMassTape` reuses the tape its
-  runtime holds), the 4D-Var's zero-start forced reverse
+- `StrideCheckpoint.jl`: Full and segmented drivers in four phases on one
+  replay (`_begin_taped_run`, the forward run `_run_forward!`,
+  `_reverse_taped_run`, `_end_taped_run!`; Full records, or with
+  `AirMassTape` reuses the tape its runtime holds; `StrideCheckpoint` and
+  `MetWindowCheckpoint` share one driver, `_StrideTapedRun`, which resolves
+  the segment list of its taped steps once, `_run_segments`: K-step windows,
+  or the met windows of `replay.steps.window`), the 4D-Var's zero-start
+  forced reverse
   (`_forced_reverse`), and the tape checks made before the forward run
   (`_require_tape_supported`: Lin–Rood storage, `AirMassTape` legality).
 - `FootprintAPI.jl`: footprint and seeded-footprint entry points.
@@ -121,8 +127,14 @@ ended in. Stride records each window once and walks it for every start. The
 simulated values and the tape. Lin–Rood accepts device tape storage only.
 Stride may record a resident tail during the forward run and recompute
 only the head. Its snapshots' tracer and air masses may use pinned host
-storage; operator state retains backend types. Full, plain Stride, resident
-tails and host snapshots are checked against recorded digests and the reference variant by the CPU bitwise harness.
+storage; operator state retains backend types. `MetWindowCheckpoint`
+checkpoints at met-window boundaries (optionally split into pieces of at most
+`split_steps`) with the Stride driver, no tail and pinned-host snapshots by
+default; unconstrained `AutoTape()` does not consider it,
+`AutoTape(; checkpoint = MetWindowCheckpoint(...))` sizes and reserves it.
+Full, plain Stride, resident tails, host snapshots and MetWindow (plain,
+split, AutoTape-constrained) are checked against recorded digests and the
+reference variant by the CPU bitwise harness.
 Lin–Rood's horizontal records are counted toward the device peak and remain
 outside the pools. Level Nz is the surface.
 
