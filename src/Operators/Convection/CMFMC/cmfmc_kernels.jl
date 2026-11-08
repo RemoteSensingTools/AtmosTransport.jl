@@ -36,35 +36,26 @@
 # ---------------------------------------------------------------------------
 
 # =========================================================================
-# Numerical tiny — type-dispatched "treat as zero" threshold for
-# cmfmc/dtrain comparisons and column-mass guards. Two requirements:
+# Numerical tiny — "treat as zero" threshold for cmfmc/dtrain
+# comparisons and column-mass guards. It is the same `1e-14` in every
+# floating-point type, GEOS-Chem's `TINYNUM` (convection_mod.F90):
 #
-#   (a) ABOVE the type's representation noise for typical cmfmc
-#       magnitudes (`eps(FT) × max_scale` where max_scale ~ 1 kg/m²/s
-#       in storage), so noise in a Float32 binary cannot spuriously
-#       activate cloud-base detection or Pass 0.
-#   (b) BELOW the smallest physically-meaningful cmfmc magnitude
-#       (~1e-6 kg/m²/s for very weak convection), so real signals
-#       are never silently dropped.
+#   - It is a physics switch in two places: a column convects only if some
+#     |cmfmc| exceeds it (with the CMFMC-edge cloud base, the base is the
+#     largest k with |cmfmc[k+1]| > tiny), and the sub-cloud layers mix only
+#     if `cmfmc_at_cldbase > tiny` (GEOS-Chem's `CMFMC(CLDBASE-1) > TINYNUM`).
+#     Both compare stored binary values, and a Float32 binary holds values
+#     far below 1e-6 exactly, so a precision-dependent threshold made Float32
+#     and Float64 runs of the same binary different models: with `1f-6` for
+#     Float32, weak-updraft columns convected only in Float64, and the
+#     CMFMC-edge cloud base differed in 8.6 % of C24 MERRA-2 column-windows.
+#   - Every other guard (`cmout > tiny`, `m > tiny`, `bmass > tiny`)
+#     protects a division; `1f-14` is a normal Float32 number, so these
+#     divisions stay finite.
 #
-# That gives a target window (eps(FT) × ~1, 1e-6):
-#
-#   - Float32: `1f-6`  — about 8 × `eps(Float32) ≈ 1.19e-7`, at the
-#     top of the safe window. Real GEOS-IT CMFMC values that fall
-#     below this are essentially indistinguishable from Float32 round-off
-#     in the binary anyway.
-#   - Float64: `1e-14` — about 45 × `eps(Float64) ≈ 2.22e-16`, well
-#     above noise and well below physical signal.
-#
-# Previously the kernels used `FT(1e-30)` (which on Float32 sat
-# ~1e-23× BELOW `eps(Float32)` — i.e. inside the noise band and
-# at risk of spurious activation on Float32 binaries). Centralising
-# the constant here also makes it easy to retune without scanning
-# three kernels.
+# Previously the kernels used `FT(1e-30)`, and later `1f-6` for Float32.
 # =========================================================================
 
-@inline _cmfmc_tiny(::Type{Float32}) = 1f-6
-@inline _cmfmc_tiny(::Type{Float64}) = 1e-14
 @inline _cmfmc_tiny(::Type{T}) where {T <: AbstractFloat} = T(1e-14)
 
 # =========================================================================
@@ -598,7 +589,7 @@ panel, all `Nt` packed tracers. The six-panel kernel
                 m_after += tracers_raw[ii, jj, k, t_idx]
             end
             # Guard only against an unusable (non-positive) denominator — NOT the
-            # CMFMC flux-noise `tiny`, which is far too large for raw tracer mass
+            # CMFMC `tiny`, which is a mass-flux threshold, not a tracer-mass one
             # (a low-abundance tracer's column can be positive but ≪ tiny, and
             # must still be rescaled to conserve).
             if m_after > zero(FT)
