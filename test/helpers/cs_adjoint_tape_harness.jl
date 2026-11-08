@@ -328,11 +328,8 @@ function physics_kwargs(P, ::DirectInputs)
                                                   for i in 1:Nc, j in 1:Nc, k in 1:Nz]), 6)
         op = AT.ImplicitVerticalDiffusion(; kz_field = AT.CubedSphereField(kz),
                                           surface_flux_coupling = coupling)
-        ws = AT.DiffusionWorkspace(P.m0, HP, 0)
-        for p in 1:6, k in 1:Nz
-            ws.layer_thickness[p][:, :, k] .= FT(40 + 15k + 3p)
-        end
-        kw = (; kw..., diffusion_op = op, diffusion_workspace = ws)
+        dz = ntuple(p -> repeat(reshape(FT[40 + 15k + 3p for k in 1:Nz], 1, 1, Nz), Nc, Nc, 1), 6)
+        kw = (; kw..., diffusion_op = op, diffusion_layer_thickness = dz)
     end
     c.conv === :none && return kw
     metrics = ntuple(_ -> ones(FT, Nc, Nc), 6)

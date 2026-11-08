@@ -144,8 +144,8 @@ What an `AirMassTape` recording depends on (a reuse compares `grid`, `steps`,
   taped step, and the window length;
 - `scheme`: the advection scheme and the step plan (values), the binary
   subcycle contract and whether the plan has a surface flux, and the
-  diffusion and convection operators, the caller's diffusion workspaces and
-  meteorology (objects the records hold, compared by identity: the contents
+  diffusion and convection operators, the caller's diffusion layer thickness
+  and meteorology (objects the records hold, compared by identity: the contents
   of a Kz field are not checksummed);
 - `grid`: `Nc`, `Hp`, `Nz` and the float type;
 - `steps`: the number of taped steps.
@@ -310,8 +310,8 @@ function _tape_identity(replay::_CSReplay, taped_steps::Int)
     for s in 1:taped_steps
         _push_met_arrays!(arrays, seen, replay.fluxes[s])
         _push_met_arrays!(arrays, seen, _forcing_at(replay.convection_forcing, s))
-        diffusion_ws = _sequence_at(replay.diffusion_user_ws, s)
-        diffusion_ws === nothing || _push_met_arrays!(arrays, seen, diffusion_ws.layer_thickness)
+        layer_thickness = _sequence_at(replay.diffusion_layer_thickness, s)
+        layer_thickness === nothing || _push_met_arrays!(arrays, seen, layer_thickness)
     end
     _push_reset_target_arrays!(arrays, seen, replay.start_targets, replay.mesh)
     _push_reset_target_arrays!(arrays, seen, replay.end_targets, replay.mesh)
@@ -321,7 +321,7 @@ function _tape_identity(replay::_CSReplay, taped_steps::Int)
               steps.end_time[n], steps.window_dt)
     scheme = (replay.advection, replay.plan, replay.meteo.binary_substeps, _has_surface_flux(replay),
               objectid(replay.diffusion_op), objectid(replay.convection),
-              objectid(replay.diffusion_user_ws), objectid(replay.meteo.diffusion_meteo))
+              objectid(replay.diffusion_layer_thickness), objectid(replay.meteo.diffusion_meteo))
     m = _replay_m(replay)
     grid = (replay.mesh.Nc, replay.mesh.Hp, size(m[1], 3), eltype(m[1]))
     return _TapeIdentity(_met_checksums(arrays), window, scheme, grid, taped_steps)

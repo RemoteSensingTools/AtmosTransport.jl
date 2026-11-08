@@ -1,4 +1,4 @@
-# Workspace validation shared by forward solves, advection preflight and adjoint wiring.
+# Workspace validation shared by forward solves and advection preflight.
 
 function _check_workspace_array(array, expected, name, label; reference = nothing)
     array isa AbstractArray && size(array) == expected || throw(DimensionMismatch(
@@ -139,30 +139,3 @@ _ledger_panel(carry::NTuple{6}, p) = carry[p]
 _ledger_panel(carry, p) = carry
 _select_ledger_panel(carry, p, packed, tracer) =
     packed || tracer !== nothing ? _ledger_panel(carry, p) : nothing
-
-function check_diffusion_workspace(workspace)
-    workspace === nothing && throw(ArgumentError(
-        "CS adjoint diffusion requires a panel-native DiffusionWorkspace"))
-    hasproperty(workspace, :factors) && hasproperty(workspace, :layer_thickness) ||
-        throw(ArgumentError(
-            "CS adjoint diffusion requires a workspace with panel-native " *
-            "`factors` and `layer_thickness` tuples"))
-    w_scratch = workspace.factors
-    dz_scratch = workspace.layer_thickness
-    length(w_scratch) == 6 && length(dz_scratch) == 6 ||
-        throw(DimensionMismatch("CS adjoint diffusion workspace must provide 6 panel scratch arrays"))
-    return w_scratch, dz_scratch
-end
-
-
-# Adjoint panel validation shares the same shape checks as the forward solve.
-function check_diffusion_workspace(workspace, lambda::AbstractArray, air_mass::AbstractArray;
-                                    panel::Integer, columns::Tuple)
-    size(lambda) == size(air_mass) || throw(DimensionMismatch(
-        "adjoint tracer panel $panel shape $(size(lambda)) does not match air_mass shape $(size(air_mass))"))
-    expected = (columns..., size(lambda, 3))
-    _check_column_workspace((factors = workspace.factors[panel],
-                             layer_thickness = workspace.layer_thickness[panel]),
-                            expected, "panel $panel")
-    return nothing
-end

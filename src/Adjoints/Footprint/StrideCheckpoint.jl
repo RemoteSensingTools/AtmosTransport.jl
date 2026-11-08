@@ -65,7 +65,8 @@ _check_reverse_length(_start, replay::_CSReplay, n::Int) =
 
 function _walk!(footprints, lambda, ops, replay::_CSReplay, ws, forcing)
     _walk_window_reverse!(footprints, lambda, ops, replay.mesh, ws;
-                          convection_workspace = replay.convection_workspace, forcing)
+                          convection_workspace = replay.convection_workspace,
+                          diffusion_scratch = replay.diffusion_scratch, forcing)
     return nothing
 end
 

@@ -25,7 +25,11 @@ No lower sibling imports Runner.
   the window-start, window-end and step-end (`m + λ dm`) targets.
 - `adjoint_schedule.jl`: `CSStepSchedule(sim)`, `cs_adjoint_inputs`, fresh-state
   checks and production forcing capture (one copy of the face fluxes each time
-  production rewrites them, shared by the steps of a met window).
+  production rewrites them, shared by the steps of a met window; per window
+  one convection forcing, diffusion operator and layer thickness, no diffusion
+  workspace). Reset targets load each window once; a window's start target is
+  the previous window's end target, one array, when the two are bitwise equal
+  (`_window_reset_targets`, `_bitwise_equal`).
 - `BinaryPathExpander.jl`: existing binary-path child module.
 - `InputStaging.jl`: existing input-staging child module.
 - [`DrivenRunner/`](DrivenRunner/README.md): configured runner, model setup,
@@ -73,5 +77,12 @@ Storage allocation delegates to Architectures.similar_arrays with the existing
 `scale_arrays!`, retaining one broadcast per panel in the original order.
 
 TM5 live CS diffusion captures a frozen copy of D per window, without scratch
-or metrics. Its windows share one diffusion workspace because D needs no dz.
-The default capture for existing Kz operators retains the deepcopy behavior.
+or metrics, and no layer thickness (`diffusion_layer_thickness = nothing`)
+because D needs no dz. The default capture for existing Kz operators retains
+the deepcopy behavior and copies the window's layer thickness (none for Dkg
+fields); the replay owns the diffusion workspace and reverse scratch.
+
+Sharing reset targets is exact: the replay writes a target only when a reset
+refreshes its halos (`fill_panel_halos!(…; dir = 1)` rewrites every halo cell
+from the interior), so either reset of a shared target installs what separate
+copies would; the interior is never written.

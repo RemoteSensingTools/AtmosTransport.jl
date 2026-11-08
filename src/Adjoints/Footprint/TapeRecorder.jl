@@ -63,7 +63,7 @@ mutable struct _CSTapeRecorder{C <: AbstractTapeContent, S, L} <: _AbstractCSRec
     convection_index    :: Int      # its index in `ops`
     convection_m        :: Any      # the air-mass panels it read (staged if no slot comes)
     codes_scratch       :: Any      # `UInt8` panels the limiter codes are computed in, or nothing
-    diffusion_workspace :: Any      # the caller's diffusion workspace of the current step
+    layer_thickness     :: Any      # the caller's diffusion layer thickness of the current step
     linrood             :: Dict{Symbol, Any}   # phases of the Lin-Rood operator being recorded
 end
 
@@ -102,7 +102,7 @@ mutable struct _CSCountingRecorder{C <: AbstractTapeContent, L} <: _AbstractCSRe
     convection_pending :: Bool
     convection_index   :: Int
     convection_m       :: Any
-    diffusion_workspace :: Any
+    layer_thickness    :: Any
     slot_bytes_through_step :: Vector{Int}    # `slot_bytes` at the end of each counted step
     layouts::Vector{Vector{Any}}
     pending_slot_bytes      :: Vector{Int}    # bytes a recording ending after the step adds (`_finish_recording!`)
@@ -195,10 +195,10 @@ _shares_air_mass(::CSLinRoodStyle) = false
 # The hooks (both recorders)
 # ---------------------------------------------------------------------------
 
-function _begin_recorded_step!(r::_AbstractCSRecorder, s::Int, diffusion_workspace, time)
+function _begin_recorded_step!(r::_AbstractCSRecorder, s::Int, layer_thickness, time)
     r.current_step = s
     r.time = Float64(time)
-    r.diffusion_workspace = diffusion_workspace
+    r.layer_thickness = layer_thickness
     return nothing
 end
 
@@ -272,11 +272,10 @@ end
 
 record_diffusion!(::_AbstractCSRecorder, ::NoDiffusion, _workspace, _dt) = nothing
 function record_diffusion!(r::_AbstractCSRecorder, diffusion_op, _workspace, dt)
-    # The reverse solve reads the layer thickness of the caller's workspace of
-    # this step (the replay workspace holds the same values only until the
-    # next step loads its own) and evaluates the Kz field at the forward's
-    # clock.
-    _record!(r, _CSDiffusionRecord(diffusion_op, r.diffusion_workspace, r.center_m, dt, r.time))
+    # The reverse solve reads the caller's layer thickness of this step (the
+    # replay workspace holds the same values only until the next step loads
+    # its own) and evaluates the Kz field at the forward's clock.
+    _record!(r, _CSDiffusionRecord(diffusion_op, r.layer_thickness, r.center_m, dt, r.time))
     return nothing
 end
 

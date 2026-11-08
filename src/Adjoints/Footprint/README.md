@@ -10,6 +10,10 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 - `FootprintResult.jl`: `CSFootprintResult` and `CSTapeByteEstimate`.
 - `StepReplay.jl`: `CSStepSchedule`, resolved windows, replay setup, stepping,
   snapshots and restore. Clock arithmetic is shared with Models via StepPlans.
+  The caller passes the diffusion layer thickness per step
+  (`diffusion_layer_thickness`, read only); the replay owns its diffusion
+  workspace and one reverse-solve scratch (`diffusion_scratch`), which the
+  reverse walk passes to every diffusion record.
   Consecutive steps given the same flux arrays (a met window's, as
   `cs_adjoint_inputs` shares them) share one flux state, so `flux_scale ≠ 1`
   scales each set once.

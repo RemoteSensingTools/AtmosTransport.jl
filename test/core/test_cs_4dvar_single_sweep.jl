@@ -78,11 +78,8 @@ function _physics(kind::Symbol, P)
         op = AT.ImplicitVerticalDiffusion(;
             kz_field = AT.CubedSphereField(ntuple(_ -> AT.PreComputedKzField(repeat(reshape(FT[30 / k for k in 1:Nz], 1, 1, Nz), Nc, Nc, 1)), 6)),
             surface_flux_coupling = coupling)
-        ws = AT.DiffusionWorkspace(P.m, P.mesh.Hp, 0)
-        for p in 1:6, k in 1:Nz
-            ws.layer_thickness[p][:, :, k] .= FT(40 + 15k + 3p)
-        end
-        return (; diffusion_op = op, diffusion_workspace = ws)
+        dz = ntuple(p -> repeat(reshape(FT[40 + 15k + 3p for k in 1:Nz], 1, 1, Nz), Nc, Nc, 1), 6)
+        return (; diffusion_op = op, diffusion_layer_thickness = dz)
     end
     metrics = ntuple(_ -> ones(FT, Nc, Nc), 6)
     if kind === :tm5

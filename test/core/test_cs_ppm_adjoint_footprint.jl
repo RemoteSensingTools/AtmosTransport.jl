@@ -89,9 +89,9 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
             (cs, obs, ds)
         end
         kwargs = if physics === :tm5
-            diffusion_op, diffusion_workspace = _cs_diffusion_context(mesh, panels_rm[1]; kz = 2.0, dz = 50.0)
+            diffusion_op, diffusion_layer_thickness = _cs_diffusion_context(mesh, panels_rm[1]; kz = 2.0, dz = 50.0)
             convection_op, convection_forcing, convection_workspace = _cs_tm5_convection_context(mesh, panels_m)
-            (; diffusion_op, diffusion_workspace, convection_op, convection_forcing, convection_workspace)
+            (; diffusion_op, diffusion_layer_thickness, convection_op, convection_forcing, convection_workspace)
         elseif physics === :cmfmc
             convection_op, convection_forcing, convection_workspace = _cs_cmfmc_convection_context(mesh, panels_m)
             (; convection_op, convection_forcing, convection_workspace)
@@ -186,7 +186,7 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
             _constant_cs_problem(Nc=3, Nz=5, nsteps=2)
         dt = 300.0
         scheme = AT.PPMScheme(AT.NoLimiter())
-        diffusion_op, diffusion_ws = _cs_gchp_vdiff_diffusion_context(
+        diffusion_op, layer_thickness = _cs_gchp_vdiff_diffusion_context(
             mesh, panels_m; dz=55.0)
         obj = AT.CSLayerMeanObjective(1, 2, 2, 4)
 
@@ -194,7 +194,7 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
             scheme=scheme, dt=dt,
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
+            diffusion_layer_thickness=layer_thickness)
 
         @test result.footprints[2][1][2, 2] > 0
 
@@ -209,13 +209,13 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
             scheme=scheme, dt=dt,
             emission_rates=_scaled_rates(rates, eps_dir),
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
+            diffusion_layer_thickness=layer_thickness)
         j_minus = AT.run_cs_footprint_forward(
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
             scheme=scheme, dt=dt,
             emission_rates=_scaled_rates(rates, -eps_dir),
             diffusion_op=diffusion_op,
-            diffusion_workspace=diffusion_ws)
+            diffusion_layer_thickness=layer_thickness)
 
         fd = (j_plus - j_minus) / (2eps_dir)
         predicted = _dot_footprint(result, rates)
@@ -228,7 +228,7 @@ include(joinpath(@__DIR__, "..", "helpers", "cs_footprint_problem.jl"))
             panels_rm, panels_m, panels_am, panels_bm, panels_cm, mesh, obj;
             scheme=scheme, dt=dt,
             diffusion_op=stale_op,
-            diffusion_workspace=diffusion_ws)
+            diffusion_layer_thickness=layer_thickness)
     end
 
     @testset "Vector mass panels preserve seeded footprint bits ($FT)" for FT in (Float32, Float64)

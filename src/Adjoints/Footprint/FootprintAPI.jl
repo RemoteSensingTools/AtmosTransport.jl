@@ -40,8 +40,11 @@ operator's `surface_flux_coupling`: `V(dt/2) -> emissions -> V(dt/2)`
 (`SplitSurfaceFluxCoupling`) or `emissions -> V(dt)`
 (`DiffusiveSurfaceFluxBoundary`); `surface_flux = false` replays a
 configuration without surface sources, whose center is one solve `V(dt)`.
-Diffusion requires a panel-native `DiffusionWorkspace` with filled
-`layer_thickness`. `flux_scale` multiplies all transport fluxes and is shared
+Kz diffusion requires `diffusion_layer_thickness`: six `(Nc, Nc, Nz)` panels
+of layer thickness [m], one tuple for every step or one per step (a met
+window's steps may share one tuple); Dkg fields and TM5 Calc_Kzz read none
+(`nothing`). The replay owns its diffusion workspace and copies the step's
+layer thickness into it; it never writes the caller's panels. `flux_scale` multiplies all transport fluxes and is shared
 with the tape/reverse APIs so forward finite differences exercise the same
 model trajectory.
 """
@@ -59,7 +62,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
                                   cfl_limit = DEFAULT_CFL_LIMIT,
                                   emission_rates = nothing,
                                   diffusion_op = NoDiffusion(),
-                                  diffusion_workspace = nothing,
+                                  diffusion_layer_thickness = nothing,
                                   diffusion_meteo = nothing,
                                   convection_op = NoConvection(),
                                   convection_forcing = nothing,
@@ -69,7 +72,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
                                      mesh, objective;
                                      scheme, dt, schedule, surface_flux, flux_scale,
                                      cfl_limit, emission_rates,
-                                     diffusion_op, diffusion_workspace, diffusion_meteo,
+                                     diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                                      convection_op, convection_forcing, convection_workspace)
 end
 
@@ -103,9 +106,12 @@ plan's physics cadence (every step, or once per met window over the window).
 
 The replay uses the caller's convection workspace with the persistent state
 of a fresh run (its ledger carry and CFL cache are reset when a replay
-starts) and the diffusion workspaces' `factors` as scratch; do not pass a live
-production model's workspaces. `cs_adjoint_inputs(sim)` captures every input
-of a `DrivenSimulation` configuration, with fresh workspaces.
+starts); do not pass a live production model's convection workspace. The
+diffusion layer thickness (`diffusion_layer_thickness`, as for
+`run_cs_footprint_forward`) is only read; the replay owns the diffusion
+workspace and the reverse solves' scratch. `cs_adjoint_inputs(sim)` captures
+every input of a `DrivenSimulation` configuration, with a fresh convection
+workspace.
 
 `tape` defaults to [`AutoTape`](@ref), which resolves and reserves a concrete
 [`AdjointTape`](@ref) from the schedule, memory budgets and supplied
@@ -131,7 +137,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        cfl_limit = DEFAULT_CFL_LIMIT,
                                        base_emission_rates = nothing,
                                        diffusion_op = NoDiffusion(),
-                                       diffusion_workspace = nothing,
+                                       diffusion_layer_thickness = nothing,
                                        diffusion_meteo = nothing,
                                        convection_op = NoConvection(),
                                        convection_forcing = nothing,
@@ -141,7 +147,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, (objective,);
         scheme, dt, schedule, flux_scale, cfl_limit, base_emission_rates,
-        diffusion_op, diffusion_workspace, diffusion_meteo,
+        diffusion_op, diffusion_layer_thickness, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace, tape))
 end
 
@@ -163,7 +169,7 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   cfl_limit = DEFAULT_CFL_LIMIT,
                                   base_emission_rates = nothing,
                                   diffusion_op = NoDiffusion(),
-                                  diffusion_workspace = nothing,
+                                  diffusion_layer_thickness = nothing,
                                   diffusion_meteo = nothing,
                                   convection_op = NoConvection(),
                                   convection_forcing = nothing,
@@ -177,7 +183,7 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   mesh, starts;
                                   scheme, tape, dt, schedule, flux_scale, cfl_limit,
                                   base_emission_rates,
-                                  diffusion_op, diffusion_workspace, diffusion_meteo,
+                                  diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                                   convection_op, convection_forcing, convection_workspace)
 end
 
@@ -215,7 +221,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  base_panels_rm0 = nothing,
                                                  base_emission_rates = nothing,
                                                  diffusion_op = NoDiffusion(),
-                                                 diffusion_workspace = nothing,
+                                                 diffusion_layer_thickness = nothing,
                                                  diffusion_meteo = nothing,
                                                  convection_op = NoConvection(),
                                                  convection_forcing = nothing,
@@ -232,7 +238,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
         mesh, [_SeedStart(final_adjoint_rm)];
         scheme, tape, dt, schedule, surface_flux, flux_scale, cfl_limit,
         base_emission_rates,
-        diffusion_op, diffusion_workspace, diffusion_meteo,
+        diffusion_op, diffusion_layer_thickness, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace))
 end
 
@@ -244,7 +250,7 @@ end
     _cs_surface_footprints(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                            panels_cm_steps, mesh, starts; scheme, tape, dt,
                            schedule, surface_flux, flux_scale, cfl_limit,
-                           base_emission_rates, diffusion_op, diffusion_workspace,
+                           base_emission_rates, diffusion_op, diffusion_layer_thickness,
                            diffusion_meteo, convection_op, convection_forcing,
                            convection_workspace)
         -> Vector{CSFootprintResult}
@@ -272,7 +278,7 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 cfl_limit,
                                 base_emission_rates,
                                 diffusion_op,
-                                diffusion_workspace,
+                                diffusion_layer_thickness,
                                 diffusion_meteo,
                                 convection_op,
                                 convection_forcing,
@@ -281,7 +287,7 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
     replay, step_dt = _cs_replay_for_call(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                                           panels_cm_steps, mesh; scheme, dt, schedule,
                                           surface_flux, base_emission_rates, flux_scale,
-                                          cfl_limit, diffusion_op, diffusion_workspace,
+                                          cfl_limit, diffusion_op, diffusion_layer_thickness,
                                           diffusion_meteo, convection_op, convection_forcing,
                                           convection_workspace)
     return _with_tape_runtime(runtime -> _collect_footprints(replay, starts, step_dt, runtime), tape)

@@ -85,14 +85,17 @@ end
     _CSDiffusionRecord{FT, T, D, W}
 
 Forward-recorded implicit vertical-diffusion application. `op` is the
-diffusion operator (e.g., `ImplicitVerticalDiffusion`), `workspace` is the
-operator's workspace at this step, `panels_m` is the air-mass tape slot,
-`dt` is the (half-)timestep size and `time` the clock (`current_time`) at
-which the forward evaluated the operator's Kz field.
+diffusion operator (e.g., `ImplicitVerticalDiffusion`), `layer_thickness` the
+caller's layer-thickness panels [m] of this step's met window (read, never
+written; `nothing` for an operator whose solve reads no layer thickness),
+`panels_m` is the air-mass tape slot, `dt` is the (half-)timestep size and
+`time` the clock (`current_time`) at which the forward evaluated the
+operator's Kz field. The reverse solve's scratch belongs to the replay, not
+to the record.
 """
 struct _CSDiffusionRecord{FT, T, D, W}
     op::D
-    workspace::W
+    layer_thickness::W
     panels_m::T
     dt::FT
     time::Float64

@@ -102,26 +102,21 @@ function _shift_control(control, direction, scale)
         sigma=control.sigma)
 end
 
+# A Kz diffusion operator and its layer thickness (six interior panels [m]).
 function _cs_diffusion_context(mesh, prototype; kz=2.0, dz=50.0)
     FT = eltype(prototype)
-    panels = ntuple(_ -> prototype, 6)
-    ws = AT.DiffusionWorkspace(panels, mesh.Hp, 0)
-    for p in 1:6
-        fill!(ws.layer_thickness[p], FT(dz))
-    end
+    Nz = size(prototype, 3)
+    layer_thickness = ntuple(_ -> fill!(similar(prototype, FT, mesh.Nc, mesh.Nc, Nz), FT(dz)), 6)
     kz_field = AT.CubedSphereField(ntuple(_ -> AT.ConstantField{FT, 3}(FT(kz)), 6))
     op = AT.ImplicitVerticalDiffusion(; kz_field)
-    return op, ws
+    return op, layer_thickness
 end
 
 function _cs_gchp_vdiff_diffusion_context(mesh, panels_m; dz=50.0)
     FT = eltype(panels_m[1])
     Nc = mesh.Nc
     Nz = size(panels_m[1], 3)
-    ws = AT.DiffusionWorkspace(panels_m, mesh.Hp, 0)
-    for p in 1:6
-        fill!(ws.layer_thickness[p], FT(dz))
-    end
+    layer_thickness = ntuple(_ -> fill!(similar(panels_m[1], FT, Nc, Nc, Nz), FT(dz)), 6)
 
     surface = AT.PBLSurfaceForcing(
         ntuple(p -> [FT(900 + 15p + 2i + j) for i in 1:Nc, j in 1:Nc], 6),
@@ -145,7 +140,7 @@ function _cs_gchp_vdiff_diffusion_context(mesh, panels_m; dz=50.0)
         kz_field, surface, vdiff, panels_m, mesh.cell_areas;
         halo_width = mesh.Hp)
     op = AT.ImplicitVerticalDiffusion(; kz_field)
-    return op, ws
+    return op, layer_thickness
 end
 
 function _cs_tm5_convection_context(mesh, panels_m)
