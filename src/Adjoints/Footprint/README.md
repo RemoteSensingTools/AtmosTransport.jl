@@ -8,15 +8,29 @@ through Adjoints. Meteorology is fixed; only tracer mass is differentiated.
 
 - `Footprint.jl`: module imports, includes and exports.
 - `FootprintResult.jl`: `CSFootprintResult` and `CSTapeByteEstimate`.
+- `WindowSource.jl`: the met windows the replay reads (`AbstractCSWindowSource`,
+  `CSWindowMet`, `CSWindowLease`, `window_count`,
+  `acquire_window!`, `release_window!`) and `ResidentCSWindowSource`, which
+  groups the per-step inputs of the entry points by met window once: one
+  flux state per window (one per step when the fluxes change within the
+  window), its convection forcing, diffusion operator, layer thickness and
+  reset targets, each validated once (constant within the window; shapes,
+  element types and backend). Consecutive steps given the same flux arrays
+  (a met window's, as `cs_adjoint_inputs` shares them) share one flux state,
+  so `flux_scale ≠ 1` scales each set once. Releasing a resident window does
+  nothing.
 - `StepReplay.jl`: `CSStepSchedule`, resolved windows, replay setup, stepping,
   snapshots and restore. Clock arithmetic is shared with Models via StepPlans.
-  The caller passes the diffusion layer thickness per step
+  The replay holds its window source and the windows it has acquired
+  (`leases`); every met input of a step is read through the step's window
+  (`_load_step!`, `_replay_operators`, the recorder's layer thickness). An
+  untaped forward run releases the windows it acquired when it acquires the
+  next; a recording run retains the windows it reads, which the drivers
+  release after the records (`_release_replay_windows!`, also in their
+  `finally` blocks). The caller passes the diffusion layer thickness per step
   (`diffusion_layer_thickness`, read only); the replay owns its diffusion
   workspace and one reverse-solve scratch (`diffusion_scratch`), which the
   reverse walk passes to every diffusion record.
-  Consecutive steps given the same flux arrays (a met window's, as
-  `cs_adjoint_inputs` shares them) share one flux state, so `flux_scale ≠ 1`
-  scales each set once.
 - `ReplaySupport.jl`: replay-specific extension of `require_adjoint_support`.
 - `TapeRecorder.jl`: the recorder hooks, shared by the tape recorder
   (staging into the call's pool) and the counting recorder (the per-step
@@ -75,8 +89,8 @@ scripts and tests.
 `CSFootprintResult`, `CSTapeByteEstimate`, `CSStepSchedule`,
 `run_cs_footprint_forward`, `cs_tape_byte_estimate`,
 `cs_surface_emission_footprint`, `cs_surface_emission_footprint_from_seed`.
-Inversion uses the replay accessors, call setup/validation, objective-footprint
-batch, the tape runtime (one per evaluation, or one shared by an
+Inversion uses the replay accessors, call setup/validation, the release of
+the replay's met windows, objective-footprint batch, the tape runtime (one per evaluation, or one shared by an
 optimization's evaluations), the taped forward run (which samples the
 observations while it records) and the zero-start forced reverse driver
 listed below.
@@ -138,7 +152,7 @@ reference variant by the CPU bitwise harness.
 Lin–Rood's horizontal records are counted toward the device peak and remain
 outside the pools. Level Nz is the surface.
 
-# shared: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _replay_m, _replay_nsteps, _replay_rm, _require_tape_supported, _run_forward!, _validate_step_sequences, _with_tape_runtime
+# shared: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run, _cs_objective_footprints, _cs_replay_for_call, _end_taped_run!, _forced_reverse, _release_replay_windows!, _replay_m, _replay_nsteps, _replay_rm, _require_tape_supported, _run_forward!, _validate_step_sequences, _with_tape_runtime
 
 # shared: _validate_step_sequences
 

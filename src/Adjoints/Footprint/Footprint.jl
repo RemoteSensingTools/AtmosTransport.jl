@@ -12,7 +12,7 @@ using ...Operators.Diffusion: DiffusionWorkspace, NoDiffusion, surface_flux_cent
     surface_flux_coupling
 using ...Operators.Convection.CMFMC: CMFMCConvection, CMFMCWorkspace, invalidate_cmfmc_cache!
 using ...Operators.Convection: NoConvection, convection_checkpoint_state
-import ...MetDrivers: current_time, uses_binary_substep_contract
+import ...MetDrivers: current_time, uses_binary_substep_contract, window_count
 using ...Architectures: CPU
 using ...State: CubedSphereFaceFluxState, CubedSphereState, DryBasis
 using ...MetDrivers: ConvectionForcing
@@ -54,6 +54,7 @@ export CSFootprintResult, CSTapeByteEstimate, run_cs_footprint_forward,
     CSStepSchedule
 
 include("FootprintResult.jl")
+include("WindowSource.jl")
 include("StepReplay.jl")
 include("ReplaySupport.jl")
 include("TapeRecorder.jl")

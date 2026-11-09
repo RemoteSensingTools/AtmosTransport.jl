@@ -120,8 +120,12 @@ function cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                               panels_cm_steps, mesh; scheme, schedule, nsteps,
                               flux_scale, surface_flux)
     counter = _CSCountingRecorder(StateTape(), scheme)
-    _replay_steps!(replay, 1:nsteps; recorder = counter)
-    _finish_recording!(counter)
+    try
+        _replay_steps!(replay, 1:nsteps; recorder = counter)
+        _finish_recording!(counter)
+    finally
+        _release_replay_windows!(replay)
+    end
 
     # Records of the stripped operators, from the plan. A split-sweep center
     # shares its air mass with the next sweep, which the transport replay

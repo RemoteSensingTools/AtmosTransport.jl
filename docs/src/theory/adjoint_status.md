@@ -190,6 +190,28 @@ a 31-day C48 Lin–Rood 4D-Var now fits on a 46 GiB GPU, and C90 Lin–Rood fits
 11 days; costs and gradients are unchanged bit for bit on one CPU thread. The
 measurements are in `docs/memos/2026-11-08_adjoint_input_dedup.md`.
 
+#### How the replay reads the met: window sources
+
+The replay reads every met input of a step through the step's met window
+(`CSWindowMet`): the window's face fluxes, convection forcing, diffusion
+operator and layer thickness, and reset targets. It acquires the window from
+a window source (`acquire_window!`) at the window's first step, or at a
+checkpoint restart inside the window, and returns it with `release_window!`:
+
+- an untaped forward run releases its window when it acquires the next one;
+- a recording run keeps the windows it reads until the driver has released
+  the records that reference them. A Stride resident tail and a held
+  `AirMassTape` tape still hold records after their windows are returned.
+
+The entry points build a `ResidentCSWindowSource` from their per-step
+arguments, so every window stays in memory and releasing one does nothing.
+It groups the steps by window once (one flux state per window, or one per
+step when the fluxes change within the window; a `flux_scale ≠ 1` is applied
+once per set) and validates each window once. The convection forcing, the
+diffusion operator and the layer thickness must be constant within a met
+window, as production refreshes them at the window's first step. Results are
+the same bit for bit as with the per-step vectors the source replaced.
+
 ### The tape: `AdjointTape`
 
 Every reverse-pass entry point (`cs_surface_emission_footprint`,

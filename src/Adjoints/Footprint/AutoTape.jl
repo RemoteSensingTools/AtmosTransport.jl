@@ -80,6 +80,7 @@ function _size_tape!(runtime::_TapeRuntime, replay::_CSReplay, n::Int)
     finally
         _replay_restore!(replay, initial)
         _release_snapshot!(initial)
+        _release_replay_windows!(replay)
     end
     _store_tape_count!(runtime, counter)
     return _TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, _replay_m(replay),

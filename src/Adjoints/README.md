@@ -21,7 +21,8 @@ remain available through Adjoints and as qualified AtmosTransport names.
   scratch tuple the replay owns, overwritten column by column before it is
   read, so one scratch serves every solve.
 - `LinRoodTape.jl`: Lin–Rood horizontal record and reverse composition (fenced).
-- `Footprint/`: production-step replay, recording, reverse walk, checkpointing
+- `Footprint/`: production-step replay (reading its met through a window
+  source, one met window at a time), recording, reverse walk, checkpointing
   (Full, Stride and met-window-aligned `MetWindowCheckpoint` segments).
 - `Inversion/`: observation binding/sampling/IO and surface-flux solvers.
 
