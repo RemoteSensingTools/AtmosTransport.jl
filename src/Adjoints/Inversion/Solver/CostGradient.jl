@@ -612,6 +612,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
         (; sampled.simulated, residuals, observation_cost, sampled.stencils)
     finally
         _end_taped_run!(run)
+        _release_replay_windows!(replay)
     end
 
     # Either: (a) apply T'^T to physical gradient and add χ for the

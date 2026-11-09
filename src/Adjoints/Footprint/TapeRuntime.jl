@@ -136,17 +136,18 @@ What an `AirMassTape` recording depends on (a reuse compares `grid`, `steps`,
 
 - `met`: content checksums (a position-weighted wrapping sum of bit patterns,
   the same on every backend and thread count) of the met inputs the records read or the
-  air-mass trajectory follows: the initial air mass, every step's face fluxes,
-  convection forcing and diffusion layer thickness, and the interiors of the
-  air-mass reset targets (whose halos the forward run refreshes in place),
-  each array once, in step order;
+  air-mass trajectory follows: the initial air mass, every taped step's face
+  fluxes, convection forcing and diffusion layer thickness (read through its
+  met window), and the interiors of the air-mass reset targets of the run's
+  windows (whose halos the forward run refreshes in place), each array once,
+  in step order;
 - `window`: met window, first/last flags, step length and clock of every
   taped step, and the window length;
 - `scheme`: the advection scheme and the step plan (values), the binary
-  subcycle contract and whether the plan has a surface flux, and the
-  diffusion and convection operators, the caller's diffusion layer thickness
-  and meteorology (objects the records hold, compared by identity: the contents
-  of a Kz field are not checksummed);
+  subcycle contract and whether the plan has a surface flux, each met
+  window's diffusion operator and layer thickness, the convection operator
+  and the caller's diffusion meteorology (objects the records hold, compared
+  by identity: the contents of a Kz field are not checksummed);
 - `grid`: `Nc`, `Hp`, `Nz` and the float type;
 - `steps`: the number of taped steps.
 
@@ -307,21 +308,33 @@ function _tape_identity(replay::_CSReplay, taped_steps::Int)
     arrays = Any[]
     seen = IdDict{Any, Nothing}()
     _push_met_arrays!(arrays, seen, _replay_m(replay))
-    for s in 1:taped_steps
-        _push_met_arrays!(arrays, seen, replay.fluxes[s])
-        _push_met_arrays!(arrays, seen, _forcing_at(replay.convection_forcing, s))
-        layer_thickness = _sequence_at(replay.diffusion_layer_thickness, s)
-        layer_thickness === nothing || _push_met_arrays!(arrays, seen, layer_thickness)
+    source = replay.source
+    start_targets, end_targets, diffusion = Any[], Any[], Any[]
+    for w in 1:window_count(source)
+        lease = acquire_window!(source, w)
+        try
+            met = lease.met
+            for s in met.steps
+                s <= taped_steps || break
+                _push_met_arrays!(arrays, seen, _fluxes_at(met, s))
+                _push_met_arrays!(arrays, seen, met.convection_forcing)
+                met.layer_thickness === nothing || _push_met_arrays!(arrays, seen, met.layer_thickness)
+            end
+            met.start_air_mass === nothing || push!(start_targets, met.start_air_mass)
+            met.end_air_mass === nothing || push!(end_targets, met.end_air_mass)
+            push!(diffusion, (objectid(met.diffusion_op), objectid(met.layer_thickness)))
+        finally
+            release_window!(source, lease)
+        end
     end
-    _push_reset_target_arrays!(arrays, seen, replay.start_targets, replay.mesh)
-    _push_reset_target_arrays!(arrays, seen, replay.end_targets, replay.mesh)
+    _push_reset_target_arrays!(arrays, seen, start_targets, replay.mesh)
+    _push_reset_target_arrays!(arrays, seen, end_targets, replay.mesh)
     steps = replay.steps
     n = 1:taped_steps
     window = (steps.window[n], steps.first[n], steps.last[n], steps.dt[n], steps.start_time[n],
               steps.end_time[n], steps.window_dt)
     scheme = (replay.advection, replay.plan, replay.meteo.binary_substeps, _has_surface_flux(replay),
-              objectid(replay.diffusion_op), objectid(replay.convection),
-              objectid(replay.diffusion_layer_thickness), objectid(replay.meteo.diffusion_meteo))
+              diffusion, objectid(replay.convection), objectid(replay.meteo.diffusion_meteo))
     m = _replay_m(replay)
     grid = (replay.mesh.Nc, replay.mesh.Hp, size(m[1], 3), eltype(m[1]))
     return _TapeIdentity(_met_checksums(arrays), window, scheme, grid, taped_steps)

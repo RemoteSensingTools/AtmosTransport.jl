@@ -281,6 +281,7 @@ function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt;
             end
         finally
             _release_records!(ops)
+            _release_replay_windows!(replay)
         end
     end
     return map((start, (lambda, footprints, _)) -> _footprint_result(start, footprints, lambda, dt, replay),
@@ -301,6 +302,7 @@ function _collect_footprints(replay::_CSReplay, starts, dt, runtime::_TapeRuntim
         return _reverse_taped_run(run, replay, starts, dt; nsteps = n, forcing = NoStepForcing())
     finally
         _end_taped_run!(run)
+        _release_replay_windows!(replay)
     end
 end
 
