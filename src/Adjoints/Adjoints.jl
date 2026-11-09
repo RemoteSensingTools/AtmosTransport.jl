@@ -36,13 +36,13 @@ using ..Observations: AbstractPressureBasis, AbstractRetrievalMapping, AbstractU
 using ..Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, AutoTape,
     TapeReservationError, TapeReservationExceeded, AirMassTape, CSTapeSlot,
     DeviceCSTapeStorage, FullCheckpoint, MmapCSTapeStorage, PinnedHostCSTapeStorage, StateTape,
-    StrideCheckpoint, StrideSearch
+    StrideCheckpoint, StrideSearch, MetWindowCheckpoint
 
 export AbstractCSFootprintObjective, CSLayerMeanObjective, CSColumnMeanObjective,
     CSPlacedPointObjective, CSRetrievalColumnObjective, CSCellAverageObjective, CSSeedObjective,
     CSAdjointWorkspace, CSTapeSlot, DeviceCSTapeStorage, PinnedHostCSTapeStorage, MmapCSTapeStorage,
     AdjointTape, AutoTape, TapeReservationError, TapeReservationExceeded, AbstractTapeContent, StateTape, AirMassTape,
-    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, StrideSearch,
+    AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, StrideSearch, MetWindowCheckpoint,
     evaluate_objective, require_adjoint_support, adjoint_support,
     AbstractTapeDependence, AirMassDependence, TracerDependence, tape_dependence
 

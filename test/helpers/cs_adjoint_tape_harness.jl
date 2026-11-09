@@ -418,7 +418,14 @@ physics_kwargs(P, inputs::CapturedInputs) =
 # Variants `checkpoint/storage` of the `AdjointTape`: the reference is the
 # default tape (`StateTape`, device storage, FullCheckpoint), passed as no
 # keyword. `strideK` is the case's stride (2 and 3 both cross the met windows
-# [2, 3, 2]) and `S` each of its host storages. The Jacobian's two objectives
+# [2, 3, 2]) and `S` each of its host storages. `metwindow` checkpoints at the
+# met-window boundaries (pinned-host snapshots, the default), `metwindowsplit`
+# also splits each window into segments of at most two steps (device
+# snapshots); `automet` is AutoTape constrained to the split schedule. The
+# footprint runs all three, the Jacobian (two starts per segment) the split
+# schedule, the observation operators the split schedule (a taped run that
+# ends inside a met window) and the optimization (one pool for its
+# evaluations) the unsplit one. The Jacobian's two objectives
 # share each stride window's recording; the optimization's evaluations share
 # one tape pool (rewound, and an mmap file counted and reserved once).
 # `airmass/S` is an `AirMassTape` (FullCheckpoint) for the linear schemes: one
@@ -429,12 +436,13 @@ physics_kwargs(P, inputs::CapturedInputs) =
 const REFERENCE = "full/device"
 
 const VARIANT_TEMPLATES = (
-    footprint = [REFERENCE, "strideK/device", "full/S", "strideK/S"],
+    footprint = [REFERENCE, "strideK/device", "full/S", "strideK/S", "metwindow/device", "metwindowsplit/S",
+                 "automet/device"],
     seeded = [REFERENCE, "strideK/S"],
-    jacobian = [REFERENCE, "strideK/device", "strideK/S"],
+    jacobian = [REFERENCE, "strideK/device", "strideK/S", "metwindowsplit/device"],
     fourdvar = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
-    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
-    optimize = [REFERENCE, "full/S", "strideK/device", "strideK/S"],
+    fourdvar_operators = [REFERENCE, "full/S", "strideK/device", "strideK/S", "metwindowsplit/S"],
+    optimize = [REFERENCE, "full/S", "strideK/device", "strideK/S", "metwindow/device"],
 )
 
 # The entry points a case runs.
@@ -461,7 +469,8 @@ function _variant_kwargs(P, variant::AbstractString, scratch::AbstractString)
         checkpoint = schedule == "autostride" ? AT.StrideCheckpoint(P.case.stride) :
             schedule == "autotail" ? AT.StrideCheckpoint(P.case.stride; resident_tail = 2) :
             schedule == "autohostsnap" ? AT.StrideCheckpoint(P.case.stride; resident_tail = 2,
-                snapshots = AT.PinnedHostCSTapeStorage()) : nothing
+                snapshots = AT.PinnedHostCSTapeStorage()) :
+            schedule == "automet" ? AT.MetWindowCheckpoint(; split_steps = 2) : nothing
         # Size the synthetic shared CPU budget from the actual schedule,
         # including CFL subcycles and operator-state snapshots. Keep one
         # feasible stride even when 80% of Full would be too small.
@@ -470,6 +479,9 @@ function _variant_kwargs(P, variant::AbstractString, scratch::AbstractString)
     end
     content = schedule == "airmass" ? AT.AirMassTape() : AT.StateTape()
     checkpoint = schedule in ("full", "airmass") ? AT.FullCheckpoint() :
+                 schedule == "metwindow" ? AT.MetWindowCheckpoint() :
+                 schedule == "metwindowsplit" ? AT.MetWindowCheckpoint(; split_steps = 2,
+                                                                       snapshots = AT.DeviceCSTapeStorage()) :
                  AT.StrideCheckpoint(parse(Int, chopprefix(schedule, "stride")))
     storage = storage == "mmap" ? AT.MmapCSTapeStorage(mktempdir(scratch)) : STORAGES[storage]()
     return (; tape = AT.AdjointTape(; content, storage, checkpoint))

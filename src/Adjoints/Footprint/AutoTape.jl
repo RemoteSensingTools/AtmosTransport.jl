@@ -1,15 +1,20 @@
 # Resolve once, reserve before step 1. Size entries retain array templates,
 # never copies of state. The binary contract has one palindrome per step;
 # other schedules (and Lin-Rood) use the recorder's cached counting replay.
+# `window` is the met window of every sized step (MetWindowCheckpoint's
+# segments).
 struct _TapeSizing
     layouts::Vector{Vector{Any}}
     pending::Vector{Bool}
     boundary_flush::Vector{Bool}
     panels::Any
     prefixes::Dict{Any, Tuple{Any, Vector{Int}}}
+    window::Vector{Int}
 end
 
-function _TapeSizing(layouts, pending, panels)
+function _TapeSizing(layouts, pending, panels, window::AbstractVector{<:Integer})
+    length(window) == length(layouts) || throw(DimensionMismatch(
+        "tape sizing of $(length(layouts)) steps given met windows of $(length(window)) steps"))
     prefixes = Dict{Any, Tuple{Any, Vector{Int}}}()
     n = length(layouts)
     boundary_flush = falses(n)
@@ -26,7 +31,7 @@ function _TapeSizing(layouts, pending, panels)
     for (_, counts) in values(prefixes)
         cumsum!(counts, counts)
     end
-    return _TapeSizing(layouts, pending, collect(boundary_flush), panels, prefixes)
+    return _TapeSizing(layouts, pending, collect(boundary_flush), panels, prefixes, collect(Int, window))
 end
 
 function _closed_tape_size(replay::_CSReplay, n::Int)
@@ -57,7 +62,7 @@ function _closed_tape_size(replay::_CSReplay, n::Int)
         end
         pending[s] = waiting
     end
-    return _TapeSizing(layouts, collect(pending), panels)
+    return _TapeSizing(layouts, collect(pending), panels, replay.steps.window[1:n])
 end
 _append_codes!(_layout, ::CSAdjointLinearScheme, _panels) = nothing
 _append_codes!(layout, ::CSAdjointNonlinearScheme, panels) =
@@ -77,7 +82,8 @@ function _size_tape!(runtime::_TapeRuntime, replay::_CSReplay, n::Int)
         _release_snapshot!(initial)
     end
     _store_tape_count!(runtime, counter)
-    return _TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, _replay_m(replay))
+    return _TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, _replay_m(replay),
+                       replay.steps.window[1:n])
 end
 
 function _segment_counts(size::_TapeSizing, steps::AbstractUnitRange)
@@ -117,6 +123,12 @@ _head_windows(s::StrideCheckpoint, n) =
     [checkpoint_window_range(s, w, n) for w in
         1:(checkpoint_window_count(s, n) - (s.resident_tail > 0))]
 
+# MetWindowCheckpoint re-records every taped step (no resident tail); its
+# segments over steps `1:n` follow the met window of each step.
+_head_steps(::MetWindowCheckpoint, n) = n
+_head_windows(s::MetWindowCheckpoint, step_windows::AbstractVector{<:Integer}, n) =
+    _met_window_segments(s, view(step_windows, 1:n))
+
 # Measured device costs estimate relative time for the log. Candidate order
 # follows the storage tiers; host and disk times are not extrapolated.
 const _AUTO_TAPE_COST = (linear = (full = 7.36, forward = 4.25),
@@ -125,7 +137,7 @@ _tape_cost(::CSAdjointLinearScheme) = _AUTO_TAPE_COST.linear
 _tape_cost(_scheme) = _AUTO_TAPE_COST.limited
 _tape_cost(::CSAdjointLinRoodScheme) = nothing
 _expected_tape_time(::FullCheckpoint, _n, _cost) = 1.0
-_expected_tape_time(s::StrideCheckpoint, n, cost) =
+_expected_tape_time(s::_SegmentedCheckpoint, n, cost) =
     cost === nothing ? missing : 1 + (_head_steps(s, n) / n) * cost.forward / cost.full
 _expected_tape_time(tape::AdjointTape, n, cost) =
     tape.storage isa DeviceCSTapeStorage &&
@@ -174,6 +186,10 @@ end
 
 function _candidate_counts(tape::AdjointTape, size::_TapeSizing, n)
     s = tape.checkpoint
+    if s isa MetWindowCheckpoint
+        windows = _head_windows(s, size.window, n)
+        return (_window_counts(size, windows), Dict{Any, Tuple{Any, Int}}(), length(windows))
+    end
     if s isa FullCheckpoint
         return (_segment_counts(size, 1:n), Dict{Any, Tuple{Any, Int}}(), 0)
     end
@@ -199,7 +215,7 @@ function _candidate_memory(tape, size, n, snapshot_bytes)
     device = tier === :device ? bytes : 0
     host = tier === :host ? bytes : 0
     disk = tier === :disk ? bytes : 0
-    if tape.checkpoint isa StrideCheckpoint
+    if tape.checkpoint isa _SegmentedCheckpoint
         if tape.checkpoint.snapshots isa DeviceCSTapeStorage
             device += nsnaps * snapshot_bytes
         else
@@ -220,7 +236,7 @@ function _fits_tape(tape, size, n, snapbytes, budgets)
     budgets.shared && mem.device + mem.host > budgets.host && return false
     storage = tape.storage
     storage isa PinnedHostCSTapeStorage && mem.headbytes + mem.tailbytes > something(storage.max_bytes, typemax(Int)) && return false
-    if tape.checkpoint isa StrideCheckpoint
+    if tape.checkpoint isa _SegmentedCheckpoint
         cap = tape.checkpoint.snapshots
         cap isa PinnedHostCSTapeStorage && mem.nsnaps * 2 * _bytes_per_panel_tuple(size.panels) > something(cap.max_bytes, typemax(Int)) && return false
     end
@@ -236,7 +252,7 @@ function _auto_candidates(request::AutoTape, replay, size, n, snapbytes, budgets
     candidates = AdjointTape[]
     host_candidates = AdjointTape[]
     constraint = request.checkpoint
-    if constraint isa Union{FullCheckpoint, StrideCheckpoint}
+    if constraint isa AbstractCheckpointSchedule
         push!(candidates, AdjointTape(content, storage, constraint))
     else
         constraint === nothing && push!(candidates, AdjointTape(content, storage, FullCheckpoint()))
@@ -355,7 +371,8 @@ function _prepare_tape!(runtime::_TapeRuntime, replay::_CSReplay, n::Int, nstart
         checkpoint = tape.checkpoint
         @info("adjoint tape", storage = tape.storage, checkpoint,
             K = (checkpoint isa StrideCheckpoint ? checkpoint.K : 0),
-            resident_tail = (checkpoint isa StrideCheckpoint ? checkpoint.resident_tail : n),
+            resident_tail = (checkpoint isa StrideCheckpoint ? checkpoint.resident_tail :
+                             checkpoint isa FullCheckpoint ? n : 0),
             content = tape.content, estimate_GB = _layout_total(_segment_layout(size, 1:n)) / 1e9,
             budget_GB = budgets.device / 1e9, budgets, rejected_candidates = failures,
             reserved_GB = (mem.device + mem.host + mem.disk) / 1e9,
