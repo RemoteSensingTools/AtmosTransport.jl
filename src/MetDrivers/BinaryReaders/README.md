@@ -24,6 +24,16 @@ flux interpolation/copy functions retain their MetDrivers facade names.
 Float64 column sums and `Parameters.SURFACE_PRESSURE_BASIS_TOLERANCE`.
 `raw_window_staging`, `read_window_payload!`, `unpack_window_payload!` and
 `same_window_layout` provide device staging and host refill.
+`window_read_split(path)` sets `reader.read_split` when the reader opens the
+file: on NFS `ResidencyWindowReads`, or `SequentialWindowReads` (always 1)
+when `page_cache_visible` is false (Linux hides the page cache from processes
+that neither own nor may write the file); `ConcurrentWindowReads` elsewhere
+and whenever the file-system query fails (it never throws).
+`window_read_chunks(split, data, first_byte, nbytes)` gives the `pread` count
+of one raw window read: always 4 for `ConcurrentWindowReads`; for
+`ResidencyWindowReads` 4 when `resident_fraction!` (a `mincore` sample of the
+window's pages in the reader's mmap) is at least
+`NFS_RESIDENT_FRACTION_FOR_SPLIT`, else 1.
 
 `has_dtrain(reader_or_capabilities)` and `has_dkg(reader)` own the DTRAIN/Dkg
 payload-membership predicates shared by Models and the CS reader/driver. The
@@ -38,6 +48,7 @@ Shape/count mirrors with writers are owned by BinaryFormat.
 ## File map
 
 - `BinaryReaders.jl`: submodule assembly, imports and interface.
+- `window_reads.jl`: raw-read split by file system and page-cache residency (`mincore`).
 - `reader.jl`: mmap ownership, accessors, legacy pressure inference, LL/RG loaders.
 - `cubed_sphere_reader.jl`: panel allocation/loading and CS mesh reconstruction.
 - `driver.jl`: common driver, LL/RG replay reduction, validation and interpolation.
@@ -54,9 +65,10 @@ and runtime. The load-time replay gate is opt-in (`validate_replay=true`).
 The reader decodes the version-5 flux-construction identity into
 `header.flux_construction`; `binary_capabilities` reports it with
 `format_version`, and `inspect_binary` prints both.
+Raw window reads return the same bytes for every `pread` count.
 Tests: reader round trips, binary inspector, format versions 4 and 5, CS
-staging and optional sections, replay consistency, validate-replay config, and
-cubed-sphere runtime.
+staging, raw-read split and page-cache residency, optional sections, replay consistency,
+validate-replay config, and cubed-sphere runtime.
 
 LL/RG window loading decodes the complete v5 `tm5_pbl` group as topology-native
 arrays in `TransportWindow.tm5_pbl`, preserving on-disk precision conversion.

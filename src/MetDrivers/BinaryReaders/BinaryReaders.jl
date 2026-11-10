@@ -39,6 +39,7 @@ import ..MetDrivers: air_mass_basis, load_transport_window, same_window_layout, 
 import ..BinaryFormat: binary_geometry, grid_type, horizontal_topology, has_flux_delta,
                        binary_capabilities, binary_dry_mass_target, inspect_binary
 import ...State: mass_basis
+include("window_reads.jl")
 include("reader.jl")
 include("cubed_sphere_reader.jl")
 include("driver.jl")

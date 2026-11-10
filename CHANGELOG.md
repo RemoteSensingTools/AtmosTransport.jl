@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Cubed-sphere GPU window reads from NFS use one `pread` for a window that is
+  not in the page cache and four concurrent ones for a window that is (at
+  least 90 % of its pages, sampled with `mincore`); the reader detects NFS when
+  it opens a binary (Linux and macOS) and keeps four reads elsewhere. On Linux
+  a process that neither owns nor may write the binary cannot see its page
+  cache and always uses one read on NFS. Four reads defeated NFS readahead:
+  first reads of C90 windows ran at 0.40 GB/s with the old reader and at
+  0.64-0.79 GB/s now, while cached windows keep 19-25 GB/s. Results are
+  bit-identical.
+
 - **Result change for Float32 CMFMC convection:** the "treat as zero"
   threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's
   `TINYNUM`); Float32 used `1f-6`. The threshold decides whether a column
