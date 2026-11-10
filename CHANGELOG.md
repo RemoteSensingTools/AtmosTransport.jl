@@ -17,6 +17,16 @@
   `tm5_ec2tm_convention = "tm5_halflevel_v3"`; readers reject ERA5-derived TM5
   sections with an older value (regenerate them). Binaries with the CATRINE
   TM5 attachment are unaffected.
+- **Stop rules for the cubed-sphere 4D-Var optimizers:** `CSLBFGS` and
+  `CSGradientDescent` accept `cost_rtol` (with `cost_rtol_improvements`),
+  `stall_evaluations`, `max_evaluations` and a `callback`, checked after every
+  cost evaluation (line-search trials included) against the lowest cost so
+  far. All are off by default, and default solves are bit-identical. The solve
+  result also reports `best` (the lowest-cost evaluation), `evaluations` and
+  `stop_reason`. Near a Float32 cost-noise floor the line search otherwise
+  keeps evaluating without a decrease; callers no longer need to throw from
+  the cost function to stop. `CSIterationLogEntry` gains an `evaluation`
+  field (second positional argument). Optim compat is now `2.1`.
 
 - **Result change for Float32 CMFMC convection:** the "treat as zero"
   threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's

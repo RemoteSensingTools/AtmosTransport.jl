@@ -481,7 +481,7 @@ paths = [
 ]
 
 [topics.inversion]
-description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, placed point, averaging-kernel column (layer and level retrievals) and time-window observations, co-sampling, cell averaging, forward-sampler parity, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
+description = "4D-Var inversion: the single-sweep gradient and the reused-tape Jacobian, placed point, averaging-kernel column (layer and level retrievals) and time-window observations, co-sampling, cell averaging, forward-sampler parity, adjoint identities and gradient Taylor tests, covariance and preconditioning, optimizers, their stop rules and iteration logs, observation and departure files, the inversion driver and synthetic truth recovery"
 files = [
     "core/test_cs_4dvar_single_sweep.jl",
     "core/test_cs_4dvar_placed_observations.jl",
@@ -492,6 +492,7 @@ files = [
     "core/test_cs_preconditioning.jl",
     "core/test_cs_optimizer_dispatch.jl",
     "core/test_cs_lbfgs.jl",
+    "core/test_cs_optimizer_stop_rules.jl",
     "core/test_cs_iteration_log.jl",
     "core/test_cs_observations_io.jl",
     "core/test_cs_observation_binding.jl",

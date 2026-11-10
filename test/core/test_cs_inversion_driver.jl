@@ -85,6 +85,12 @@ end
     result_gd = _run_with_override(gd_cfg)
     @test result_gd isa AT.CS4DVarSolveResult
 
+    # The stop rules reach the optimizer.
+    capped = _run_with_override(replace(base,
+        "kind = \"lbfgs\"" => "kind = \"lbfgs\"\nmax_evaluations = 2\nstall_evaluations = 5"))
+    @test capped.stop_reason == :evaluations
+    @test capped.evaluations == 2
+
     # Switch covariance to diagonal.
     diag_cfg = replace(base,
         "kind = \"isotropic_gaussian\"" => "kind = \"diagonal\"")
