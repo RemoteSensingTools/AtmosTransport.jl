@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **GPU fix, total surface-pressure recovery:** the kernels behind
+  `recover_total_surface_pressure_staged!` flagged an invalid column with an
+  atomic store, which CUDA cannot compile with current Atomix/UnsafeAtomics
+  (the process aborts at kernel compilation) and which raised a
+  `KernelException` instead of the documented `ArgumentError` with older
+  ones. They now count invalid columns with an atomic add. Results are
+  unchanged.
+- **Test environment:** CUDA is a declared test dependency (`CUDA = "5"`), so
+  `julia --project=test` resolves CUDA, GPUCompiler and LLVM together and the
+  GPU sections of the core tests run on GPU hosts instead of being skipped.
+  Existing checkouts refresh their test Manifest once (see `test/README.md`).
+
 - **Result change for Float32 CMFMC convection:** the "treat as zero"
   threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's
   `TINYNUM`); Float32 used `1f-6`. The threshold decides whether a column
