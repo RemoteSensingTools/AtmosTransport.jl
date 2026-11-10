@@ -274,14 +274,21 @@ function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt;
         steps = first(windows[w]):min(last(windows[w]), nsteps)
         _rewind_tape_pool!(pool)
         _replay_restore!(replay, run.checkpoints[w])
+        w > 1 && prefetch_window!(replay.source, replay.steps.window[first(windows[w - 1])])
         ops = _record_cs_tape!(replay, steps, runtime.tape.content, pool)
         try
+            # The segment's records reference only the windows the replay
+            # holds; none may have been refilled since it acquired them.
+            _require_current_windows(replay)
             for (lambda, footprints, ws) in reverses
                 _walk!(footprints, lambda, ops, replay, ws, forcing)
             end
         finally
-            _release_records!(ops)
-            _release_replay_windows!(replay)
+            try
+                _release_records!(ops)
+            finally
+                _release_replay_windows!(replay)
+            end
         end
     end
     return map((start, (lambda, footprints, _)) -> _footprint_result(start, footprints, lambda, dt, replay),
@@ -301,8 +308,11 @@ function _collect_footprints(replay::_CSReplay, starts, dt, runtime::_TapeRuntim
         _run_forward!(run, replay)
         return _reverse_taped_run(run, replay, starts, dt; nsteps = n, forcing = NoStepForcing())
     finally
-        _end_taped_run!(run)
-        _release_replay_windows!(replay)
+        try
+            _end_taped_run!(run)
+        finally
+            _release_replay_windows!(replay)
+        end
     end
 end
 
@@ -326,13 +336,15 @@ end
 
 # The tape checks the drivers rely on, made before any forward run: the
 # Lin–Rood tape is device-only (its records hold device copies, not pool
-# slots; the check is the fenced Lin–Rood validator), and an `AirMassTape`
-# needs a scheme whose reverse reads the air mass only (`tape_dependence`).
-# The 4D-Var gradient calls this before its forward run, so a rejected
-# combination does not waste that run.
-function _require_tape_supported(scheme, tape::AdjointTape)
+# slots; the check is the fenced Lin–Rood validator), an `AirMassTape` needs
+# a scheme whose reverse reads the air mass only (`tape_dependence`), and a
+# streamed met source (`source`) needs a tape whose records reference one met
+# window at a time. The 4D-Var gradient calls this before its forward run, so
+# a rejected combination does not waste that run.
+function _require_tape_supported(scheme, tape::AdjointTape, source = nothing)
     _require_tape_storage(scheme, tape.storage)
     _require_tape_content(tape.content, scheme)
+    _require_window_tape(source, tape)
     return nothing
 end
 
@@ -347,3 +359,30 @@ _require_air_mass_dependence(::TracerDependence, scheme) = throw(ArgumentError(
     "(tape_dependence(scheme) isa AirMassDependence: UpwindScheme(), SlopesScheme(NoLimiter()), " *
     "PPMScheme(NoLimiter())); the reverse of $(nameof(typeof(scheme))) replays limiter branches " *
     "of the tracer (TracerDependence), so every forward run records its own tape: use StateTape()."))
+
+# A streamed met source keeps a few windows on the device and refills them as
+# the replay moves, so a tape may reference the met of the windows of one
+# re-recorded segment only: `MetWindowCheckpoint` (one met window per
+# segment, no resident tail) with `StateTape`. Full keeps every window's
+# records, Stride segments straddle windows and its resident tail outlives
+# its windows' leases, an `AirMassTape` is held across evaluations, and an
+# unconstrained `AutoTape` would choose Full or Stride.
+_require_window_tape(::Nothing, _tape) = nothing
+_require_window_tape(source::AbstractCSWindowSource, tape) =
+    streaming(source) ? _require_streamed_tape(tape) : nothing
+
+function _require_streamed_tape(tape::Union{AdjointTape, AutoTape})
+    _tape_content(tape) isa StateTape || throw(ArgumentError(
+        "AirMassTape with a streamed met source: a held air-mass tape references the met of every " *
+        "window across evaluations, but the source keeps a few windows on the device. Use StateTape() " *
+        "with MetWindowCheckpoint()."))
+    tape.checkpoint isa MetWindowCheckpoint || throw(ArgumentError(
+        "$(_streamed_tape_name(tape)) with a streamed met source: the source keeps a few met windows on " *
+        "the device, so the tape may reference one window at a time (Full keeps the records of every " *
+        "window, Stride segments straddle windows and a resident tail outlives its windows). Use " *
+        "AdjointTape(; checkpoint = MetWindowCheckpoint(...)) or AutoTape(; checkpoint = MetWindowCheckpoint(...))."))
+    return nothing
+end
+_streamed_tape_name(tape::AdjointTape) = string(nameof(typeof(tape.checkpoint)))
+_streamed_tape_name(tape::AutoTape) = tape.checkpoint === nothing ? "AutoTape() (it would choose Full or Stride)" :
+    "AutoTape with a $(nameof(typeof(tape.checkpoint)))"

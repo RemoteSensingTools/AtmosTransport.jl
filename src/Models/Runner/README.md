@@ -29,7 +29,12 @@ No lower sibling imports Runner.
   one convection forcing, diffusion operator and layer thickness, no diffusion
   workspace). Reset targets load each window once; a window's start target is
   the previous window's end target, one array, when the two are bitwise equal
-  (`_window_reset_targets`, `_bitwise_equal`).
+  (`_window_reset_targets`, `_bitwise_equal`). `residency` selects where the
+  capture keeps the met: `:device` (`_DeviceCapture`: per-step vectors, every
+  window on the model backend) or `:host` (`_HostCapture`: each completed
+  window copied to the host and its device copies freed, targets kept on the
+  host, projected host bytes checked against the budget after every window;
+  the inputs carry a `HostCSWindowSource` as `kwargs.met_source`).
 - `BinaryPathExpander.jl`: existing binary-path child module.
 - `InputStaging.jl`: existing input-staging child module.
 - [`DrivenRunner/`](DrivenRunner/README.md): configured runner, model setup,

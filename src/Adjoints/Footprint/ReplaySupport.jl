@@ -2,7 +2,12 @@
 # met window (the diffusion operator may change per window). Only the
 # operators' types are checked.
 function require_adjoint_support(replay::_CSReplay)
-    source = replay.source
+    require_adjoint_support(replay.plan, _window_operators(replay, replay.source)...)
+    return replay
+end
+
+# One `StepOperators` per distinct diffusion operator of the windows.
+function _window_operators(replay::_CSReplay, source::AbstractCSWindowSource)
     seen = IdDict{Any, Nothing}()
     ops = StepOperators[]
     for w in 1:window_count(source)
@@ -16,6 +21,10 @@ function require_adjoint_support(replay::_CSReplay)
             release_window!(source, lease)
         end
     end
-    require_adjoint_support(replay.plan, ops...)
-    return replay
+    return ops
 end
+
+# A streamed source's windows share one layout (operator types included), so
+# its layout stands for every window: no window is acquired.
+_window_operators(replay::_CSReplay, source::AbstractStreamedCSWindowSource) =
+    (_replay_operators(replay, 1, window_layout(source)),)

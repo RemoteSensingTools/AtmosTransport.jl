@@ -16,7 +16,7 @@
 
 """
     _observation_replay(panels_rm0, panels_m0, am_steps, bm_steps, cm_steps, mesh,
-                        observations; scheme, column_met, kwargs...) -> (replay, dt)
+                        observations; met_source, scheme, column_met, kwargs...) -> (replay, dt)
 
 Check `observations` against the run (sampled steps, objectives, the column
 meteorology they need) and build the replay of steps `1:last` of the call
@@ -28,10 +28,11 @@ function _observation_replay(panels_rm0, panels_m0,
                              panels_cm_steps,
                              mesh::CubedSphereMesh,
                              observations;
+                             met_source = nothing,
                              scheme = PPMScheme(NoLimiter()),
                              column_met = nothing,
                              kwargs...)
-    nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+    nsteps = _call_nsteps(panels_am_steps, panels_bm_steps, panels_cm_steps, met_source)
     Nz = size(panels_rm0[1], 3)
     @inbounds for obs in observations
         last(obs.sampling.steps) <= nsteps || throw(ArgumentError(
@@ -40,7 +41,8 @@ function _observation_replay(panels_rm0, panels_m0,
     end
     _validate_column_met(observations, column_met, mesh, Nz, nsteps)
     return _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
-                               mesh; scheme, nsteps = maximum(obs -> obs.step, observations), kwargs...)
+                               mesh; met_source, scheme, nsteps = maximum(obs -> obs.step, observations),
+                               kwargs...)
 end
 
 """

@@ -159,7 +159,9 @@ relative).
 
 #### Memory of the captured inputs
 
-The captured inputs stay resident for the whole 4D-Var period. Per met window
+With the default `residency = :device` the captured inputs stay on the
+device for the whole 4D-Var period (a streamed `HostCSWindowSource`, below,
+keeps them in host memory instead). Per met window
 they are one set of face fluxes, the convection forcing, the diffusion
 operator (its Kz panels) and layer thickness, and the reset targets; per step
 there are only references. Two duplicates are removed at capture, both
@@ -198,19 +200,66 @@ operator and layer thickness, and reset targets. It acquires the window from
 a window source (`acquire_window!`) at the window's first step, or at a
 checkpoint restart inside the window, and returns it with `release_window!`:
 
-- an untaped forward run releases its window when it acquires the next one;
+- an untaped forward run (and the counting run that sizes a tape) releases
+  its window when it acquires the next one;
 - a recording run keeps the windows it reads until the driver has released
-  the records that reference them. A Stride resident tail and a held
-  `AirMassTape` tape still hold records after their windows are returned.
+  the records that reference them. Before the segmented driver walks a
+  re-recorded segment, it checks that every window the segment holds is
+  still the one it acquired (`require_current`; otherwise a
+  `StaleWindowSlotError`).
 
-The entry points build a `ResidentCSWindowSource` from their per-step
-arguments, so every window stays in memory and releasing one does nothing.
-It groups the steps by window once (one flux state per window, or one per
-step when the fluxes change within the window; a `flux_scale ≠ 1` is applied
-once per set) and validates each window once. The convection forcing, the
-diffusion operator and the layer thickness must be constant within a met
-window, as production refreshes them at the window's first step. Results are
-the same bit for bit as with the per-step vectors the source replaced.
+Two sources ship:
+
+- `ResidentCSWindowSource` (the default). The entry points build it from
+  their per-step arguments, so every window stays in memory and releasing
+  one does nothing. It groups the steps by window once (one flux state per
+  window, or one per step when the fluxes change within the window; a
+  `flux_scale ≠ 1` is applied once per set) and validates each window once.
+  The convection forcing, the diffusion operator and the layer thickness must
+  be constant within a met window, as production refreshes them at the
+  window's first step. Results are the same bit for bit as with the per-step
+  vectors the source replaced.
+- `HostCSWindowSource`, a streamed source. `cs_adjoint_inputs(sim; residency
+  = :host, device_slots = 2, host_budget_bytes)` builds it: each completed
+  window's captured met (the same arrays the resident capture keeps) is
+  copied to host memory and its device copies are freed; the reset targets
+  are kept on the host too. Pass it as `met_source` with `nothing` for the
+  three per-step flux vectors (the diffusion and convection-forcing keywords
+  come from the source; the schedule carries no reset targets). The source
+  keeps `device_slots` windows on the device. Acquiring a window that no slot
+  holds refills the least recently used slot without a lease, in place, from
+  the host copy; a slot is synchronized before its last lease ends, so a
+  refill never overwrites data a queued kernel still reads. Every refill
+  increments the slot's `generation`, which `require_current` compares.
+  Loads are synchronous (prefetching is a later step). One source serves any
+  number of calls (every evaluation of an optimization); `close(source)`
+  frees its slots.
+
+A streamed source accepts only `MetWindowCheckpoint` (plain, split, or as the
+`AutoTape` constraint) with `StateTape`: each re-recorded segment references
+one met window. `FullCheckpoint`, `StrideCheckpoint` (fixed K, or with a
+resident tail whose records outlive their windows' leases), `AirMassTape`
+(held across evaluations) and an unconstrained `AutoTape()` are an
+`ArgumentError` before the forward run, also for a cost-only evaluation. The
+setup checks read the source's window layout instead of acquiring every
+window, and a Lin–Rood tape is sized from window 1 and the longest later
+window: a Lin–Rood step has a fixed record structure, so each step takes the
+layout of the counted step of its class (window 1 or later, first or last
+step of its window); a class those windows lack falls back to counting every
+step. Recording still throws `TapeReservationExceeded` if a step needed more.
+
+Exactness: the slots hold copies of the resident arrays and the replay runs
+the same operators on them, so costs, simulated values, footprints and
+gradients equal the resident inputs' bit for bit on one CPU thread
+(`test/core/test_cs_window_source.jl`, and on two days of MERRA-2 C24
+meteorology for the PPM and Lin–Rood schemes).
+
+Host memory per C90 L72 Float32 window is about 135 MB (face fluxes 48.3,
+convection forcing 28.4, Kz panels 14.0 plus the operator's host Kz staging
+copy 14.0, layer thickness 14.0, reset targets 16.6 on average): about
+3.2 GB per day, so a month of windows (about 100 GB) does not fit a process
+budget of 60 GB on a shared host. Device memory holds the slots (about
+0.3 GB for two at C90) instead of every window.
 
 ### The tape: `AdjointTape`
 
