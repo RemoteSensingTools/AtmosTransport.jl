@@ -122,6 +122,15 @@
 #     m = 5
 #     # both:
 #     gradient_tolerance = 1e-10
+#     # optional stop rules (both kinds), against the best cost so far:
+#     cost_rtol = 1e-4            # 0 = off; stop after `cost_rtol_improvements`
+#                                 # (default 2) consecutive best-cost decreases
+#                                 # below this relative amount
+#     stall_evaluations = 6       # 0 = off; stop after this many evaluations
+#                                 # without a new best cost (the cost noise floor);
+#                                 # every line-search trial counts, so keep it above
+#                                 # the backtracking a healthy search needs
+#     max_evaluations = 60        # 0 = no cap; at most this many cost evaluations
 #
 #     [adjoint.tape]              # optional: the gradient's tape (`AdjointTape`), shared
 #                                 # by every evaluation of the optimization
@@ -158,6 +167,7 @@ const Adv = AtmosTransport.Operators.Advection
 
 const _GRADIENT_DESCENT_KEYS = ("initial_step", "min_step", "step_shrink", "line_search")
 const _LBFGS_KEYS = ("m", "show_trace")
+const _STOP_RULE_KEYS = ("cost_rtol", "cost_rtol_improvements", "stall_evaluations", "max_evaluations")
 const _HYDROSTATIC_METEO_KEYS = ("interface_pressures_pa", "specific_humidity", "temperature_kelvin")
 const _OBSERVATION_FILE_KEYS = ("file", "tracer", "out_of_range_policy", "placement", "flagged_records",
                                 "cell_averaging")
@@ -192,7 +202,7 @@ const _INVERSION_TABLE_KEYS = Dict(
     "covariance"     => ("kind", "sigma_value", "correlation_length_cells"),
     "preconditioner" => ("enabled", "optim_type", "background_value"),
     "optimizer"      => ("kind", "iterations", "log", "gradient_tolerance",
-                         _GRADIENT_DESCENT_KEYS..., _LBFGS_KEYS...),
+                         _GRADIENT_DESCENT_KEYS..., _LBFGS_KEYS..., _STOP_RULE_KEYS...),
     "adjoint"        => ("tape",),
 )
 const _REQUIRED_TABLES = ("mesh", "time", "meteo", "advection", "observations",
@@ -503,8 +513,12 @@ function _build_optimizer(opt_cfg, FT)
     kind = opt_cfg["kind"]
     log_flag = get(opt_cfg, "log", false)
     iterations = opt_cfg["iterations"]
+    stop_rules = (cost_rtol = get(opt_cfg, "cost_rtol", 0.0),
+                  cost_rtol_improvements = get(opt_cfg, "cost_rtol_improvements", 2),
+                  stall_evaluations = get(opt_cfg, "stall_evaluations", 0),
+                  max_evaluations = get(opt_cfg, "max_evaluations", 0))
     if kind == "gradient_descent"
-        return AT.CSGradientDescent(
+        return AT.CSGradientDescent(;
             iterations = iterations,
             initial_step = FT(get(opt_cfg, "initial_step", 1.0)),
             min_step = FT(get(opt_cfg, "min_step", sqrt(eps(FT)))),
@@ -512,14 +526,16 @@ function _build_optimizer(opt_cfg, FT)
             gradient_tolerance = FT(get(opt_cfg, "gradient_tolerance", 0.0)),
             line_search = get(opt_cfg, "line_search", true),
             log = log_flag,
+            stop_rules...,
         )
     elseif kind == "lbfgs"
-        return AT.CSLBFGS(
+        return AT.CSLBFGS(;
             iterations = iterations,
             gradient_tolerance = FT(get(opt_cfg, "gradient_tolerance", 1e-8)),
             m = get(opt_cfg, "m", 10),
             show_trace = get(opt_cfg, "show_trace", false),
             log = log_flag,
+            stop_rules...,
         )
     else
         throw(ArgumentError("unknown optimizer kind $(repr(kind)); " *
@@ -726,6 +742,9 @@ if abspath(PROGRAM_FILE) == @__FILE__
     println("Final cost:         ", result.last.cost)
     println("Observation cost:   ", result.last.observation_cost)
     println("Background cost:    ", result.last.background_cost)
+    println("Best cost:          ", result.best.cost)
     println("Iterations:         ", result.iterations)
+    println("Evaluations:        ", result.evaluations)
+    println("Stop reason:        ", result.stop_reason)
     println("Final gradient L2:  ", result.gradient_norm_history[end])
 end

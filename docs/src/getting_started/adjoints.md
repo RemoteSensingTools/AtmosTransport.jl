@@ -109,7 +109,7 @@ section of the adjoint status page has the details.
 | `[control]` | One spatial field shared by named emission steps. `normalize=true` divides its contribution across those steps. |
 | `[covariance]` | Prior-error scale and spatial correlation. |
 | `[preconditioner]` | Map optimizer variables to physical control values. |
-| `[optimizer]` | L-BFGS iteration and stopping settings. |
+| `[optimizer]` | L-BFGS iteration and stopping settings; optional stop rules `cost_rtol` (with `cost_rtol_improvements`), `stall_evaluations` and `max_evaluations`; 0 turns `cost_rtol`, `stall_evaluations` and `max_evaluations` off. |
 
 Instead of inline entries, `[observations]` can read an observation file
 (schema v2, written with `write_observations`). Point records (`kind =

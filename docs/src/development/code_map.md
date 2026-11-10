@@ -144,7 +144,7 @@ None recorded.
 
 ## `src/Adjoints/Inversion/Solver`
 
-Size: **93388 bytes / 26682.3 tokens**. Public names: **28**.
+Size: **106779 bytes / 30508.3 tokens**. Public names: **28**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/ObservationBinding`, `src/Grids`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Parameters`, `src/Tape`.
 
@@ -156,10 +156,10 @@ Files:
 - `Covariance.jl` (16063 bytes)
 - `Departures.jl` (399 bytes)
 - `Jacobian.jl` (4794 bytes)
-- `Optimizer.jl` (21649 bytes)
+- `Optimizer.jl` (33073 bytes)
 - `Preconditioning.jl` (8042 bytes)
 - `Solver.jl` (1793 bytes)
-- `Types.jl` (8783 bytes)
+- `Types.jl` (10750 bytes)
 
 Forward ↔ adjoint mirrors:
 
