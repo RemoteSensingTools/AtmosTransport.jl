@@ -13,7 +13,10 @@
   the shift the repair moves about 1 % or less above the lowest layer. The
   updraft and the archived downdraft flux are unchanged (the rebuilt interface
   fluxes are still the input). `ddrf_layer_above = false` restores TM5's
-  reading.
+  reading. Binaries of this conversion record
+  `tm5_ec2tm_convention = "tm5_halflevel_v3"`; readers reject ERA5-derived TM5
+  sections with an older value (regenerate them). Binaries with the CATRINE
+  TM5 attachment are unaffected.
 
 - **Result change for Float32 CMFMC convection:** the "treat as zero"
   threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's
