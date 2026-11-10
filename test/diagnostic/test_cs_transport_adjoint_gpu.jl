@@ -128,8 +128,9 @@ else
             panels_rm_g, panels_m_g, panels_am_g, panels_bm_g, panels_cm_g,
             mesh, gpu_observations, gpu_control;
             scheme=AT.PPMScheme(AT.NoLimiter()), dt=Float32(1),
-            optimizer=AT.CSGradientDescent(1, 0.1f0, sqrt(eps(Float32)),
-                                            0.5f0, 0.0f0, true, false))
+            optimizer=AT.CSGradientDescent(; iterations=1, initial_step=0.1f0,
+                                            min_step=sqrt(eps(Float32)), step_shrink=0.5f0,
+                                            gradient_tolerance=0.0f0))
         @test gpu_solve.controls[1].value[1] isa CUDA.CuArray
     end
 

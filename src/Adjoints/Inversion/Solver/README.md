@@ -6,7 +6,8 @@
 
 - `Solver.jl`: module imports, includes and exports.
 - `Types.jl`: control windows, controls, the evaluation types
-  (`CSCostAndGradient`, `CSCostOnly`), Jacobian/4D-Var results and iteration logs.
+  (`CSCostAndGradient`, `CSCostOnly`), Jacobian/4D-Var results, solve results
+  (last accepted and best evaluation, stop reason) and iteration logs.
 - `Covariance.jl`: diagonal and panel-local Gaussian square roots and adjoints.
 - `Preconditioning.jl`: Linear/LogNormal forward transforms and adjoint chain rule.
 - `Jacobian.jl`: batched objective footprints and weighted window aggregation.
@@ -15,7 +16,8 @@
   forced reverse pass and background cost/gradient; `CSCostOnly` evaluations
   run the forward run alone. `cs_surface_flux_4dvar` opens a tape runtime of
   its `tape` per call; `_cs_surface_flux_4dvar` evaluates with a given one.
-- `Optimizer.jl`: gradient descent, L-BFGS, cached evaluations and dispatch;
+- `Optimizer.jl`: gradient descent, L-BFGS, their shared stop rules
+  (`_CSStopRules`, `_CSStopTracker`), cached evaluations and dispatch;
   `cs_surface_flux_4dvar_optimize` shares one tape runtime (one pool) between
   its evaluations and releases it when it returns.
 - `Departures.jl`: solver-result adapter to observation-owned departure IO.
@@ -34,7 +36,8 @@ Inversion facade, inversion scripts and numerical tests.
 Controls/results, evaluation types, covariance square roots/adjoints,
 preconditioner forward and adjoint maps, `cs_surface_flux_jacobian`, `cs_surface_flux_4dvar`,
 `cs_surface_flux_4dvar_optimize`, `cs_surface_flux_4dvar_solve`,
-`CSGradientDescent`, `CSLBFGS`. Configure descent/logging through `optimizer`.
+`CSGradientDescent`, `CSLBFGS`. Configure descent, stop rules and logging
+through `optimizer`.
 The inverse covariance/preconditioner and test-only tangent APIs were removed.
 
 ## Forward<->adjoint mirrors
@@ -53,6 +56,15 @@ no correlation across panels. FFTW uses CPU scratch. LogNormal transforms
 require positive backgrounds. Scratch is reused and is not thread-safe.
 L-BFGS shares one cost/gradient evaluation per visited point, including its
 initial point and returned result. GD uses L2 gradient tolerance, L-BFGS L∞.
+Both optimizers pass every evaluation (line-search trials included) through one
+stop tracker: it keeps the lowest-cost evaluation (`best`) and applies the
+opt-in rules `cost_rtol`/`cost_rtol_improvements`, `stall_evaluations`,
+`max_evaluations` and `callback`, all off by default, which leaves the default
+path bitwise unchanged. A fired rule stops the solve before its next
+evaluation: through Optim's callback at an accepted L-BFGS iterate, or by an
+internal exception caught in the wrapper inside a line search. `last` stays
+the last accepted iterate and `stop_reason` names the criterion. The solver
+keeps earlier results, so `cost_fn` must not overwrite arrays it returned.
 
 Jacobian aggregates and gradient panel storage use Architectures.zeros_like.
 
