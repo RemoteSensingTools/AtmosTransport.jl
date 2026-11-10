@@ -278,6 +278,10 @@ function _run_cs_footprint_forward(panels_rm0, panels_m0,
     _validate_objective(objective, mesh, Nz)
     replay, _ = _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                                     panels_cm_steps, mesh; scheme, kwargs...)
-    _replay_steps!(replay, 1:_replay_nsteps(replay))
+    try
+        _replay_steps!(replay, 1:_replay_nsteps(replay))
+    finally
+        _release_replay_windows!(replay)
+    end
     return evaluate_objective(objective, _replay_rm(replay), _replay_m(replay), mesh)
 end

@@ -68,7 +68,10 @@ only, `tape_dependence`), where the staged states live
 (`DeviceCSTapeStorage()`, `PinnedHostCSTapeStorage()`,
 `MmapCSTapeStorage(dir)`) and how much of the run is taped at once
 (`FullCheckpoint()`, `StrideCheckpoint(K; resident_tail = 0,
-snapshots = DeviceCSTapeStorage())`). A resident tail uses the tape’s selected storage and is recorded in the
+snapshots = DeviceCSTapeStorage())`, `MetWindowCheckpoint(; split_steps = 0,
+snapshots = PinnedHostCSTapeStorage())`, whose segments are the met windows
+of the step schedule, optionally split; unconstrained Auto does not choose
+it, `AutoTape(; checkpoint = MetWindowCheckpoint())` sizes and reserves it). A resident tail uses the tape’s selected storage and is recorded in the
 forward run; only the head's `K`-step windows are recomputed. Snapshots may
 use `PinnedHostCSTapeStorage()` for their tracer and air masses; persistent
 operator state retains its backend types. The value holds no memory: each

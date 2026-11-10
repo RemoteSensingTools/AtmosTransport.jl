@@ -41,6 +41,7 @@ export AbstractTapeContent, StateTape, AirMassTape, AdjointTape, AutoTape, TapeR
        _CSSweepRecord, _CSHaloRecord, _CSMidpointRecord, _CSStepEndRecord,
        _CSDiffusionRecord, _CSConvectionRecord, _CSAirMassResetRecord,
        AbstractCheckpointSchedule, FullCheckpoint, StrideCheckpoint, StrideSearch,
+       MetWindowCheckpoint, _met_window_segments,
        checkpoint_window_count, checkpoint_window_range
 
 include("TapeStorage.jl")

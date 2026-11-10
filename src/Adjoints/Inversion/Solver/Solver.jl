@@ -12,8 +12,8 @@ using ..ObservationBinding: CSObservation, CSObservationSet, CSObservationStenci
     _observe_cs_forward!
 import ..ObservationBinding: build_departure_set
 using ...Footprint: CSFootprintResult, _TapeRuntime, _UntapedRun, _begin_taped_run,
-    _cs_objective_footprints, _end_taped_run!, _forced_reverse, _require_tape_supported,
-    _validate_step_sequences, _with_tape_runtime
+    _cs_objective_footprints, _end_taped_run!, _forced_reverse, _release_replay_windows!,
+    _require_tape_supported, _validate_step_sequences, _with_tape_runtime
 
 export CSSurfaceFluxWindow, CSSurfaceFluxJacobianResult, CSSurfaceFluxControl, CS4DVarResult,
     CS4DVarSolveResult, AbstractCSSurfaceFluxCovariance, DiagonalCSCovariance,

@@ -320,10 +320,11 @@ schedule (and, for the linear schemes, `AirMassTape`) must reproduce the
 default tape's (`StateTape`, device, `FullCheckpoint`) gradients bit for bit
 on rough fields that reach every limiter branch (counted in the limiter codes
 of the recorded tape), for every entry point including a Jacobian under
-`StrideCheckpoint` and a two-iteration 4D-Var optimization (`optimize`, one
+`StrideCheckpoint` and `MetWindowCheckpoint` (split and unsplit met windows)
+and a two-iteration 4D-Var optimization (`optimize`, one
 tape pool for all its evaluations), and on the reference host the reference
 digests must equal `fixtures/cs_adjoint_tape_digests.toml`. A Lin–Rood case
-(device tape, Full and Stride) runs in both tiers. The reference variant
+(device tape, Full, Stride and MetWindow) runs in both tiers. The reference variant
 passes no `tape` keyword, so `--reference-only` also records on a checkout
 with an older tape API (it skips the limiter-code histograms, which read this
 tree's tape). Two core cases

@@ -33,11 +33,17 @@ end
         size = F._closed_tape_size(replay, P.nsteps)
         counter = F._CSCountingRecorder(AT.StateTape(), scheme)
         F._replay_steps!(replay, 1:P.nsteps; recorder = counter)
-        counted = F._TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, F._replay_m(replay))
+        counted = F._TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, F._replay_m(replay),
+                                replay.steps.window[1:P.nsteps])
         @test [F._counts_bytes(F._segment_counts(size, 1:s)) for s in 1:P.nsteps] ==
               [F._counts_bytes(F._segment_counts(counted, 1:s)) for s in 1:P.nsteps]
         for K in (1, 2, 4), tail in (0, 2)
             tape = AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(K; resident_tail = tail))
+            @test F._candidate_memory(tape, size, P.nsteps, 0) ==
+                  F._candidate_memory(tape, counted, P.nsteps, 0)
+        end
+        for split in (0, 2)
+            tape = AT.AdjointTape(; checkpoint = AT.MetWindowCheckpoint(; split_steps = split))
             @test F._candidate_memory(tape, size, P.nsteps, 0) ==
                   F._candidate_memory(tape, counted, P.nsteps, 0)
         end
@@ -322,6 +328,57 @@ end
     end
     @test AT.AutoTape(; checkpoint = AT.StrideSearch()).checkpoint isa AT.StrideSearch
     @test_throws TypeError AT.AdjointTape(; checkpoint = AT.StrideSearch())
+end
+
+@testset "MetWindowCheckpoint: segment sizing, reservation and AutoTape constraint" begin
+    @test_throws ArgumentError AT.MetWindowCheckpoint(; split_steps = -1)
+    @test_throws ArgumentError AT.MetWindowCheckpoint(; snapshots = AT.MmapCSTapeStorage("x"))
+    @test_throws ArgumentError AT.AdjointTape(; content = AT.AirMassTape(), checkpoint = AT.MetWindowCheckpoint())
+    @test_throws ArgumentError AT.AutoTape(; content = AT.AirMassTape(), checkpoint = AT.MetWindowCheckpoint())
+    @test AT.MetWindowCheckpoint().snapshots isa AT.PinnedHostCSTapeStorage
+
+    # Met windows of 2, 3 and 2 steps; limited PPM, window TM5 convection,
+    # split diffusion and a `:preserve_vmr` reset, so the segments' layouts differ.
+    P = H.problem(H.Case(; name = "metwindow", scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :tm5,
+                         diffusion = :split, reset = :preserve_vmr, steps = [2, 3, 2]))
+    replay = _auto_replay(P)
+    size = F._closed_tape_size(replay, P.nsteps)
+    @test size.window == [1, 1, 2, 2, 2, 3, 3]
+    statebytes = 2 * T._bytes_per_panel_tuple(P.m0)
+    for (split, segments) in ((0, [1:2, 3:5, 6:7]), (2, [1:2, 3:4, 5:5, 6:7]), (1, [s:s for s in 1:7]))
+        checkpoint = AT.MetWindowCheckpoint(; split_steps = split, snapshots = AT.DeviceCSTapeStorage())
+        tape = AT.AdjointTape(; checkpoint)
+        @test F._head_windows(checkpoint, size.window, P.nsteps) == segments
+        head, tail, nsnaps = F._candidate_counts(tape, size, P.nsteps)
+        @test head == F._window_counts(size, segments)
+        @test isempty(tail) && nsnaps == length(segments)
+        mem = F._candidate_memory(tape, size, P.nsteps, statebytes)
+        @test mem.device == mem.headbytes + length(segments) * statebytes && mem.host == 0
+        hostmem = F._candidate_memory(AT.AdjointTape(; checkpoint = AT.MetWindowCheckpoint(; split_steps = split)),
+                                      size, P.nsteps, statebytes)
+        @test hostmem.host == length(segments) * statebytes && hostmem.device == mem.headbytes
+        # One-step segments are StrideCheckpoint(1)'s.
+        split == 1 && @test mem == F._candidate_memory(
+            AT.AdjointTape(; checkpoint = AT.StrideCheckpoint(1; snapshots = AT.DeviceCSTapeStorage())),
+            size, P.nsteps, statebytes)
+        # Explicit and AutoTape-constrained requests reserve one snapshot per
+        # segment and no tail; a run begins with the segments of its taped steps.
+        for request in (tape, AT.AutoTape(; checkpoint))
+            F._with_tape_runtime(request) do runtime
+                @test F._prepare_tape!(runtime, replay, P.nsteps).checkpoint === checkpoint
+                @test length(runtime.snapshots) == length(segments)
+                @test runtime.tail_pool === nothing
+                @test F._begin_taped_run(checkpoint, replay, runtime, P.nsteps).windows == segments
+                @test F._begin_taped_run(checkpoint, replay, runtime, 4).windows ==
+                      T._met_window_segments(checkpoint, size.window[1:4])
+            end
+        end
+    end
+    # AutoTape rejects a constrained schedule that does not fit its budget.
+    request = AT.AutoTape(; checkpoint = AT.MetWindowCheckpoint(), budget_bytes = 0)
+    F._with_tape_runtime(request) do runtime
+        @test_throws AT.TapeReservationError F._prepare_tape!(runtime, replay, P.nsteps)
+    end
 end
 
 mutable struct _ReleaseProbe

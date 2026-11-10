@@ -90,7 +90,9 @@ else
             I = (inp.mesh.Hp + 1):(inp.mesh.Hp + inp.mesh.Nc)
             target = inp.kwargs.schedule.window_end_air_mass[1][1]
             arrays = Any[inp.panels_m0[1], view(target, I, I, :)]
-            FP._push_met_arrays!(arrays, IdDict{Any, Nothing}(), r.convection_forcing)
+            forcing = [FP.acquire_window!(r.source, w).met.convection_forcing
+                       for w in 1:FP.window_count(r.source)]
+            FP._push_met_arrays!(arrays, IdDict{Any, Nothing}(), forcing)
             @test FP._met_checksums(arrays) == FP._met_checksums(Any[Array(a) for a in arrays])
             FP._with_tape_runtime(AT.AdjointTape(; content = AT.AirMassTape())) do runtime
                 r, dt = replay()

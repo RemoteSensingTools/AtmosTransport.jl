@@ -12,7 +12,7 @@ using ...Operators.Diffusion: DiffusionWorkspace, NoDiffusion, surface_flux_cent
     surface_flux_coupling
 using ...Operators.Convection.CMFMC: CMFMCConvection, CMFMCWorkspace, invalidate_cmfmc_cache!
 using ...Operators.Convection: NoConvection, convection_checkpoint_state
-import ...MetDrivers: current_time, uses_binary_substep_contract
+import ...MetDrivers: current_time, uses_binary_substep_contract, window_count
 using ...Architectures: CPU
 using ...State: CubedSphereFaceFluxState, CubedSphereState, DryBasis
 using ...MetDrivers: ConvectionForcing
@@ -35,7 +35,8 @@ using ...Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, Aut
     _free_tape_array!, _free_tape_panels!, _tape_synchronize, _holds_tape_bytes,
     _release_tape_pool!, _rewind_tape_pool!, _stage_computed, _stage_panels, _tape_panels,
     _allocate_tape_slot, _tape_slot_bytes, _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_pooled, _layout_bytes, _device_tape_memory,
-    _tape_device_margin, _is_reservation_failure, _host_tape_budget, _check_tape_schedule, StrideSearch, checkpoint_window_count, checkpoint_window_range
+    _tape_device_margin, _is_reservation_failure, _host_tape_budget, _check_tape_schedule, StrideSearch, checkpoint_window_count, checkpoint_window_range,
+    MetWindowCheckpoint, _met_window_segments
 import ..Adjoints: require_adjoint_support
 using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence,
     CSAdjointLinRoodScheme, CSAdjointSupportedScheme, CSCellAverageObjective,
@@ -53,6 +54,7 @@ export CSFootprintResult, CSTapeByteEstimate, run_cs_footprint_forward,
     CSStepSchedule
 
 include("FootprintResult.jl")
+include("WindowSource.jl")
 include("StepReplay.jl")
 include("ReplaySupport.jl")
 include("TapeRecorder.jl")

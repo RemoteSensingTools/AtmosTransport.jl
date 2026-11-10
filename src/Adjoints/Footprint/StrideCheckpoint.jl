@@ -1,5 +1,6 @@
 # ---------------------------------------------------------------------------
-# Checkpoint drivers of the reverse pass: FullCheckpoint and StrideCheckpoint.
+# Checkpoint drivers of the reverse pass: FullCheckpoint, and StrideCheckpoint
+# and MetWindowCheckpoint (one segmented driver).
 #
 # Every driver works on one replay (`_CSReplay`, StepReplay.jl) of the
 # production step plan, whatever the advection scheme: it propagates the
@@ -19,11 +20,13 @@
 #   1. `_begin_taped_run(checkpoint, replay, runtime, taped_steps)`, before
 #      the forward run: what the schedule needs before it (Full: the tape
 #      pool, sized first by a counting run when the storage reserves its
-#      extent; Stride: the checkpoint of the initial state);
+#      extent; Stride and MetWindow: the segments of the taped steps and the
+#      checkpoint of the initial state);
 #   2. `_run_forward!(run, replay; on_step_end)`: the forward run of every
 #      step of the replay, which keeps what the schedule's reverse pass needs
 #      for steps `1:taped_steps` (Full: the tape; Stride: the state at every
-#      K-step boundary) and passes each step to `on_step_end`;
+#      K-step boundary; MetWindow: the state at every segment boundary) and
+#      passes each step to `on_step_end`;
 #   3. `_reverse_taped_run(run, replay, starts, dt; nsteps, forcing)`, with
 #      the replay where the forward run left it: the reverse pass of steps
 #      `1:nsteps` (`nsteps <= taped_steps`) from each adjoint start;
@@ -192,31 +195,43 @@ function _reverse_taped_run(run::Union{_FullTapedRun, _ReplayedTapedRun}, replay
 end
 
 # ---------------------------------------------------------------------------
-# StrideCheckpoint(K): the forward run saves the replay state at every K-step
-# boundary of the taped steps (and counts the window tapes for a storage that
-# reserves its extent, once per runtime); the reverse pass re-records each
-# window from its saved left edge into the runtime's pool, rewound for each
-# window, and walks it backwards for every start. Peak tape is one window;
-# the forward run and each window's recording are shared by all starts. The
-# window boundaries do not depend on the run length, so the saved states serve
-# the reverse pass of any `nsteps <= taped_steps`.
+# StrideCheckpoint(K) and MetWindowCheckpoint: the forward run saves the
+# replay state at every segment boundary of the taped steps (every K steps,
+# or every met-window boundary and split point); the reverse pass re-records
+# each segment from its saved left edge into the runtime's pool, rewound for
+# each segment, and walks it backwards for every start. Peak tape is one
+# segment; the forward run and each segment's recording are shared by all
+# starts. The segment boundaries depend on the taped steps only (not on the
+# reverse length), so the saved states serve the reverse pass of any
+# `nsteps <= taped_steps`. Only the segment list differs between the two
+# schedules (`_run_segments`), resolved once when the run begins.
 # ---------------------------------------------------------------------------
 
-struct _StrideTapedRun{R <: _TapeRuntime, S <: StrideCheckpoint}
+# The schedules that save snapshots and re-record segments from them.
+const _SegmentedCheckpoint = Union{StrideCheckpoint, MetWindowCheckpoint}
+
+struct _StrideTapedRun{R <: _TapeRuntime, S <: _SegmentedCheckpoint}
     schedule::S
     taped_steps::Int
     runtime::R
     checkpoints::Vector{Any}
     tail::Any
+    windows::Vector{UnitRange{Int}}   # the re-recorded head segments of `1:taped_steps`
 end
 
-function _begin_taped_run(schedule::StrideCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, n::Int)
+_run_segments(s::StrideCheckpoint, _replay::_CSReplay, n::Int) = _head_windows(s, n)
+_run_segments(s::MetWindowCheckpoint, replay::_CSReplay, n::Int) = _head_windows(s, replay.steps.window, n)
+_resident_tail(s::StrideCheckpoint) = s.resident_tail
+_resident_tail(::MetWindowCheckpoint) = 0
+
+function _begin_taped_run(schedule::_SegmentedCheckpoint, replay::_CSReplay, runtime::_TapeRuntime, n::Int)
+    windows = _run_segments(schedule, replay, n)
     checkpoints = runtime.snapshots
     isempty(checkpoints) || (checkpoints[1] = _save_snapshot!(checkpoints[1], replay, schedule.snapshots))
     runtime.tail_pool === nothing || _rewind_tape_pool!(runtime.tail_pool)
-    tail = schedule.resident_tail == 0 ? nothing :
+    tail = _resident_tail(schedule) == 0 ? nothing :
         _CSTapeRecorder(runtime.tape.content, runtime.tail_pool, replay.advection)
-    return _StrideTapedRun(schedule, n, runtime, checkpoints, tail)
+    return _StrideTapedRun(schedule, n, runtime, checkpoints, tail, windows)
 end
 
 _taped_steps(run::_StrideTapedRun) = run.taped_steps
@@ -224,7 +239,7 @@ _end_taped_run!(run::_StrideTapedRun) =
     (run.tail === nothing || _release_records!(run.tail.ops); nothing)  # snapshots belong to the runtime
 
 function _run_taped_steps!(run::_StrideTapedRun, replay, on_step_end)
-    for (w, steps) in enumerate(_head_windows(run.schedule, run.taped_steps))
+    for (w, steps) in enumerate(run.windows)
         w == 1 || (run.checkpoints[w] = _save_snapshot!(run.checkpoints[w], replay, run.schedule.snapshots))
         _replay_steps!(replay, steps; on_step_end)
     end
@@ -253,7 +268,7 @@ function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt;
     end
     # Preserve the original head boundaries even if the surface-pressure
     # screen shortens the reverse pass into a head segment or into the tail.
-    windows = _head_windows(run.schedule, run.taped_steps)
+    windows = run.windows
     for w in reverse(eachindex(windows))
         first(windows[w]) > nsteps && continue
         steps = first(windows[w]):min(last(windows[w]), nsteps)
@@ -266,6 +281,7 @@ function _reverse_taped_run(run::_StrideTapedRun, replay::_CSReplay, starts, dt;
             end
         finally
             _release_records!(ops)
+            _release_replay_windows!(replay)
         end
     end
     return map((start, (lambda, footprints, _)) -> _footprint_result(start, footprints, lambda, dt, replay),
@@ -286,6 +302,7 @@ function _collect_footprints(replay::_CSReplay, starts, dt, runtime::_TapeRuntim
         return _reverse_taped_run(run, replay, starts, dt; nsteps = n, forcing = NoStepForcing())
     finally
         _end_taped_run!(run)
+        _release_replay_windows!(replay)
     end
 end
 

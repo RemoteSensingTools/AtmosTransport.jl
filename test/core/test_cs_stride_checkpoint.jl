@@ -116,6 +116,32 @@ _scaled_rates(rates, scale) =
     @test_throws BoundsError TapeMod.checkpoint_window_range(s2, 0, 6)
 end
 
+@testset "MetWindowCheckpoint segments follow the met windows" begin
+    # Real binaries have 8-11 steps per met window.
+    steps_per_window = [9, 10, 11, 8]
+    windows = reduce(vcat, fill.(eachindex(steps_per_window), steps_per_window))
+    segments = TapeMod._met_window_segments
+    met = TapeMod.MetWindowCheckpoint()
+    @test segments(met, windows) == [1:9, 10:19, 20:30, 31:38]
+    # Split windows: nearly equal pieces of at most `split_steps`, longer ones first.
+    @test segments(TapeMod.MetWindowCheckpoint(; split_steps = 4), windows) ==
+          [1:3, 4:6, 7:9, 10:13, 14:16, 17:19, 20:23, 24:27, 28:30, 31:34, 35:38]
+    @test segments(TapeMod.MetWindowCheckpoint(; split_steps = 10), windows) ==
+          [1:9, 10:19, 20:25, 26:30, 31:38]
+    @test segments(TapeMod.MetWindowCheckpoint(; split_steps = 1), windows) == [s:s for s in 1:38]
+    for split in (0, 1, 3, 4, 8, 12)
+        segs = segments(TapeMod.MetWindowCheckpoint(; split_steps = split), windows)
+        @test reduce(vcat, collect.(segs)) == collect(1:38)                  # a partition of the steps
+        @test all(seg -> allequal(windows[seg]), segs)                       # none straddles a window
+        split > 0 && @test maximum(length, segs) <= split
+    end
+    # A run that stops inside a met window ends its last segment there.
+    @test segments(met, windows[1:23]) == [1:9, 10:19, 20:23]
+    @test segments(met, Int[]) == UnitRange{Int}[]
+    @test_throws ArgumentError segments(met, [1, 2, 1])
+    @test_throws ArgumentError TapeMod.MetWindowCheckpoint(; split_steps = -1)
+end
+
 @testset "checkpoint parity across scheme, storage and seed paths" begin
     mesh, m, rm, am, bm, cm = _stride_problem(; Nz = 4)
     N, Nz, Hp = size(rm[1], 1), size(rm[1], 3), mesh.Hp
@@ -144,6 +170,39 @@ end
             @test _footprints_equal(full, result)
             @test all(p -> isapprox(full.initial_adjoint[p], result.initial_adjoint[p];
                                     atol = 1e-12, rtol = 1e-10), 1:6)
+        end
+    end
+end
+
+@testset "MetWindowCheckpoint parity on variable met windows" begin
+    mesh, m, rm, am, bm, cm = _stride_problem(; Nz = 4, nsteps = 7)
+    N, Nz = size(rm[1], 1), size(rm[1], 3)
+    for p in 1:6, k in 1:Nz, j in 1:N, i in 1:N
+        rm[p][i, j, k] = m[p][i, j, k] * (0.06 + 0.011sin(0.27i + 0.13j + 0.19k + 0.07p))
+    end
+    Adv.fill_panel_halos!(rm, mesh; dir = 0)
+    seed = ntuple(p -> [7e-4sin(0.31i + 0.17j + 0.13k + 0.25p) for i in 1:N, j in 1:N, k in 1:Nz], 6)
+    objective = _column_mean_objective(mesh)
+    # Met windows of 2, 3 and 4 steps; the 7-step run stops inside the third.
+    schedule = AT.CSStepSchedule(; steps_per_window = [2, 3, 4], window_dt = 6.0)
+    # Bit for bit on one thread; reverse-halo atomics may sum in another order on several.
+    same(a, b) = Threads.nthreads() == 1 ?
+        a.footprints == b.footprints && a.initial_adjoint == b.initial_adjoint :
+        _footprints_equal(a, b) && all(p -> isapprox(a.initial_adjoint[p], b.initial_adjoint[p];
+                                                     atol = 1e-12, rtol = 1e-10), 1:6)
+    checkpoints = (AT.MetWindowCheckpoint(), AT.MetWindowCheckpoint(; snapshots = AT.DeviceCSTapeStorage()),
+                   AT.MetWindowCheckpoint(; split_steps = 2), AT.MetWindowCheckpoint(; split_steps = 1))
+    schemes = (AT.PPMScheme(AT.NoLimiter()), AT.PPMScheme(AT.MonotoneLimiter()), AT.LinRoodPPMScheme(7))
+    @testset "$(typeof(scheme)), seeded=$seeded" for scheme in schemes, seeded in (false, true)
+        run(checkpoint) = seeded ?
+            AT.cs_surface_emission_footprint_from_seed(seed, m, am, bm, cm, mesh;
+                scheme, schedule, base_panels_rm0 = rm, tape = AT.AdjointTape(; checkpoint)) :
+            AT.cs_surface_emission_footprint(rm, m, am, bm, cm, mesh, objective;
+                scheme, schedule, tape = AT.AdjointTape(; checkpoint))
+        full = run(AT.FullCheckpoint())
+        @test same(full, run(AT.StrideCheckpoint(3)))
+        for checkpoint in checkpoints
+            @test same(full, run(checkpoint))
         end
     end
 end

@@ -174,6 +174,12 @@ end
 _flux_sets(inp) = [(inp.am[s], inp.bm[s], inp.cm[s]) for s in eachindex(inp.am)]
 _unshared(v) = [map(copy, x) for x in v]
 
+# The met of every window of a replay, and the flux state each step reads.
+_window_mets(replay) = [ADJ.Footprint.acquire_window!(replay.source, w).met
+                        for w in 1:ADJ.Footprint.window_count(replay.source)]
+_step_flux_states(replay) = [ADJ.Footprint._fluxes_at(_window_mets(replay)[replay.steps.window[s]], s)
+                             for s in 1:ADJ.Footprint._replay_nsteps(replay)]
+
 @testset "cs_adjoint_inputs shares each met window's fluxes" begin
     for c in (Case(scheme = AT.PPMScheme(AT.MonotoneLimiter()), conv = :cmfmc, diffusion = :split,
                    cadence = :substep, contract = false, vary_ps = true,
@@ -212,11 +218,14 @@ _unshared(v) = [map(copy, x) for x in v]
         objective = AT.CSLayerMeanObjective(2, 2, 3, NZ)
         for flux_scale in (1.0, 0.5)
             replay = _replay(inp; flux_scale)
-            @test length(unique(objectid, replay.fluxes)) == length(c.steps)
-            @test all(isequal(replay.fluxes[s].am, map(a -> flux_scale .* a, inp.am[s]))
+            fluxes = _step_flux_states(replay)
+            # One flux state per met window, held by the window's met.
+            @test all(met -> met.fluxes isa AT.CubedSphereFaceFluxState, _window_mets(replay))
+            @test length(unique(objectid, fluxes)) == length(c.steps)
+            @test all(isequal(fluxes[s].am, map(a -> flux_scale .* a, inp.am[s]))
                       for s in eachindex(inp.am))
             # Without a scale the replay references the captured arrays.
-            @test all((replay.fluxes[s].am === inp.am[s]) == isone(flux_scale)
+            @test all((fluxes[s].am === inp.am[s]) == isone(flux_scale)
                       for s in eachindex(inp.am))
             footprint(am, bm, cm) = AT.cs_surface_emission_footprint(
                 inp.rm0, inp.m0, am, bm, cm, MESH, objective; _footprint_kwargs(inp)..., flux_scale)
@@ -228,11 +237,89 @@ _unshared(v) = [map(copy, x) for x in v]
         end
     end
 
-    # Fluxes interpolated within the window are rewritten, so copied, every step.
+    # Fluxes interpolated within the window are rewritten, so copied, every step;
+    # the window's met holds one flux state per step.
     c = Case(conv = :tm5)
     inp = _adjoint_inputs(c; interpolate_fluxes_within_window = true)
     @test length(unique(objectid, _flux_sets(inp))) == sum(c.steps)
     @test all(isequal.(_flux_sets(inp), _flux_sets(_adjoint_inputs(c))))
+    replay = _replay(inp)
+    @test [length(met.fluxes) for met in _window_mets(replay)] == c.steps
+    @test all(_step_flux_states(replay)[s].am === inp.am[s] for s in eachindex(inp.am))
+end
+
+@testset "the replay reads its met through a resident window source" begin
+    FP = ADJ.Footprint
+    c = Case(conv = :cmfmc, diffusion = :split, reset = :preserve_vmr, steps = [3, 2, 2])
+    inp = _adjoint_inputs(c)
+    replay = _replay(inp)
+    source = replay.source
+    @test source isa FP.ResidentCSWindowSource
+    @test FP.window_count(source) == length(c.steps)
+    first_steps = cumsum([1; c.steps[1:end-1]])
+    for (w, met) in enumerate(_window_mets(replay))
+        s = first_steps[w]
+        @test met.window == w && met.steps == s:(s + c.steps[w] - 1)
+        @test met.convection_forcing === inp.kw.convection_forcing[s]
+        @test met.diffusion_op === inp.kw.diffusion_op[s]
+        @test met.layer_thickness === inp.kw.diffusion_layer_thickness[s]
+        @test met.start_air_mass === inp.kw.schedule.window_start_air_mass[w]
+        @test met.end_air_mass === inp.kw.schedule.window_end_air_mass[w]
+    end
+    @test_throws ArgumentError FP.acquire_window!(source, length(c.steps) + 1)
+
+    # An untaped run holds only its current window; a recording run retains
+    # every window it reads until the driver releases them.
+    held(r) = [(h.lease.met.window, h.retained) for h in r.leases]
+    FP._replay_steps!(replay, 1:sum(c.steps))
+    @test held(replay) == [(length(c.steps), false)]
+    FP._release_replay_windows!(replay)
+    @test isempty(replay.leases)
+    recorded = _replay(inp)
+    FP._replay_steps!(recorded, 1:(first_steps[2] - 1))
+    counter = FP._CSCountingRecorder(AT.StateTape(), recorded.advection)
+    FP._replay_steps!(recorded, first_steps[2]:sum(c.steps); recorder = counter)
+    @test held(recorded) == [(w, true) for w in 2:length(c.steps)]
+    FP._release_replay_windows!(recorded)
+    @test isempty(recorded.leases)
+
+    # Window inputs change only at a window's first step: one forcing, one
+    # diffusion operator and one layer thickness per window.
+    for (key, msg) in ((:convection_forcing, "convection_forcing changes at step 3 inside met window 1"),
+                       (:diffusion_op, "diffusion_op changes at step 3 inside met window 1"),
+                       (:diffusion_layer_thickness, "diffusion_layer_thickness changes at step 3 inside met window 1"))
+        v = getproperty(inp.kw, key)
+        bad = copy(v)
+        bad[3] = v[4]                            # the last step of window 1 takes window 2's
+        err = try
+            _replay(inp; NamedTuple{(key,)}((bad,))...); nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError && occursin(msg, err.msg)
+    end
+
+    # Each window is validated when the replay is built: reset targets have
+    # six panels of the initial air mass's shapes, the layer thickness the
+    # replay workspace's.
+    sched = inp.kw.schedule
+    with_start(targets) = AT.CSStepSchedule(sched.plan; steps_per_window = sched.steps_per_window,
+                                            window_dt = sched.window_dt, start_time = sched.start_time,
+                                            binary_substeps = sched.binary_substeps,
+                                            chemistry = sched.chemistry,
+                                            window_start_air_mass = targets,
+                                            window_end_air_mass = sched.window_end_air_mass)
+    shrink(p) = p[1:end-1, ntuple(_ -> Colon(), ndims(p) - 1)...]
+    five = Any[sched.window_start_air_mass...]               # a vector that also takes five panels
+    five[2] = five[2][1:5]
+    @test_throws "require six panels" _replay(inp; schedule = with_start(five))
+    misshaped = copy(sched.window_start_air_mass)
+    misshaped[2] = (shrink(misshaped[2][1]), misshaped[2][2:6]...)
+    @test_throws "must match the initial air-mass panel shapes" _replay(inp; schedule = with_start(misshaped))
+    dz = copy(inp.kw.diffusion_layer_thickness)
+    small = map(shrink, dz[1])
+    dz[1:c.steps[1]] .= Ref(small)
+    @test_throws "diffusion_layer_thickness at step 1" _replay(inp; diffusion_layer_thickness = dz)
 end
 
 @testset "Full and Stride footprints agree across met windows" begin
