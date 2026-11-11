@@ -790,7 +790,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **160473 bytes / 45849.4 tokens**. Public names: **27**.
+Size: **160625 bytes / 45892.9 tokens**. Public names: **27**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -806,7 +806,7 @@ Files:
 - `adjoint_kernels.jl` (7588 bytes)
 - `conservative_dkg.jl` (11517 bytes)
 - `diffusion_kernels.jl` (17829 bytes)
-- `dz_helpers.jl` (20518 bytes)
+- `dz_helpers.jl` (20670 bytes)
 - `gchp_nonlocal_pbl.jl` (8854 bytes)
 - `operators.jl` (27596 bytes)
 - `pbl_physics.jl` (10566 bytes)

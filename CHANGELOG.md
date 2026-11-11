@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **GPU fix, total surface-pressure recovery:** the kernels behind
+  `recover_total_surface_pressure_staged!` flagged an invalid column with an
+  atomic store, which CUDA cannot compile with current Atomix/UnsafeAtomics
+  (the process aborts at kernel compilation) and which raised a
+  `KernelException` instead of the documented `ArgumentError` with older
+  ones. They now count invalid columns with an atomic add. Results are
+  unchanged.
+- **Test environment:** CUDA is a declared test dependency (`CUDA = "5"`), so
+  `julia --project=test` resolves CUDA, GPUCompiler and LLVM together and the
+  GPU sections of the core tests run on GPU hosts instead of being skipped.
+  Existing checkouts refresh their test Manifest once (see `test/README.md`).
 - **Result change for ERA5 TM5 convection (`ec2tm_from_rates!`):** the
   downdraft detrainment archived on GRIB level `k` is now read as that of
   layer `k - 1`, the layer above. The IFS steps its downdraft from the layer
