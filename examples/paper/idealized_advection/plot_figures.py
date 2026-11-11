@@ -18,8 +18,9 @@ conservation.pdf      Marker shape = grid as in convergence.pdf, filled = FP64, 
                       against time in flow B at 0.94 deg, in units of 1e-7: (a) C96, (b) lat-lon
                       and N96; (c) largest |chi - 1| of the uniform tracer per scheme and grid
                       (all flows and resolutions), with the machine epsilon of each precision
-                      (dotted); (d) FP32 - FP64 l2 difference next to the FP64
-                      l2 error per scheme and grid (flow B, smooth tracer, 0.94 deg).
+                      (dotted); (d) l2 error of the FP64 run divided by the FP32 - FP64 l2 difference:
+                      smallest ratio per scheme and grid (all flows, resolutions, non-uniform
+                      tracers, T/2 and T).
 tilt.pdf              flow A l2 at T against the tilt of the rotation axis (0, 45, 90 degrees).
 """
 import argparse
@@ -286,13 +287,18 @@ def conservation_figure(rows, series, figures):
     marker = {family: st["marker"] for family, st in FAMILY_STYLE.items()}
     # (a, b) uniform tracer in flow B at 0.94 degrees, linear axes in units of 1e-7: FP64 stays on the zero line
     exponent = -7
+    # per line: grid family, scheme, label of the FP32 line and its place (day, offset in points, ha, va)
     panels = (("(a) tracer-mass change, uniform tracer, flow B, C96",
-               [("cs", "upwind"), ("cs", "ppm"), ("cs", "linrood7")]),
+               [("cs", "upwind", "upwind", (9, (0, -6), "center", "top")),
+                ("cs", "ppm", "PPM", (9, (-4, 5), "right", "bottom")),
+                ("cs", "linrood7", "Lin–Rood 7", (9, (-8, -2), "right", "top"))]),
               ("(b) the same on lat–lon 0.94° and N96",
-               [("ll", "upwind"), ("ll", "ppm"), ("rg", "upwind")]))
+               [("ll", "upwind", "lat–lon upwind", (4.5, (8, 3), "left", "bottom")),
+                ("ll", "ppm", "lat–lon PPM", (9, (-4, 5), "right", "bottom")),
+                ("rg", "upwind", "N96 upwind", (10.5, (0, -7), "center", "top"))]))
     for col, (title, picks) in enumerate(panels):
         ax = fig.add_subplot(gs[0, col])
-        for family, scheme in picks:
+        for family, scheme, text, (day, offset, ha, va) in picks:
             for prec, ls, tag in (("Float64", "-", "f64"), ("Float32", "--", "f32")):
                 rid = f"{FAMILY_GRID[family]}_B_{scheme}_{tag}"
                 pts = [(r["hour"] / 24, r["budget_rel"]) for r in series if r["run_id"] == rid and r["tracer"] == "uniform"]
@@ -303,6 +309,10 @@ def conservation_figure(rows, series, figures):
                 ax.plot(x, np.array(y) / 10.0**exponent, ls, color=COLOR[scheme], lw=1.4 if fp64 else 1.0,
                         marker=None if fp64 else marker[family], markevery=(6, 6), ms=4.5, mfc=SURFACE,
                         mec=COLOR[scheme], mew=0.9)
+                if not fp64:               # name the line itself: two lines of (b) share the upwind colour
+                    k = int(np.argmin(np.abs(np.array(x) - day)))
+                    ax.annotate(text, (x[k], y[k] / 10.0**exponent), xytext=offset, textcoords="offset points",
+                                fontsize=6.5, color=INK, ha=ha, va=va)
         ax.axhline(0, color=INK2, lw=0.5)
         ax.set_xlim(0, 12)
         ax.set_xticks(range(0, 13, 3))
@@ -349,24 +359,26 @@ def conservation_figure(rows, series, figures):
     ax.tick_params(labelsize=6.5)
     _style(ax)
 
-    # (d) FP32 - FP64 next to the FP64 discretization error, flow B smooth tracer, the three grids at 0.94 degrees
+    # (d) how many times the FP32 - FP64 difference is below the discretization error: smallest ratio per
+    # scheme and grid over all flows, resolutions, non-uniform tracers and both times (T/2, T)
     ax = fig.add_subplot(gs[1, 1])
     for i, (scheme, label, color) in enumerate(SCHEMES):
         for family, dy in FAMILY_OFFSET.items():
-            sel = [r for r in rows if r["grid"] == FAMILY_GRID[family] and r["scheme"] == scheme and r["flow"] == "B"
-                   and r["tracer"] == "gaussian_hills" and r["time"] == "T" and not r["tag"]]
-            e64 = [r["l2"] for r in sel if r["precision"] == "Float64"]
-            d = [r["fp32_minus_fp64_l2"] for r in sel if r["precision"] == "Float32"]
-            if e64 and d:
-                ax.plot([d[0], e64[0]], [i + dy, i + dy], "-", color=color, lw=0.5)
-                ax.plot([e64[0]], [i + dy], marker[family], color=color, ms=4.5)
-                ax.plot([d[0]], [i + dy], marker[family], color=color, mfc="none", ms=4.5)
+            v = [r["fp64_l2_same_case"] / r["fp32_minus_fp64_l2"] for r in rows
+                 if r["family"] == family and r["scheme"] == scheme and r["precision"] == "Float32"
+                 and r["tracer"] != "uniform" and not r["tag"] and r["fp32_minus_fp64_l2"] > 0]
+            if v:
+                ax.plot([min(v)], [i + dy], marker[family], color=color, ms=4.5)
     ax.set_xscale("log")
+    ax.set_xlim(0.5, 1e6)
+    ax.axvline(1, color=INK2, lw=0.7, ls=":")
+    ax.text(1.35, len(SCHEMES) - 0.6, "precision error = discretization error", fontsize=6, color=INK2,
+            rotation=90, ha="left", va="bottom")
     ax.set_yticks(range(len(SCHEMES)))
     ax.set_yticklabels([])
     ax.set_ylim(len(SCHEMES) - 0.45, -0.55)
-    ax.set_xlabel("normalized ℓ2, flow B Gaussian hills at T, 0.94°")
-    ax.set_title("(d) filled: FP64 error, open: FP32 − FP64", fontsize=7.5, color=INK, loc="left")
+    ax.set_xlabel("smallest ratio, all flows and resolutions")
+    ax.set_title("(d) discretization error ÷ FP32 − FP64 difference", fontsize=7.5, color=INK, loc="left")
     ax.tick_params(labelsize=6.5)
     _style(ax)
     save(fig, figures, "conservation")
