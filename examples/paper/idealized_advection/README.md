@@ -118,6 +118,7 @@ capabilities and the driver check.
 | `analyze.py` | norms, extrema, mass drift, uniform-tracer error, FP32 − FP64 → `results/` |
 | `plot_figures.py` | `figures/convergence.pdf`, `deformation_maps.pdf`, `conservation.pdf`, `tilt.pdf` (+ PNG) |
 | `panel_edge_split.py` | cubed sphere: error near the panel edges against the panel interiors → `results/panel_edge_split.csv` (part of the `analyze` stage) |
+| `uniform_tracer_stats.py` | uniform tracer: largest, RMS and 99th-percentile deviation and mass drift, also in units of the machine epsilon of the run's precision → `results/uniform_tracer_stats.csv` (part of the `analyze` stage) |
 | `forcing_window_error.jl` | error of window-mean winds against the analytic flow, without the model → `results/forcing_window_error.csv` |
 | `float32_drift/` | the diagnostics of the `Float32` tracer-mass drift (own README) |
 | `results/norms.csv` | one row per run × tracer × time (T/2, T) |
@@ -130,6 +131,7 @@ capabilities and the driver check.
 | `results/substep_sensitivity.csv` | `cfl*` variants next to their base case |
 | `results/window_sensitivity.csv` | `w*` variants (shorter met windows) next to their base case, with the observed order of both |
 | `results/panel_edge_split.csv` | cubed-sphere l2 at T split into the cells within 7.5° of a panel edge and the rest, with the observed order of each |
+| `results/uniform_tracer_stats.csv` | per untagged run: \|χ − 1\| of the uniform tracer (largest of the run; RMS, 99th percentile and area fraction above 1e-4 at T) and the largest mass drift, in absolute terms and divided by the machine epsilon |
 | `results/forcing_window_error.csv` | normalized l2 difference between advection by window-mean winds and by the analytic winds, for windows of 4 h to 15 min |
 
 Work directory layout (`$IDEALIZED_ADVECTION_WORKDIR`): `binaries/<case>/`,
@@ -148,6 +150,37 @@ uniform tracer (use `max_abs_chi_minus_1`). `mass_drift_budget` is the relative 
 compensated Float64 budget); `mass_drift_fields` recomputes it from mixing ratio × air mass of the
 bottom level. `fp32_minus_fp64_l2` is the area-weighted RMS difference of the two precisions
 relative to the RMS of the FP64 field, next to the FP64 run's `l2` error (`fp64_l2_same_case`).
+
+### Float32 and Float64 on one scale
+
+The Float32 tracer-mass drift and the deviations of a uniform tracer are eight to nine orders of
+magnitude above the Float64 ones. The scale of that gap is the ratio of the two machine epsilons
+(1.2e-7 and 2.2e-16, ratio 5.4e8): in units of the epsilon of its precision, a Float32 run is
+close to its Float64 twin (`uniform_tracer_stats.csv`, dotted lines in panel (c) of
+`conservation.pdf`). Over the 87 twins, the Float32 / Float64 ratio in these units is
+
+| Quantity (uniform tracer) | Median | Quartiles | Range |
+|---|---|---|---|
+| RMS of \|χ − 1\| at T | 1.00 | 0.94–1.05 | 0.26–1.53 |
+| largest \|χ − 1\| of the saved snapshots | 0.93 | 0.79–1.13 | 0.29–6.25 |
+| largest mass drift (56 twins with a non-zero Float64 drift) | 0.78 | 0.31–1.60 | 0.04–23.2 |
+
+This is consistent with roundoff dominating in both precisions; it does not show that every
+Float32 error scales exactly with epsilon (the mass drift does not: the Float64 drift is only
+0 to 12 eps).
+
+| Grid | Largest \|χ − 1\|, FP32 / FP64 (in eps) | Largest RMS at T, FP32 / FP64 (in eps) | Largest mass drift, FP32 / FP64 (in eps) |
+|---|---|---|---|
+| Cubed sphere | 4.1e-5 / 2.7e-13 (348 / 1195) | 2.3e-6 / 3.6e-15 (19 / 16) | 2.1e-6 / 2.7e-15 (18 / 12) |
+| Lat–lon | 7.6e-4 / 1.3e-12 (6414 / 6003) | 2.6e-5 / 4.7e-14 (220 / 212) | 4.0e-6 / 1.1e-15 (33 / 5) |
+| Reduced Gaussian | 8.7e-5 / 6.2e-14 (731 / 277) | 8.0e-7 / 1.8e-15 (7 / 8) | 7.7e-8 / 1.1e-15 (0.6 / 5) |
+
+Each entry is the largest of its grid family and precision, so the two numbers of a pair can come
+from different runs. The lat–lon maximum is the 0.9375° flow-A run: both precisions peak within
+three cells of the two poles of the tilted rotation axis, where the air does not move and 117
+substeps per window are applied; at T, 99 % of the sphere is below 8.9e-5 in Float32 (RMS
+2.6e-5). In flows B and C the lat–lon Float32 deviation stays below 7e-6. For a tracer at
+420 ppm, 1e-6 is 0.0004 ppm and the lat–lon maximum 0.32 ppm.
 
 Where the runs execute: Float64 on the CPU; the Float32 runs of the grid entries with
 `gpu_precisions = ["Float32"]` in `cases.toml` (C192 and lat–lon 0.9375°) on CUDA GPUs, one

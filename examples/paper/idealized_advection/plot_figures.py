@@ -17,7 +17,8 @@ conservation.pdf      Marker shape = grid as in convergence.pdf, filled = FP64, 
                       (a, b) relative change of the mass of a uniform tracer (model budget)
                       against time in flow B at 0.94 deg, in units of 1e-7: (a) C96, (b) lat-lon
                       and N96; (c) largest |chi - 1| of the uniform tracer per scheme and grid
-                      (all flows and resolutions); (d) FP32 - FP64 l2 difference next to the FP64
+                      (all flows and resolutions), with the machine epsilon of each precision
+                      (dotted); (d) FP32 - FP64 l2 difference next to the FP64
                       l2 error per scheme and grid (flow B, smooth tracer, 0.94 deg).
 tilt.pdf              flow A l2 at T against the tilt of the rotation axis (0, 45, 90 degrees).
 """
@@ -310,6 +311,9 @@ def conservation_figure(rows, series, figures):
         ax.set_ylabel(f"relative change ($10^{{{exponent}}}$)")
         ax.tick_params(labelsize=6.5)
         _style(ax)
+        if col == 0:                       # the unit of the axis as a mole fraction of CO2
+            ax.text(0.03, 0.05, f"$10^{{{exponent}}}$ of a 420 ppm tracer = {420 * 10.0**exponent * 1e3:.2f} ppb",
+                    transform=ax.transAxes, fontsize=6.5, color=INK2, ha="left", va="bottom")
     schemes = ("upwind", "ppm", "linrood7")
     handles = [plt.Line2D([], [], color=COLOR[s], lw=1.4) for s in schemes]
     handles += [plt.Line2D([], [], color=INK2, ls="-", lw=1.4), plt.Line2D([], [], color=INK2, ls="--", lw=1.0)]
@@ -333,6 +337,13 @@ def conservation_figure(rows, series, figures):
     ax.set_yticks(range(len(SCHEMES)))
     ax.set_yticklabels([l for _, l, _ in SCHEMES])
     ax.set_ylim(len(SCHEMES) - 0.45, -0.55)
+    # machine epsilon of each precision: the symbols of a precision lie a similar factor to its right
+    for prec, eps in (("FP64", np.finfo(np.float64).eps), ("FP32", np.finfo(np.float32).eps)):
+        ax.axvline(eps, color=INK2, lw=0.7, ls=":")
+        ax.text(eps * 1.6, len(SCHEMES) - 0.6, f"{prec} machine epsilon", fontsize=6, color=INK2, rotation=90,
+                ha="left", va="bottom")
+    ax.set_xlim(left=np.finfo(np.float64).eps / 4)
+    ax.set_xticks(10.0 ** np.arange(-15, -2, 3))
     ax.set_xlabel("max |χ − 1|, all flows and resolutions")
     ax.set_title("(c) uniform tracer: filled FP64, open FP32", fontsize=7.5, color=INK, loc="left")
     ax.tick_params(labelsize=6.5)

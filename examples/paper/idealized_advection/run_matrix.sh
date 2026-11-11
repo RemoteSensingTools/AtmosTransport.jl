@@ -147,6 +147,7 @@ stage_run() {
 stage_analyze() {
     python3 "$HERE/analyze.py" --workdir "$WORK" --results "$HERE/results"
     python3 "$HERE/panel_edge_split.py" --workdir "$WORK" --results "$HERE/results"
+    python3 "$HERE/uniform_tracer_stats.py" --workdir "$WORK" --results "$HERE/results"
 }
 
 stage_plot() {
