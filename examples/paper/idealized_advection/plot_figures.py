@@ -10,13 +10,15 @@ convergence.pdf       l2 at T against grid spacing (log-log). Top row: smooth tr
                       scheme; cubed sphere: filled circles, FP64 solid, FP32 dashed; lat-lon: open
                       squares, thin line; reduced Gaussian: open triangles, thin line (FP64). All
                       at their true grid spacing. Tagged variants are left out.
-deformation_maps.pdf  flow B at T/2 and T, slotted cylinders and cosine bells: exact cell means
-                      and C96 upwind, PPM (default limiter), Lin-Rood 7, lat-lon 1.875 deg PPM.
-conservation.pdf      (a, b) relative change of the tracer mass (model budget) against time for
-                      the uniform tracer and the Gaussian hills, flow B at C96, linear axes
-                      in units of 1e-7 and 1e-8; (c) largest |chi - 1| of the uniform tracer per scheme (cubed sphere,
-                      all flows and resolutions); (d) FP32 - FP64 l2 difference next to the FP64
-                      l2 error per scheme (flow B, smooth tracer, cubed sphere).
+deformation_maps.pdf  flow B at T/2 and T, slotted cylinders and cosine bells, all at 0.94 deg:
+                      exact cell means (C96), upwind on C96 and N96, PPM (default limiter) on C96
+                      and the lat-lon grid, Lin-Rood 7 on C96.
+conservation.pdf      Marker shape = grid as in convergence.pdf, filled = FP64, open = FP32.
+                      (a, b) relative change of the mass of a uniform tracer (model budget)
+                      against time in flow B at 0.94 deg, in units of 1e-7: (a) C96, (b) lat-lon
+                      and N96; (c) largest |chi - 1| of the uniform tracer per scheme and grid
+                      (all flows and resolutions); (d) FP32 - FP64 l2 difference next to the FP64
+                      l2 error per scheme and grid (flow B, smooth tracer, 0.94 deg).
 tilt.pdf              flow A l2 at T against the tilt of the rotation axis (0, 45, 90 degrees).
 """
 import argparse
@@ -187,6 +189,22 @@ def ll_polygons(path):
     return polys, np.array(keep)
 
 
+def rg_polygons(path):
+    with nc.Dataset(path) as ds:
+        lonb = np.asarray(ds["cell_lon_bounds"][:])        # corners SW, SE, NE, NW
+        latb = np.asarray(ds["cell_lat_bounds"][:])
+    lonb = (lonb.T if lonb.shape[0] == 4 else lonb) % 360  # (cell, 4)
+    latb = latb.T if latb.shape[0] == 4 else latb
+    east = np.where(lonb[:, 1] <= lonb[:, 0], lonb[:, 1] + 360, lonb[:, 1])
+    keep = (east - lonb[:, 0] < 180) & (east <= 360)
+    polys = [np.array([[w, s], [e, s], [e, n], [w, n]])
+             for w, e, s, n in zip(lonb[keep, 0], east[keep], latb[keep, 0], latb[keep, 2])]
+    return polys, keep
+
+
+POLYGONS = {"c": cs_polygons, "l": ll_polygons, "n": rg_polygons}       # by first letter of the grid name
+
+
 def run_field(workdir, run_id, tracer, hour):
     with nc.Dataset(workdir / "runs" / run_id / "output.nc") as ds:
         hours = np.asarray(ds["time"][:])
@@ -197,11 +215,13 @@ def run_field(workdir, run_id, tracer, hour):
     return a.reshape(-1)
 
 
-def maps_figure(workdir, figures, cs="c96", ll="ll192x96"):
+def maps_figure(workdir, figures, cs="c96", ll="ll384x192", rg="n96"):
+    """All three grids at the same equatorial spacing (0.94 degrees for the defaults)."""
     panels = [("exact", None, cs), (f"C{cs[1:]} upwind", f"{cs}_B_upwind_f64", cs),
+              (f"N{rg[1:]} upwind", f"{rg}_B_upwind_f64", rg),
               (f"C{cs[1:]} PPM", f"{cs}_B_ppm_f64", cs),
-              (f"C{cs[1:]} Lin–Rood 7", f"{cs}_B_linrood7_f64", cs),
-              ("lat–lon 1.875° PPM", f"{ll}_B_ppm_f64", ll)]
+              ("lat–lon PPM", f"{ll}_B_ppm_f64", ll),
+              (f"C{cs[1:]} Lin–Rood 7", f"{cs}_B_linrood7_f64", cs)]
     missing = [p[1] for p in panels if p[1] is not None and not is_current(workdir / "runs" / p[1])]
     if missing:
         raise RuntimeError(f"runs not finished or stale: {missing}")
@@ -217,7 +237,7 @@ def maps_figure(workdir, figures, cs="c96", ll="ll192x96"):
     for row, (title, run_id, grid) in enumerate(panels):
         if grid not in geometry:
             src = workdir / "runs" / (run_id or f"{cs}_B_upwind_f64") / "output.nc"
-            geometry[grid] = cs_polygons(src) if grid.startswith("c") else ll_polygons(src)
+            geometry[grid] = POLYGONS[grid[0]](src)
         polys, keep = geometry[grid]
         for block, (tracer, tname) in enumerate(tracers):
             for k, (t, label) in enumerate(((1, "T/2"), (2, "T"))):
@@ -245,89 +265,97 @@ def maps_figure(workdir, figures, cs="c96", ll="ll192x96"):
                     ax.set_title(f"{tname}, {label}", fontsize=7, color=INK)
         axes[row, 0].text(-0.27, 0.5, title, transform=axes[row, 0].transAxes, fontsize=6.5, color=INK,
                           rotation=90, ha="center", va="center")
-    cax = fig.add_axes([0.3, 0.075, 0.4, 0.012])
+    cax = fig.add_axes([0.3, 0.065, 0.4, 0.010])
     cb = fig.colorbar(pc, cax=cax, orientation="horizontal", extend="both")
     cb.set_label("mixing ratio (background 0.1; range of each panel in its corner)", fontsize=7, color=INK)
     cb.ax.tick_params(labelsize=6.5)
     cb.outline.set_linewidth(0.4)
-    fig.subplots_adjust(left=0.1, right=0.995, top=0.95, bottom=0.15, hspace=0.06, wspace=0.04)
+    fig.subplots_adjust(left=0.1, right=0.995, top=0.96, bottom=0.13, hspace=0.06, wspace=0.04)
     save(fig, figures, "deformation_maps", png_dpi=130)
 
 
 # ----------------------------------------------------------------------------- conservation
-def conservation_figure(rows, series, figures, grid="c96"):
-    fig = plt.figure(figsize=(7.1, 4.6), facecolor=SURFACE)
-    gs = fig.add_gridspec(2, 2, hspace=0.5, wspace=0.3, left=0.15, right=0.98, top=0.94, bottom=0.1)
-    picks = ("upwind", "ppm", "linrood7")
-    # (a, b) linear axes, each in the unit of its FP32 signal: FP64 stays on the zero line
-    for col, (tracer, exponent) in enumerate((("uniform", -7), ("gaussian_hills", -8))):
+FAMILY_GRID = {"cs": "c96", "ll": "ll384x192", "rg": "n96"}       # the three grids at 0.94 degrees
+FAMILY_OFFSET = {"cs": -0.27, "ll": 0.0, "rg": 0.27}             # rows of one scheme in panels (c, d)
+
+
+def conservation_figure(rows, series, figures):
+    fig = plt.figure(figsize=(7.1, 4.8), facecolor=SURFACE)
+    gs = fig.add_gridspec(2, 2, hspace=0.62, wspace=0.3, left=0.15, right=0.98, top=0.945, bottom=0.095)
+    marker = {family: st["marker"] for family, st in FAMILY_STYLE.items()}
+    # (a, b) uniform tracer in flow B at 0.94 degrees, linear axes in units of 1e-7: FP64 stays on the zero line
+    exponent = -7
+    panels = (("(a) tracer-mass change, uniform tracer, flow B, C96",
+               [("cs", "upwind"), ("cs", "ppm"), ("cs", "linrood7")]),
+              ("(b) the same on lat–lon 0.94° and N96",
+               [("ll", "upwind"), ("ll", "ppm"), ("rg", "upwind")]))
+    for col, (title, picks) in enumerate(panels):
         ax = fig.add_subplot(gs[0, col])
-        for scheme in picks:
+        for family, scheme in picks:
             for prec, ls, tag in (("Float64", "-", "f64"), ("Float32", "--", "f32")):
-                rid = f"{grid}_B_{scheme}_{tag}"
-                pts = [(r["hour"] / 24, r["budget_rel"]) for r in series if r["run_id"] == rid and r["tracer"] == tracer]
-                if pts:
-                    x, y = zip(*sorted(pts))
-                    ax.plot(x, np.array(y) / 10.0**exponent, ls, color=COLOR[scheme],
-                            lw=1.4 if prec == "Float64" else 1.0)
+                rid = f"{FAMILY_GRID[family]}_B_{scheme}_{tag}"
+                pts = [(r["hour"] / 24, r["budget_rel"]) for r in series if r["run_id"] == rid and r["tracer"] == "uniform"]
+                if not pts:
+                    raise RuntimeError(f"{rid}: no uniform-tracer mass series in mass_series.csv")
+                x, y = zip(*sorted(pts))
+                fp64 = prec == "Float64"
+                ax.plot(x, np.array(y) / 10.0**exponent, ls, color=COLOR[scheme], lw=1.4 if fp64 else 1.0,
+                        marker=None if fp64 else marker[family], markevery=(6, 6), ms=4.5, mfc=SURFACE,
+                        mec=COLOR[scheme], mew=0.9)
         ax.axhline(0, color=INK2, lw=0.5)
         ax.set_xlim(0, 12)
         ax.set_xticks(range(0, 13, 3))
         ax.set_xlabel("day")
-        name = "uniform tracer" if tracer == "uniform" else "Gaussian hills"
-        ax.set_title(f"({'ab'[col]}) tracer-mass change, {name}, flow B {grid.upper()}", fontsize=7.5,
-                     color=INK, loc="left")
+        ax.set_title(title, fontsize=7.5, color=INK, loc="left")
         ax.set_ylabel(f"relative change ($10^{{{exponent}}}$)")
         ax.tick_params(labelsize=6.5)
         _style(ax)
-    handles = [plt.Line2D([], [], color=COLOR[s], lw=1.4) for s in picks]
+    schemes = ("upwind", "ppm", "linrood7")
+    handles = [plt.Line2D([], [], color=COLOR[s], lw=1.4) for s in schemes]
     handles += [plt.Line2D([], [], color=INK2, ls="-", lw=1.4), plt.Line2D([], [], color=INK2, ls="--", lw=1.0)]
-    fig.legend(handles, [LABEL[s] for s in picks] + ["FP64", "FP32"], loc="upper center", ncol=5,
-               frameon=False, fontsize=7, bbox_to_anchor=(0.5, 0.525))
+    handles += [plt.Line2D([], [], color=INK2, ls="none", marker=marker[f], mfc="none", mec=INK2, ms=4.5)
+                for f in FAMILY_STYLE]
+    labels = [LABEL[s] for s in schemes] + ["FP64", "FP32"] + [FAMILY_LABEL[f] for f in FAMILY_STYLE]
+    fig.legend(handles, labels, loc="upper center", ncol=8, frameon=False, fontsize=6.5, handlelength=1.8,
+               columnspacing=1.0, handletextpad=0.5, bbox_to_anchor=(0.5, 0.535))
 
-    # (c) uniform tracer: largest |chi - 1| per scheme and precision, cubed sphere, all flows
+    # (c) uniform tracer: largest |chi - 1| per scheme, grid and precision, all flows and resolutions
     ax = fig.add_subplot(gs[1, 0])
     for i, (scheme, label, color) in enumerate(SCHEMES):
-        for prec, mk, dy in (("Float64", "o", -0.15), ("Float32", "s", 0.15)):
-            v = [r["max_abs_chi_minus_1"] for r in rows if r["family"] == "cs" and r["scheme"] == scheme
-                 and r["precision"] == prec and r["tracer"] == "uniform" and r["time"] == "T" and not r["tag"]]
-            if v:
-                ax.plot([max(v)], [i + dy], mk, color=color, mfc=color if prec == "Float64" else "none", ms=5)
+        for family, dy in FAMILY_OFFSET.items():
+            for prec in ("Float64", "Float32"):
+                v = [r["max_abs_chi_minus_1"] for r in rows if r["family"] == family and r["scheme"] == scheme
+                     and r["precision"] == prec and r["tracer"] == "uniform" and r["time"] == "T" and not r["tag"]]
+                if v:
+                    ax.plot([max(v)], [i + dy], marker[family], color=color,
+                            mfc=color if prec == "Float64" else "none", ms=4.5)
     ax.set_xscale("log")
     ax.set_yticks(range(len(SCHEMES)))
     ax.set_yticklabels([l for _, l, _ in SCHEMES])
-    ax.invert_yaxis()
-    ax.set_xlabel("max |χ − 1|, cubed sphere, all flows and resolutions")
-    ax.set_title("(c) uniform tracer: ● FP64, □ FP32", fontsize=7.5, color=INK, loc="left")
+    ax.set_ylim(len(SCHEMES) - 0.45, -0.55)
+    ax.set_xlabel("max |χ − 1|, all flows and resolutions")
+    ax.set_title("(c) uniform tracer: filled FP64, open FP32", fontsize=7.5, color=INK, loc="left")
     ax.tick_params(labelsize=6.5)
     _style(ax)
 
-    # (d) FP32 - FP64 next to the FP64 discretization error, flow B smooth tracer, cubed sphere
+    # (d) FP32 - FP64 next to the FP64 discretization error, flow B smooth tracer, the three grids at 0.94 degrees
     ax = fig.add_subplot(gs[1, 1])
-    row_labels = []
     for i, (scheme, label, color) in enumerate(SCHEMES):
-        sel = [r for r in rows if r["family"] == "cs" and r["scheme"] == scheme and r["flow"] == "B"
-               and r["tracer"] == "gaussian_hills" and r["time"] == "T" and not r["tag"]]
-        for grid_label, dy in (("c48", -0.28), ("c96", 0.0), ("c192", 0.28)):
-            e64 = [r["l2"] for r in sel if r["grid"] == grid_label and r["precision"] == "Float64"]
-            d = [r["fp32_minus_fp64_l2"] for r in sel if r["grid"] == grid_label and r["precision"] == "Float32"]
-            if e64:
-                ax.plot([e64[0]], [i + dy], "o", color=color, ms=4)
-            if d:
-                ax.plot([d[0]], [i + dy], "s", color=color, mfc="none", ms=4)
+        for family, dy in FAMILY_OFFSET.items():
+            sel = [r for r in rows if r["grid"] == FAMILY_GRID[family] and r["scheme"] == scheme and r["flow"] == "B"
+                   and r["tracer"] == "gaussian_hills" and r["time"] == "T" and not r["tag"]]
+            e64 = [r["l2"] for r in sel if r["precision"] == "Float64"]
+            d = [r["fp32_minus_fp64_l2"] for r in sel if r["precision"] == "Float32"]
             if e64 and d:
                 ax.plot([d[0], e64[0]], [i + dy, i + dy], "-", color=color, lw=0.5)
-            if d and i == 0:               # name the three rows once, at the first scheme
-                row_labels.append((i + dy, grid_label.upper()))
+                ax.plot([e64[0]], [i + dy], marker[family], color=color, ms=4.5)
+                ax.plot([d[0]], [i + dy], marker[family], color=color, mfc="none", ms=4.5)
     ax.set_xscale("log")
     ax.set_yticks(range(len(SCHEMES)))
     ax.set_yticklabels([])
-    ax.invert_yaxis()
-    ax.set_xlim(left=ax.get_xlim()[0] * 0.1)
-    for y, text in row_labels:
-        ax.text(ax.get_xlim()[0] * 1.3, y, text, fontsize=5, color=INK2, ha="left", va="center")
-    ax.set_xlabel("normalized ℓ2, flow B Gaussian hills at T")
-    ax.set_title("(d) ● FP64 error, □ FP32 − FP64", fontsize=7.5, color=INK, loc="left")
+    ax.set_ylim(len(SCHEMES) - 0.45, -0.55)
+    ax.set_xlabel("normalized ℓ2, flow B Gaussian hills at T, 0.94°")
+    ax.set_title("(d) filled: FP64 error, open: FP32 − FP64", fontsize=7.5, color=INK, loc="left")
     ax.tick_params(labelsize=6.5)
     _style(ax)
     save(fig, figures, "conservation")
