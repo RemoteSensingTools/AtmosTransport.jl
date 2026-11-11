@@ -1,9 +1,10 @@
 # Refilling a host window in place (`load_transport_window!`, the GPU staging
 # path) must give exactly the window `load_transport_window` builds, halos included.
-using Test, AtmosTransport
+using Test, AtmosTransport, Mmap
 include(joinpath(@__DIR__, "..", "fixtures", "cs_multifile.jl"))
 using .CSDriverHandoffFixtures
 const StagingMD = AtmosTransport.MetDrivers
+const Readers = StagingMD.BinaryReaders
 
 # Field-by-field equality of two windows (arrays by value, `nothing` by identity).
 windows_equal(a::AbstractArray, b::AbstractArray) = a == b
@@ -126,6 +127,88 @@ end
         end
         close(driver)
     end
+    end
+end
+
+# A raw window read is split into concurrent `pread`s: four on local file
+# systems (and when the file system cannot be queried); on NFS four for a
+# window already in the page cache, else one. The bytes read do not depend on
+# the split.
+@testset "Raw window reads: split by file system, same bytes" begin
+    mktempdir() do dir   # a local directory on CI (no NFS there)
+        local_dir = !Readers._on_nfs(dir)
+        @test Readers.window_read_split(dir) isa Readers.ConcurrentWindowReads || !local_dir
+        @test Readers.window_read_split(joinpath(dir, "missing", "file.bin")) isa Readers.ConcurrentWindowReads
+        @test Readers.window_read_split("") isa Readers.ConcurrentWindowReads
+        path = joinpath(dir, "chunks.bin")
+        cs_handoff_fixture(path, [1.0, 3.0, 8.0]; FT = Float32)
+        driver = TransportBinaryDriver(path; FT = Float32, arch = CPU(), Hp = 1)
+        reader = driver.reader
+        if local_dir
+            @test reader.read_split isa Readers.ConcurrentWindowReads
+            @test occursin("window reads:  4 concurrent preads", sprint(show, reader))
+        end
+        h = reader.header
+        for win in (2, 1, 3)
+            offset = Readers._transport_window_offset(reader, win)
+            nbytes = h.elems_per_window * sizeof(Float32)
+            local_dir && @test Readers.window_read_chunks(reader.read_split, reader.data,
+                                                          offset * sizeof(Float32), nbytes) == 4
+            expected = reader.data[offset .+ (1:h.elems_per_window)]
+            position = h.header_bytes + offset * sizeof(Float32)
+            for chunks in (Readers.NFS_WINDOW_READ_CHUNKS, 2, 3, Readers.LOCAL_WINDOW_READ_CHUNKS)
+                buffer = fill(NaN32, h.elems_per_window)
+                Readers._concurrent_pread!(buffer, reader.io, position, chunks)
+                @test reinterpret(UInt32, buffer) == reinterpret(UInt32, expected)
+            end
+        end
+        close(driver)
+    end
+end
+
+# The NFS rule's page-cache query (`mincore` on a file mapping): a freshly
+# written file is cached; after `fsync` and `POSIX_FADV_DONTNEED` Linux drops
+# it unless the file lives in memory (tmpfs). Processes that cannot see a
+# file's page cache read NFS windows with one `pread`.
+@testset "Window residency from the page cache" begin
+    supported = Sys.islinux() || Sys.isapple()
+    mktempdir() do dir
+        page = Readers._page_size()
+        npages = 4 * Readers.RESIDENCY_SAMPLE_PAGES   # sampled, not queried whole
+        path = joinpath(dir, "resident.bin")
+        write(path, rand(UInt8, npages * page))
+        open(path) do io
+            data = Mmap.mmap(io, Vector{UInt8}, npages * page)
+            split = Readers.ResidencyWindowReads()
+            fraction(first, n) = Readers.resident_fraction!(split.pages, data, first, n)
+            if supported
+                @test fraction(0, sizeof(data)) == 1.0                 # sampled runs
+                @test fraction(100, 5 * page) == 1.0                   # unaligned, whole
+                @test Readers.window_read_chunks(split, data, 0, sizeof(data)) == 4
+            else
+                @test fraction(0, sizeof(data)) === nothing
+                @test Readers.window_read_chunks(split, data, 0, sizeof(data)) == 1
+            end
+            @test_throws BoundsError fraction(1, sizeof(data))
+            @test Readers.window_read_chunks(Readers.SequentialWindowReads(), data, 0, sizeof(data)) == 1
+            # Linux shows the page cache only to the owner or a writer.
+            @test Readers.page_cache_visible(path) == supported
+            @test_throws ArgumentError fraction(0, -1)
+            if Sys.islinux() && ccall(:geteuid, Cuint, ()) != 0 && isfile("/etc/passwd") &&
+               stat("/etc/passwd").uid != ccall(:geteuid, Cuint, ())
+                @test !Readers.page_cache_visible("/etc/passwd")
+            end
+            @test !Readers.page_cache_visible(joinpath(dir, "missing.bin")) || Sys.isapple()
+            if Sys.islinux() && Base.Filesystem.diskstat(dir).ftype != 0x01021994   # not tmpfs
+                @test ccall(:fsync, Cint, (Cint,), fd(io)) == 0
+                @test ccall(:posix_fadvise, Cint, (Cint, Int64, Int64, Cint), fd(io), 0, 0, 4) == 0
+                # The kernel may keep pages it was advised to drop; the split
+                # follows whatever residency it reports.
+                cold = fraction(0, sizeof(data)) < Readers.NFS_RESIDENT_FRACTION_FOR_SPLIT
+                @test Readers.window_read_chunks(split, data, 0, sizeof(data)) == (cold ? 1 : 4)
+            end
+            finalize(data)
+        end
     end
 end
 

@@ -365,7 +365,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryReaders`
 
-Size: **98265 bytes / 28075.7 tokens**. Public names: **53**.
+Size: **109707 bytes / 31344.9 tokens**. Public names: **53**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/State`.
 
@@ -373,12 +373,13 @@ Used by: `src`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/MetDrivers`, `
 
 Files:
 
-- `BinaryReaders.jl` (4106 bytes)
-- `cubed_sphere_driver.jl` (24917 bytes)
-- `cubed_sphere_reader.jl` (9692 bytes)
+- `BinaryReaders.jl` (4133 bytes)
+- `cubed_sphere_driver.jl` (25155 bytes)
+- `cubed_sphere_reader.jl` (10087 bytes)
 - `driver.jl` (26779 bytes)
 - `inspect.jl` (5560 bytes)
-- `reader.jl` (27211 bytes)
+- `reader.jl` (27609 bytes)
+- `window_reads.jl` (10384 bytes)
 
 Forward ↔ adjoint mirrors:
 

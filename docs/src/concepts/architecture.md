@@ -201,6 +201,22 @@ Either way the device window equals the upload of a window loaded on the
 host. Other binaries are converted on the host into a page-locked staging
 window.
 
+On Linux and macOS the number of concurrent reads per window depends on the
+file system of the binary, which the reader identifies once when it opens the
+file (Linux `statfs` magic number, macOS `statfs` type name). Four concurrent
+reads copy a page-cache-warm C90 window (156 MB) about three to four times
+faster than one read, but on NFS they defeat sequential readahead: client-cold
+windows of files nobody had read recently came at 0.72-0.82 GB/s forward with
+one read against 0.40-0.49 GB/s with four (0.46 against 0.36-0.41 GB/s in
+reverse window order). So on NFS each window read first asks the page cache
+how much of the window is resident (`mincore` on the reader's memory map,
+1024 sampled pages, about 40 µs): four reads when at least 90 % is, one
+otherwise. Local file systems, and file systems that cannot be identified,
+always use four reads. Linux (5.x) shows a file's page cache through
+`mincore` only to its owner, to root, or to a process that may write the file
+(others are told every page is resident), so other readers of an NFS binary
+always use one read. The bytes read do not depend on the split.
+
 The detailed operator ordering is documented in [Operators](@ref Operator-concepts). The mass
 invariant is derived in [Mass conservation](@ref).
 

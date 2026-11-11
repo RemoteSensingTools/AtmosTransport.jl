@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Cubed-sphere GPU window reads from NFS use one `pread` for a window that is
+  not in the page cache and four concurrent ones for a window that is (at
+  least 90 % of its pages, sampled with `mincore`); the reader detects NFS when
+  it opens a binary (Linux and macOS) and keeps four reads elsewhere. On Linux
+  a process that neither owns nor may write the binary cannot see its page
+  cache and always uses one read on NFS. Four reads defeated NFS readahead:
+  first reads of C90 windows ran at 0.40 GB/s with the old reader and at
+  0.64-0.79 GB/s now, while cached windows keep 19-25 GB/s. Results are
+  bit-identical.
 - **GPU fix, total surface-pressure recovery:** the kernels behind
   `recover_total_surface_pressure_staged!` flagged an invalid column with an
   atomic store, which CUDA cannot compile with current Atomix/UnsafeAtomics
