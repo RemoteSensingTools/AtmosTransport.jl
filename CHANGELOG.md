@@ -13,6 +13,21 @@
   `julia --project=test` resolves CUDA, GPUCompiler and LLVM together and the
   GPU sections of the core tests run on GPU hosts instead of being skipped.
   Existing checkouts refresh their test Manifest once (see `test/README.md`).
+- **Result change for ERA5 TM5 convection (`ec2tm_from_rates!`):** the
+  downdraft detrainment archived on GRIB level `k` is now read as that of
+  layer `k - 1`, the layer above. The IFS steps its downdraft from the layer
+  above (`-pmfd(jk) + pmfd(jk-1) + pmfdde_rate(jk)`; ICON's IFS port,
+  `mo_cudescn.f90`, `mo_cumaster.f90`), so the same-layer reading TM5 uses
+  pairs each layer's flux change with the detrainment of the layer above it.
+  On ERA5 N320 that turned 20–25 % of the downdraft detrainment into
+  negative entrainment, which the sign repair then moved within the layer; with
+  the shift the repair moves about 1 % or less above the lowest layer. The
+  updraft and the archived downdraft flux are unchanged (the rebuilt interface
+  fluxes are still the input). `ddrf_layer_above = false` restores TM5's
+  reading. Binaries of this conversion record
+  `tm5_ec2tm_convention = "tm5_halflevel_v3"`; readers reject ERA5-derived TM5
+  sections with an older value (regenerate them). Binaries with the CATRINE
+  TM5 attachment are unaffected.
 - **Stop rules for the cubed-sphere 4D-Var optimizers:** `CSLBFGS` and
   `CSGradientDescent` accept `cost_rtol` (with `cost_rtol_improvements`),
   `stall_evaluations`, `max_evaluations` and a `callback`, checked after every

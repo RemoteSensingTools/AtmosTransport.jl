@@ -106,14 +106,17 @@ derived from ERA5 by `ec2tm_from_rates!`; its current value is
 const TM5_EC2TM_CONVENTION_KEY = "tm5_ec2tm_convention"
 
 """
-Current ERA5 → TM5 convection convention, as in TM5 (`tmm.F90`,
+Current ERA5 → TM5 convection convention. As in TM5 (`tmm.F90`,
 `ECconv_to_TMconv`): ERA5 UDMF/DDMF level `k` is the flux through the top of
 layer `k`, none crosses the ground, and the cloud (downdraft) top is the layer
-above the first interface that carries flux. ERA5-derived TM5 sections without
-this value were built with the convention of issue #54 and are rejected when a
-binary is opened.
+above the first interface that carries flux. Unlike TM5: the downdraft
+detrainment archived on level `k` is that of layer `k - 1`, as the IFS stores
+it (`ec2tm_from_rates!`, `ddrf_layer_above`). ERA5-derived TM5 sections without
+this value were built with the convention of issue #54 or with TM5's
+same-layer downdraft detrainment (`"tm5_halflevel_v2"`) and are rejected when
+a binary is opened.
 """
-const TM5_EC2TM_CONVENTION = "tm5_halflevel_v2"
+const TM5_EC2TM_CONVENTION = "tm5_halflevel_v3"
 
 """
 GEOS FV3 dynamics time step [s]. GEOS-FP and GEOS-IT accumulate the mass fluxes

@@ -456,9 +456,18 @@ flux as the cloud-top layer, one layer too low; the closure then moved the
 cloud-top detrainment to the layer of largest entrainment. On 3000 deep ERA5
 columns this lifted 14 % less boundary-layer tracer above 500 hPa in a 3 h TM5
 step and put the highest detraining layer about 4 levels too low; mass was
-conserved. Binaries of the fixed conversion record
-`tm5_ec2tm_convention = "tm5_halflevel_v2"`, and readers reject ERA5-derived
-TM5 sections without it (see the [Conventions cheat sheet](@ref)).
+conserved. Binaries of the fixed conversion recorded
+`tm5_ec2tm_convention = "tm5_halflevel_v2"`.
+
+The conversion also departs from TM5 in one place. The IFS steps its downdraft
+from the layer above, so the downdraft detrainment it archives on level `k` is
+that of layer `k - 1`; TM5's `ECconv_to_TMconv` reads it on layer `k`, which on
+ERA5 turns about a fifth of the downdraft detrainment into negative
+entrainment that the sign repair then moves. `ec2tm_from_rates!` reads it on
+the layer above (`ddrf_layer_above = false` gives TM5's reading). Binaries of
+this conversion record `tm5_ec2tm_convention = "tm5_halflevel_v3"`, and readers
+reject ERA5-derived TM5 sections without it (see the
+[Conventions cheat sheet](@ref)).
 
 #### [Level merging (`n_merge > 1`)](@id tm5-level-merging)
 
