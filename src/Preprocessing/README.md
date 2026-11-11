@@ -186,8 +186,10 @@ ERA5 N320 and MERRA-2 to CS:
 - ERA5 → TM5 convection (`ec2tm_from_rates!`): UDMF/DDMF level `k` is the
   flux through the top of layer `k`, so callers pass `[GRIB levels 1..Nz; 0]`
   (interface `Nz + 1`, the ground, must be zero), and the cloud top is the
-  layer above the first interface with flux, as in TM5. Writers record
-  `era5_tm5_convection_header` (`tm5_ec2tm_convention = "tm5_halflevel_v2"`);
+  layer above the first interface with flux, as in TM5; the downdraft
+  detrainment of level `k` is read as that of layer `k - 1`, as the IFS
+  stores it (TM5 reads it on layer `k`). Writers record
+  `era5_tm5_convection_header` (`tm5_ec2tm_convention = "tm5_halflevel_v3"`);
   readers reject ERA5-derived TM5 sections without it.
 
 ## Related Docs And Tests
