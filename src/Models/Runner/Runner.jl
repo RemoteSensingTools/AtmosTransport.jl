@@ -28,7 +28,7 @@ using ...Operators.StepPlans: AirMassResetStage
 # The cubed-sphere adjoint replays the plan a DrivenSimulation executes
 # (`CSStepSchedule(sim)`, `require_adjoint_support(sim)`, adjoint_schedule.jl).
 import ...Adjoints
-using ...Adjoints: CSStepSchedule, require_adjoint_support
+using ...Adjoints: CSStepSchedule, HostCSWindowSource, require_adjoint_support
 using ...MetDrivers
 using ...MetDrivers: same_window_layout, AbstractRawWindowStaging, raw_window_staging,
                     read_window_payload!, unpack_window_payload!

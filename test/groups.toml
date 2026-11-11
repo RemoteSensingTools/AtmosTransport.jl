@@ -449,7 +449,7 @@ paths = [
 ]
 
 [topics.adjoint_footprint]
-description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, the AdjointTape (storage pools, full and stride checkpointing, tape compaction and limiter codes) and the bitwise tape gate"
+description = "Adjoint kernels and footprints: Lin-Rood and PPM transposes, footprint finite-difference checks, the AdjointTape (storage pools, full and stride checkpointing, tape compaction and limiter codes), the bitwise tape gate and streamed met window sources"
 files = [
     "core/test_linrood_kernel_adjoints.jl",
     "core/test_cs_adjoint_production_parity.jl",
@@ -461,6 +461,7 @@ files = [
     "core/test_cs_tape_compaction.jl",
     "core/test_cs_auto_tape.jl",
     "core/test_cs_tape_storage.jl",
+    "core/test_cs_window_source.jl",
 ]
 paths = [
     "src/Adjoints/**",

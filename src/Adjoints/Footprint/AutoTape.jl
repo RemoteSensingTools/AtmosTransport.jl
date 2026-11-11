@@ -73,18 +73,91 @@ function _size_tape!(runtime::_TapeRuntime, replay::_CSReplay, n::Int)
     if replay.meteo.binary_substeps && cs_advection_style(replay.advection) isa CSSplitSweepStyle
         return _closed_tape_size(replay, n)
     end
+    return _counted_tape_size!(runtime, replay, n, replay.source, cs_advection_style(replay.advection))
+end
+
+_counted_tape_size!(runtime::_TapeRuntime, replay::_CSReplay, n::Int, _source, _style) =
+    _every_step_tape_size!(runtime, replay, n)
+
+# Every step counted from step 1, from the replay's initial state (a counting
+# run keeps no met, so a streamed source's windows are released as it goes).
+function _every_step_tape_size!(runtime::_TapeRuntime, replay::_CSReplay, n::Int)
     initial = _replay_snapshot(replay)
     counter = _CSCountingRecorder(StateTape(), replay.advection)
     try
         _replay_steps!(replay, 1:n; recorder = counter)
     finally
+        _release_replay_windows!(replay)
         _replay_restore!(replay, initial)
         _release_snapshot!(initial)
-        _release_replay_windows!(replay)
     end
     _store_tape_count!(runtime, counter)
     return _TapeSizing(counter.layouts, counter.pending_slot_bytes .> 0, _replay_m(replay),
                        replay.steps.window[1:n])
+end
+
+# Lin–Rood with a streamed source: count one window, not the period. A
+# Lin–Rood step has a fixed record structure (one horizontal operator per
+# half palindrome, no CFL subcycles) and stages every convection air mass at
+# its call (no record waits for a later step), so a step's records follow
+# from the stages it runs: its class, whether it is in window 1 and whether
+# it is its window's first or last step. Window 1 and the longest later window
+# are counted from the initial state with a fresh counter, and every step
+# takes the layout of the counted step of its class (with its convection step
+# index `entry[4]` moved by the same offset). Should a step stage more pool
+# slots than its class did, recording throws `TapeReservationExceeded`; the
+# Lin–Rood horizontal records, outside the pool, only enter the device-peak
+# estimate. A run with a class the two windows do not have (a one-step
+# window, a run of window 1 only ending inside it) counts every step.
+function _counted_tape_size!(runtime::_TapeRuntime, replay::_CSReplay, n::Int,
+                             ::AbstractStreamedCSWindowSource, ::CSLinRoodStyle)
+    sizing = _class_tape_size(replay, n)
+    return sizing === nothing ? _every_step_tape_size!(runtime, replay, n) : sizing
+end
+
+_step_class(steps::_ResolvedSchedule, s::Int) = (steps.window[s] == 1, steps.first[s], steps.last[s])
+
+function _class_tape_size(replay::_CSReplay, n::Int)
+    steps = replay.steps
+    window = view(steps.window, 1:n)
+    ranges = UnitRange{Int}[]
+    first_window = findall(==(1), window)
+    push!(ranges, first(first_window):last(first_window))
+    later = [findall(==(w), window) for w in 2:window[n]]
+    if !isempty(later)
+        longest = argmax(length, later)
+        push!(ranges, first(longest):last(longest))
+    end
+    covered = Set(_step_class(steps, s) for range in ranges for s in range)
+    all(s -> _step_class(steps, s) in covered, 1:n) || return nothing
+    counted = Dict{NTuple{3, Bool}, Tuple{Int, Vector{Any}, Bool}}()
+    initial = _replay_snapshot(replay)
+    try
+        for range in ranges
+            _replay_restore!(replay, initial)
+            counter = _CSCountingRecorder(StateTape(), replay.advection)
+            _replay_steps!(replay, range; recorder = counter)
+            for (k, s) in enumerate(range)
+                get!(counted, _step_class(steps, s)) do
+                    (s, s <= length(counter.layouts) ? counter.layouts[s] : Any[],
+                     counter.pending_slot_bytes[k] > 0)
+                end
+            end
+        end
+    finally
+        _release_replay_windows!(replay)
+        _replay_restore!(replay, initial)
+        _release_snapshot!(initial)
+    end
+    layouts = Vector{Vector{Any}}(undef, n)
+    pending = falses(n)
+    for s in 1:n
+        r, layout, waiting = counted[_step_class(steps, s)]
+        layouts[s] = Any[length(entry) > 3 ? (entry[1], entry[2], entry[3], entry[4] + s - r) : entry
+                         for entry in layout]
+        pending[s] = waiting
+    end
+    return _TapeSizing(layouts, collect(pending), _replay_m(replay), steps.window[1:n])
 end
 
 function _segment_counts(size::_TapeSizing, steps::AbstractUnitRange)
@@ -346,7 +419,7 @@ end
 function _prepare_tape!(runtime::_TapeRuntime, replay::_CSReplay, n::Int, nstarts::Int = 1)
     runtime.sizing === nothing || return runtime.tape
     request = runtime.request
-    _require_tape_supported(replay.advection, request)
+    _require_tape_supported(replay.advection, request, replay.source)
     size = _size_tape!(runtime, replay, n)
     opstate = _snapshot_operator_state(replay)
     snapbytes = 2 * _bytes_per_panel_tuple(_replay_m(replay)) + _snapshot_bytes(opstate)
@@ -387,11 +460,12 @@ end
 _begin_taped_run(replay::_CSReplay, runtime::_TapeRuntime, n::Int; nstarts::Int = 1) =
     _begin_taped_run(_prepare_tape!(runtime, replay, n, nstarts).checkpoint, replay, runtime, n)
 
-_require_tape_supported(scheme, tape::AutoTape) = begin
+_require_tape_supported(scheme, tape::AutoTape, source = nothing) = begin
     tape.storage === nothing || _require_tape_storage(scheme, tape.storage)
     content = _tape_content(tape)
     _require_tape_content(content, scheme)
     tape.checkpoint === nothing || _check_tape_schedule(content, tape.checkpoint)
+    _require_window_tape(source, tape)
     nothing
 end
 

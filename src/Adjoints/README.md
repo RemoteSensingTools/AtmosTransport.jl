@@ -22,8 +22,10 @@ remain available through Adjoints and as qualified AtmosTransport names.
   read, so one scratch serves every solve.
 - `LinRoodTape.jl`: Lin–Rood horizontal record and reverse composition (fenced).
 - `Footprint/`: production-step replay (reading its met through a window
-  source, one met window at a time), recording, reverse walk, checkpointing
-  (Full, Stride and met-window-aligned `MetWindowCheckpoint` segments).
+  source, one met window at a time: resident, or streamed from host memory
+  through a few device slots with `HostCSWindowSource`), recording, reverse
+  walk, checkpointing (Full, Stride and met-window-aligned
+  `MetWindowCheckpoint` segments, the only schedule a streamed source takes).
 - `Inversion/`: observation binding/sampling/IO and surface-flux solvers.
 
 ## Depends on

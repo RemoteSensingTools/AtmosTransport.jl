@@ -117,6 +117,11 @@ _CSCountingRecorder(content::AbstractTapeContent, scheme) =
     _CSCountingRecorder(content, cs_advection_style(scheme), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         0.0, nothing, false, false, 0, nothing, nothing, Int[], Vector{Any}[], Int[])
 
+# Its layouts reference arrays (the staged panels, which may be a window's
+# reset target) only for their shapes and element types, which every window
+# shares, so a counting run releases windows as an untaped run does.
+_retains_windows(::_CSCountingRecorder) = false
+
 # ---------------------------------------------------------------------------
 # What staging and recording do
 # ---------------------------------------------------------------------------

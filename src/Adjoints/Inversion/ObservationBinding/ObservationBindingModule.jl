@@ -2,7 +2,7 @@ module ObservationBinding
 using ....ConfigChecks: parse_choice
 using ....Operators.Advection: NoLimiter
 using ....Operators.Advection: PPMScheme
-using ...Footprint: _validate_step_sequences
+using ...Footprint: _call_nsteps
 using ....Grids: cs_definition
 using ....Grids: cs_definition_tag
 using ....Grids: panel_convention

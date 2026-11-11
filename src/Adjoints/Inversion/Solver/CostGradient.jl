@@ -451,6 +451,16 @@ last assimilated step is taped but not walked: the tape (and the reservation
 of a `MmapCSTapeStorage`) covers the steps through the last observation with
 `assimilate = true`.
 
+`met_source` (an `AbstractCSWindowSource`, e.g. the `HostCSWindowSource` of
+`cs_adjoint_inputs(sim; residency = :host)`) supplies the met per window
+instead of the per-step arguments: pass `nothing` for the three flux vectors
+and omit `diffusion_op`, `diffusion_layer_thickness`, `convection_forcing`
+and `flux_scale`. A streamed source needs a `MetWindowCheckpoint` tape
+(`tape = AutoTape(; checkpoint = MetWindowCheckpoint())` or an explicit
+`AdjointTape`), also for a cost-only evaluation; anything else is an
+`ArgumentError` before the forward run. `cs_surface_flux_4dvar_optimize`
+reuses the source in every evaluation.
+
 `evaluation = CSCostOnly()` computes the cost and the simulated values only:
 the forward run without a tape and no reverse pass (the result's `gradients`
 are empty; `tape` is validated but opens no memory); the default
@@ -511,6 +521,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
                                 mesh::CubedSphereMesh,
                                 observations,
                                 controls;
+                                met_source::Union{Nothing, AbstractCSWindowSource} = nothing,
                                 scheme::CSAdjointSupportedScheme,
                                 dt = nothing,
                                 schedule = nothing,
@@ -526,7 +537,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
                                 preconditioner = nothing,
                                 column_met = nothing)
     FT = eltype(panels_rm0[1])
-    nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+    nsteps = _call_nsteps(panels_am_steps, panels_bm_steps, panels_cm_steps, met_source)
     observation_vec = _observation_vector(observations)
     control_vec = _control_vector(controls)
     isempty(observation_vec) && throw(ArgumentError("at least one CSObservation is required"))
@@ -536,7 +547,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_layer_thickness, nsteps)
     _require_cs_convection_workspace(convection_op, convection_workspace)
     # Tape checks before the forward run, not after it.
-    _require_tape_supported(scheme, runtime.request)
+    _require_tape_supported(scheme, runtime.request, met_source)
 
     seen = Set{Symbol}()
     for control in control_vec
@@ -571,7 +582,7 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
     replay, step_dt = _observation_replay(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, observation_vec;
-        scheme, dt, schedule,
+        met_source, scheme, dt, schedule,
         flux_scale = FT(flux_scale),
         cfl_limit, emission_rates,
         diffusion_op, diffusion_layer_thickness, diffusion_meteo,
@@ -611,8 +622,11 @@ function _cs_surface_flux_4dvar(runtime::_TapeRuntime, panels_rm0, panels_m0,
                                      mesh, prototype = panels_rm0[1]))
         (; sampled.simulated, residuals, observation_cost, sampled.stencils)
     finally
-        _end_taped_run!(run)
-        _release_replay_windows!(replay)
+        try
+            _end_taped_run!(run)
+        finally
+            _release_replay_windows!(replay)
+        end
     end
 
     # Either: (a) apply T'^T to physical gradient and add χ for the

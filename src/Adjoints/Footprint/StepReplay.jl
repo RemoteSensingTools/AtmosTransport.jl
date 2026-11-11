@@ -73,7 +73,9 @@ Unsupported chemistry is rejected by the adjoint setup guard.
   `w > 1` and, with the window contract, to `window_end_air_mass[w]` before
   the window-end physics (vectors of `NTuple{6}` halo-padded panels, one per
   window; a reset refreshes the halos of its target in place, as production
-  does).
+  does). Pass `nothing` when a met source (`met_source`) carries the targets
+  with its windows; the replay checks that the plan's targets exist when it
+  is built.
 
 The default (`CSStepSchedule(window_dt = dt)`) is one step per window and the
 full operator suite at every step, `TransportModel.step!`'s composition.
@@ -124,6 +126,7 @@ _has_reset(stages::Tuple) = any(s -> s isa AirMassResetStage, stages)
 
 function _validate_reset_targets(stages::Tuple, targets, name, nwindows)
     if _has_reset(stages)
+        targets === nothing && return nothing      # carried by a met source's windows
         targets isa AbstractVector || throw(ArgumentError(
             "the plan resets the air mass ($(name)); pass one NTuple{6} of air-mass panels per met window"))
         nwindows === nothing || length(targets) == nwindows || throw(ArgumentError(
@@ -276,8 +279,8 @@ _sequence_at(v, _s) = v
 
 """
     _build_cs_replay(panels_rm0, panels_m0, am_steps, bm_steps, cm_steps, mesh;
-                     scheme, schedule, nsteps, flux_scale, surface_flux,
-                     emission_rates, diffusion_op,
+                     met_source = nothing, scheme, schedule, nsteps, flux_scale,
+                     surface_flux, emission_rates, diffusion_op,
                      diffusion_layer_thickness, diffusion_meteo, convection_op,
                      convection_forcing, convection_workspace) -> _CSReplay
 
@@ -288,14 +291,21 @@ surface-flux operator whose per-cell rates at step `s` are
 palindrome center is one diffusion solve `V(dt)`, as production runs a
 configuration without surface sources. The caller's convection workspace is
 used, with the persistent state of a fresh run. The replay owns its diffusion
-workspace and the reverse solves' scratch; `diffusion_layer_thickness` (six
-panels, or one per step: a met window's steps share its tuple) is copied into
-that workspace at each step and is never written. The met inputs are grouped
-by met window into a `ResidentCSWindowSource` (`WindowSource.jl`), which
-validates each window once.
+workspace and the reverse solves' scratch; the window's layer thickness is
+copied into that workspace at each step and is never written.
+
+The met is read through a window source (`WindowSource.jl`): `met_source`,
+or else a `ResidentCSWindowSource` grouping the per-step inputs
+(`am_steps`…, `diffusion_op`, `diffusion_layer_thickness` — six panels, or
+one per step: a met window's steps share its tuple — and
+`convection_forcing`) by met window, which validates each window once. A
+given source is checked against the run here, without acquiring a window:
+its steps per window against the schedule for steps `1:nsteps`, and its
+window layout against the replay's diffusion workspace and initial air mass.
 """
 function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                           panels_cm_steps, mesh::CubedSphereMesh;
+                          met_source = nothing,
                           scheme, schedule::CSStepSchedule, nsteps::Int,
                           flux_scale = one(eltype(panels_m0[1])),
                           surface_flux::Bool = true,
@@ -307,9 +317,7 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
                           convection_forcing = nothing,
                           convection_workspace = nothing)
     FT = eltype(panels_m0[1])
-    Nz = size(panels_m0[1], 3)
-    1 <= nsteps <= length(panels_am_steps) || throw(ArgumentError(
-        "replay of $nsteps steps with $(length(panels_am_steps)) flux steps"))
+    nsteps >= 1 || throw(ArgumentError("a replay needs at least one step; got $nsteps"))
     steps = _resolve_schedule(schedule, nsteps, FT)
     surface_flux || emission_rates === nothing || throw(ArgumentError(
         "emission rates given to a replay without a surface-flux operator"))
@@ -319,21 +327,22 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
     state = CubedSphereState(DryBasis, mesh, m; (_REPLAY_TRACER => rm,)...)
     fill_panel_halos!(state.air_mass, mesh; dir = 0)
     fill_panel_halos!(state.tracers_raw, mesh; dir = 0)
-    grid = _replay_grid(mesh, Nz)
+    grid = _replay_grid(mesh, size(panels_m0[1], 3))
     advection_ws = _cs_advection_workspace_for(scheme, state, grid)
 
-    uses_diffusion = any(s -> !(_sequence_at(diffusion_op, s) isa NoDiffusion), 1:nsteps)
+    uses_diffusion = _uses_diffusion(met_source, diffusion_op, nsteps)
     diffusion_ws = uses_diffusion ? DiffusionWorkspace(state) : nothing
     # One scratch for every reverse solve: each overwrites a column before it
     # reads it, so scratch carries nothing between solves (or windows).
     diffusion_scratch = uses_diffusion ? map(similar, diffusion_ws.factors) : nothing
-    source = ResidentCSWindowSource(panels_am_steps, panels_bm_steps, panels_cm_steps, steps.window;
-                                    flux_scale = FT(flux_scale), convection_forcing, diffusion_op,
-                                    layer_thickness = diffusion_layer_thickness,
-                                    start_air_mass = schedule.window_start_air_mass,
-                                    end_air_mass = schedule.window_end_air_mass,
-                                    layer_thickness_like = uses_diffusion ? diffusion_ws.layer_thickness : nothing,
-                                    air_mass_like = panels_m0)
+    layer_thickness_like = uses_diffusion ? diffusion_ws.layer_thickness : nothing
+    source = _window_source(met_source, panels_am_steps, panels_bm_steps, panels_cm_steps, steps, schedule;
+                            flux_scale = FT(flux_scale), convection_forcing, diffusion_op,
+                            diffusion_layer_thickness, layer_thickness_like, air_mass_like = panels_m0)
+    # The reset-target fields of the replay meteorology are typed from the
+    # source's window layout (every window's targets have its types).
+    layout = window_layout(source)
+    _check_reset_targets(schedule.plan, layout)
 
     rate_buffer = surface_flux ? _zero_surface_rates(mesh, panels_m0[1]) : nothing
     emissions = surface_flux ?
@@ -342,15 +351,75 @@ function _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_step
     convection_op isa NoConvection || reset_operator_state!(convection_workspace)
 
     meteo = _CSReplayMeteo(schedule.start_time, schedule.binary_substeps, diffusion_meteo,
-                           _first_target(schedule.window_start_air_mass),
-                           _first_target(schedule.window_end_air_mass))
+                           layout.start_air_mass, layout.end_air_mass)
     return _CSReplay(schedule.plan, steps, state, grid, mesh, source, _HeldWindow[], scheme,
                      advection_ws, diffusion_ws, diffusion_scratch, emissions, rate_buffer,
                      emission_rates, convection_op, convection_workspace, schedule.chemistry, meteo)
 end
 
-_first_target(::Nothing) = nothing
-_first_target(targets) = first(targets)
+# Whether any step diffuses: from the per-step operators, or from the
+# windows of a source (a streamed source's windows share one layout).
+_uses_diffusion(::Nothing, diffusion_op, nsteps::Int) =
+    any(s -> !(_sequence_at(diffusion_op, s) isa NoDiffusion), 1:nsteps)
+_uses_diffusion(source::AbstractCSWindowSource, _op, _nsteps) =
+    !(window_layout(source).diffusion_op isa NoDiffusion)
+_uses_diffusion(source::ResidentCSWindowSource, _op, _nsteps) =
+    any(met -> !(met.diffusion_op isa NoDiffusion), source.windows)
+
+# The window source of a replay: the per-step inputs grouped by met window, or
+# the caller's source, checked against the run.
+function _window_source(::Nothing, am, bm, cm, steps::_ResolvedSchedule, schedule::CSStepSchedule;
+                        flux_scale, convection_forcing, diffusion_op, diffusion_layer_thickness,
+                        layer_thickness_like, air_mass_like)
+    nsteps = length(steps.window)
+    nsteps <= length(am) || throw(ArgumentError(
+        "replay of $nsteps steps with $(length(am)) flux steps"))
+    return ResidentCSWindowSource(am, bm, cm, steps.window; flux_scale, convection_forcing, diffusion_op,
+                                  layer_thickness = diffusion_layer_thickness,
+                                  start_air_mass = schedule.window_start_air_mass,
+                                  end_air_mass = schedule.window_end_air_mass,
+                                  layer_thickness_like, air_mass_like)
+end
+
+function _window_source(source::AbstractCSWindowSource, _am, _bm, _cm, steps::_ResolvedSchedule,
+                        schedule::CSStepSchedule; layer_thickness_like, air_mass_like, _kwargs...)
+    schedule.window_start_air_mass === nothing && schedule.window_end_air_mass === nothing ||
+        throw(ArgumentError("the met source carries the air-mass reset targets of its windows; build " *
+                            "the schedule without window_start_air_mass and window_end_air_mass"))
+    _check_window_steps(source, steps)
+    _check_window_met(window_layout(source), layer_thickness_like, air_mass_like)
+    return source
+end
+
+# The run's steps by window must be the source's: window `w` of the source
+# has `window_steps(source)[w]` steps, and each step of the run lies in the
+# window the schedule gives it (a run may end inside a window).
+function _check_window_steps(source::AbstractCSWindowSource, steps::_ResolvedSchedule)
+    counts = window_steps(source)
+    nsteps = length(steps.window)
+    s = 0
+    for (w, n) in enumerate(counts), _ in 1:n
+        s += 1
+        s > nsteps && return nothing
+        steps.window[s] == w || throw(ArgumentError(
+            "the met source puts step $s in window $w; the schedule puts it in window $(steps.window[s])"))
+    end
+    s >= nsteps || throw(ArgumentError("the met source has $s steps; the run has $nsteps"))
+    return nothing
+end
+
+# A plan that resets the air mass reads the target of every window it enters;
+# the windows carry one exactly when the plan reads it.
+function _check_reset_targets(plan::StepPlan, layout::CSWindowMet)
+    for (stages, target, name) in ((plan.window_advance, layout.start_air_mass, "window_start_air_mass"),
+                                   (plan.window_end, layout.end_air_mass, "window_end_air_mass"))
+        _has_reset(stages) == (target !== nothing) || throw(ArgumentError(_has_reset(stages) ?
+            "the plan resets the air mass ($name); pass one NTuple{6} of air-mass panels per met window " *
+            "in the schedule, or a met source whose windows carry them" :
+            "the met windows carry $name, but the plan has no air-mass reset that reads it"))
+    end
+    return nothing
+end
 
 # ---------------------------------------------------------------------------
 # The windows the replay holds
@@ -359,6 +428,7 @@ _first_target(targets) = first(targets)
 # The met of window `w`, acquired from the source unless the replay holds it.
 # A recording run (`retain = true`) retains every window it reads; the
 # windows no recording has read are released when the next one is acquired.
+# An untaped run moves forward, so it hints the next window to the source.
 function _window_met!(r::_CSReplay, w::Int, retain::Bool)
     for held in Iterators.reverse(r.leases)      # the current window is the last one acquired
         held.lease.met.window == w || continue
@@ -368,6 +438,7 @@ function _window_met!(r::_CSReplay, w::Int, retain::Bool)
     _release_windows!(r, held -> !held.retained)
     lease = acquire_window!(r.source, w)
     push!(r.leases, _HeldWindow(lease, retain))
+    !retain && w < window_count(r.source) && prefetch_window!(r.source, w + 1)
     return lease.met
 end
 
@@ -380,19 +451,27 @@ and in their `finally` blocks.
 """
 _release_replay_windows!(r::_CSReplay) = _release_windows!(r, _ -> true)
 
+# Each lease leaves `r.leases` before its release, so a release that throws
+# never leaves a released lease behind for a second release.
 function _release_windows!(r::_CSReplay, which)
-    any(which, r.leases) || return r
-    kept = _HeldWindow[]
-    for held in r.leases
-        which(held) ? release_window!(r.source, held.lease) : push!(kept, held)
+    i = 1
+    while i <= length(r.leases)
+        held = r.leases[i]
+        which(held) || (i += 1; continue)
+        deleteat!(r.leases, i)
+        release_window!(r.source, held.lease)
     end
-    copy!(r.leases, kept)
     return r
 end
 
 # A recording run's records reference the met of the windows it reads.
 _retains_windows(::NoStepRecorder) = false
 _retains_windows(::AbstractStepRecorder) = true
+
+# Every window the replay holds is still the one it acquired (a streamed
+# source has not refilled its slot): the Stride/MetWindow driver checks it
+# before it walks a segment's records, which reference only those windows.
+_require_current_windows(r::_CSReplay) = (foreach(held -> require_current(held.lease), r.leases); nothing)
 
 # Met inputs of step `s` that are not prognostic state: the step's emission
 # rates in the surface source, the layer thickness of its diffusion, the clock

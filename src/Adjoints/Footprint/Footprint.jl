@@ -1,5 +1,6 @@
 module Footprint
 using ...Architectures: zeros_like
+import Adapt
 
 using KernelAbstractions: @Const, @index, @kernel, @localmem, @synchronize, get_backend, synchronize
 using KernelAbstractions: CPU as KACPU
@@ -35,7 +36,7 @@ using ...Tape: AbstractCheckpointSchedule, AbstractTapeContent, AdjointTape, Aut
     _free_tape_array!, _free_tape_panels!, _tape_synchronize, _holds_tape_bytes,
     _release_tape_pool!, _rewind_tape_pool!, _stage_computed, _stage_panels, _tape_panels,
     _allocate_tape_slot, _tape_slot_bytes, _reserve_tape_pool, _reserve_tape_reads!, _tape_code_scratch!, _layout_key, _layout_pooled, _layout_bytes, _device_tape_memory,
-    _tape_device_margin, _is_reservation_failure, _host_tape_budget, _check_tape_schedule, StrideSearch, checkpoint_window_count, checkpoint_window_range,
+    _tape_device_margin, _is_reservation_failure, _host_tape_budget, _host_tape_memory, _check_tape_schedule, StrideSearch, checkpoint_window_count, checkpoint_window_range,
     MetWindowCheckpoint, _met_window_segments
 import ..Adjoints: require_adjoint_support
 using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDependence,
@@ -51,7 +52,7 @@ using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDepe
 
 export CSFootprintResult, CSTapeByteEstimate, run_cs_footprint_forward,
     cs_surface_emission_footprint, cs_surface_emission_footprint_from_seed, cs_tape_byte_estimate,
-    CSStepSchedule
+    CSStepSchedule, AbstractCSWindowSource, HostCSWindowSource, StaleWindowSlotError
 
 include("FootprintResult.jl")
 include("WindowSource.jl")
