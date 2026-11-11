@@ -372,7 +372,7 @@ end
             # opens; the on-disk names are pinned here as literals.
             stamp = Dict{String, Any}(
                 "tm5_convection_source" => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)",
-                "tm5_ec2tm_convention" => "tm5_halflevel_v2")
+                "tm5_ec2tm_convention" => "tm5_halflevel_v3")
             stamped_ll = joinpath(dir, "stamped_ll.bin")
             stamped_cs = joinpath(dir, "stamped_cs.bin")
             _ll_fixture_binary(stamped_ll; FT = Float64,

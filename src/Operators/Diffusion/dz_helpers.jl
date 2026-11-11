@@ -70,7 +70,8 @@ end
         slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
     end
     if !(isfinite(slope) && slope > zero(FT))
-        @atomic status[1] = one(eltype(status))
+        # Counted with an atomic add: CUDA cannot compile an atomic store.
+        @atomic status[1] += one(eltype(status))
     end
     @inbounds ps_total[i, j] = (ps_dry[i, j] - offset) / slope
 end
@@ -88,7 +89,8 @@ end
         slope += dry_fraction * (bk_ifc[k + 1] - bk_ifc[k])
     end
     if !(isfinite(slope) && slope > zero(FT))
-        @atomic status[1] = one(eltype(status))
+        # Counted with an atomic add: CUDA cannot compile an atomic store.
+        @atomic status[1] += one(eltype(status))
     end
     @inbounds ps_total[c] = (ps_dry[c] - offset) / slope
 end

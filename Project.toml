@@ -84,7 +84,7 @@ Mmap = "1"
 NCDatasets = "0.14"
 NVTX = "1.0.3"
 OffsetArrays = "1"
-Optim = "2.0.1"
+Optim = "2.1"
 PrecompileTools = "1"
 Printf = "1"
 ProgressMeter = "1"
@@ -99,9 +99,10 @@ julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JuliaSyntax = "70703baa-626e-46a2-a12c-08ffd08c73b4"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "JET", "JuliaSyntax", "Test"]
+test = ["Aqua", "CUDA", "JET", "JuliaSyntax", "Test"]

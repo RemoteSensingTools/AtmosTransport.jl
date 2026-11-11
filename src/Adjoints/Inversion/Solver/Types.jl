@@ -161,22 +161,26 @@ struct CS4DVarResult{FT, A2 <: AbstractArray{FT, 2}}
 end
 
 """
-    CSIterationLogEntry(iteration, cost, observation_cost, background_cost,
-                        gradient_norm, step_size, elapsed_seconds)
+    CSIterationLogEntry(iteration, evaluation, cost, observation_cost,
+                        background_cost, gradient_norm, step_size,
+                        elapsed_seconds)
 
 One row of per-iteration solver diagnostics. Captures the
 cost-decomposition (observation vs background terms), the optimizer's
 documented gradient norm (L2 for `CSGradientDescent`, L-infinity for
 `CSLBFGS`), the line-search step accepted on this iteration
 (`0` for optimizers that don't expose a step — e.g. L-BFGS), and the
-wall-clock time since the solve started.
+wall-clock time since the solve started. `evaluation` is the 1-based
+index of the cost evaluation (`cost_fn` call) that computed this iterate;
+evaluations between two rows are line-search trials.
 
 The convention is that an iteration is logged AFTER the descent
 direction has been accepted; the `iteration = 0` row records the
-initial probe before any descent step.
+initial probe (evaluation 1) before any descent step.
 """
 struct CSIterationLogEntry{FT}
     iteration::Int
+    evaluation::Int
     cost::FT
     observation_cost::FT
     background_cost::FT
@@ -211,6 +215,36 @@ Base.firstindex(log::CSIterationLog) = firstindex(log.entries)
 Base.lastindex(log::CSIterationLog) = lastindex(log.entries)
 Base.eachindex(log::CSIterationLog) = eachindex(log.entries)
 
+"""
+    CS4DVarSolveResult
+
+The outcome of [`cs_surface_flux_4dvar_solve`](@ref) (and
+[`cs_surface_flux_4dvar_optimize`](@ref)):
+
+- `controls`, `last`: the optimizer's last accepted iterate and its
+  evaluation ([`CS4DVarResult`](@ref)).
+- `best`: the evaluation with the lowest cost among all evaluations,
+  line-search trials included (the earliest one on ties); its `controls`
+  hold that point. It is `last` unless a trial point beat the last accepted
+  iterate, which happens when a stop rule ends the solve inside a line search
+  or when the cost is noisy near its minimum.
+- `cost_history`, `gradient_norm_history`: one value per accepted iterate,
+  the initial point first; `step_history`: the accepted steps
+  (`CSGradientDescent` only).
+- `iterations`: accepted iterations (for `CSLBFGS` ended by Optim itself,
+  Optim's count, which includes a final iteration whose line search failed).
+- `evaluations`: cost evaluations (`cost_fn` calls), the initial one included.
+- `stop_reason`: why the solve ended, one of `:iterations`, `:gradient`,
+  `:line_search` (the line search found no acceptable step), `:cost_rtol`,
+  `:stall`, `:evaluations`, `:callback`, and for `CSLBFGS` also
+  `:no_progress` (an accepted step left the controls or the cost exactly
+  unchanged) and `:non_finite` (any other Optim termination is reported as
+  `:optim_<TerminationCode>`). A `cost_rtol`, `stall` or `callback` stop fires
+  at the evaluation that triggers it and takes precedence over the
+  optimizer's own criteria; the evaluation cap is checked only when another
+  evaluation is requested.
+- `log`: the [`CSIterationLog`](@ref), or `nothing` without `log = true`.
+"""
 struct CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}
     controls::Vector{<:CSSurfaceFluxControl}
     last::CS4DVarResult{FT, A2}
@@ -219,4 +253,7 @@ struct CS4DVarSolveResult{FT, A2 <: AbstractArray{FT, 2}}
     step_history::Vector{FT}
     iterations::Int
     log::Union{Nothing, CSIterationLog{FT}}
+    best::CS4DVarResult{FT, A2}
+    evaluations::Int
+    stop_reason::Symbol
 end

@@ -12,6 +12,10 @@
 #   1. Add it to the root Project.toml's [extras] and [targets.test].
 #   2. Add it here so `julia --project=test path/to/test.jl` works.
 #   3. Keep the versions in sync.
+#
+# CUDA is listed here and in the root [extras] although the package also has it
+# as a weakdep: the test environment must resolve CUDA together with LLVM and
+# GPUCompiler instead of borrowing them from a stacked default environment.
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -19,6 +23,7 @@ ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 AtmosTransport = "fcfdcc98-126e-435e-9a83-ddb11e65593a"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ConservativeRegridding = "8e50ac2c-eb48-49bc-a402-07c87b949343"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CubedSphere = "7445602f-e544-4518-8976-18f8e8ae6cdb"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
@@ -64,6 +69,7 @@ Adapt = "4"
 Aqua = "0.8"
 ArgParse = "1.2.0"
 ConservativeRegridding = "0.2"
+CUDA = "5"
 CubedSphere = "0.3.6"
 Dates = "1"
 DocStringExtensions = "0.9.5"
@@ -86,7 +92,7 @@ Logging = "1"
 Mmap = "1"
 NCDatasets = "0.14"
 OffsetArrays = "1"
-Optim = "2.0.1"
+Optim = "2.1"
 PrecompileTools = "1"
 Printf = "1"
 ProgressMeter = "1"

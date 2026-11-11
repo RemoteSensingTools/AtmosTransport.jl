@@ -11,6 +11,42 @@
   first reads of C90 windows ran at 0.40 GB/s with the old reader and at
   0.64-0.79 GB/s now, while cached windows keep 19-25 GB/s. Results are
   bit-identical.
+- **GPU fix, total surface-pressure recovery:** the kernels behind
+  `recover_total_surface_pressure_staged!` flagged an invalid column with an
+  atomic store, which CUDA cannot compile with current Atomix/UnsafeAtomics
+  (the process aborts at kernel compilation) and which raised a
+  `KernelException` instead of the documented `ArgumentError` with older
+  ones. They now count invalid columns with an atomic add. Results are
+  unchanged.
+- **Test environment:** CUDA is a declared test dependency (`CUDA = "5"`), so
+  `julia --project=test` resolves CUDA, GPUCompiler and LLVM together and the
+  GPU sections of the core tests run on GPU hosts instead of being skipped.
+  Existing checkouts refresh their test Manifest once (see `test/README.md`).
+- **Result change for ERA5 TM5 convection (`ec2tm_from_rates!`):** the
+  downdraft detrainment archived on GRIB level `k` is now read as that of
+  layer `k - 1`, the layer above. The IFS steps its downdraft from the layer
+  above (`-pmfd(jk) + pmfd(jk-1) + pmfdde_rate(jk)`; ICON's IFS port,
+  `mo_cudescn.f90`, `mo_cumaster.f90`), so the same-layer reading TM5 uses
+  pairs each layer's flux change with the detrainment of the layer above it.
+  On ERA5 N320 that turned 20–25 % of the downdraft detrainment into
+  negative entrainment, which the sign repair then moved within the layer; with
+  the shift the repair moves about 1 % or less above the lowest layer. The
+  updraft and the archived downdraft flux are unchanged (the rebuilt interface
+  fluxes are still the input). `ddrf_layer_above = false` restores TM5's
+  reading. Binaries of this conversion record
+  `tm5_ec2tm_convention = "tm5_halflevel_v3"`; readers reject ERA5-derived TM5
+  sections with an older value (regenerate them). Binaries with the CATRINE
+  TM5 attachment are unaffected.
+- **Stop rules for the cubed-sphere 4D-Var optimizers:** `CSLBFGS` and
+  `CSGradientDescent` accept `cost_rtol` (with `cost_rtol_improvements`),
+  `stall_evaluations`, `max_evaluations` and a `callback`, checked after every
+  cost evaluation (line-search trials included) against the lowest cost so
+  far. All are off by default, and default solves are bit-identical. The solve
+  result also reports `best` (the lowest-cost evaluation), `evaluations` and
+  `stop_reason`. Near a Float32 cost-noise floor the line search otherwise
+  keeps evaluating without a decrease; callers no longer need to throw from
+  the cost function to stop. `CSIterationLogEntry` gains an `evaluation`
+  field (second positional argument). Optim compat is now `2.1`.
 
 - **Result change for Float32 CMFMC convection:** the "treat as zero"
   threshold `_cmfmc_tiny` is now `1e-14` in every precision (GEOS-Chem's

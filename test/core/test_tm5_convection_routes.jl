@@ -96,7 +96,7 @@ end
 
 @testset "TM5 convection provenance is checked on load" begin
     # The on-disk names are pinned here as literals.
-    stamp = "tm5_ec2tm_convention" => "tm5_halflevel_v2"
+    stamp = "tm5_ec2tm_convention" => "tm5_halflevel_v3"
     ec2tm_source = "tm5_convection_source" => "ec2tm_from_rates(udmf,ddmf,udrf,ddrf)"
     mktempdir() do dir
         accepted = (
@@ -119,6 +119,9 @@ end
             "unknown convention" => (write_cs_tm5_fixture,
                                      [ec2tm_source, "tm5_ec2tm_convention" => "tm5_halflevel_v1"],
                                      r"regenerate"i),
+            "same-layer downdraft detrainment" =>
+                (write_cs_tm5_fixture, [ec2tm_source, "tm5_ec2tm_convention" => "tm5_halflevel_v2"],
+                 r"regenerate"i),
             "retired LL route"  => (write_ll_tm5_fixture, ["spectral_half_dt_seconds" => 450.0],
                                     r"#55"),
             "pre-fix LL→CS regrid" => (write_cs_tm5_fixture,

@@ -35,6 +35,22 @@ The test environment intentionally has no version bound for AtmosTransport
 itself: `Pkg.test()` supplies the checkout, and direct invocations develop it
 with the command above. Release version bumps need no matching test bound.
 
+CUDA is a declared test dependency, with the same bound as the package's CUDA
+extension, so the test Manifest resolves CUDA, GPUCompiler and LLVM together.
+Core tests that load CUDA run their GPU sections only when
+`CUDA.functional()` is true and skip them elsewhere, as on CI. Two of them,
+`core/test_spectral_synthesis_backends.jl` and
+`core/test_tm5_cs_spectral_integrals.jl`, additionally need
+`ATMOSTR_TEST_SPECTRAL_GPU=1` for their GPU sections; the `diagnostic/` GPU
+tests stay opt-in through their own environment variables. Do not rely on a
+CUDA from the default `@v1.x` environment: a stacked environment combines its
+GPUCompiler with the test Manifest's LLVM, which can fail to precompile.
+
+The Manifests are not tracked, so a checkout prepared before CUDA became a
+test dependency keeps a stale test Manifest: `Pkg.instantiate()` then reports
+that CUDA is missing from the manifest, and `Pkg.resolve()` cannot downgrade
+LLVM for it. Rerun the setup command above to refresh it.
+
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'         # CI-equivalent default
 julia --project=test test/runtests.jl                # core + regridding
