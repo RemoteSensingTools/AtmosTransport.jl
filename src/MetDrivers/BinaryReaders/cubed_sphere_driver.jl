@@ -223,8 +223,8 @@ end
 # Raw window staging (device runs)
 #
 # A window's payload is one contiguous run of `elems_per_window` elements of
-# the binary. A device run reads it into a host buffer with concurrent reads
-# (no page faults on the file mapping) and unpacks each section on the device:
+# the binary. A device run reads it into a host buffer with one or more
+# concurrent `pread`s (`window_read_chunks`; no page faults on the file mapping) and unpacks each section on the device:
 # each section panel is copied into its window panel, a padded field receiving
 # its interior and zero halo cells. With discrete device memory (CUDA, ROCm)
 # the host buffer is page-locked and each section is uploaded through a
@@ -312,8 +312,10 @@ end
     read_window_payload!(staging::AbstractRawWindowStaging, driver, win) -> staging
 
 Read window `win` of `driver`'s binary into `staging.host`: on Unix as
-`_RAW_READ_CHUNKS` concurrent `pread`s on libuv's thread pool (`@threadcall`,
-no Julia thread is blocked), elsewhere with one `read!`.
+concurrent `pread`s on libuv's thread pool (`@threadcall`, no Julia thread is
+blocked), as many as the reader's `read_split` gives for the window
+(`window_read_chunks`: four on local file systems; on NFS four for a window
+already in the page cache, else one); on other platforms with one `read!`.
 """
 function read_window_payload!(staging::AbstractRawWindowStaging,
                               driver::TransportBinaryDriver{FT, <:TransportBinaryReader{FT, DiskFT},
@@ -326,9 +328,11 @@ function read_window_payload!(staging::AbstractRawWindowStaging,
         "raw window staging holds $(length(buffer)) $(eltype(buffer)) values; " *
         "$(basename(reader.path)) has $(h.elems_per_window) $(DiskFT) values per window"))
     1 <= win <= h.nwindow || throw(BoundsError(1:h.nwindow, win))
-    position = h.header_bytes + _transport_window_offset(reader, win) * sizeof(DiskFT)
+    first_byte = _transport_window_offset(reader, win) * sizeof(DiskFT)   # into `reader.data`
+    position = h.header_bytes + first_byte
     if Sys.isunix()
-        _concurrent_pread!(buffer, reader.io, position)
+        chunks = window_read_chunks(reader.read_split, reader.data, first_byte, sizeof(buffer))
+        _concurrent_pread!(buffer, reader.io, position, chunks)
     else
         lock(reader.io)
         try
@@ -341,19 +345,16 @@ function read_window_payload!(staging::AbstractRawWindowStaging,
     return staging
 end
 
-# A single reader copies a window from the page cache at about 6 GB/s; four
-# concurrent reads of its quarters reach 10-17 GB/s (C90 L72 window, 156 MB).
-const _RAW_READ_CHUNKS = 4
-
-# Fill `buffer` from byte `position` of the file behind `io` with concurrent
-# `pread`s (which leave the stream's file offset alone).
-function _concurrent_pread!(buffer::Vector, io::IOStream, position::Integer)
+# Fill `buffer` from byte `position` of the file behind `io` with `chunks`
+# concurrent `pread`s of contiguous parts (which leave the stream's file offset
+# alone). The bytes read do not depend on `chunks`.
+function _concurrent_pread!(buffer::Vector, io::IOStream, position::Integer, chunks::Int)
     descriptor = Base.cconvert(Cint, fd(io))
     nbytes = sizeof(buffer)
-    chunk = cld(nbytes, _RAW_READ_CHUNKS)
+    chunk = cld(nbytes, chunks)
     GC.@preserve buffer begin
         base = Ptr{UInt8}(pointer(buffer))
-        @sync for c in 0:(_RAW_READ_CHUNKS - 1)
+        @sync for c in 0:(chunks - 1)
             first = c * chunk
             n = min(chunk, nbytes - first)
             n > 0 && @async _pread_all(descriptor, base + first, n, Int64(position + first))

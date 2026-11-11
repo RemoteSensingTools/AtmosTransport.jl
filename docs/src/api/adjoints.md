@@ -11,7 +11,15 @@ the `Inversion` and `Adjoints` facades.
 ## Adjoints
 
 Configure optimizer settings and logging on `CSGradientDescent` or `CSLBFGS`
-and pass it as `optimizer` to `cs_surface_flux_4dvar_optimize`. One
+and pass it as `optimizer` to `cs_surface_flux_4dvar_optimize`. Both accept
+the same opt-in stop rules, checked after every cost evaluation against the
+best cost so far: `cost_rtol` (stop after `cost_rtol_improvements`
+consecutive relative decreases of the best cost below it), `stall_evaluations`
+(stop after that many evaluations without a new best cost, as at the noise
+floor of a Float32 cost), `max_evaluations` and a `callback(evaluation,
+result) -> Bool`. The `CS4DVarSolveResult` holds the last accepted iterate
+(`controls`, `last`), the lowest-cost evaluation (`best`), the number of
+`evaluations` and a `stop_reason`. One
 `cs_surface_flux_4dvar` evaluation runs the forward model once: the run that
 samples the observations records the tape of the reverse pass;
 `evaluation = CSCostOnly()` runs it without a tape for the cost and simulated

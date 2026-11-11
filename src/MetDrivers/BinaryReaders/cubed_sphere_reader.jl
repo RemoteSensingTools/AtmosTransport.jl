@@ -135,6 +135,12 @@ function load_vdiff_qv_window!(dest::NTuple{N, Array{<:AbstractFloat, 3}},
     return dest
 end
 
+load_vdiff_qv_window!(_, reader::TransportBinaryReader{<:Any, <:Any, <:Union{LatLonBinaryGeometry,
+                                                                              ReducedGaussianBinaryGeometry}},
+                      ::Int) = throw(ArgumentError(
+    "VDIFF humidity is read from cubed-sphere binaries only; " *
+    "$(basename(reader.path)) holds a $(grid_type(reader)) grid"))
+
 function load_flux_delta_window!(
     reader::TransportBinaryReader{FT, DiskFT, CubedSphereBinaryGeometry},
     win::Int; dm = nothing,

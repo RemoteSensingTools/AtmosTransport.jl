@@ -110,7 +110,9 @@ function tm5_fields(basis, q)
         udrf, ddrf, q_col = f.udrf[i, j, :], f.ddrf[i, j, :], f.q[i, j, :]
         dz_hydrostatic_virtual!(dz, f.t[i, j, :], q_col, f.ps[i, j], A_IFC, B_IFC, NZ)
         ecmwf_convection_to_basis!(basis, udmf, ddmf, udrf, ddrf, q_col)
-        ec2tm_from_rates!(columns..., udmf, ddmf, udrf, ddrf, dz, NZ)
+        # The synthetic ddrf above sits on its own layer.
+        ec2tm_from_rates!(columns..., udmf, ddmf, udrf, ddrf, dz, NZ;
+                          ddrf_layer_above = false)
         for (field, column) in zip(out, columns)
             field[i, j, :] .= column
         end

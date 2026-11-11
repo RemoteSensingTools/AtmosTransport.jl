@@ -35,11 +35,14 @@ include(joinpath(@__DIR__, "..", "helpers", "tm5_ecconv_reference.jl"))
 
 # Run ec2tm_from_rates! on GRIB-level columns packed as the preprocessor packs
 # them: interface k = top of layer k, interface Nz + 1 (the ground) = 0.
-function _ec2tm_grib(grib_udmf, grib_ddmf, udrf, ddrf, dz; stats = nothing)
+# `ddrf_layer_above = false` is TM5's own reading of the downdraft detrainment,
+# which the TM5-parity tests compare against.
+function _ec2tm_grib(grib_udmf, grib_ddmf, udrf, ddrf, dz; stats = nothing,
+                     ddrf_layer_above = false)
     Nz = length(dz)
     out = ntuple(_ -> zeros(Nz), 4)
     ec2tm_from_rates!(out..., vcat(grib_udmf, 0.0), vcat(grib_ddmf, 0.0),
-                      copy(udrf), copy(ddrf), copy(dz), Nz; stats)
+                      copy(udrf), copy(ddrf), copy(dz), Nz; stats, ddrf_layer_above)
     return out
 end
 
@@ -96,7 +99,8 @@ const _DZ_REF     = Float64[200.0, 200.0, 200.0, 150.0, 120.0, 80.0]
     Nz = _NZ_REF
     out = ntuple(_ -> zeros(Nz), 4)
     ec2tm_from_rates!(out..., copy(_UDMF_REF), copy(_DDMF_REF),
-                      copy(_UDRF_RATE), copy(_DDRF_RATE), copy(_DZ_REF), Nz)
+                      copy(_UDRF_RATE), copy(_DDRF_RATE), copy(_DZ_REF), Nz;
+                      ddrf_layer_above = false)
     entu, detu, entd, detd = out
     ref = tm5_ecconv_reference(_UDMF_REF[1:Nz], _DDMF_REF[1:Nz],
                                _UDRF_RATE, _DDRF_RATE, _DZ_REF)
@@ -117,7 +121,7 @@ end
     Nz = 40
     worst_field = 0.0
     worst_flux = 0.0
-    for column in 1:500
+    for column in 1:500, ddrf_layer_above in (false, true)
         top, base = rand(rng, 4:20), rand(rng, 30:Nz)
         # Updraft through interfaces top+1..Nz (GRIB level Nz included), zero
         # at and above interface `top` and at the ground.
@@ -132,8 +136,8 @@ end
         udrf = [k >= top ? 2e-5 * rand(rng) : 0.0 for k in 1:Nz]
         ddrf = [k >= dtop ? 1e-5 * rand(rng) : 0.0 for k in 1:Nz]
         dz = 100.0 .+ 400.0 .* rand(rng, Nz)
-        out = _ec2tm_grib(grib_udmf, grib_ddmf, udrf, ddrf, dz)
-        ref = tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf, ddrf, dz)
+        out = _ec2tm_grib(grib_udmf, grib_ddmf, udrf, ddrf, dz; ddrf_layer_above)
+        ref = tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf, ddrf, dz; ddrf_layer_above)
         scale = sum(abs, grib_udmf) + sum(abs, grib_ddmf)     # the closure's scale
         worst_field = max(worst_field,
                           maximum(maximum(abs, a .- b) for (a, b) in zip(out, ref)) / scale)
@@ -148,6 +152,45 @@ end
     @test worst_flux < 16eps()
 end
 
+
+# The IFS steps the downdraft from the layer above, so it archives the
+# detrainment of layer k on GRIB level k + 1 (and that of the lowest layer on
+# no level). Known answer, top down, all values dyadic:
+#
+#   layer                  1      2      3      4
+#   downdraft entrainment  1/64   1/64   0      0
+#   downdraft detrainment  0      1/128  1/128  1/64
+#   interface (top of k)   1      2      3      4      5
+#   |ddmf|                 0      1/64   3/128  1/64   0
+#
+# archived ddr on level k = detrainment of layer k - 1: [0, 0, 1/128, 1/128].
+@testset "ec2tm_from_rates! reads the downdraft detrainment from the layer above" begin
+    dz = fill(128.0, 4)
+    grib_udmf = zeros(4)
+    grib_ddmf = [0.0, -1/64, -3/128, -1/64]
+    ddrf = [0.0, 0.0, 1/128, 1/128] ./ dz
+    stats = TM5CleanupStats()
+    entu, detu, entd, detd = _ec2tm_grib(grib_udmf, grib_ddmf, zeros(4), ddrf, dz;
+                                         stats, ddrf_layer_above = true)
+    @test entd == [1/64, 1/64, 0.0, 0.0]
+    @test detd == [0.0, 1/128, 1/128, 1/64]
+    # Only the lowest layer, whose detrainment is archived on no level, is
+    # repaired: the flux reaching the ground becomes its detrainment.
+    @test stats.levels_entd_neg[] == 1
+    @test implied_downdraft_flux(entd, detd) == vcat(grib_ddmf, 0.0)
+    @test (entu, detu, entd, detd) ==
+          tm5_ecconv_reference(grib_udmf, grib_ddmf, zeros(4), ddrf, dz; ddrf_layer_above = true)
+    # TM5's same-layer reading of the same archive misplaces layer 2's
+    # detrainment and lowers its entrainment to compensate.
+    _, _, entd_tm5, detd_tm5 = _ec2tm_grib(grib_udmf, grib_ddmf, zeros(4), ddrf, dz)
+    @test entd_tm5 == [1/64, 1/128, 0.0, 0.0]
+    @test detd_tm5 == [0.0, 0.0, 1/128, 1/64]
+    # Detrainment archived on the model-top level has no layer above it.
+    _, _, _, detd_top = _ec2tm_grib(grib_udmf, grib_ddmf, zeros(4),
+                                    [1e-4, 0.0, 1/128 / 128, 1/128 / 128], dz;
+                                    ddrf_layer_above = true)
+    @test detd_top == detd
+end
 
 @testset "ec2tm_from_rates! bad-data cleanup" begin
     Nz = 5

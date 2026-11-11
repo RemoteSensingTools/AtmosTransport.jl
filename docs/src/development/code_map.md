@@ -144,7 +144,7 @@ None recorded.
 
 ## `src/Adjoints/Inversion/Solver`
 
-Size: **94192 bytes / 26912.0 tokens**. Public names: **28**.
+Size: **107583 bytes / 30738.0 tokens**. Public names: **28**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/ObservationBinding`, `src/Grids`, `src/Operators/Convection`, `src/Operators/Diffusion`, `src/Parameters`, `src/Tape`.
 
@@ -156,10 +156,10 @@ Files:
 - `Covariance.jl` (16063 bytes)
 - `Departures.jl` (399 bytes)
 - `Jacobian.jl` (4794 bytes)
-- `Optimizer.jl` (21649 bytes)
+- `Optimizer.jl` (33073 bytes)
 - `Preconditioning.jl` (8042 bytes)
 - `Solver.jl` (1805 bytes)
-- `Types.jl` (8783 bytes)
+- `Types.jl` (10750 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -365,7 +365,7 @@ None recorded.
 
 ## `src/MetDrivers/BinaryReaders`
 
-Size: **98265 bytes / 28075.7 tokens**. Public names: **53**.
+Size: **109707 bytes / 31344.9 tokens**. Public names: **53**.
 
 Depends on: `src`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/Parameters`, `src/State`.
 
@@ -373,12 +373,13 @@ Used by: `src`, `src/Adjoints/Footprint`, `src/Diagnostics`, `src/MetDrivers`, `
 
 Files:
 
-- `BinaryReaders.jl` (4106 bytes)
-- `cubed_sphere_driver.jl` (24917 bytes)
-- `cubed_sphere_reader.jl` (9692 bytes)
+- `BinaryReaders.jl` (4133 bytes)
+- `cubed_sphere_driver.jl` (25155 bytes)
+- `cubed_sphere_reader.jl` (10087 bytes)
 - `driver.jl` (26779 bytes)
 - `inspect.jl` (5560 bytes)
-- `reader.jl` (27211 bytes)
+- `reader.jl` (27609 bytes)
+- `window_reads.jl` (10384 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -790,7 +791,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **160473 bytes / 45849.4 tokens**. Public names: **27**.
+Size: **160625 bytes / 45892.9 tokens**. Public names: **27**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -806,7 +807,7 @@ Files:
 - `adjoint_kernels.jl` (7588 bytes)
 - `conservative_dkg.jl` (11517 bytes)
 - `diffusion_kernels.jl` (17829 bytes)
-- `dz_helpers.jl` (20518 bytes)
+- `dz_helpers.jl` (20670 bytes)
 - `gchp_nonlocal_pbl.jl` (8854 bytes)
 - `operators.jl` (27596 bytes)
 - `pbl_physics.jl` (10566 bytes)
@@ -888,7 +889,7 @@ None recorded.
 
 ## `src/Parameters`
 
-Size: **27631 bytes / 7894.6 tokens**. Public names: **78**.
+Size: **27851 bytes / 7957.4 tokens**. Public names: **78**.
 
 Depends on: none.
 
@@ -896,7 +897,7 @@ Used by: `ext`, `src`, `src/Adjoints/Footprint`, `src/Adjoints/Inversion/Observa
 
 Files:
 
-- `MetSourceConstants.jl` (6412 bytes)
+- `MetSourceConstants.jl` (6632 bytes)
 - `NumericalDefaults.jl` (10348 bytes)
 - `Parameters.jl` (410 bytes)
 - `PhysicalConstants.jl` (9107 bytes)
@@ -976,7 +977,7 @@ None recorded.
 
 ## `src/Preprocessing/PhysicsInputs`
 
-Size: **94410 bytes / 26974.3 tokens**. Public names: **22**.
+Size: **96002 bytes / 27429.1 tokens**. Public names: **22**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Spectral`, `src/State`.
 
@@ -988,7 +989,7 @@ Files:
 - `convection_mass_basis.jl` (11596 bytes)
 - `era5_surface_reader.jl` (22826 bytes)
 - `tm5_bldiff.jl` (28154 bytes)
-- `tm5_convection_conversion.jl` (25918 bytes)
+- `tm5_convection_conversion.jl` (27510 bytes)
 - `tm5_pbl_inputs.jl` (4571 bytes)
 
 Forward ↔ adjoint mirrors:

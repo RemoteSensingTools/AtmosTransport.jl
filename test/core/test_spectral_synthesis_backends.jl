@@ -74,7 +74,13 @@ end
         bad=deepcopy(config);bad["preprocessing"]=Dict{String,Any}(bad["preprocessing"]);bad["preprocessing"][key]=value
         @test_throws ArgumentError c.resolve_spectral_construction(bad)
     end
-    if get(ENV,"ATMOSTR_TEST_SPECTRAL_GPU","0")!="1"
+    # Without a loaded CUDA extension, or with a CUDA that is not functional, the
+    # GPU backend is rejected. Once another test in the same process has loaded
+    # CUDA on a GPU host, the extension's method accepts it.
+    cuda_ext=Base.get_extension(AtmosTransport,:AtmosTransportCUDAExt)
+    if cuda_ext!==nothing && cuda_ext.CUDA.functional()
+        @test c.validate_gpu_spectral_backend()===nothing
+    else
         @test_throws ArgumentError c.validate_gpu_spectral_backend()
     end
 end

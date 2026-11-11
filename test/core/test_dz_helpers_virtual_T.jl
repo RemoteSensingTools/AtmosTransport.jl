@@ -142,6 +142,13 @@ end
     bk_sigma = FT[0, 1]
     @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(ps_matrix), ps_matrix, ones(FT, 3, 2, 1), diffusion_coefficients(ones(FT, 3, 2, 1), ak_sigma, bk_sigma); sync = true)
     @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(ps_vector), ps_vector, ones(FT, 5, 1), diffusion_coefficients(ones(FT, 5, 1), ak_sigma, bk_sigma); sync = true)
+    if HAS_CUDA_DZ
+        # The device kernels raise the same error (several columns flag it at once).
+        gpu_matrix, gpu_vector = CUDA.CuArray(ps_matrix), CUDA.CuArray(ps_vector)
+        gpu_qv3, gpu_qv2 = CUDA.ones(FT, 3, 2, 1), CUDA.ones(FT, 5, 1)
+        @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(gpu_matrix), gpu_matrix, gpu_qv3, diffusion_coefficients(gpu_qv3, ak_sigma, bk_sigma); sync = true)
+        @test_throws ArgumentError recover_total_surface_pressure_staged!(similar(gpu_vector), gpu_vector, gpu_qv2, diffusion_coefficients(gpu_qv2, ak_sigma, bk_sigma); sync = true)
+    end
 
     # Validation is performed on the actual accumulated slope inside the
     # recovery kernel, including non-finite inputs and arithmetic overflow.

@@ -9,12 +9,17 @@ Memory-mapped reader for the current transport-binary format.
 element type, and `G` is the concrete geometry metadata type. Payloads remain
 in their native topology: structured arrays for lat-lon, face-indexed arrays
 for reduced Gaussian, and six panel arrays for cubed sphere.
+
+`read_split` decides how many concurrent `pread`s a raw window read
+(`read_window_payload!`) uses; the reader picks it from the file system when it
+opens the file (`window_read_split`).
 """
 struct TransportBinaryReader{FT, DiskFT, G <: AbstractTransportBinaryGeometry}
-    data   :: Vector{DiskFT}
-    io     :: IOStream
-    header :: TransportBinaryHeader{G}
-    path   :: String
+    data       :: Vector{DiskFT}
+    io         :: IOStream
+    header     :: TransportBinaryHeader{G}
+    path       :: String
+    read_split :: AbstractWindowReadSplit
 end
 
 _transport_load_float_type(::TransportBinaryReader{FT}) where FT = FT
@@ -42,6 +47,7 @@ function Base.show(io::IO, r::TransportBinaryReader)
           "├── humidity:      ", transport_qv_summary(h), "\n",
           "├── semantics:     ", transport_semantics_summary(h), "\n",
           "├── poisson:       ", string("scale=", h.poisson_balance_target_scale, ", ", h.poisson_balance_target_semantics), "\n",
+          "├── window reads:  ", window_read_summary(r.read_split), "\n",
           "└── windows:       ", h.nwindow)
 end
 
@@ -226,7 +232,8 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
             "from the header, found $(actual_bytes)"))
         data = Mmap.mmap(io, Vector{DiskFT}, total_elems, header.header_bytes)
         G = typeof(header.geometry)
-        reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+        read_split = window_read_split(bin_path)
+        reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path, read_split)
         if !haskey(header.raw_header, "surface_pressure_basis")
             inferred = infer_surface_pressure_basis(reader)
             @warn "$(basename(bin_path)) has no `surface_pressure_basis` header key; " *
@@ -234,7 +241,7 @@ function TransportBinaryReader(bin_path::String; FT::Type{<:AbstractFloat} = Flo
                   "window-1 surface pressure and air mass. Regenerate the binary before the " *
                   "legacy fallback becomes an error." maxlog=1
             header = parse_transport_header(raw; legacy_surface_pressure_basis=inferred)
-            reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path)
+            reader = TransportBinaryReader{FT, DiskFT, G}(data, io, header, bin_path, read_split)
         end
         _check_tm5_convection_provenance(reader)
         _check_tm5_convection_basis(reader)

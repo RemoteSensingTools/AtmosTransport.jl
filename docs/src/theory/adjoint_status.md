@@ -534,7 +534,7 @@ exactly, and the bytes per step.
 | --- | --- |
 | `Covariance.jl` | `DiagonalCSCovariance`, `IsotropicGaussianCSCovariance`, `apply_B_half!`, `apply_B_half_adjoint!` |
 | `Preconditioning.jl` | `apply_preconditioner!`, `LinearOptimType`, `LogNormalOptimType` |
-| `Optimizer.jl` | `AbstractCSOptimizer`, `CSGradientDescent`, `CSLBFGS` (via multiple-dispatch surfaces) |
+| `Optimizer.jl` | `AbstractCSOptimizer`, `CSGradientDescent`, `CSLBFGS` (via multiple-dispatch surfaces) and their shared stop rules |
 | `Jacobian.jl` | Footprint-Jacobian assembly for batched observation operators |
 | `CostGradient.jl` | 4D-Var cost / gradient evaluator with preconditioning |
 | `Observations.jl`, `ObservationColumns.jl`, `ObservationBinding.jl`, `ObservationsIO.jl` | Typed observation surface (time sampling, placed point objectives, column meteorology, stencils) + on-disk schema v2 |
@@ -542,7 +542,7 @@ exactly, and the bytes per step.
 
 These are all on CI. Full inversion tests:
 `test_cs_4dvar_single_sweep.jl`, `test_cs_4dvar_placed_observations.jl`,
-`test_cs_gradient_checks.jl`, `test_cs_lbfgs.jl`,
+`test_cs_gradient_checks.jl`, `test_cs_lbfgs.jl`, `test_cs_optimizer_stop_rules.jl`,
 `test_cs_inversion_driver.jl`, `test_cs_inversion_truth_recovery.jl`,
 `test_cs_iteration_log.jl`, `test_cs_observations_io.jl`,
 `test_cs_observation_binding.jl`, `test_cs_departures_io.jl`,

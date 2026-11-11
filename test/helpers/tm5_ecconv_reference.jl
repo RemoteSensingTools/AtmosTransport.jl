@@ -25,15 +25,19 @@
 # net `entu - detu`), and so does this reference.
 
 """
-    tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf_rate, ddrf_rate, dz)
-        -> (entu, detu, entd, detd)
+    tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf_rate, ddrf_rate, dz;
+                         ddrf_layer_above = false) -> (entu, detu, entd, detd)
 
 TM5's conversion of one ERA5 column. `grib_udmf`, `grib_ddmf` are the archived
 mass fluxes on GRIB levels 1..lm (kg m⁻² s⁻¹, level 1 at the model top);
 `udrf_rate`, `ddrf_rate` the detrainment rates on layers 1..lm (kg m⁻³ s⁻¹);
-`dz` the layer thicknesses (m).
+`dz` the layer thicknesses (m). `ddrf_layer_above = true` moves the height-
+integrated downdraft detrainment of GRIB level k to layer k - 1 before the
+budgets (dropping level 1), the reading `ec2tm_from_rates!` uses by default;
+TM5 itself reads it on its own layer (`false`).
 """
-function tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf_rate, ddrf_rate, dz)
+function tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf_rate, ddrf_rate, dz;
+                              ddrf_layer_above = false)
     lm = length(dz)
     length(grib_udmf) == length(grib_ddmf) == length(udrf_rate) == length(ddrf_rate) == lm ||
         throw(DimensionMismatch("all ERA5 columns must have lm = $lm levels"))
@@ -56,6 +60,7 @@ function tm5_ecconv_reference(grib_udmf, grib_ddmf, udrf_rate, ddrf_rate, dz)
     # Height integral of the detrainment rates.
     detu .*= dz
     detd .*= dz
+    ddrf_layer_above && (detd = vcat(detd[2:end], 0.0))
 
     # do l = 1, lm: first layer whose bottom half level l carries flux.
     uptop = something(findfirst(l -> hl(mflu, l) > 0.0, 1:lm), 0)
