@@ -71,3 +71,7 @@ nohup.out
 
 # Rust build output of tools such as tools/atmos-bin
 /tools/*/target/
+
+# Paper sources: figure previews are committed; regenerated corner tables are not.
+!examples/paper/**/figures/*.png
+examples/paper/grids/cs_c*_corners.csv

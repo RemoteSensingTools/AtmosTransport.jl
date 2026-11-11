@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `examples/paper/` holds the scripts, case tables, result tables and figures
+  of the model description paper. `examples/paper/idealized_advection/`
+  writes transport binaries for three analytic flows (solid-body rotation,
+  and the non-divergent and divergent deformational flows of Lauritzen et al.
+  2012) on cubed-sphere, latitude-longitude and reduced-Gaussian grids, runs
+  the unmodified model on them for every advection scheme in FP32 and FP64,
+  and compares against analytic cell means (202 runs; `run_matrix.sh`). The
+  FP32 conservation page of the manual gains the measurements that locate
+  the FP32 tracer-mass drift of the advection in the rounding of the stored
+  cell values. No model code changes.
 - Cubed-sphere GPU window reads from NFS use one `pread` for a window that is
   not in the page cache and four concurrent ones for a window that is (at
   least 90 % of its pages, sampled with `mincore`); the reader detects NFS when

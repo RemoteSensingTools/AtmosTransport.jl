@@ -345,10 +345,37 @@ Snapshot totals, `total_mass` and the log totals share one compensated
 **Advection.** The 3-hourly change of the background total has a standard
 deviation of 5.5e-10. Its mean is +1.4e-10 (MERRA-2, `t` = 1.9) to +3.6e-10
 (ERA5, `t` = 3.2), i.e. at most about +1e-6 per year. SF₆ shows no detectable
-mean (`t` = −1.0). The cause of the bias for the uniform background has not
-been identified. Removing storage rounding altogether would need double-single
-tracer storage (two `Float32` words per value), doubling memory traffic. That
-is not warranted at this level.
+mean (`t` = −1.0).
+
+The bias is the rounding of the stored cell update, not a flux that fails to
+cancel. This was measured in the idealized advection tests of
+`examples/paper/idealized_advection` (analytic deformational flow on C48, four
+layers, 12 days, uniform tracer), where the drift is much larger than with
+real meteorology: 1e-7 to 2e-6 of the tracer mass in 12 days, depending on
+scheme and resolution (up to 4e-6 in solid-body rotation on the 0.9375°
+latitude–longitude grid, with 117 substeps per hourly window). After every Lin–Rood horizontal step, each cell update
+was recomputed exactly in `Float64` from the `Float32` face values the kernel
+had used. The face fluxes cancel to 1e-17 of the total, also across the panel
+seams, and the rounding of the stored results accounts for the whole drift
+(−5.3e-7, a mean of −0.0015 ulp per cell update, in all cells and not only at
+the panel edges). An emulation of the upwind update `rm + F_in − F_out` gives
+the same behavior for the split schemes: +6e-7 in 12 days for a uniform
+tracer, and a drift that stops in a steady flow, as it does in the model's
+solid-body rotation.
+
+The drift is specific to flat tracer fields in smooth, slowly varying flows.
+A hill on a uniform background drifts about 80 times less in the emulation, and
+the Gaussian hills of the model runs stay near 1e-8. It does not grow in
+proportion to the number of substeps. Why the rounding is one-sided has not
+been established; exact ties are not the cause.
+
+A per-cell carry, which keeps what rounding removed and adds it to the next
+update of the same cell, bounds the error: the Lin–Rood drift falls to 2e-9
+and the emulated drift below 3e-10. Rounding the exact three-term update once
+is not sufficient (+1.3e-8 for Lin–Rood, but −2.5e-7 in the emulation). A
+carry needs one more array per tracer (`Float32` in the emulation; the
+Lin–Rood prototype kept it in `Float64`). It is not implemented, because the
+drift with real meteorology, about +1e-6 per year, does not warrant it.
 
 **CMFMC convection.** In the MERRA-2 week above, the remaining CO₂
 difference with all operators (−2.0e-8 of the burden, about −1e-6 per year)
@@ -434,6 +461,14 @@ MERRA-2 C90 CATRINE configuration over 761 days (December 2021 to December
 is +9.0e-7 for CO₂, +1.6e-7 for fossil CO₂ (relative to the emitted mass),
 +1.1e-6 for SF₆ and −3.6e-8 for Rn-222; the column-mean RMS difference on the
 last day is 0.015 ppm for CO₂ and 0.0009 ppt for SF₆.
+
+The advection measurements of [What remains](#What-remains) are reproduced by
+the scripts in `examples/paper/idealized_advection/float32_drift/` (see its
+README): `linrood_stage_harness.jl` recomputes every cell update of the
+production Lin–Rood step exactly and splits the global change into rounding
+and flux mismatch, with the single-rounding and carry prototypes as options;
+`emulate_upwind.jl` and `emulate_fixes.jl` are the stand-alone emulation of the
+upwind update and of the candidate fixes.
 
 `test/core/test_float32_conservation.jl` checks the error-free and compensated
 sums, that the ledger leaves a leaking matrix visible, the ledger carry (its

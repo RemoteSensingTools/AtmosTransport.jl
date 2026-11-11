@@ -1,0 +1,12 @@
+family,scheme,grids,l2,minimal_spacing_deg,note
+cs,upwind,c48 c96 c192,0.6263 0.5820 0.5220,nan,finer than c192 (0.469 deg)
+cs,slopes,c48 c96 c192,0.3904 0.2018 0.0662,nan,finer than c192 (0.469 deg)
+cs,ppm,c48 c96 c192,0.2564 0.1094 0.0525,nan,finer than c192 (0.469 deg)
+cs,ppm_cw84,c48 c96 c192,0.2990 0.0909 0.0246,5.478815e-01,between c96 and c192
+cs,linrood5,c48 c96 c192,0.1897 0.0407 0.0141,8.174038e-01,between c96 and c192
+cs,linrood7,c48 c96 c192,0.1822 0.0385 0.0139,8.445211e-01,between c96 and c192
+ll,upwind,ll96x48 ll192x96 ll384x192,0.6518 0.6185 0.5722,nan,finer than ll384x192 (0.938 deg)
+ll,slopes,ll96x48 ll192x96 ll384x192,0.5130 0.3672 0.1785,nan,finer than ll384x192 (0.938 deg)
+ll,ppm,ll96x48 ll192x96 ll384x192,0.4152 0.2234 0.0896,nan,finer than ll384x192 (0.938 deg)
+ll,ppm_cw84,ll96x48 ll192x96 ll384x192,0.4673 0.2689 0.0779,nan,finer than ll384x192 (0.938 deg)
+rg,upwind,n48 n96,0.6250 0.5813,nan,finer than n96 (0.938 deg)
