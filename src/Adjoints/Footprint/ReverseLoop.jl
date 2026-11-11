@@ -203,8 +203,8 @@ end
 
 """
     _cs_replay_for_call(panels_rm0, panels_m0, am_steps, bm_steps, cm_steps, mesh;
-                        scheme, dt = nothing, schedule = nothing,
-                        nsteps = length(am_steps), surface_flux = true,
+                        met_source = nothing, scheme, dt = nothing, schedule = nothing,
+                        nsteps = all steps, surface_flux = true,
                         emission_rates = nothing, base_emission_rates = nothing,
                         flux_scale, cfl_limit,
                         diffusion_op, diffusion_layer_thickness, diffusion_meteo,
@@ -214,14 +214,16 @@ end
 Validate the keyword inputs of an adjoint entry point, check that every
 operator of its step plan has an adjoint (`require_adjoint_support`) and build
 the replay of steps `1:nsteps`. `dt` is the step length (the schedule's when
-one is given).
+one is given). The met comes from the per-step arguments or from
+`met_source` (`_call_nsteps`, `_require_source_keywords`).
 """
 function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
                              panels_cm_steps, mesh::CubedSphereMesh;
+                             met_source = nothing,
                              scheme,
                              dt = nothing,
                              schedule = nothing,
-                             nsteps::Int = length(panels_am_steps),
+                             nsteps = nothing,
                              surface_flux::Bool = true,
                              emission_rates = nothing,
                              base_emission_rates = nothing,
@@ -234,8 +236,11 @@ function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_s
                              convection_forcing = nothing,
                              convection_workspace = nothing)
     FT = eltype(panels_m0[1])
-    total = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)
+    total = _call_nsteps(panels_am_steps, panels_bm_steps, panels_cm_steps, met_source)
+    nsteps = something(nsteps, total)
     1 <= nsteps <= total || throw(ArgumentError("nsteps = $nsteps outside 1:$total"))
+    _require_source_keywords(met_source; flux_scale, diffusion_op, diffusion_layer_thickness,
+                             convection_forcing)
     emission_rates !== nothing && base_emission_rates !== nothing && throw(ArgumentError(
         "pass emission_rates or base_emission_rates, not both"))
     rates = emission_rates === nothing ? base_emission_rates : emission_rates
@@ -243,10 +248,10 @@ function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_s
     _require_production_cfl_limit(cfl_limit)
     _validate_cs_diffusion_inputs(diffusion_op, diffusion_layer_thickness, total)
     _require_cs_convection_workspace(convection_op, convection_workspace)
-    convection_op isa NoConvection || _validate_convection_forcing(convection_forcing, total)
+    convection_op isa NoConvection || _validate_convection_forcing(met_source, convection_forcing, total)
     schedule, step_dt = _call_schedule(schedule, dt, FT)
     replay = _build_cs_replay(panels_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                              panels_cm_steps, mesh; scheme, schedule, nsteps,
+                              panels_cm_steps, mesh; met_source, scheme, schedule, nsteps,
                               flux_scale, surface_flux, emission_rates = rates,
                               diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                               convection_op, convection_forcing, convection_workspace)
@@ -254,13 +259,55 @@ function _cs_replay_for_call(panels_rm0, panels_m0, panels_am_steps, panels_bm_s
     return replay, step_dt
 end
 
-function _validate_convection_forcing(forcing, nsteps::Int)
+"""
+    _call_nsteps(am_steps, bm_steps, cm_steps, met_source) -> Int
+
+The number of steps of an entry point's met: the length of the per-step face
+fluxes, or the steps of `met_source`'s windows. A call passes one or the
+other: with a met source the three flux vectors are `nothing`.
+"""
+function _call_nsteps(am, bm, cm, ::Nothing)
+    am === nothing && throw(ArgumentError(
+        "no met: pass the per-step face fluxes (panels_am_steps, panels_bm_steps, panels_cm_steps) " *
+        "or a `met_source`"))
+    return _validate_step_sequences(am, bm, cm)
+end
+function _call_nsteps(am, bm, cm, met_source::AbstractCSWindowSource)
+    am === nothing && bm === nothing && cm === nothing || throw(ArgumentError(
+        "pass the per-step face fluxes or `met_source`, not both: with a met source, pass `nothing` " *
+        "for panels_am_steps, panels_bm_steps and panels_cm_steps"))
+    return sum(window_steps(met_source))
+end
+
+# A met source supplies the window inputs the per-step keywords would: the
+# diffusion operator and layer thickness and the convection forcing. Its
+# fluxes are production's, so `flux_scale` (a low-level scaling of the
+# per-step fluxes) stays one.
+_require_source_keywords(::Nothing; _kwargs...) = nothing
+function _require_source_keywords(::AbstractCSWindowSource; flux_scale, diffusion_op,
+                                  diffusion_layer_thickness, convection_forcing)
+    given = String[]
+    diffusion_op isa NoDiffusion || push!(given, "diffusion_op")
+    diffusion_layer_thickness === nothing || push!(given, "diffusion_layer_thickness")
+    convection_forcing === nothing || push!(given, "convection_forcing")
+    isone(flux_scale) || push!(given, "flux_scale")
+    isempty(given) || throw(ArgumentError(
+        "$(join(given, ", ")) given with `met_source`: the met source supplies each window's diffusion " *
+        "operator, layer thickness and convection forcing (and production's unscaled fluxes)"))
+    return nothing
+end
+
+function _validate_convection_forcing(::Nothing, forcing, nsteps::Int)
     forcing === nothing && throw(ArgumentError(
         "an active convection operator requires `convection_forcing`"))
     forcing isa AbstractVector && length(forcing) != nsteps && throw(ArgumentError(
         "convection_forcing length $(length(forcing)) does not match nsteps $nsteps"))
     return nothing
 end
+_validate_convection_forcing(source::AbstractCSWindowSource, _forcing, _nsteps) =
+    window_layout(source).convection_forcing === nothing ? throw(ArgumentError(
+        "an active convection operator requires the convection forcing; the met source's windows carry none")) :
+    nothing
 
 # ---------------------------------------------------------------------------
 # Forward replays

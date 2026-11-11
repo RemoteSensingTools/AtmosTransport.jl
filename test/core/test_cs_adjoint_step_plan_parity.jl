@@ -268,19 +268,26 @@ end
     end
     @test_throws ArgumentError FP.acquire_window!(source, length(c.steps) + 1)
 
-    # An untaped run holds only its current window; a recording run retains
+    # An untaped run holds only its current window, and so does a counting
+    # run (its layouts keep array templates only); a recording run retains
     # every window it reads until the driver releases them.
     held(r) = [(h.lease.met.window, h.retained) for h in r.leases]
     FP._replay_steps!(replay, 1:sum(c.steps))
     @test held(replay) == [(length(c.steps), false)]
     FP._release_replay_windows!(replay)
     @test isempty(replay.leases)
+    counted = _replay(inp)
+    FP._replay_steps!(counted, 1:sum(c.steps); recorder = FP._CSCountingRecorder(AT.StateTape(), counted.advection))
+    @test held(counted) == [(length(c.steps), false)]
     recorded = _replay(inp)
     FP._replay_steps!(recorded, 1:(first_steps[2] - 1))
-    counter = FP._CSCountingRecorder(AT.StateTape(), recorded.advection)
-    FP._replay_steps!(recorded, first_steps[2]:sum(c.steps); recorder = counter)
+    runtime = FP._TapeRuntime(AT.AdjointTape())
+    FP._prepare_tape!(runtime, recorded, sum(c.steps))
+    ops = FP._record_cs_tape!(recorded, first_steps[2]:sum(c.steps), AT.StateTape(), runtime.pool)
     @test held(recorded) == [(w, true) for w in 2:length(c.steps)]
+    FP._release_records!(ops)
     FP._release_replay_windows!(recorded)
+    FP._release_tape_runtime!(runtime)
     @test isempty(recorded.leases)
 
     # Window inputs change only at a window's first step: one forcing, one

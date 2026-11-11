@@ -20,12 +20,14 @@ window's `m`), and a separate copy otherwise (see `_window_reset_targets`).
 """
 function Adjoints.CSStepSchedule(sim::DrivenSimulation)
     require_adjoint_support(sim)
+    return _cs_step_schedule(sim, _window_reset_targets(sim, identity)...)
+end
+
+# The schedule of `sim` with reset targets `starts` and `ends` (`nothing` when
+# a met source carries them with its windows).
+function _cs_step_schedule(sim::DrivenSimulation, starts, ends)
     windows = sim.start_window:sim.stop_window
-    plan = sim.plan
-    needs_start = any(s -> s isa AirMassResetStage, plan.window_advance)
-    needs_end = any(s -> s isa AirMassResetStage, plan.window_end)
-    starts, ends = _window_reset_targets(sim, windows, needs_start, needs_end)
-    return CSStepSchedule(plan; steps_per_window = sim.steps_per_window_schedule[windows],
+    return CSStepSchedule(sim.plan; steps_per_window = sim.steps_per_window_schedule[windows],
                           window_dt = sim.window_dt, start_time = sim.start_time,
                           binary_substeps = uses_binary_substep_contract(sim.driver),
                           chemistry = sim.model.chemistry,
@@ -33,7 +35,8 @@ function Adjoints.CSStepSchedule(sim::DrivenSimulation)
 end
 
 """
-    cs_adjoint_inputs(sim::DrivenSimulation; tracer = first tracer) -> NamedTuple
+    cs_adjoint_inputs(sim::DrivenSimulation; tracer = first tracer, residency = :device,
+                      device_slots = nothing, host_budget_bytes = nothing) -> NamedTuple
 
 Everything a cubed-sphere adjoint of `sim`'s configuration needs, captured from
 the production simulation itself: `panels_rm0` (the tracer `tracer`) and
@@ -49,6 +52,19 @@ production refreshed them, and shared by the window's steps; `nothing` for
 Dkg fields and TM5 Calc_Kzz, which carry their exchange), and the convection operator,
 its forcing per step (one object per met window) and a fresh workspace. The
 replay allocates its own diffusion workspace and reverse scratch.
+
+`residency = :host` keeps the met windows in host memory instead: each
+window's captured fluxes, convection forcing, diffusion operator, layer
+thickness and reset targets are copied to the host when the window is
+complete (bit copies of what `:device` keeps) and the device copies freed.
+The three flux vectors are then `nothing`, the schedule carries no reset
+targets, and `kwargs.met_source` is a [`HostCSWindowSource`](@ref) with
+`device_slots` (default 2) windows on the model's backend, replacing `diffusion_op`,
+`diffusion_layer_thickness` and `convection_forcing`. The host bytes must fit
+`host_budget_bytes` (default: the host or cgroup memory limit less AutoTape's
+host margin; set it on a shared host); the capture checks the projected total
+after every window and fails before the run. Streamed inputs need a
+`MetWindowCheckpoint` tape.
 
 The face fluxes are copied each time production rewrites the model's
 fluxes. With window-constant fluxes (`sim.interpolate_fluxes_within_window ==
@@ -84,7 +100,9 @@ footprint = cs_surface_emission_footprint(inputs.panels_rm0, inputs.panels_m0,
     Base.structdiff(inputs.kwargs, NamedTuple{(:surface_flux, :emission_rates)})...)
 ```
 """
-function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.model.state.tracer_names))
+function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.model.state.tracer_names),
+                           residency::Symbol = :device, device_slots = nothing,
+                           host_budget_bytes = nothing)
     model = sim.model
     model.state isa CubedSphereState || throw(ArgumentError(
         "cs_adjoint_inputs needs a cubed-sphere simulation; got $(typeof(model.state))"))
@@ -93,18 +111,17 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
     idx = findfirst(==(tracer), model.state.tracer_names)
     idx === nothing && throw(ArgumentError(
         "tracer $(repr(tracer)) is not in the simulation ($(model.state.tracer_names))"))
+    capture = _adjoint_capture(residency, sim; device_slots, host_budget_bytes)
     require_adjoint_support(sim)
     _require_fresh_adjoint_state(model)
 
     panels_rm0 = map(copy, get_tracer(model.state, idx))
     panels_m0 = map(copy, model.state.air_mass)
-    schedule = CSStepSchedule(sim)
+    schedule = _capture_schedule!(capture, sim)
     emission_rates = _adjoint_emission_rates(model.emissions, tracer, sim.final_iteration)
 
     has_diffusion = !(model.diffusion isa NoDiffusion)
     has_convection = !(model.convection isa NoConvection)
-    am, bm, cm = Any[], Any[], Any[]
-    diffusion_op, layer_thickness, forcing = Any[], Any[], Any[]
     fluxes = window_op = window_dz = window_forcing = nothing
     try
         while sim.iteration < sim.final_iteration
@@ -116,36 +133,149 @@ function cs_adjoint_inputs(sim::DrivenSimulation; tracer::Symbol = first(sim.mod
             if _refreshes_fluxes(sim, substep)
                 fluxes = map(f -> map(copy, f), (model.fluxes.am, model.fluxes.bm, model.fluxes.cm))
             end
-            push!(am, fluxes[1])
-            push!(bm, fluxes[2])
-            push!(cm, fluxes[3])
             if substep == 1
+                _window_captured!(capture)          # the previous window is complete
                 has_convection && (window_forcing = deepcopy(model.convection_forcing))
                 if has_diffusion
                     window_op = _adjoint_window_operator(model.diffusion)
                     window_dz = _adjoint_window_layer_thickness(model.diffusion, model)
                 end
             end
-            push!(forcing, window_forcing)
-            push!(diffusion_op, window_op)
-            push!(layer_thickness, window_dz)
+            _capture_step!(capture, fluxes, window_forcing, window_op, window_dz)
             _advance_adjoint_carrier!(model.diffusion,sim)
             _advance_clock!(sim)
         end
+        _window_captured!(capture)
     finally
         _finish_window_prefetch!(sim)
     end
-    kwargs = (; scheme = model.advection, schedule,
-              surface_flux = !(model.emissions isa NoSurfaceFlux), emission_rates,
-              diffusion_op = has_diffusion ? [diffusion_op...] : NoDiffusion(),
-              diffusion_layer_thickness = has_diffusion && !all(isnothing, layer_thickness) ?
-                                          map(identity, layer_thickness) : nothing,
-              convection_op = model.convection,
-              convection_forcing = has_convection ? [forcing...] : nothing,
-              convection_workspace = convection_workspace_for(model.convection, model.state,
-                                                               model.grid))
-    return (; panels_rm0, panels_m0, panels_am_steps = [am...], panels_bm_steps = [bm...],
-            panels_cm_steps = [cm...], mesh = model.grid.horizontal, kwargs)
+    common = (; scheme = model.advection, schedule,
+              surface_flux = !(model.emissions isa NoSurfaceFlux), emission_rates)
+    convection = (; convection_op = model.convection,
+                  convection_workspace = convection_workspace_for(model.convection, model.state,
+                                                                  model.grid))
+    return _captured_inputs(capture, panels_rm0, panels_m0, model.grid.horizontal, common, convection,
+                            has_diffusion, has_convection)
+end
+
+# Where the capture keeps the met: every window on the model's backend, as
+# per-step vectors (`:device`), or each completed window copied to the host
+# for a `HostCSWindowSource` (`:host`).
+function _adjoint_capture(residency::Symbol, sim; device_slots, host_budget_bytes)
+    residency === :host && return _HostCapture(sim; device_slots = something(device_slots, 2),
+                                               host_budget_bytes)
+    residency === :device || throw(ArgumentError(
+        "residency = $(repr(residency)); expected :device (every window on the model's backend) or " *
+        ":host (a HostCSWindowSource)"))
+    device_slots === nothing && host_budget_bytes === nothing || throw(ArgumentError(
+        "device_slots and host_budget_bytes configure residency = :host"))
+    return _DeviceCapture(Any[], Any[], Any[], Any[], Any[], Any[])
+end
+
+struct _DeviceCapture
+    am              :: Vector{Any}
+    bm              :: Vector{Any}
+    cm              :: Vector{Any}
+    forcing         :: Vector{Any}
+    diffusion_op    :: Vector{Any}
+    layer_thickness :: Vector{Any}
+end
+
+_capture_schedule!(::_DeviceCapture, sim) = CSStepSchedule(sim)
+
+function _capture_step!(c::_DeviceCapture, fluxes, forcing, op, dz)
+    push!(c.am, fluxes[1]); push!(c.bm, fluxes[2]); push!(c.cm, fluxes[3])
+    push!(c.forcing, forcing); push!(c.diffusion_op, op); push!(c.layer_thickness, dz)
+    return nothing
+end
+_window_captured!(::_DeviceCapture) = nothing
+
+function _captured_inputs(c::_DeviceCapture, panels_rm0, panels_m0, mesh, common, convection,
+                          has_diffusion, has_convection)
+    kwargs = (; common...,
+              diffusion_op = has_diffusion ? [c.diffusion_op...] : NoDiffusion(),
+              diffusion_layer_thickness = has_diffusion && !all(isnothing, c.layer_thickness) ?
+                                          map(identity, c.layer_thickness) : nothing,
+              convection_op = convection.convection_op,
+              convection_forcing = has_convection ? [c.forcing...] : nothing,
+              convection_workspace = convection.convection_workspace)
+    return (; panels_rm0, panels_m0, panels_am_steps = [c.am...], panels_bm_steps = [c.bm...],
+            panels_cm_steps = [c.cm...], mesh, kwargs)
+end
+
+# The host capture: the steps of the window being captured (device copies),
+# the completed windows in host memory, and their host bytes against the
+# budget (each array once: a start target shared with the previous window's
+# end target counts once).
+mutable struct _HostCapture
+    const am            :: Vector{Any}
+    const bm            :: Vector{Any}
+    const cm            :: Vector{Any}
+    forcing             :: Any
+    diffusion_op        :: Any
+    layer_thickness     :: Any
+    const windows       :: Vector{Any}
+    starts              :: Any
+    ends                :: Any
+    const seen          :: IdDict{Any, Nothing}
+    target_bytes        :: Int
+    window_bytes        :: Int
+    const budget        :: Int
+    const nwindows      :: Int
+    const device_slots  :: Int
+end
+
+_HostCapture(sim; device_slots, host_budget_bytes) =
+    _HostCapture(Any[], Any[], Any[], nothing, nothing, nothing, Any[], nothing, nothing,
+                 IdDict{Any, Nothing}(), 0, 0, Adjoints.Footprint._host_window_budget(host_budget_bytes),
+                 length(sim.start_window:sim.stop_window), Int(device_slots))
+
+# The schedule without targets; the targets, computed as `CSStepSchedule(sim)`
+# computes them, in host memory.
+function _capture_schedule!(c::_HostCapture, sim)
+    c.starts, c.ends = _window_reset_targets(sim, Adjoints.Footprint._host_copy)
+    c.target_bytes = Adjoints.Footprint._new_array_bytes!(c.seen, (Tuple(something(c.starts, ())),
+                                                                   Tuple(something(c.ends, ()))))
+    Adjoints.Footprint._require_host_budget(c.target_bytes, c.budget, "the reset targets")
+    return _cs_step_schedule(sim, nothing, nothing)
+end
+
+function _capture_step!(c::_HostCapture, fluxes, forcing, op, dz)
+    push!(c.am, fluxes[1]); push!(c.bm, fluxes[2]); push!(c.cm, fluxes[3])
+    c.forcing, c.diffusion_op, c.layer_thickness = forcing, op, dz
+    return nothing
+end
+
+# A completed window: its met in host memory (`_host_window_met`), its device
+# copies freed, and the projected host bytes of all windows checked.
+function _window_captured!(c::_HostCapture)
+    isempty(c.am) && return nothing
+    FP = Adjoints.Footprint
+    w = length(c.windows) + 1
+    first_step = w == 1 ? 1 : last(c.windows[end].steps) + 1
+    met = FP._host_window_met(w, first_step:(first_step + length(c.am) - 1), c.am, c.bm, c.cm;
+                              convection_forcing = c.forcing,
+                              diffusion_op = something(c.diffusion_op, NoDiffusion()),
+                              layer_thickness = c.layer_thickness,
+                              start_air_mass = c.starts === nothing ? nothing : c.starts[w],
+                              end_air_mass = c.ends === nothing ? nothing : c.ends[w])
+    FP._free_met_arrays!((Tuple(unique(objectid, zip(c.am, c.bm, c.cm))), c.forcing, c.diffusion_op,
+                          c.layer_thickness))
+    push!(c.windows, met)
+    c.window_bytes += FP._new_array_bytes!(c.seen, FP._met_pieces(met))
+    FP._require_host_budget(c.target_bytes + cld(c.window_bytes * c.nwindows, w), c.budget,
+                            "the met of $(c.nwindows) windows (projected from $w)")
+    empty!(c.am); empty!(c.bm); empty!(c.cm)
+    return nothing
+end
+
+function _captured_inputs(c::_HostCapture, panels_rm0, panels_m0, mesh, common, convection,
+                          _has_diffusion, _has_convection)
+    source = HostCSWindowSource([c.windows...]; device_like = first(panels_m0),
+                                device_slots = c.device_slots, host_budget_bytes = c.budget)
+    kwargs = (; common..., met_source = source, convection...)
+    return (; panels_rm0, panels_m0, panels_am_steps = nothing, panels_bm_steps = nothing,
+            panels_cm_steps = nothing, mesh, kwargs)
 end
 
 # With no mass reset, the next window's live D reads prognostic air mass.
@@ -209,8 +339,8 @@ function _adjoint_emission_rates(op, tracer, n)
     return fill(src.cell_mass_rate, n)
 end
 
-# The air-mass reset targets of `windows` (vectors of six halo-padded panels on
-# the model backend, or `nothing` for a target the plan does not read),
+# The air-mass reset targets of the simulation's windows (vectors of six
+# halo-padded panels on the model backend, or `nothing` for a target the plan does not read),
 # computed as the simulation computes them: each window's air mass (start) and
 # its end air mass `m + 1 * dm` (end, `expected_air_mass!`). Each window is
 # loaded once.
@@ -228,25 +358,32 @@ end
 # halo cells by an adjoint state the next halo record has zeroed (the reason
 # reset-target identity checksums cover interiors only), as for any later
 # forward run of separate targets.
-function _window_reset_targets(sim::DrivenSimulation, windows, needs_start::Bool, needs_end::Bool)
+#
+# `store` keeps each target: `identity` (on the model backend), or a host copy
+# (`residency = :host`); a shared target is stored once.
+function _window_reset_targets(sim::DrivenSimulation, store)
+    plan = sim.plan
+    needs_start = any(s -> s isa AirMassResetStage, plan.window_advance)
+    needs_end = any(s -> s isa AirMassResetStage, plan.window_end)
     needs_start || needs_end || return nothing, nothing
     starts, ends = Any[], Any[]
-    previous_end = nothing
-    for w in windows
+    previous_end = stored_end = nothing
+    for w in sim.start_window:sim.stop_window
         window = _adapt_window_to_model_backend(_load_window(sim.driver, w),
                                                 sim.model.state.air_mass)
         if needs_start
             if previous_end !== nothing && _bitwise_equal(previous_end, window.air_mass)
-                push!(starts, previous_end)
+                push!(starts, stored_end)
             else
                 start = _allocate_storage_like(window.air_mass)
-                push!(starts, _copy_storage!(start, window.air_mass))
+                push!(starts, store(_copy_storage!(start, window.air_mass)))
             end
         end
         if needs_end
             previous_end = _allocate_storage_like(window.air_mass)
             expected_air_mass!(previous_end, window, one(typeof(sim.Δt)))
-            push!(ends, previous_end)
+            stored_end = store(previous_end)
+            push!(ends, stored_end)
         end
     end
     return needs_start ? [starts...] : nothing, needs_end ? [ends...] : nothing

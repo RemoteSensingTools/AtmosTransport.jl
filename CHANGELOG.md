@@ -12,6 +12,21 @@
   FP32 conservation page of the manual gains the measurements that locate
   the FP32 tracer-mass drift of the advection in the rounding of the stored
   cell values. No model code changes.
+- **Adjoint: met windows can stay in host memory.** `cs_adjoint_inputs(sim;
+  residency = :host, device_slots = 2, host_budget_bytes)` returns a
+  `HostCSWindowSource` that keeps every met window on the host and only
+  `device_slots` on the device; pass it as `met_source` to
+  `cs_surface_flux_4dvar[_optimize]`, `cs_surface_emission_footprint`,
+  `cs_surface_flux_jacobian` or `run_cs_footprint_forward` (exclusive with the
+  per-step flux vectors and the `diffusion_*`, `convection_forcing` and
+  `flux_scale` keywords). Results are bitwise those of resident inputs on one
+  CPU thread. A streamed source runs with `MetWindowCheckpoint` tapes only;
+  `FullCheckpoint`, `StrideCheckpoint`, `AirMassTape` and an unconstrained
+  `AutoTape()` are rejected before the forward run. At C90 (Lin–Rood 7) the
+  device no longer holds the met inputs (about 2.9 GB per day), so the device
+  peak stays at the evaluation's working set for any period; the limit becomes
+  host memory (about 2.9 GB per day). `CSStepSchedule` accepts `nothing` reset
+  targets for a resetting plan when a met source carries them.
 - Cubed-sphere GPU window reads from NFS use one `pread` for a window that is
   not in the page cache and four concurrent ones for a window that is (at
   least 90 % of its pages, sampled with `mincore`); the reader detects NFS when

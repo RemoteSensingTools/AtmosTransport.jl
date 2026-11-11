@@ -47,6 +47,13 @@ window's steps may share one tuple); Dkg fields and TM5 Calc_Kzz read none
 layer thickness into it; it never writes the caller's panels. `flux_scale` multiplies all transport fluxes and is shared
 with the tape/reverse APIs so forward finite differences exercise the same
 model trajectory.
+
+`met_source` (an [`AbstractCSWindowSource`](@ref), e.g. the
+[`HostCSWindowSource`](@ref) of `cs_adjoint_inputs(sim; residency = :host)`)
+supplies the met per window instead: pass `nothing` for the three per-step
+flux vectors and omit `diffusion_op`, `diffusion_layer_thickness`,
+`convection_forcing` and `flux_scale` (an `ArgumentError` otherwise); the
+schedule then carries no reset targets (the source's windows do).
 """
 function run_cs_footprint_forward(panels_rm0, panels_m0,
                                   panels_am_steps,
@@ -54,6 +61,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
                                   panels_cm_steps,
                                   mesh::CubedSphereMesh,
                                   objective::AbstractCSFootprintObjective;
+                                  met_source::Union{Nothing, AbstractCSWindowSource} = nothing,
                                   scheme = PPMScheme(NoLimiter()),
                                   dt = nothing,
                                   schedule = nothing,
@@ -70,7 +78,7 @@ function run_cs_footprint_forward(panels_rm0, panels_m0,
     return _run_cs_footprint_forward(panels_rm0, panels_m0,
                                      panels_am_steps, panels_bm_steps, panels_cm_steps,
                                      mesh, objective;
-                                     scheme, dt, schedule, surface_flux, flux_scale,
+                                     met_source, scheme, dt, schedule, surface_flux, flux_scale,
                                      cfl_limit, emission_rates,
                                      diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                                      convection_op, convection_forcing, convection_workspace)
@@ -123,6 +131,15 @@ recorded by the forward run and use pinned host `snapshots` for the head.
 The call reuses its pools and frees them when it returns. The Lin–Rood tape
 is device-only; its horizontal records remain outside the pools and are
 sized by counting.
+
+`met_source` replaces the per-step met arguments, as for
+`run_cs_footprint_forward`. A streamed source (`HostCSWindowSource`) keeps
+a few met windows on the device, so the tape must record one window at a
+time: `AdjointTape(; checkpoint = MetWindowCheckpoint(...))` or
+`AutoTape(; checkpoint = MetWindowCheckpoint(...))`; Full, Stride,
+`AirMassTape` and an unconstrained `AutoTape()` are an `ArgumentError`
+before anything runs. Lin–Rood tapes are then sized from window 1 and the
+longest later window instead of a counting run over every step.
 """
 function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        panels_am_steps,
@@ -130,6 +147,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
                                        panels_cm_steps,
                                        mesh::CubedSphereMesh,
                                        objective::AbstractCSFootprintObjective;
+                                       met_source::Union{Nothing, AbstractCSWindowSource} = nothing,
                                        scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
                                        dt = nothing,
                                        schedule = nothing,
@@ -146,7 +164,7 @@ function cs_surface_emission_footprint(panels_rm0, panels_m0,
     return only(_cs_objective_footprints(
         panels_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, (objective,);
-        scheme, dt, schedule, flux_scale, cfl_limit, base_emission_rates,
+        met_source, scheme, dt, schedule, flux_scale, cfl_limit, base_emission_rates,
         diffusion_op, diffusion_layer_thickness, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace, tape))
 end
@@ -162,6 +180,7 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
                                   panels_cm_steps,
                                   mesh::CubedSphereMesh,
                                   objectives;
+                                  met_source::Union{Nothing, AbstractCSWindowSource} = nothing,
                                   scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
                                   dt = nothing,
                                   schedule = nothing,
@@ -181,7 +200,7 @@ function _cs_objective_footprints(panels_rm0, panels_m0,
     return _cs_surface_footprints(panels_rm0, panels_m0,
                                   panels_am_steps, panels_bm_steps, panels_cm_steps,
                                   mesh, starts;
-                                  scheme, tape, dt, schedule, flux_scale, cfl_limit,
+                                  met_source, scheme, tape, dt, schedule, flux_scale, cfl_limit,
                                   base_emission_rates,
                                   diffusion_op, diffusion_layer_thickness, diffusion_meteo,
                                   convection_op, convection_forcing, convection_workspace)
@@ -204,7 +223,8 @@ operator and the result holds the emission footprints. `surface_flux = false`
 replays a configuration without surface sources (palindrome center `V(dt)`):
 the result's `footprints` are empty and `initial_adjoint` is the
 initial-condition sensitivity `dJ/drm_0`, which every result also carries.
-`tape` defaults to [`AutoTape`](@ref), as for `cs_surface_emission_footprint`.
+`tape` defaults to [`AutoTape`](@ref) and `met_source` replaces the per-step
+met, as for `cs_surface_emission_footprint`.
 """
 function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  panels_m0,
@@ -212,6 +232,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
                                                  panels_bm_steps,
                                                  panels_cm_steps,
                                                  mesh::CubedSphereMesh;
+                                                 met_source::Union{Nothing, AbstractCSWindowSource} = nothing,
                                                  scheme::CSAdjointSupportedScheme = PPMScheme(NoLimiter()),
                                                  dt = nothing,
                                                  schedule = nothing,
@@ -236,7 +257,7 @@ function cs_surface_emission_footprint_from_seed(final_adjoint_rm::NTuple{6},
     return only(_cs_surface_footprints(
         tape_rm0, panels_m0, panels_am_steps, panels_bm_steps, panels_cm_steps,
         mesh, [_SeedStart(final_adjoint_rm)];
-        scheme, tape, dt, schedule, surface_flux, flux_scale, cfl_limit,
+        met_source, scheme, tape, dt, schedule, surface_flux, flux_scale, cfl_limit,
         base_emission_rates,
         diffusion_op, diffusion_layer_thickness, diffusion_meteo,
         convection_op, convection_forcing, convection_workspace))
@@ -248,7 +269,7 @@ end
 
 """
     _cs_surface_footprints(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                           panels_cm_steps, mesh, starts; scheme, tape, dt,
+                           panels_cm_steps, mesh, starts; met_source, scheme, tape, dt,
                            schedule, surface_flux, flux_scale, cfl_limit,
                            base_emission_rates, diffusion_op, diffusion_layer_thickness,
                            diffusion_meteo, convection_op, convection_forcing,
@@ -269,6 +290,7 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 panels_cm_steps,
                                 mesh::CubedSphereMesh,
                                 starts::AbstractVector;
+                                met_source,
                                 scheme::CSAdjointSupportedScheme,
                                 tape::Union{AdjointTape, AutoTape},
                                 dt = nothing,
@@ -283,9 +305,9 @@ function _cs_surface_footprints(tape_rm0, panels_m0,
                                 convection_op,
                                 convection_forcing,
                                 convection_workspace)
-    _require_tape_supported(scheme, tape)
+    _require_tape_supported(scheme, tape, met_source)
     replay, step_dt = _cs_replay_for_call(tape_rm0, panels_m0, panels_am_steps, panels_bm_steps,
-                                          panels_cm_steps, mesh; scheme, dt, schedule,
+                                          panels_cm_steps, mesh; met_source, scheme, dt, schedule,
                                           surface_flux, base_emission_rates, flux_scale,
                                           cfl_limit, diffusion_op, diffusion_layer_thickness,
                                           diffusion_meteo, convection_op, convection_forcing,
