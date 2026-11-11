@@ -1,0 +1,156 @@
+# Case matrix of the idealized advection tests (GMD paper, Sect. 4.1).
+#
+# Each [[grid]] entry lists the flows and advection schemes run on that grid; every combination
+# runs in the precisions listed (default: `precisions` below). Optional per entry: `courant`
+# (largest outflow fraction per flux application, sets the substeps per window; default 0.5),
+# `windows_per_day` (met windows per day; default 24, i.e. hourly winds),
+# `tilt` (flow A: tilt of the rotation axis in degrees; default 45), `gpu_precisions` (the
+# precisions of this entry that run on a CUDA GPU; the L40S is slow in Float64, so Float32 only)
+# and `tag`, which names a variant of a grid and flow (case `<grid>_<flow>_<tag>`). Tagged cases
+# are reported separately (`cfl*`: substep sensitivity, `w*`: forcing-window sensitivity,
+# `tilt*`: tilt series) and stay out of the convergence results.
+# `make_configs.jl` turns this table into run configs.
+
+precisions = ["Float64", "Float32"]
+
+# Snapshot cadence [h] and the levels written (1 = top). The layers are identical 2-D tests;
+# writing the top and bottom layers checks that they stay identical.
+output_cadence_hours = 6
+output_levels = [1, 4]
+
+[schemes.upwind]
+scheme = "upwind"
+
+[schemes.slopes]
+scheme = "slopes"
+
+[schemes.ppm]
+scheme = "ppm"                      # monotone limiter (default)
+
+[schemes.ppm_cw84]
+scheme = "ppm"
+limiter = "cw84"
+
+[schemes.linrood5]
+scheme = "linrood"
+ppm_order = 5
+
+[schemes.linrood7]
+scheme = "linrood"
+ppm_order = 7
+
+# ---------------------------------------------------------------- cubed sphere (GEOS convention)
+[[grid]]
+label = "c48"
+flows = ["A", "B", "C"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84", "linrood5", "linrood7"]
+
+[[grid]]
+label = "c96"
+flows = ["A", "B", "C"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84", "linrood5", "linrood7"]
+
+[[grid]]
+label = "c192"
+flows = ["A", "B", "C"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84", "linrood5", "linrood7"]
+gpu_precisions = ["Float32"]
+
+# ---------------------------------------------------------------- latitude-longitude
+[[grid]]
+label = "ll96x48"                   # 3.75 degrees
+flows = ["A", "B"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84"]
+
+[[grid]]
+label = "ll192x96"                  # 1.875 degrees
+flows = ["A", "B", "C"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84"]
+
+[[grid]]
+label = "ll384x192"                 # 0.9375 degrees
+flows = ["A", "B"]
+schemes = ["upwind", "slopes", "ppm", "ppm_cw84"]
+gpu_precisions = ["Float32"]
+
+# ---------------------------------------------------------------- reduced Gaussian (ECMWF rings)
+[[grid]]
+label = "n48"                       # ring sizes in ../grids/n48_pl.txt
+flows = ["A", "B", "C"]
+schemes = ["upwind"]
+
+[[grid]]
+label = "n96"                       # ring sizes in ../grids/n96_pl.txt
+flows = ["A", "B"]
+schemes = ["upwind"]
+
+# ---------------------------------------------------------------- flow A tilt series (45 degrees above)
+[[grid]]
+label = "c96"
+flows = ["A"]
+tilt = 0.0
+tag = "tilt0"
+schemes = ["ppm", "linrood7"]
+
+[[grid]]
+label = "c96"
+flows = ["A"]
+tilt = 90.0
+tag = "tilt90"
+schemes = ["ppm", "linrood7"]
+
+[[grid]]
+label = "ll192x96"
+flows = ["A"]
+tilt = 0.0
+tag = "tilt0"
+schemes = ["ppm"]
+
+[[grid]]
+label = "ll192x96"
+flows = ["A"]
+tilt = 90.0
+tag = "tilt90"
+schemes = ["ppm"]
+
+[[grid]]
+label = "n48"
+flows = ["A"]
+tilt = 0.0
+tag = "tilt0"
+schemes = ["upwind"]
+
+[[grid]]
+label = "n48"
+flows = ["A"]
+tilt = 90.0
+tag = "tilt90"
+schemes = ["upwind"]
+
+# ---------------------------------------------------------------- substep sensitivity
+[[grid]]
+label = "c96"                       # twice the substeps of the C96 flow B case
+flows = ["B"]
+courant = 0.25
+tag = "cfl025"
+schemes = ["slopes", "ppm", "ppm_cw84", "linrood7"]
+precisions = ["Float64"]
+
+# ---------------------------------------------------------------- forcing-window sensitivity
+# Flow B with 15-minute instead of hourly windows: the window-mean winds are then 16 times
+# closer to the analytic flow (see forcing_window_error.jl).
+[[grid]]
+label = "c96"
+flows = ["B"]
+windows_per_day = 96
+tag = "w15"
+schemes = ["ppm", "ppm_cw84", "linrood5", "linrood7"]
+precisions = ["Float64"]
+
+[[grid]]
+label = "c192"
+flows = ["B"]
+windows_per_day = 96
+tag = "w15"
+schemes = ["ppm", "ppm_cw84", "linrood5", "linrood7"]
+precisions = ["Float64"]

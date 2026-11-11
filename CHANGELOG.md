@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `examples/paper/` holds the scripts, case tables, result tables and figures
+  of the model description paper. `examples/paper/idealized_advection/`
+  writes transport binaries for three analytic flows (solid-body rotation,
+  and the non-divergent and divergent deformational flows of Lauritzen et al.
+  2012) on cubed-sphere, latitude-longitude and reduced-Gaussian grids, runs
+  the unmodified model on them for every advection scheme in FP32 and FP64,
+  and compares against analytic cell means (202 runs; `run_matrix.sh`). The
+  FP32 conservation page of the manual gains the measurements that locate
+  the FP32 tracer-mass drift of the advection in the rounding of the stored
+  cell values. No model code changes.
 - **Adjoint: met windows can stay in host memory.** `cs_adjoint_inputs(sim;
   residency = :host, device_slots = 2, host_budget_bytes)` returns a
   `HostCSWindowSource` that keeps every met window on the host and only
