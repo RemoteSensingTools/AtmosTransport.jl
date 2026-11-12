@@ -115,6 +115,30 @@ physics-file route, issue #55), and lat-lon → cubed-sphere regrids of those;
 each error asks for regeneration. Sections without a recorded source are
 accepted.
 
+The CATRINE attachment can also put the ERA5-based fields on a binary of other
+meteorology and other hybrid levels, for example MERRA-2 L72
+(`--vertical-mapping pressure_overlap`). For a dry-basis binary the archive
+fluxes are first converted to dry air with the ERA5 N320 humidity, the moisture
+of the air that the ERA5 fluxes carry, at the start of each transport window;
+`--era5-root` names that archive and is required unless the binary is itself
+ERA5-derived (a moist binary needs no humidity). The attachment then regrids
+the fields horizontally at the native ERA5 L137 levels and, on every cube
+column, places the ERA5 interfaces `A + B ps` and the binary's interfaces over
+the same total surface pressure: the stored `ps` when it is total, otherwise
+the dry `ps` converted with the binary's `vdiff_qv` humidity, as the initial
+conditions do (a dry `ps` without `vdiff_qv` is rejected). Each ERA5 layer
+total is distributed over the target layers in proportion to the pressure
+overlap. Column sums are preserved; ERA5 pressure above the target top goes to
+the top layer. Every section of the input binary is kept, so `cmfmc`
+convection and the GEOS boundary-layer scheme still run on the output, and so
+is every header key of the input that the output does not set itself. Inputs
+of format version 5 or with Float64 sections are rejected. The header records
+`convection_attachment = "legacy_catrine_1deg_3hour_tm5_to_cs_pressure_overlap_v1"`,
+`convection_meteorology`, `convection_host_meteorology` (the input's
+`source_type`, else its `preprocessor`), `host_git_commit` and
+`convection_vertical_mapping`: such a binary is a sensitivity-experiment
+product, not a consistent one.
+
 The transport-binary core fields (`:m`, `:am`, `:bm`, `:cm`, `:dm`)
 are stored as **per-cell mass** and **per-substep mass amount**
 (`flux_kind = :substep_mass_amount`), not per-area / per-second

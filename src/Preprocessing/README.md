@@ -38,9 +38,13 @@ remap retain it where reproducing IFS geometry requires it.
   `coarsen_nested_cs_transport_binary` (experimental).
 - TM5 convection sections come from the ERA5 N320 to CS path
   (`include_convection = true` in the met source) or from
-  [`../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`](../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl).
-  The lat-lon spectral path writes none; a config with a `[tm5_convection]`
-  table is rejected (`reject_removed_tm5_convection_route`).
+  the attachment script
+  [`../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl`](../../scripts/preprocessing/attach_catrine_tm5_convection_cs.jl)
+  (ERA5-derived binaries through their `merge_map`, or, with
+  `--vertical-mapping pressure_overlap`, binaries on other levels such as
+  MERRA-2, keeping all their sections). The lat-lon spectral path writes
+  none; a config with a `[tm5_convection]` table is rejected
+  (`reject_removed_tm5_convection_route`).
 
 ## Supported Source and Target Pairs
 
