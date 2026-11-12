@@ -202,4 +202,6 @@ mass basis, supported operators, and load-time consistency gates.
 - Code structure, migration rows and the code map: `docs/src/development/structure.md`,
   `docs/src/development/code_map.md`
 - Test tiers, the adjoint bitwise harness and CI policy: `test/README.md`
+- How Julia is written here (dispatch, kernels, single precision, docstrings, tests):
+  the project skill `.claude/skills/atmostransport-julia/`
 - Historical design and debugging records: `docs/memos/`, `docs/resources/`

@@ -250,6 +250,7 @@ CS builder in `src/Models/InitialConditions/cubed_sphere.jl`):
 | `"file_field"` | yes | yes | yes | `file`, `variable`, optional `humidity_variable`, `time_index`, `vertical_order` |
 | `"catrine_co2"` | yes | yes | yes | optional `file`, `variable`, `humidity_variable`, `time_index` overrides for the built-in defaults |
 | `"pressure_layer"` | no | no | yes | `lowest_layer = true` or `psurf_fraction`; optional `total_molecules` |
+| `"pressure_gaussian"` | no | no | yes | `width`; optional `psurf_fraction` (center), `total_molecules` |
 | `"cs_native"` | no | no | yes | `file`, `variable`; optional `humidity_variable`, `time_index`, `vertical_order`, `clamp_negative` (default `false`) |
 
 `catrine_co2` defaults to
@@ -308,6 +309,32 @@ per-column surface pressure. The fraction defaults to `0.5` and must be in
 `(0, 1]`; equal distances select the first level. One uniform dry VMR across
 the selected cells is normalized to the positive `total_molecules`
 (default `1e22`), using their summed dry-air mass. Other levels start at zero.
+
+`pressure_gaussian` gives every column a Gaussian profile of the dry VMR in
+``\sigma = p / p_\mathrm{s}``, with center `psurf_fraction` (in `(0, 1]`,
+default `0.5`; `1` is the surface) and standard deviation `width` (required,
+positive, in the same units):
+
+```math
+q(\sigma) \propto \exp\left(-\frac{(\sigma - \sigma_0)^2}{2 w^2}\right).
+```
+
+Each layer holds the mean of this profile over its own ``\sigma`` interval,
+from the binary's hybrid coefficients and per-column surface pressure, not the
+value at its midpoint. Every vertical grid therefore holds the layer means of
+the same continuous profile, whatever its layer thicknesses, which a single
+`pressure_layer` cannot give. Where two grids share layer edges, the tracer
+between two such ``\sigma`` surfaces is the same on both, up to the variation
+of humidity inside the coarser layer (about 1e-4 of the column amount on real
+binaries). ``\sigma`` uses the total surface pressure; a binary that stores
+the dry surface pressure without humidity places the layers with the dry
+pressure, which moves up to about 1 % of a column's tracer to another layer
+compared with a binary that carries humidity. The part beyond the surface or the model top is
+cut off, and one global factor sets the molecule count to `total_molecules`
+(default `1e22`). A `width` below the local layer thickness is still
+integrated exactly but appears spread over the layer; to compare vertical
+grids choose `width` of at least the layer thickness of the coarser grid near
+the center.
 
 Surface-flux emission is configured as a nested sub-table under each
 tracer. Each tracer that emits gets one `[tracers.<name>.surface_flux]`

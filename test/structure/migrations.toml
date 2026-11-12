@@ -1,11 +1,2 @@
-# Reviewed identity migrations; see test/structure/README.md.
-
-[[migration]]
-from = "AtmosTransport.Operators.Convection"
-to = ["AtmosTransport.Operators.Convection", "AtmosTransport.Operators.Convection.IFS"]
-reason = "IFS convection: new child module wired by the Convection facade, as TM5 and CMFMC in C1"
-
-[[migration]]
-from = "src/Operators/Convection"
-to = ["src/Operators/Convection", "src/Operators/Convection/IFS"]
-reason = "IFS convection: new child folder wired by the Convection facade, as TM5 and CMFMC in C1"
+# Added files remain within the existing Tape and Footprint owners.
+migration = []

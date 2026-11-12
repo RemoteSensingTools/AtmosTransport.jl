@@ -74,7 +74,7 @@ using .InitialConditionIO: FileInitialConditionSource,
                            GaussianBlobInitialConditionSpec,
                            FileInitialConditionSpec,
                            CatrineCO2InitialConditionSpec,
-                           PressureLayerInitialConditionSpec,
+                           PressureLayerInitialConditionSpec, PressureGaussianInitialConditionSpec,
                            CSNativeInitialConditionSpec,
                            initial_condition_spec,
                            build_initial_mixing_ratio,
@@ -86,7 +86,8 @@ export FileInitialConditionSource, build_initial_mixing_ratio, pack_initial_trac
 export AbstractInitialConditionSpec, UniformInitialConditionSpec, initial_condition_spec
 export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec
 export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
-export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
+export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec,
+       PressureGaussianInitialConditionSpec
 export CSNativeInitialConditionSpec
 export FileSurfaceFluxField, build_surface_flux_source, build_surface_flux_sources
 include("Runner/Runner.jl")

@@ -411,9 +411,9 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["uniform", "latitude_step", "lat_step", "hemisphere_step", "bl_enhanced", "gaussian_blob", "file", "netcdf", "file_field", "catrine_co2", "pressure_layer", "cs_native"],
+          "enum": ["uniform", "latitude_step", "lat_step", "hemisphere_step", "bl_enhanced", "gaussian_blob", "file", "netcdf", "file_field", "catrine_co2", "pressure_layer", "pressure_gaussian", "cs_native"],
           "default": "uniform",
-          "description": "uniform: background everywhere; latitude_step (alias lat_step, hemisphere_step): south_value and north_value split at split_lat_deg; bl_enhanced: background plus enhancement in the lowest n_layers (lat-lon only); gaussian_blob: background plus a horizontal Gaussian, equal at all levels; file (alias netcdf, file_field): a lon-lat NetCDF field interpolated to the grid; catrine_co2: file with the CATRINE startCO2 defaults; pressure_layer: one layer per column normalised to total_molecules (cubed sphere); cs_native: a field already on the binary's cube and levels (cubed sphere)."
+          "description": "uniform: background everywhere; latitude_step (alias lat_step, hemisphere_step): south_value and north_value split at split_lat_deg; bl_enhanced: background plus enhancement in the lowest n_layers (lat-lon only); gaussian_blob: background plus a horizontal Gaussian, equal at all levels; file (alias netcdf, file_field): a lon-lat NetCDF field interpolated to the grid; catrine_co2: file with the CATRINE startCO2 defaults; pressure_layer: one layer per column normalised to total_molecules (cubed sphere); pressure_gaussian: a Gaussian in p / p_surface, averaged over each layer and normalised to total_molecules (cubed sphere); cs_native: a field already on the binary's cube and levels (cubed sphere)."
         },
         "background": {
           "type": "number",
@@ -504,12 +504,17 @@
           "type": "number",
           "exclusiveMinimum": 0,
           "maximum": 1,
-          "description": "pressure_layer: each column's tracer goes into the layer whose log-pressure midpoint is nearest psurf_fraction times its surface pressure; default 0.5."
+          "description": "pressure_layer: each column's tracer goes into the layer whose log-pressure midpoint is nearest psurf_fraction times its surface pressure; pressure_gaussian: center of the Gaussian in p / p_surface (1 is the surface); default 0.5."
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "pressure_gaussian: standard deviation of the Gaussian in units of p / p_surface (required). For profiles that agree between vertical grids, at least the layer thickness of the coarser grid near the center."
         },
         "total_molecules": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "pressure_layer: total number of tracer molecules in the selected layers, reached with one uniform dry VMR; default 1e22. Other layers start at zero."
+          "description": "pressure_layer: total number of tracer molecules in the selected layers, reached with one uniform dry VMR; default 1e22. Other layers start at zero. pressure_gaussian: total number of tracer molecules of the profile; default 1e22."
         }
       },
       "description": "Initial dry volume mixing ratio (mol/mol) of a tracer, built by kind on the binary's grid and converted to tracer mass with the first window's air mass."
