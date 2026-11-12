@@ -9,11 +9,12 @@ their location from an argument or an environment variable.
 | Folder | Reproduces | Large outputs |
 |---|---|---|
 | [`idealized_advection/`](idealized_advection/) | Sect. 4.1, standard transport tests: solid-body rotation and the deformational flows of Nair and Lauritzen (2010) on cubed-sphere, latitude–longitude and reduced-Gaussian grids, all advection schemes, FP32 and FP64 | `$IDEALIZED_ADVECTION_WORKDIR` (current case table, 202 runs: binaries about 150 GB, run output about 35 GB) |
+| [`layer_tracers/`](layer_tracers/) | Sect. 6.2, process experiments with layered tracers: percentile spread by process, solver and field swaps, regional contrasts | model output of the runs (about 400 GB for the 74 runs), reduced `.npz` files |
 | [`grids/`](grids/) | Figure of the three transport grids (latitude–longitude, reduced Gaussian, cubed sphere) coloured by cell area | none (`cs_c<N>_corners.csv` is regenerated) |
 
 All commands run from the repository root with the project environment
 (`julia --project=. ...`); the Python scripts need numpy, matplotlib and netCDF4 (the grid
-figure also cartopy for the coastlines).
+figure and the lift map of the layered tracers also cartopy for the coastlines).
 
 ## Idealized advection (Sect. 4.1)
 
@@ -30,6 +31,19 @@ JOBS=8 THREADS=8 GPUS="0 1" examples/paper/idealized_advection/run_matrix.sh all
 ```
 
 Results: `idealized_advection/results/*.csv`; figures: `idealized_advection/figures/`.
+
+## Process experiments with layered tracers (Sect. 6.2)
+
+Generated configurations of ordinary runs with seven Gaussian tracers in σ = p / p_surface and
+every combination of advection, mixing and convection; see
+[`layer_tracers/README.md`](layer_tracers/README.md) for the cases, the metric and the commands.
+
+```bash
+export LAYER_TRACERS_WORKDIR=/path/to/scratch ERA5_BINARIES=/path MERRA2_BINARIES=/path GPU_LOCK_DIR=/path/to/locks
+GPUS="0 1" examples/paper/layer_tracers/run_matrix.sh all      # or: crossover | configs | run | reduce | figures
+```
+
+Results: `layer_tracers/results/*.csv`; figures: `layer_tracers/figures/`.
 
 ## Grid figure
 
