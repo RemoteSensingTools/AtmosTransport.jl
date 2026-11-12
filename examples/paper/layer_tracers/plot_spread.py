@@ -250,7 +250,7 @@ def table(data, month, arm, region, path):
                 rows.append(row)
                 print(f"{tracer:6s} {case:16s} {day:4d} | {q[5]:6.3f} {q[2]:6.3f} | {center - q[1]:6.3f} {q[3] - center:7.3f} | {center - q[0]:6.3f} {q[4] - center:7.3f}")
     with open(path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n"); w.writeheader(); w.writerows(rows)
 
 
 def main():
