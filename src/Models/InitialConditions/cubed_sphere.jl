@@ -504,10 +504,12 @@ const _GAUSSIAN_LAYER_REACH = 8.0     # standard deviations beyond which exp(-x�
 """
     _gaussian_layer_mean(s_top, s_bot, center, width) -> Float64
 
-Mean of `exp(-(s - center)^2 / (2 width^2))` over `[s_top, s_bot]`, by 8-point
-Gauss-Legendre quadrature on sub-intervals no longer than `width` within
-`center ± 8 width`. The error stays below 1e-14 of the peak value of the
-Gaussian; the relative error of a layer far in the tail is larger.
+Return the mean of `exp(-(s - center)^2 / (2 width^2))` over `[s_top, s_bot]`.
+
+The integral uses 8-point Gauss-Legendre quadrature on sub-intervals no longer
+than `width`, within `center ± 8 width`. The error stays below 1e-14 of the
+peak value of the Gaussian; the relative error of a layer far in the tail is
+larger.
 """
 function _gaussian_layer_mean(s_top::Float64, s_bot::Float64, center::Float64, width::Float64)
     s_bot > s_top || return 0.0
@@ -526,6 +528,20 @@ function _gaussian_layer_mean(s_top::Float64, s_bot::Float64, center::Float64, w
     return total * 0.5 * h / (s_bot - s_top)
 end
 
+"""
+    _build_cs_pressure_gaussian_ic(air_mass, grid, cfg, FT, surface_pressure,
+                                   pressure_basis, qv[, vmr]) -> vmr
+
+Build the dry-VMR panels of `init.kind = "pressure_gaussian"`.
+
+Each layer of each column receives the mean of the Gaussian in
+`σ = p / p_surface` over the layer (`_gaussian_layer_mean`), with center
+`cfg["psurf_fraction"]` and standard deviation `cfg["width"]`; one global
+factor then sets the molecule count to `cfg["total_molecules"]`. `air_mass`
+is halo-padded dry air mass, `surface_pressure` the binary's interior panels
+on `pressure_basis`, `qv` the humidity panels or `nothing`. The result is six
+interior `(Nc, Nc, Nz)` panels, written into `vmr` when it is given.
+"""
 function _build_cs_pressure_gaussian_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
                                         grid::AtmosGrid{<:CubedSphereMesh},
                                         cfg, ::Type{FT},
