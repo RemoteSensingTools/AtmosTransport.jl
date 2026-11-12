@@ -65,7 +65,7 @@ aborts the run with a precise error message.
 module DrivenRunner
 
 using Adapt
-using ....Models.Physics: DEFAULT_AIR_MASS_RESET_MODE
+using ....Models.Physics: DEFAULT_AIR_MASS_RESET_MODE, _ifs_variant_label
 using ....ConfigChecks: config_bool as _config_bool
 using ....Models.Core: Callback, NaNChecker, WindowInterval
 using ....Models.InitialConditionIO: AbstractInitialConditionSpec, initial_condition_spec
@@ -89,7 +89,7 @@ using ....Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile,
                   uses_diffusive_surface_flux_boundary,
                   AbstractConvection,
                   NoConvection, TM5Convection, CMFMCConvection,
-                  CMFMCMatrixConvection
+                  CMFMCMatrixConvection, IFSConvection
 using ....Architectures: AbstractArchitecture, architecture_from_config,
                        is_gpu, ensure_runtime!,
                        array_adapter, architecture_label, device_name,

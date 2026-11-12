@@ -569,10 +569,11 @@ surface_flux_boundary = false   # LL/CS: true selects S(dt)->V(dt).
                                 # fluxes need true and a cubed-sphere grid.
 
 [convection]
-kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5"
+kind = "cmfmc"                  # "none" | "cmfmc" | "cmfmc_matrix" | "tm5" | "ifs"
                                 # cmfmc_matrix = TM5 LU solver on GEOS CMFMC
                                 # rates; tm5 = TM5 entrainment (:entu/:detu/
-                                # :entd/:detd payload)
+                                # :entd/:detd payload); ifs = IFS tracer
+                                # transport (CUCTRACER) on the same payload
 cloud_base = "cmfmc"            # cmfmc only: "cmfmc" = lowest layer with updraft
                                 # inflow; "dqrcu" = GEOS-Chem's cloud base from the
                                 # binary's :cmfmc_cloud_base (CS-only)
@@ -586,6 +587,14 @@ n_merge       = 1               # 1 = no aggregation; >1 merges adjacent vertica
                                 # not additive in the tracer — use 1 for tagged-tracer
                                 # budgets, anomaly transport and adjoints; see
                                 # "Level merging" in operators_on_binaries.md)
+
+# ifs only (forward model; no adjoint):
+cfl_limit = 0.8                 # in (0, 1]: each column takes
+                                # ceil(Courant number / cfl_limit) sub-steps
+variant = "monotone"            # "monotone" = no new extrema (up to rounding);
+                                # "cuctracer" = the IFS routine's arithmetic, for
+                                # comparison (negative values, amplifies where
+                                # the downdraft exceeds the updraft)
 
 # TM5 and CMFMC-matrix: per-topology legacy column-tile budget in GiB.
 # Collaborative GPU runs defer this global scratch allocation. A CPU or

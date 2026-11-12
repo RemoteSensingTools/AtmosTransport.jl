@@ -87,6 +87,7 @@ run on the array backend; the tape path does not require host scalar reads.
 
 The CS reverse pass also supports the default, unclamped/full-column/unmerged
 forms of `TM5Convection`, `CMFMCConvection`, and `CMFMCMatrixConvection`.
+`IFSConvection` is forward-only; adjoint setups reject it.
 CMFMC and CMFMC-matrix have column adjoint-identity tests (for CMFMC also the
 transpose of the forward column matrix, sub-cloud mixing included, in
 `test_cmfmc_ras_cloud_base.jl`); the TM5/CMFMC

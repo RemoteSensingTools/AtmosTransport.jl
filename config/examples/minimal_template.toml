@@ -35,7 +35,7 @@ scheme = "slopes"
 kind = "none"
 
 [convection]
-# Valid values: "none", "tm5", "cmfmc", "cmfmc_matrix" (subject to the
+# Valid values: "none", "tm5", "cmfmc", "cmfmc_matrix", "ifs" (subject to the
 # forcing payloads carried by the transport binary).
 kind = "none"
 

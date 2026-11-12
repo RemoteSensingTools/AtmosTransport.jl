@@ -125,7 +125,8 @@ function _check_tm5_convection_basis(reader::TransportBinaryReader)
         throw(ArgumentError(
             "$(basename(reader.path)): TM5 convection fluxes are on a $(recorded_label) basis " *
             "(`$(TM5_CONVECTION_MASS_BASIS_KEY)`) but the air mass is $(binary_basis) " *
-            "(`mass_basis`); TM5Convection needs both on the same basis. Regenerate the binary."))
+            "(`mass_basis`); TM5Convection and IFSConvection need both on the same basis. " *
+            "Regenerate the binary."))
     end
     return nothing
 end

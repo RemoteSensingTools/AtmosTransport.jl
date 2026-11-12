@@ -98,6 +98,9 @@ Lin-Rood's `state_bytes` also includes the face-panel tuples of its
 horizontal records, whose dimensions differ from a full state. Halo,
 midpoint, reset and end-of-step records carry only scalar metadata and are
 counted in `total_records` but NOT in `state_bytes`.
+
+A `convection_op` that tape recording refuses (see
+`_require_supported_cs_convection_variant`) is refused here too.
 """
 function cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                                panels_cm_steps, mesh::CubedSphereMesh, scheme;
@@ -109,6 +112,7 @@ function cs_tape_byte_estimate(panels_m0, panels_am_steps, panels_bm_steps,
                                surface_flux::Bool = true,
                                dt = nothing)
     require_adjoint_support(scheme)
+    _require_supported_cs_convection_variant(convection_op)   # as the recording entry points
     _require_production_cfl_limit(cfl_limit)
     FT = eltype(panels_m0[1])
     nsteps = _validate_step_sequences(panels_am_steps, panels_bm_steps, panels_cm_steps)

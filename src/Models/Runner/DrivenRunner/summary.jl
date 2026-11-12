@@ -43,6 +43,10 @@ function _schedule_label(driver)
     return @sprintf("%d..%d, max=%d", lo, hi, steps_per_window(driver))
 end
 
+_convection_label(op) = string(nameof(typeof(op)))
+_convection_label(op::IFSConvection) =
+    "IFSConvection(variant=$(_ifs_variant_label(op.variant)), cfl_limit=$(op.cfl_limit))"
+
 function _physics_summary_lines(; topology, mesh_label, levels, halo_width,
                                   backend, FT, recipe, driver, tracers,
                                   binary_count, snapshot_file)
@@ -55,7 +59,7 @@ function _physics_summary_lines(; topology, mesh_label, levels, halo_width,
                  scheme, FT, backend),
         @sprintf("|-- physics:   diffusion=%s, convection=%s",
                  _diffusion_label(recipe.diffusion),
-                 nameof(typeof(recipe.convection))),
+                 _convection_label(recipe.convection)),
         @sprintf("|-- schedule:  window_dt=%.0fs, steps/window=%s, binaries=%d",
                  Float64(window_dt(driver)), _schedule_label(driver),
                  binary_count),

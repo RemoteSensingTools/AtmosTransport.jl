@@ -323,6 +323,7 @@ export NoSurfaceFlux, SurfaceFluxOperator, SurfaceFluxSource,
        flux_temporal_scheme, PerTracerFluxMap, flux_for
 export AbstractConvection, NoConvection, CMFMCConvection, TM5Convection,
        CMFMCMatrixConvection, CMFMCWorkspace,
+       IFSConvection,
        AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase
 export ConvectionForcing, apply_convection!
 export AbstractMetDriver, TransportWindow, current_time

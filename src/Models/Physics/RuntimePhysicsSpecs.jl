@@ -73,7 +73,28 @@ struct CMFMCMatrixConvectionSpec <: AbstractCollabLUConvectionSpec
     n_merge            :: Int
 end
 
-const _CONVECTION_KINDS = (:none, :tm5, :cmfmc, :cmfmc_matrix)
+# `kind = "ifs"`: the IFS tracer transport on the TM5 fields. `cfl_limit` in
+# (0, 1] sets the per-column sub-steps; `variant` selects the variant without
+# new extrema ("monotone", default) or the arithmetic of the IFS routine
+# ("cuctracer", for comparison).
+struct IFSConvectionSpec{V <: AbstractIFSTracerVariant} <: AbstractConvectionSpec
+    cfl_limit :: Float64
+    variant   :: V
+end
+
+# `[convection] variant` choices (kind = "ifs").
+const _IFS_VARIANTS = (monotone = IFSMonotoneUpstream(), cuctracer = IFSCuctracer())
+
+function _ifs_convection_spec(section)
+    cfl_limit = config_float(get(section, "cfl_limit", 0.8), "[convection].cfl_limit")
+    0 < cfl_limit <= 1 || throw(ArgumentError(
+        "[convection].cfl_limit must lie in (0, 1]; got $(cfl_limit)"))
+    variant = parse_choice(get(section, "variant", "monotone"), _IFS_VARIANTS,
+                           "[convection].variant"; allow_symbol = true)
+    return IFSConvectionSpec(cfl_limit, variant)
+end
+
+const _CONVECTION_KINDS = (:none, :tm5, :cmfmc, :cmfmc_matrix, :ifs)
 
 _parse_convection_kind(section) =
     parse_choice(get(section, "kind", "none"), NamedTuple{_CONVECTION_KINDS}(_CONVECTION_KINDS),
@@ -115,6 +136,7 @@ function convection_spec(section)
     kind !== :cmfmc && haskey(section, "cloud_base") && throw(ArgumentError(
         "[convection] cloud_base applies to kind = \"cmfmc\" only; got kind = $(repr(String(get(section, "kind", "none"))))"))
     kind === :none  && return NoConvectionSpec()
+    kind === :ifs   && return _ifs_convection_spec(section)
     kind === :cmfmc &&
         return CMFMCConvectionSpec(_config_bool(section, "clamp", false, "[convection].clamp"),
                                    _cloud_base_rule(section))
@@ -133,6 +155,8 @@ materialize(s::CMFMCConvectionSpec, ::AbstractRuntimeRecipeStyle) =
 materialize(s::TM5ConvectionSpec, ::AbstractRuntimeRecipeStyle) =
     TM5Convection(; tile_workspace_gib = s.tile_workspace_gib, use_collab_lu = s.use_collab_lu,
                     lmax_conv = s.lmax_conv, n_merge = s.n_merge)
+materialize(s::IFSConvectionSpec, ::AbstractRuntimeRecipeStyle) =
+    IFSConvection(; cfl_limit = s.cfl_limit, variant = s.variant)
 materialize(s::CMFMCMatrixConvectionSpec, ::AbstractRuntimeRecipeStyle) =
     CMFMCMatrixConvection(; tile_workspace_gib = s.tile_workspace_gib,
                             use_collab_lu = s.use_collab_lu, lmax_conv = s.lmax_conv,
@@ -628,7 +652,7 @@ materialize(::TM5DkgDiffusionSpec, ::AbstractRuntimeRecipeStyle, ::Type{FT},
         "runtime binaries carrying a `:dkg` payload."))
 
 export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
-       TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
+       TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec, IFSConvectionSpec
 export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
        PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
 export AbstractAdvectionContext, ForwardAdvectionContext, InversionAdvectionContext

@@ -32,7 +32,9 @@ const _ADVECTION_KEYS = _ADVECTION_SPEC_KEYS                              # `adv
 const _ADVECTION_ONLY_KEYS = ("check_binary_cfl",)  # `binary_cfl_check`; no legacy `[run]` form
 const _DIFFUSION_KEYS = ("kind", "value", "surface_flux_boundary", "type")  # `diffusion_spec`
 const _COLLAB_LU_KEYS = ("tile_workspace_gib", "use_collab_lu", "lmax_conv", "n_merge")
-const _CONVECTION_KEYS = ("kind", "clamp", "cloud_base", _COLLAB_LU_KEYS...)  # `convection_spec`
+const _IFS_CONVECTION_KEYS = ("cfl_limit", "variant")
+const _CONVECTION_KEYS = ("kind", "clamp", "cloud_base", _COLLAB_LU_KEYS...,
+                          _IFS_CONVECTION_KEYS...)                       # `convection_spec`
 const _CHEMISTRY_KEYS = ("kind", "half_lives_seconds")                   # `chemistry_spec`
 const _LOGGING_KEYS = ("level", "progress", "progress_interval_windows")  # `run_logging`
 const _CHECKS_KEYS = ("nan_check", "nan_check_interval_windows")          # `run_checks`
@@ -215,6 +217,8 @@ function _convection_key_findings!(w, section)
     kind in ("tm5", "cmfmc_matrix") ||
         _report_unread!(w, section, _COLLAB_LU_KEYS, "[convection]",
                       "unless kind = \"tm5\" or \"cmfmc_matrix\"")
+    kind == "ifs" || _report_unread!(w, section, _IFS_CONVECTION_KEYS, "[convection]",
+                                     "unless kind = \"ifs\"")
     return w
 end
 

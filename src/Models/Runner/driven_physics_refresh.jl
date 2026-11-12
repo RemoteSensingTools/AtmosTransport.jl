@@ -189,6 +189,19 @@ function _validate_convection_window!(::TM5Convection,
     return nothing
 end
 
+# IFSConvection reads the same four sections as TM5Convection.
+function _validate_convection_window!(::IFSConvection,
+                                       window::TransportWindow,
+                                       driver::AbstractMetDriver)
+    window.convection.tm5_fields === nothing &&
+        throw(ArgumentError(
+            "IFSConvection requires `window.convection.tm5_fields` " *
+            "(NamedTuple with :entu, :detu, :entd, :detd) to be populated; " *
+            "driver $(typeof(driver)) provided convection forcing without TM5 fields. " *
+            "It reads the same binary sections as kind = \"tm5\"."))
+    return nothing
+end
+
 # CMFMCMatrixConvection reads the SAME binary sections as CMFMCConvection
 # (cmfmc + dtrain) — only the runtime numerics differ (GCHP two-pass vs
 # the conservative TM5 LU on derived rates).

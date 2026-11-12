@@ -187,10 +187,12 @@ Profile / derived / precomputed Kz fields exist in `src/State/Fields/` — see
 | `CMFMCConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | GCHP-style upwind moist convection; mass flux + optional detrainment. |
 | `CMFMCMatrixConvection()` | `ConvectionForcing.{cmfmc, dtrain}` | Implicit matrix solve assembled from GEOS cloud-mass flux and detrainment. |
 | `TM5Convection{FT}()` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | TM5 Tiedtke-1989 four-field entrainment / detrainment with an implicit column solve. Parametric on `FT`. |
+| `IFSConvection(; cfl_limit = 0.8, variant = IFSMonotoneUpstream())` | `ConvectionForcing.tm5_fields.{entu, detu, entd, detd}` | Tracer transport of the IFS convection scheme (`CUCTRACER`): entraining plumes and an implicit compensating flow, with per-column CFL sub-steps. The default variant creates no new extrema; `IFSCuctracer()` keeps the routine's arithmetic for comparison. Forward model only. |
 
-The convection facade re-exports the CMFMC and TM5 operator families from
-`Operators.Convection.CMFMC` and `Operators.Convection.TM5`. Each family owns
-its forward and adjoint kernels. `Convection.convection_workspace_for` builds
+The convection facade re-exports the CMFMC, TM5 and IFS operator families from
+`Operators.Convection.CMFMC`, `Operators.Convection.TM5` and
+`Operators.Convection.IFS`. Each family owns its forward and adjoint kernels
+(IFS has no adjoint). `Convection.convection_workspace_for` builds
 the runtime workspace; checkpoint storage uses the shared Operators interface.
 
 The convection subtypes consume a `ConvectionForcing` carrier (declared in
@@ -203,12 +205,16 @@ window; the operator does not call `current_time` itself.
 
 ```toml
 [convection]
-kind = "cmfmc"     # or "cmfmc_matrix" / "tm5" / "none"
+kind = "cmfmc"     # or "cmfmc_matrix" / "tm5" / "ifs" / "none"
 ```
+
+`kind = "ifs"` also reads `cfl_limit` (default 0.8, in (0, 1]) and `variant`
+(`"monotone"`, default, or `"cuctracer"`); see
+[IFS convection](@ref ifs-convection).
 
 The runtime picks `:cmfmc` only against binaries whose header carries
 the `:cmfmc` payload section (and `:dtrain` if requested); similarly
-for `:tm5` requiring `:entu / :detu / :entd / :detd`. Asking for a
+for `:tm5` and `:ifs` requiring `:entu / :detu / :entd / :detd`. Asking for a
 convection scheme the binary does not support is a **load-time
 error**, not a silent fallback.
 

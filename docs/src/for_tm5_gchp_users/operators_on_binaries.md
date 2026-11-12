@@ -373,7 +373,7 @@ until the full-model comparison listed in [Validation status](@ref) exists.
 
 ## Convection
 
-Three production operators today:
+Four production operators today:
 
 ### `TM5Convection`
 
@@ -533,6 +533,195 @@ Known limitations of the split (use `n_merge = 1` where they matter):
   pair holding 1e-25 and 1e-22 kg). This stays conservative and bounded — the
   mixing ratio within the pair can differ by up to about a factor `n_merge` —
   and the pre-OF-107 split behaved the same way.
+
+### [`IFSConvection`](@id ifs-convection)
+
+`[convection] kind = "ifs"` runs the tracer transport of the ECMWF IFS
+convection scheme on the same four fields as `TM5Convection` (`:entu`,
+`:detu`, `:entd`, `:detd`), so any binary that runs `kind = "tm5"` runs it too,
+with the same capability, forcing and mass-basis checks. Its purpose is to
+compare the TM5 column solve with the IFS solver on identical columns. It is
+a forward operator: adjoint setups reject it.
+
+The arithmetic follows the IFS routines `CUCTRACER` and `CUBIDIAG` with the
+implicit setting `RMFSOLCT = 1` and no scavenging, taken from OpenIFS CY48R1.1
+([`cuctracer.F90`](https://github.com/ecmwf-ifs/openifs/blob/48c1db541c1839b3b8f55f1b005df1930d29f41b/ifs-source/arpifs/phys_ec/cuctracer.F90),
+Apache-2.0). ERA5 was produced with IFS CY41R2; the routine was not checked
+against the CY41R2 source. The column code is in
+`src/Operators/Convection/IFS/ifs_column.jl`. Two variants exist:
+`variant = "monotone"` (default), which creates no new extrema, and
+`variant = "cuctracer"`, the routine's own arithmetic, kept for comparison.
+
+**Symbols.** Layer ``k = 1`` is the model top and ``k = N`` the lowest layer;
+interface ``k`` is the top of layer ``k`` and interface ``N + 1`` the ground.
+``m_k`` is the layer air mass per area (kg m⁻², the cell's air mass over its
+area), ``c_k`` the mixing ratio (tracer mass over air mass), ``e^u_k, d^u_k,
+e^d_k, d^d_k`` the four fields (kg m⁻² s⁻¹), and ``\Delta t`` the sub-step.
+Fluxes ``M`` are at interfaces; ``M^d \ge 0`` is the downdraft magnitude.
+
+**Mass fluxes.** With ``k_t`` the highest layer with ``d^u_k > 0`` and ``k_b``
+the lowest layer with ``d^d_k > 0``,
+
+```math
+M^u_k = \max(M^u_{k+1} + e^u_k - d^u_k,\ 0) \quad (k > k_t), \qquad M^u_k = 0 \quad (k \le k_t),
+```
+```math
+M^d_{k+1} = \max(M^d_k + e^d_k - d^d_k,\ 0) \quad (k < k_b), \qquad M^d_{k+1} = 0 \quad (k \ge k_b),
+```
+
+with ``M^u_{N+1} = M^d_1 = 0``; without a detraining layer there is no
+updraft (no downdraft). The closure at the top of the highest detraining layer
+and at the bottom of the lowest one matters because the cumulative sums of the
+stored, rounded fields do not return to zero exactly: in about half of the
+real ERA5 columns an updraft of about 1e-9 kg m⁻² s⁻¹ would otherwise continue
+to the model top.
+
+**Plume values** from the environment at the start of the sub-step. The
+updraft starts with ``C^u_N = c_N`` and rises,
+
+```math
+C^u_k = \frac{t_k\, C^u_{k+1} + (M^u_k - t_k)\, c_k}{M^u_k}, \qquad
+t_k = M^u_{k+1} - \min(d^u_k, M^u_{k+1}),
+```
+
+where ``t_k`` is the flux that passes through layer ``k``. IFS uses ``d^u_k``
+directly; the ``\min`` matters only where the stored detrainment exceeds the
+flux entering the layer, which time- and area-averaged fields allow, and lets
+the excess leave as entrained air of the same layer. At an interface inside
+the cloud without updraft, ``C^u_k = c_{k-1}``. The downdraft starts at its
+first interface ``l`` (the first with ``M^d_l > 0``) and descends through
+layer ``i - 1`` in the same form,
+
+```math
+C^d_i = \frac{s_i\, C^d_{i-1} + (M^d_i - s_i)\, c_{i-1}}{M^d_i}, \qquad
+s_i = M^d_{i-1} - \min(d^d_{i-1}, M^d_{i-1}),
+```
+
+starting with ``C^d_l = 0.1\, C^u_l + 0.9\, c_{l-1}`` (cuctracer) or
+``C^d_l = c_{l-1}`` (monotone). In the cuctracer variant, where the downdraft
+reaches interface ``N`` and the explicit estimate of the lowest layer,
+``c_N + \frac{\Delta t}{m_N}\left(-M^u_N C^u_N + M^d_N C^d_N + (M^u_N - M^d_N)\, c_{N-1}\right)``,
+is negative, ``C^d_N`` is reset so that this estimate is zero.
+
+**Update.** With the plume flux ``F_i = M^u_i C^u_i - M^d_i C^d_i`` and the net
+mass flux ``M_i = M^u_i - M^d_i`` (both upward positive), each layer changes by
+what enters through its bottom minus what leaves through its top,
+
+```math
+\frac{m_k\,(c'_k - c_k)}{\Delta t} = (F_{k+1} - G_{k+1}) - (F_k - G_k),
+\qquad F_1 = G_1 = F_{N+1} = G_{N+1} = 0,
+```
+
+where ``G_i`` is the compensating flow at the new values ``c'``.
+
+- cuctracer: ``G_i = M_i\, c'_{i-1}`` (the layer above in both directions), a
+  lower bidiagonal system solved from the top down.
+- monotone: ``G_i = \max(M_i, 0)\, c'_{i-1} + \min(M_i, 0)\, c'_i`` (the layer
+  the flow comes from), a tridiagonal system solved by the Thomas algorithm.
+
+Both are solved for the increment ``\delta_k = c'_k - c_k``, and the stored
+tracer mass changes by ``m_k \delta_k``; an increment below half an ulp of a
+cell leaves it bit-identical, so a uniform field does not drift where the flux
+is tiny. The sum over the column telescopes, so column tracer mass is
+conserved, and a uniform field is a solution of both.
+
+**The two variants.** The monotone variant creates no new extrema for Courant
+numbers up to one, up to rounding, conserves mass and keeps a uniform field.
+The cuctracer arithmetic returns negative values for sharp profiles (up to
+tens of percent of the column maximum in one step for a tracer confined to one
+layer). They come from the updraft share at the downdraft start, which the
+budget takes from the environment layer, and from the compensating flow where
+the downdraft exceeds the updraft at an interface (``M_i < 0``): it is then
+taken from downstream. The lowest-layer correction of the routine removes
+only part of them. For the same reason the arithmetic amplifies at such
+interfaces: a perturbation grows by about
+
+```math
+\left(1 - \frac{\Delta t\, (M^d_i - M^u_i)}{m_k}\right)^{-1}
+```
+
+per sub-step. Plume-consistent columns have such interfaces too: below an
+elevated cloud base and where the downdraft starts above the updraft top. In
+the column tests with 200 calls of frozen random forcing, 21 of 30 columns with
+an elevated cloud base and 12 of 30 with a downdraft above the updraft top grew
+more than tenfold, in the operator and in the plain transcription of the
+routine alike. On ERA5 C90
+over six days the largest ``\Delta t\,(M^d - M^u)/m`` was 1.4e-4 and the
+negative values reached -0.4 % of the field maximum. The variant is there to
+compare with IFS; there is no runtime guard.
+
+**Sub-steps.** Each column takes
+
+```math
+n = \left\lceil \frac{\Delta t_\mathrm{call}}{c_\mathrm{lim}}
+\max_k \frac{\max(M^u_k, M^u_{k+1}) + \max(M^d_k, M^d_{k+1})}{m_k} \right\rceil
+```
+
+steps of length ``\Delta t_\mathrm{call} / n`` (`cfl_limit` ``= c_\mathrm{lim}``,
+default 0.8; the maximum runs over the layers a flux touches), each with the
+tracer of the previous one; the air mass does not change. A column needing
+more than 1024 sub-steps, with a non-finite Courant number, with a negative
+field value, or with a layer without air at or below the highest layer a flux
+touches, is an error before any
+tracer moves. Each sub-step is followed by the column mass ledger of
+[Tracer Conservation in Single Precision](@ref) over the whole column, in
+every precision, so the cell that takes the rounding residual and the carry do
+not depend on the cloud top. Columns without flux are untouched bit for bit;
+in the others the transport changes the layers from the one above the first
+interface with flux down to the ground, and the ledger can change the column's
+largest cell. Scratch: four arrays the size of the air mass, one Courant
+number per column and the ledger carry.
+
+**Differences from the IFS routine.**
+
+- IFS limits the updraft mass flux to 0.8 of its CFL value by scaling the flux
+  down (`cumastrn.F90`, section 11) and steps with its model time step (720 s
+  in the ERA5 configuration); here the stored flux is kept and the column
+  takes smaller steps.
+- IFS transports no tracer for mid-level convection (type 3) and for clouds one
+  layer deep; the stored fields do not identify these columns, so they are
+  transported like the others.
+- IFS smooths the fluxes at the top and bottom of the draughts (`LMFSMOOTH`)
+  before the tracer transport; the stored fields are used as they are.
+- No wet scavenging.
+- The fluxes are rebuilt from the time- and area-averaged entrainment and
+  detrainment of the binary, not taken from the model's instantaneous `PMFU`,
+  `PMFD`, with the closure above; the excess-detrainment rule handles columns
+  the averaging makes inconsistent.
+- Measured against the compiled routine: it masks on the updraft top only and
+  never updates layer 1, so it loses mass if a flux reaches interface 2 (the
+  operator conserves); it starts no downdraft at interface 2; it floors the
+  mass flux at `RMFCMIN = 1e-8` kg m⁻² s⁻¹ (relative difference 2e-8 at tiny
+  fluxes), and in zero-flux gaps inside the cloud its updraft value is zero
+  where the operator uses the layer above.
+
+**Differences from `TM5Convection`.** TM5 assembles one matrix for the whole
+column transport, plumes included, and solves it implicitly (backward Euler,
+LU); it needs no sub-steps, has no lowest-layer correction, and its
+compensating flow is upstream for the updraft and the downdraft separately.
+`IFSConvection` computes the plume values explicitly from the environment at
+the start of the step and treats only the compensating flow implicitly, so it
+needs sub-steps; the cuctracer downdraft starts with one tenth updraft air
+where TM5's starts with environment air. TM5 diagnoses its cloud window from
+`detu` and `entd` and closes the updraft at the cloud top of a clipped depth;
+`IFSConvection` has no depth truncation, level merging or collaborative solver.
+TM5 has an adjoint; `IFSConvection` does not.
+
+**What is verified.** With `variant = "cuctracer"` the column code reproduces
+one step of the unmodified OpenIFS routines, compiled with gfortran in double
+precision, on 12 synthetic columns with 6 tracers each to 4e-15 relative
+(`test/fixtures/ifs_cuctracer_columns.txt`, rebuilt by
+`test/fixtures/ifs_cuctracer_generator/`), and agrees with a plain-loop
+transcription (`test/helpers/ifs_convection_reference.jl`) on random columns,
+including ones that break the plume assumptions, for both variants and with
+sub-steps, to 7e-15 relative (to 1e-13 over 200 calls). The default monotone
+variant has no external reference: it is checked against that transcription
+and by its properties (bounds, conservation, uniform field).
+`test/core/test_ifs_convection.jl` also checks conservation, the uniform field,
+the bounds of the monotone variant, the flux closure on unclosed `Float32`
+sums, the `Float32` column drift with a changing cloud top, the three
+topologies and CPU/GPU agreement. Not verified: parity with the CY41R2 source,
+and parity of a full model run with IFS or with TM5 driven by the same fields.
 
 ### `CMFMCConvection`
 

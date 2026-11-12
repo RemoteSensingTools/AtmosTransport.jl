@@ -90,7 +90,7 @@ schematic.
 | `:qv_start`/`:qv_end` | kg / kg | (water-mass mixing ratio is basis-agnostic) | optional endpoint pair — set when `[output] include_qv = true` |
 | `:cmfmc`    | kg / m² / s | dry-converted by the GEOS reader | NZ+1 interfaces |
 | `:dtrain`   | kg / m² / s | dry-converted by the GEOS reader | NZ centers |
-| `:entu`, `:detu`, `:entd`, `:detd` | kg / m² / s | matches `tm5_convection_mass_basis` and the binary `mass_basis`; ERA5/TM5 moist source fluxes are converted during preprocessing | NZ centers, all four required together for `TM5Convection` |
+| `:entu`, `:detu`, `:entd`, `:detd` | kg / m² / s | matches `tm5_convection_mass_basis` and the binary `mass_basis`; ERA5/TM5 moist source fluxes are converted during preprocessing | NZ centers, all four required together for `TM5Convection` and `IFSConvection` |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | SI surface quantities | basis-agnostic | per-cell surface fields; all four together feed `WindowPBLKzField` |
 | `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | m/s, K, kg/kg at substep cadence | dry where applicable | NZ centers, feeds `LocalHoltslagBovilleKzField` |
 

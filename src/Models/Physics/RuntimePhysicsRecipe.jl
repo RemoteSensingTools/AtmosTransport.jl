@@ -212,14 +212,18 @@ end
     _runtime_has_cmfmc_cloud_base(driver.reader)
 
 function validate_runtime_convection(::AbstractRuntimeRecipeStyle,
-                                     ::TM5Convection,
+                                     op::Union{TM5Convection, IFSConvection},
                                      context)
     _runtime_has_tm5_convection(context) ||
         throw(ArgumentError(
-            "[convection] kind = \"tm5\" requires TM5 convection sections " *
+            "[convection] kind = \"$(_tm5_fields_kind(op))\" requires TM5 convection sections " *
             "(`entu`, `detu`, `entd`, `detd`) in the runtime forcing source."))
     return nothing
 end
+
+# Config kind of the operators that read the TM5 convection sections.
+_tm5_fields_kind(::TM5Convection) = "tm5"
+_tm5_fields_kind(::IFSConvection) = "ifs"
 
 function validate_runtime_diffusion(::CubedSphereRuntimeRecipeStyle,
                                     ::ImplicitVerticalDiffusion{FT, <:WindowPBLKzField},

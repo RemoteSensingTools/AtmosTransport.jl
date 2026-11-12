@@ -11,6 +11,8 @@
 #   sub-cloud layer.
 # - `TM5Convection` — TM5-style four-field matrix transport with
 #   in-kernel LU solve.
+# - `IFSConvection` — IFS `CUCTRACER` tracer transport on the same four
+#   fields, bidiagonal / tridiagonal implicit solve, forward only.
 #
 # Every concrete subtype implements
 #

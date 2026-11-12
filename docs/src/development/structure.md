@@ -110,6 +110,7 @@ today.
 | O1 #110 | `AtmosTransport.Output -> [Output, Observations, .Retrievals, .Sources, .Sampling]`, `src/Output/observations -> [Retrievals, Sources, Sampling]`, `src/Output -> [src/Output, src/Observations]` |
 | M1 #111 | `AtmosTransport.MetDrivers -> [MetDrivers, .BinaryFormat, .BinaryReaders]`, `src/MetDrivers/transport_binary -> [BinaryFormat, BinaryReaders]`, `src/MetDrivers/ERA5 -> [src/Preprocessing/sources]` |
 | C1 #114 | `AtmosTransport.Operators.Convection` and `src/Operators/Convection`, each to itself plus `TM5` and `CMFMC` |
+| IFS convection | `AtmosTransport.Operators.Convection` and `src/Operators/Convection`, each to itself plus `IFS` |
 | A1 #115 | `src/Operators/Advection -> [Advection, Reconstruction, Structured, CubedSphere]` |
 | T1 #116 | `AtmosTransport.Adjoints -> [Adjoints, .Footprint, .Inversion, .Inversion.Observations, .Inversion.Solver]`, `src/Footprint -> [src/Adjoints/Footprint]`, `src/Inversion -> [src/Adjoints/Inversion, .../Solver]`, `src/Adjoints -> [src/Adjoints, src/Adjoints/Inversion/Observations]` |
 | PP1 #117 | `AtmosTransport.Preprocessing` and `src/Preprocessing`, each to itself plus `Core`, `Vertical` and `Spectral` |

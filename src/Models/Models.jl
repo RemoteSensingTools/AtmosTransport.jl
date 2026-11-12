@@ -51,7 +51,7 @@ using .Physics:
     AbstractAdvectionContext, AbstractAdvectionSpec, AbstractChemistrySpec, AbstractCollabLUConvectionSpec, AbstractConvectionSpec,
     AbstractDiffusionSpec, AbstractRuntimeRecipeStyle, AbstractStructuredRuntimeRecipeStyle, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec,
     ConstantDiffusionSpec, CubedSphereRuntimeRecipeStyle, DEFAULT_AIR_MASS_RESET_MODE, DecayChemistrySpec, ForwardAdvectionContext,
-    GCHPNonlocalVdiffDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec, InversionAdvectionContext, LatLonRuntimeRecipeStyle, LinRoodAdvectionSpec,
+    GCHPNonlocalVdiffDiffusionSpec, HoltslagBovilleVdiffDiffusionSpec, IFSConvectionSpec, InversionAdvectionContext, LatLonRuntimeRecipeStyle, LinRoodAdvectionSpec,
     NoAdvectionSpec, NoChemistrySpec, NoConvectionSpec, NoDiffusionSpec, PPMAdvectionSpec,
     ReducedGaussianRuntimeRecipeStyle, RuntimePhysicsRecipe, SlopesAdvectionSpec, TM5ConvectionSpec, TM5DkgDiffusionSpec,
     UpwindAdvectionSpec, WindowPBLKzDiffusionSpec,
@@ -113,7 +113,7 @@ export build_runtime_chemistry
 export build_runtime_physics_recipe, validate_runtime_physics_recipe
 export configured_halo_width
 export AbstractConvectionSpec, AbstractCollabLUConvectionSpec, NoConvectionSpec,
-       TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec
+       TM5ConvectionSpec, CMFMCConvectionSpec, CMFMCMatrixConvectionSpec, IFSConvectionSpec
 export AbstractAdvectionSpec, UpwindAdvectionSpec, SlopesAdvectionSpec,
        PPMAdvectionSpec, NoAdvectionSpec, LinRoodAdvectionSpec
 export AbstractAdvectionContext, ForwardAdvectionContext, InversionAdvectionContext

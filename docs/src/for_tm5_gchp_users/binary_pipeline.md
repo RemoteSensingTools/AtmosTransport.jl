@@ -216,7 +216,7 @@ isn't present.
 | `:dm` plus topology-specific flux deltas | Endpoint interpolation and opt-in load-time replay checks |
 | `:qv_start`/`:qv_end` | Specific-humidity endpoints for interpolation and moist-bookkeeping helpers |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` (GCHP-style) |
-| `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` (TM5 four-field updraft/downdraft) |
+| `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` (TM5 four-field updraft/downdraft), `IFSConvection` |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Cubed-sphere PBL-derived diffusion fields |
 | `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | `LocalHoltslagBovilleKzField` when the PBL surface fields are also present |
 | `:dkg` | `PrecomputedCSDkgField` interface exchange |

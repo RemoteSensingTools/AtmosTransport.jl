@@ -88,6 +88,7 @@ export TM5Convection
 export TM5Workspace
 export CMFMCMatrixConvection                    # GEOS rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
+export IFSConvection, IFSWorkspace, AbstractIFSTracerVariant, IFSCuctracer, IFSMonotoneUpstream
 export apply_convection!
 
 # Step plans and recorders

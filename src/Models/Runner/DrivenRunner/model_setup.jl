@@ -176,6 +176,15 @@ function _validate_convection_capability(::TM5Convection, caps)
     return nothing
 end
 
+function _validate_convection_capability(::IFSConvection, caps)
+    caps.tm5_convection || throw(ArgumentError(
+        "[convection] kind = \"ifs\" requires the binary to carry " *
+        "entu, detu, entd, detd (the TM5 convection sections); this binary's " *
+        "payload_sections are $(caps.payload_sections). Regenerate with a " *
+        "TM5-enabled preprocessor or set convection.kind = \"none\"."))
+    return nothing
+end
+
 function _validate_convection_capability(::CMFMCConvection, caps)
     caps.cmfmc_convection || throw(ArgumentError(
         "[convection] kind = \"cmfmc\" requires the binary to carry " *

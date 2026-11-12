@@ -62,6 +62,19 @@ end
 _require_supported_cs_convection_variant(op::CMFMCMatrixConvection) =
     _require_supported_cs_convection_variant(op.inner)
 
+# IFSConvection is a forward operator: no transpose of its column update is
+# implemented (the cuctracer variant's lowest-layer correction also depends on
+# the tracer).
+const _IFS_CONVECTION_NO_ADJOINT =
+    "IFSConvection has no adjoint (forward model only; no transpose of its column " *
+    "update is implemented). Use TM5Convection (kind = \"tm5\") on the same binary " *
+    "for adjoint runs."
+_require_supported_cs_convection_variant(::IFSConvection) =
+    throw(ArgumentError(_IFS_CONVECTION_NO_ADJOINT))
+
+_require_supported_cs_convection_variant(op) = throw(ArgumentError(
+    "CS adjoint footprints do not support the convection operator $(typeof(op))."))
+
 _require_cs_convection_workspace(::NoConvection, workspace) = nothing
 function _require_cs_convection_workspace(op::CMFMCConvection, workspace)
     _require_supported_cs_convection_variant(op)
@@ -71,6 +84,8 @@ function _require_cs_convection_workspace(op::TM5Convection, workspace)
     _require_supported_cs_convection_variant(op)
     return _require_tm5_convection_workspace(workspace)
 end
+_require_cs_convection_workspace(op::IFSConvection, _workspace) =
+    _require_supported_cs_convection_variant(op)
 function _require_cs_convection_workspace(op::CMFMCMatrixConvection, workspace)
     _require_supported_cs_convection_variant(op)
     workspace isa CMFMCMatrixWorkspace || throw(ArgumentError(

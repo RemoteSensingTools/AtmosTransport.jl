@@ -76,6 +76,21 @@ convection_workspace_for(op::CMFMCMatrixConvection,
                          cell_metrics = _cmfmc_cell_metrics(grid.horizontal),
                          halo_width = grid.horizontal.Hp)
 
+# IFSConvection — interface-flux and plume scratch sized like the air mass,
+# with the cell areas that convert air mass per cell to kg/m².
+convection_workspace_for(::IFSConvection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:LatLonMesh}) where {B, A, Raw <: AbstractArray{<:Any, 4}} =
+    IFSWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+convection_workspace_for(::IFSConvection,
+                          state::CellState{B, A, Raw},
+                          grid::AtmosGrid{<:ReducedGaussianMesh}) where {B, A, Raw <: AbstractArray{<:Any, 3}} =
+    IFSWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+convection_workspace_for(::IFSConvection,
+                          state::CubedSphereState{B},
+                          grid::AtmosGrid{<:CubedSphereMesh}) where {B} =
+    IFSWorkspace(state.air_mass; cell_metrics = _cmfmc_cell_metrics(grid.horizontal))
+
 # Fallback for future operators — keep LAST so the specific
 # methods above take precedence. Returns `nothing` so installing an
 # unknown operator on the model compiles; DrivenSimulation's
