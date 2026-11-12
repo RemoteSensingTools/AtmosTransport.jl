@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **IFS convection.** `[convection] kind = "ifs"` (`IFSConvection`) runs the
+  tracer transport of the ECMWF IFS convection scheme (OpenIFS CY48R1.1
+  `CUCTRACER` with the implicit `CUBIDIAG`, no scavenging) on the four TM5
+  convection fields, so every binary that runs `kind = "tm5"` runs it too. It
+  takes per-column sub-steps (`cfl_limit`, default 0.8). The default
+  `variant = "monotone"` creates no new extrema (up to rounding);
+  `variant = "cuctracer"` keeps the arithmetic of the IFS routine for
+  comparison, which can return negative values and amplifies wherever the
+  downdraft exceeds the updraft. The updraft is closed at the top of its
+  highest detraining layer and the downdraft at the bottom of its lowest one.
+  All three topologies, CPU and GPU, `Float32` and `Float64`, with a column
+  mass ledger over the whole column; forward model only. With
+  `variant = "cuctracer"` the column code reproduces the compiled OpenIFS
+  routine on synthetic columns to 4e-15. `cs_tape_byte_estimate` now refuses
+  the convection variants that tape recording refuses (as well as
+  `IFSConvection`), where it used to return a size. See the IFS convection section of *Operators on binaries*. Existing
+  kinds are unchanged.
 - `examples/paper/` holds the scripts, case tables, result tables and figures
   of the model description paper. `examples/paper/idealized_advection/`
   writes transport binaries for three analytic flows (solid-body rotation,

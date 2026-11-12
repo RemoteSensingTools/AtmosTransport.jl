@@ -54,6 +54,13 @@ _convection_attributes(spec::CMFMCConvectionSpec) = Dict(
 function _convection_attributes(spec::TM5ConvectionSpec)
     return _collab_convection_attributes("tm5", spec)
 end
+_ifs_variant_label(::IFSCuctracer) = "cuctracer"
+_ifs_variant_label(::IFSMonotoneUpstream) = "monotone"
+_convection_attributes(spec::IFSConvectionSpec) = Dict(
+    "physics_convection" => "ifs",
+    "physics_convection_variant" => _ifs_variant_label(spec.variant),
+    "physics_convection_cfl_limit" => string(spec.cfl_limit),
+)
 function _convection_attributes(spec::CMFMCMatrixConvectionSpec)
     return _collab_convection_attributes("cmfmc_matrix", spec)
 end

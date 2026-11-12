@@ -146,6 +146,7 @@ slopes advection; a prognostic-moment scheme is postponed (see
 | What | Tests | Status |
 |---|---|---|
 | CMFMC (RAS) column update against GEOS-Chem's `DO_RAS_CLOUD_CONVECTION` | `test/core/test_cmfmc_ras_cloud_base.jl` against a literal port of the GEOS-Chem routine (cubed sphere, lat-lon, reduced Gaussian; CMFMC-edge and DQRCU cloud base; Float64 and Float32) | green; before the cloud-base order fix the cloud-base layer went negative (−1.0e-4 in the test column) |
+| IFS convection (`IFSConvection`) column update against OpenIFS CY48R1.1 `CUCTRACER`/`CUBIDIAG` | `test/core/test_ifs_convection.jl`: one step of the compiled Fortran on 12 synthetic columns × 6 tracers (`test/fixtures/ifs_cuctracer_columns.txt`), a plain-loop transcription on random columns (both variants, with sub-steps and over 200 calls), conservation, uniform field, bounds of the monotone variant, flux closure on unclosed `Float32` sums, `Float32` drift with a changing cloud top, three topologies, CPU/GPU | green on synthetic columns (`variant = "cuctracer"`: 4e-15 relative to the Fortran; the default monotone variant has no external reference); not checked against the CY41R2 source of ERA5 or in a full-model comparison |
 
 ## Remaining end-to-end validation gaps
 

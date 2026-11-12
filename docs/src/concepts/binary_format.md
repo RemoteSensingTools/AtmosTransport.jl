@@ -206,7 +206,7 @@ typically 0.5--2 % low humid-column approximation.
 | `:dm` on CS, or `:dam` / `:dbm` / `:dcm` on LL | Endpoint mass/flux deltas required by the strict load-time replay gate. |
 | `:qv_start`/`:qv_end` | Specific-humidity endpoints for interpolation and moist-conversion bookkeeping. |
 | `:cmfmc` (+ optional `:dtrain`) | `CMFMCConvection` operator (GCHP-style). |
-| `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` operator (TM5 four-field). |
+| `:entu`, `:detu`, `:entd`, `:detd` (all four) | `TM5Convection` operator (TM5 four-field) and `IFSConvection` (IFS tracer transport on the same fields). |
 | `:pblh`, `:ustar`, `:pbl_hflux`, `:t2m` | Surface payload — feeds the `WindowPBLKzField` runtime Kz path. |
 | `:vdiff_u`, `:vdiff_v`, `:vdiff_t`, `:vdiff_qv` | GEOS VDIFF state — feeds the `LocalHoltslagBovilleKzField` local Kz. |
 | `:dkg` | Exact TM5 dry-air interface exchange [kg s⁻¹] between layers `k` and `k+1`; the final level is the zero-flux surface boundary. |
@@ -285,7 +285,7 @@ binary; mixing a `:moist` binary with the dry-basis runtime contract
 is rejected when the `DrivenSimulation` is constructed (not at the
 raw binary-open call) — but well before any windows actually step,
 so it is a hard wiring error rather than a silent corruption.
-Convection forcing operators (`CMFMCConvection`, `TM5Convection`)
+Convection forcing operators (`CMFMCConvection`, `TM5Convection`, `IFSConvection`)
 are basis-polymorphic — they consume forcing arrays on whatever
 basis `state.air_mass` carries.
 

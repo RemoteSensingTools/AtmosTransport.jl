@@ -38,7 +38,7 @@ abstract type AbstractDiffusion <: AbstractOperator end
 
 Root type for convective-transport operators. Concrete subtypes live in
 `src/Operators/Convection/` (`NoConvection`, `CMFMCConvection`,
-`TM5Convection`).
+`CMFMCMatrixConvection`, `TM5Convection`, `IFSConvection`).
 """
 abstract type AbstractConvection <: AbstractOperator end
 

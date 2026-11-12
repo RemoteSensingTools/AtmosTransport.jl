@@ -222,7 +222,13 @@ linear-algebra routines stay plain solves. TM5 convection uses the cloud
 levels; with level merging (`n_merge > 1`) its ledger covers the fine layers
 that aggregation, coarse solve and split change, because the split also
 rounds every fine layer. `dkg` diffusion and the flux form of Kz diffusion
-use layers that exchange mass and leave isolated layers bit-exact. CMFMC convection uses the whole column
+use layers that exchange mass and leave isolated layers bit-exact. IFS convection
+ledgers every sub-step over the whole column of each column with flux, so the
+cell that takes the residual and the carry do not change with the cloud top;
+with a range that started at the cloud top, a large cell above it dropped out
+of the range when the top moved and the carry was lost. Before this and the
+closure of the updraft at the cloud top, a one-layer tracer drifted by 1.3e-7
+in 400 calls; now what a column misses stays within its carry. CMFMC convection uses the whole column
 where nothing leaves it: the `cmfmc` flux through the model top is exactly
 zero and every layer holds air (`m` and `m/area` above the operator's
 `tiny`); the clamped variant (`clamp = true`), which clips negative values

@@ -21,6 +21,8 @@ Operators:
   sub-cycling and well-mixed sub-cloud).
 - `TM5Convection` (TM5 column solver) with `TM5Workspace`, running on
   all three topologies (LL / RG / CS).
+- `IFSConvection` (IFS `CUCTRACER` tracer transport on the same four TM5
+  fields) with `IFSWorkspace`, on all three topologies; forward only.
 
 The `step!`-level runtime block wires convection across all three
 topologies (LL / RG / CS).
@@ -50,7 +52,7 @@ path keeps forcing panel-native too: the driver loads `cmfmc` /
 `dtrain` as per-panel tuples and the operator applies the same
 column-local logic on each panel interior.
 
-`TM5Convection` ships the same three-topology scope.
+`TM5Convection` and `IFSConvection` ship the same three-topology scope.
 
 The no-op `NoConvection` path accepts any state shape — it's a pure
 dead branch.
@@ -70,6 +72,7 @@ export TM5Convection
 export TM5Workspace
 export CMFMCMatrixConvection                    # GEOS-derived rates → TM5 LU (conservative CMFMC)
 export CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
+export IFSConvection, IFSWorkspace, AbstractIFSTracerVariant, IFSCuctracer, IFSMonotoneUpstream
 export apply_convection!
 
 function apply_convection! end
@@ -81,6 +84,9 @@ include("CMFMC/CMFMC.jl")
 using .CMFMC: CMFMCConvection, AbstractCloudBase, CMFMCEdgeCloudBase, ArchivedCloudBase,
               CMFMCWorkspace, invalidate_cmfmc_cache!, CMFMCMatrixConvection,
               CMFMCMatrixWorkspace, invalidate_cmfmc_matrix_cache!
+include("IFS/IFS.jl")
+using .IFS: IFSConvection, IFSWorkspace, AbstractIFSTracerVariant, IFSCuctracer,
+            IFSMonotoneUpstream
 using ...Grids: cell_area, ncells
 import ..operator_state, ..restore_operator_state!, ..reset_operator_state!
 using ..Operators: _copy_state, _zero_state!

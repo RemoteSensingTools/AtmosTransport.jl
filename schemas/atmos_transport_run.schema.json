@@ -222,9 +222,9 @@
       "properties": {
         "kind": {
           "type": "string",
-          "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix"],
+          "enum": ["none", "tm5", "cmfmc", "cmfmc_matrix", "ifs"],
           "default": "none",
-          "description": "none; cmfmc: GEOS-Chem-style explicit mass-flux scheme from the binary's CMFMC and optional DTRAIN; cmfmc_matrix: the same GEOS rates through the TM5 implicit LU solver; tm5: TM5 (Tiedtke 1989) entrainment/detrainment fields entu, detu, entd, detd with an implicit column solve."
+          "description": "none; cmfmc: GEOS-Chem-style explicit mass-flux scheme from the binary's CMFMC and optional DTRAIN; cmfmc_matrix: the same GEOS rates through the TM5 implicit LU solver; tm5: TM5 (Tiedtke 1989) entrainment/detrainment fields entu, detu, entd, detd with an implicit column solve; ifs: the tracer transport of the IFS convection scheme (CUCTRACER) on the same four fields, forward model only."
         },
         "clamp": {
           "type": "boolean",
@@ -259,6 +259,19 @@
           "minimum": 1,
           "default": 1,
           "description": "kind = \"tm5\" or \"cmfmc_matrix\" with use_collab_lu = true: 1 solves on model levels; a larger value merges that many adjacent layers per super-layer, an approximation that changes vertical mixing and drops up to n_merge-1 top layers of the active depth."
+        },
+        "cfl_limit": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.8,
+          "description": "kind = \"ifs\": each column takes ceil(Courant number / cfl_limit) sub-steps; the Courant number is dt times the largest updraft plus the largest downdraft flux at a layer's two interfaces, over the layer mass."
+        },
+        "variant": {
+          "type": "string",
+          "enum": ["monotone", "cuctracer"],
+          "default": "monotone",
+          "description": "kind = \"ifs\": monotone (default) = the downdraft starts with environment air and the compensating flow is taken from upstream, which creates no new extrema up to rounding; cuctracer = the arithmetic of the IFS routine CUCTRACER, for comparison: it can return negative values and amplifies where the downdraft exceeds the updraft."
         }
       },
       "description": "Convective transport, applied after advection and diffusion (cadence: run.physics_cadence). The binary must carry the forcing the chosen kind reads."

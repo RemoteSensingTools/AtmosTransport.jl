@@ -50,6 +50,13 @@ restore_operator_state!(ws::TM5Workspace, snap::NamedTuple) =
     (ws.ledger_carry = _copy_state(snap.carry); nothing)
 reset_operator_state!(ws::TM5Workspace) = (_zero_state!(ws.ledger_carry); nothing)
 
+# IFS convection: the ledger carry. (No checkpoint method: the operator has
+# no adjoint, so no replay checkpoints it.)
+operator_state(ws::IFSWorkspace) = (carry = _copy_state(ws.ledger_carry),)
+restore_operator_state!(ws::IFSWorkspace, snap::NamedTuple) =
+    (ws.ledger_carry = _copy_state(snap.carry); nothing)
+reset_operator_state!(ws::IFSWorkspace) = (_zero_state!(ws.ledger_carry); nothing)
+
 # CMFMC-matrix convection: its TM5 ledger carry. The derived TM5 rates are a
 # function of the window's forcing alone, so a restore marks them stale and
 # the next call derives them again, bit for bit.

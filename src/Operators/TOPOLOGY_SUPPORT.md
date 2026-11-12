@@ -26,6 +26,7 @@ duplicating coverage claims.
 | `CMFMCConvection` | ✅ | ✅ | ✅ |
 | `TM5Convection` | ✅ | ✅ | ✅ |
 | `CMFMCMatrixConvection` | ✅ | ✅ | ✅ |
+| `IFSConvection` | ✅ | ✅ | ✅ |
 | `ExponentialDecay` / `CompositeChemistry` | ✅ | ✅ | ✅ |
 
 ✅ = dedicated `apply!` or `apply_*!` dispatch exists, tested and live through `TransportModel.step!`.
@@ -81,6 +82,9 @@ Three valid `apply!` methods + one rejection in
 `TM5Convection.jl` and `CMFMCMatrixConvection.jl` provide the same three
 topology-specific state/grid dispatches. The matrix variant derives TM5-style
 rates from CMFMC forcing before delegating to the implicit column solve.
+[`Convection/IFS/IFSConvection.jl`](Convection/IFS/IFSConvection.jl) does too;
+its three kernel pairs in `Convection/IFS/ifs_kernels.jl` share one column
+body (`ifs_column.jl`).
 
 ### Chemistry
 

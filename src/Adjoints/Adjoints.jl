@@ -21,6 +21,7 @@ using ..Operators.Convection.CMFMC: CMFMCConvection, CMFMCEdgeCloudBase, CMFMCMa
 using ..Operators.Convection.TM5: TM5Convection, TM5Workspace, _ensure_tm5_scratch!,
     _tm5_cs_panel_column_adjoint_kernel!
 using ..Operators.Convection: NoConvection
+using ..Operators.Convection.IFS: IFSConvection
 using ..State: AbstractCSDkgField, AbstractCubedSphereField, GCHPNonlocalPBLField, panel_field,
     update_field!
 using ..MetDrivers: ConvectionForcing

@@ -74,7 +74,8 @@ helpers are advanced construction APIs rather than a second reader hierarchy.
 | `NoDiffusion`, `ImplicitVerticalDiffusion` | Diffusion operator choices. |
 | `NoSurfaceFlux`, `SurfaceFluxOperator`, `SurfaceFluxSource` | Surface-flux operator stack. |
 | `PerTracerFluxMap`, `flux_for` | Map emissions to named tracers. |
-| `NoConvection`, `CMFMCConvection`, `TM5Convection` | Convection operator choices. |
+| `NoConvection`, `CMFMCConvection`, `TM5Convection`, `IFSConvection` | Convection operator choices. |
+| `IFSConvection` variants (in `AtmosTransport.Operators`): `IFSCuctracer`, `IFSMonotoneUpstream` | Arithmetic of `IFSConvection`: the variant without new extrema (default, `variant = "monotone"`) or the arithmetic of the IFS routine, for comparison (`variant = "cuctracer"`). |
 | `AbstractCloudBase`, `CMFMCEdgeCloudBase`, `ArchivedCloudBase` | Cloud-base rule of `CMFMCConvection`: lowest layer with updraft inflow (default) or the archived GEOS-Chem base (`cloud_base = "dqrcu"`). |
 | `Callback`, `IterationInterval`, `WindowInterval`, `WallTimeInterval`, `NaNChecker` | Runtime callbacks and their schedules (see *Callbacks and runtime checks*). |
 | `NoChemistry`, `ExponentialDecay`, `CompositeChemistry` | Chemistry operator choices. |

@@ -46,7 +46,8 @@ using ..Adjoints: AbstractCSFootprintObjective, AbstractStepForcing, AirMassDepe
     _apply_cs_convection_adjoint!,
     _apply_cs_diffusion_adjoint!, _apply_cs_linrood_horizontal_adjoint!, _cell_average_needs_4dvar,
     _copy_panel_tuple, _inject_step_forcing!, _linrood_validate_tape_storage,
-    _placed_objective_needs_met, _require_cs_convection_workspace, _retrieval_objective_needs_met,
+    _placed_objective_needs_met, _require_cs_convection_workspace, _require_supported_cs_convection_variant,
+    _retrieval_objective_needs_met,
     _seed_objective!, _validate_cs_diffusion_inputs, _validate_objective, _validate_step_forcing,
     _zero_surface_rates, evaluate_objective, tape_dependence
 

@@ -78,6 +78,7 @@ function adjoint_support(op::TM5Convection)
         "$(op.use_collab_lu), lmax_conv = $(op.lmax_conv), n_merge = $(op.n_merge)."
 end
 adjoint_support(op::CMFMCMatrixConvection) = adjoint_support(op.inner)
+adjoint_support(::IFSConvection) = _IFS_CONVECTION_NO_ADJOINT
 
 # Chemistry.
 adjoint_support(::NoChemistry) = nothing
