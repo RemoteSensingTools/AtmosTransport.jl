@@ -107,6 +107,7 @@ using ....Models.InitialConditionIO: INITIAL_CONDITION_KINDS,
                             BoundaryLayerEnhancedInitialConditionSpec, GaussianBlobInitialConditionSpec,
                             FileInitialConditionSpec, CatrineCO2InitialConditionSpec,
                             CSNativeInitialConditionSpec, PressureLayerInitialConditionSpec,
+                            PressureGaussianInitialConditionSpec,
                             _regridding_method, _surface_flux_kind, surface_flux_species,
                             _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
 using ....Models.InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,

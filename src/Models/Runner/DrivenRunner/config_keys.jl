@@ -52,6 +52,7 @@ const _INIT_KIND_KEYS = (
     cs_native      = ("file", "variable", "humidity_variable", "time_index",
                       "vertical_order", "clamp_negative"),
     pressure_layer = ("lowest_layer", "psurf_fraction", "total_molecules"),
+    pressure_gaussian = ("psurf_fraction", "width", "total_molecules"),
     uniform        = ("background",),
 )
 const _INIT_KEYS = Tuple(unique(vcat(["kind", "background"],
@@ -66,6 +67,7 @@ _init_spec_group(::Type{FileInitialConditionSpec}) = :file
 _init_spec_group(::Type{CatrineCO2InitialConditionSpec}) = :file
 _init_spec_group(::Type{CSNativeInitialConditionSpec}) = :cs_native
 _init_spec_group(::Type{PressureLayerInitialConditionSpec}) = :pressure_layer
+_init_spec_group(::Type{PressureGaussianInitialConditionSpec}) = :pressure_gaussian
 const _INIT_KINDS = Dict(alias => _init_spec_group(spec)
                          for (alias, spec) in INITIAL_CONDITION_KINDS)
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Gaussian layer initial condition.** `init.kind = "pressure_gaussian"`
+  (cubed sphere) gives every column a Gaussian profile of the dry VMR in
+  `p / p_surface`, with center `psurf_fraction` and standard deviation `width`,
+  normalised to `total_molecules`. Each layer holds the mean of the profile
+  over its own interval, so vertical grids with different layer thicknesses
+  (for example 72 and 117 layers) hold the layer means of the same profile; a
+  single `pressure_layer` is as thick as the local model layer.
 - **IFS convection.** `[convection] kind = "ifs"` (`IFSConvection`) runs the
   tracer transport of the ECMWF IFS convection scheme (OpenIFS CY48R1.1
   `CUCTRACER` with the implicit `CUBIDIAG`, no scavenging) on the four TM5

@@ -80,6 +80,13 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
             "per-column ps. Pass `window.surface_pressure` from the binary."))
         return _build_cs_pressure_layer_ic(air_mass, grid, cfg, FT, surface_pressure,
                                            pressure_basis, qv, vmr)
+    elseif kind === :pressure_gaussian
+        surface_pressure === nothing && throw(ArgumentError(
+            "init.kind=pressure_gaussian requires `surface_pressure` " *
+            "(NTuple{6, Matrix}) so each column's layers can be placed in " *
+            "p / p_surface. Pass `window.surface_pressure` from the binary."))
+        return _build_cs_pressure_gaussian_ic(air_mass, grid, cfg, FT, surface_pressure,
+                                              pressure_basis, qv, vmr)
     elseif kind === :cs_native
         return _build_cs_native_ic(grid, air_mass, cfg, FT;
                                    surface_pressure, pressure_basis, qv)
@@ -104,7 +111,7 @@ function _build_cs_initial_mixing_ratio(air_mass::NTuple{6, <:AbstractArray{FT, 
     else
         throw(ArgumentError(
             "unsupported init.kind=$(kind) for CubedSphereMesh; " *
-            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer | cs_native"))
+            "supported: uniform | latitude_step | gaussian_blob | file | netcdf | file_field | catrine_co2 | pressure_layer | pressure_gaussian | cs_native"))
     end
 end
 
@@ -460,6 +467,140 @@ function _build_cs_pressure_layer_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}}
         for j in 1:Nc, i in 1:Nc
             vmr[p][i, j, kt[i, j]] = vmr_value
         end
+    end
+    return vmr
+end
+
+# ---------------------------------------------------------------------------
+# pressure-Gaussian IC — the dry VMR of every column is a Gaussian in
+# σ = p / p_surface,
+#
+#     q(σ) ∝ exp(-(σ - σ₀)² / (2 w²)),
+#
+# with center σ₀ = `psurf_fraction` and standard deviation w = `width`. Each
+# layer holds the mean of q over its σ interval (not the value at its
+# midpoint), so every vertical grid holds the layer means of one continuous
+# profile, whatever its layer thicknesses. The tracer between two σ surfaces
+# that are layer edges of two grids is the same on both, up to the variation
+# of the dry air mass per σ (humidity) inside the coarser layer, about 1e-4 of
+# the column amount on real binaries. The part of the Gaussian beyond the
+# surface (σ > 1) or the model top is cut off. One global factor makes the
+# molecule count `total_molecules`.
+#
+# σ uses the total surface pressure. A binary that stores the dry surface
+# pressure without humidity places the layers with the dry pressure (the
+# warning of `_warn_surface_pressure_approximation`); against a binary with
+# humidity, up to about 1 % of a column's tracer then sits in another layer.
+#
+# A width well below the local layer thickness is still integrated exactly,
+# but the layer mean then spreads it over the whole layer: for profiles that
+# agree between grids choose `width` of at least the thickness of the coarser
+# grid's layers near the center.
+# ---------------------------------------------------------------------------
+
+const _GAUSSIAN_LAYER_NODES, _GAUSSIAN_LAYER_WEIGHTS = gausslegendre(8)
+const _GAUSSIAN_LAYER_REACH = 8.0     # standard deviations beyond which exp(-x²/2) < 2e-14
+
+"""
+    _gaussian_layer_mean(s_top, s_bot, center, width) -> Float64
+
+Return the mean of `exp(-(s - center)^2 / (2 width^2))` over `[s_top, s_bot]`.
+
+The integral uses 8-point Gauss-Legendre quadrature on sub-intervals no longer
+than `width`, within `center ± 8 width`. The error stays below 1e-14 of the
+peak value of the Gaussian; the relative error of a layer far in the tail is
+larger.
+"""
+function _gaussian_layer_mean(s_top::Float64, s_bot::Float64, center::Float64, width::Float64)
+    s_bot > s_top || return 0.0
+    lo = max(s_top, center - _GAUSSIAN_LAYER_REACH * width)
+    hi = min(s_bot, center + _GAUSSIAN_LAYER_REACH * width)
+    hi > lo || return 0.0
+    n = max(1, ceil(Int, (hi - lo) / width))
+    h = (hi - lo) / n
+    total = 0.0
+    for m in 1:n
+        mid = lo + (m - 0.5) * h
+        for (x, w) in zip(_GAUSSIAN_LAYER_NODES, _GAUSSIAN_LAYER_WEIGHTS)
+            total += w * exp(-0.5 * ((mid + 0.5 * h * x - center) / width)^2)
+        end
+    end
+    return total * 0.5 * h / (s_bot - s_top)
+end
+
+"""
+    _build_cs_pressure_gaussian_ic(air_mass, grid, cfg, FT, surface_pressure,
+                                   pressure_basis, qv[, vmr]) -> vmr
+
+Build the dry-VMR panels of `init.kind = "pressure_gaussian"`.
+
+Each layer of each column receives the mean of the Gaussian in
+`σ = p / p_surface` over the layer (`_gaussian_layer_mean`), with center
+`cfg["psurf_fraction"]` and standard deviation `cfg["width"]`; one global
+factor then sets the molecule count to `cfg["total_molecules"]`. `air_mass`
+is halo-padded dry air mass, `surface_pressure` the binary's interior panels
+on `pressure_basis`, `qv` the humidity panels or `nothing`. The result is six
+interior `(Nc, Nc, Nz)` panels, written into `vmr` when it is given.
+"""
+function _build_cs_pressure_gaussian_ic(air_mass::NTuple{6, <:AbstractArray{FT, 3}},
+                                        grid::AtmosGrid{<:CubedSphereMesh},
+                                        cfg, ::Type{FT},
+                                        surface_pressure::NTuple{6, <:AbstractMatrix},
+                                        pressure_basis::AbstractSurfacePressureBasis,
+                                        qv::Union{Nothing, NTuple{6}},
+                                        vmr = nothing) where FT
+    mesh = grid.horizontal
+    Nc   = mesh.Nc
+    Hp   = mesh.Hp
+    Nz   = size(air_mass[1], 3)
+    A    = grid.vertical.A
+    B    = grid.vertical.B
+
+    haskey(cfg, "width") || throw(ArgumentError(
+        "init.kind=pressure_gaussian requires `width`, the standard deviation of the " *
+        "profile in units of p / p_surface (for example 0.03)."))
+    center = Float64(get(cfg, "psurf_fraction", 0.5))::Float64
+    width = Float64(cfg["width"])::Float64
+    total_molecules = Float64(get(cfg, "total_molecules", 1.0e22))::Float64
+    (0 < center <= 1) || throw(ArgumentError(
+        "init.kind=pressure_gaussian requires 0 < psurf_fraction <= 1; got $(center)"))
+    (isfinite(width) && width > 0) || throw(ArgumentError(
+        "init.kind=pressure_gaussian requires width > 0; got $(width)"))
+    total_molecules > 0 || throw(ArgumentError(
+        "init.kind=pressure_gaussian requires total_molecules > 0; got $(total_molecules)"))
+    qv === nothing || all(p -> size(qv[p]) == (Nc, Nc, Nz), 1:CS_PANEL_COUNT) ||
+        throw(DimensionMismatch("CS target humidity panels must each have shape ($Nc, $Nc, $Nz)"))
+    _warn_surface_pressure_approximation(pressure_basis, qv)
+
+    # First pass: the layer means of the unit Gaussian, and the molecules they
+    # hold. air_mass is halo-padded; the interior cell `(i, j)` is `[Hp+i, Hp+j, :]`.
+    vmr = _cs_initial_vmr_storage(vmr, FT, Nc, Nz)
+    weighted_dry_mass = 0.0
+    for p in 1:CS_PANEL_COUNT
+        ps = surface_pressure[p]
+        m = air_mass[p]
+        q = vmr[p]
+        for j in 1:Nc, i in 1:Nc
+            qv_col = qv === nothing ? nothing : @view(qv[p][i, j, :])
+            ps_col = Float64(_total_surface_pressure(pressure_basis, ps[i, j], A, B, qv_col))
+            s_top = (Float64(A[1]) + Float64(B[1]) * ps_col) / ps_col
+            for k in 1:Nz
+                s_bot = (Float64(A[k + 1]) + Float64(B[k + 1]) * ps_col) / ps_col
+                shape = FT(_gaussian_layer_mean(s_top, s_bot, center, width))
+                q[i, j, k] = shape
+                weighted_dry_mass += Float64(shape) * Float64(m[Hp + i, Hp + j, k])
+                s_top = s_bot
+            end
+        end
+    end
+    weighted_dry_mass > 0 || throw(ArgumentError(
+        "init.kind=pressure_gaussian: the profile holds no dry air mass; check " *
+        "psurf_fraction, width and the binary's air mass"))
+
+    # molecules = N_A / M_air × Σ VMR × dry mass, as for `pressure_layer`.
+    scale = FT(total_molecules * DRY_AIR_MOLAR_MASS / (AVOGADRO * weighted_dry_mass))
+    for p in 1:CS_PANEL_COUNT
+        vmr[p] .*= scale
     end
     return vmr
 end
