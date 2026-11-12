@@ -43,7 +43,10 @@ __pycache__/
 .env.local
 *.local
 .mcp.json
-.claude/
+# Claude Code: project skills are shared; all other state is local
+.claude/*
+!.claude/skills/
+*/**/.claude/
 .cursor/
 docs/files.zip
 docs/plans/
