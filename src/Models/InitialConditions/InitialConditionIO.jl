@@ -10,7 +10,8 @@ topology-dispatched VMR builders for the unified runtime.
   returning **dry VMR** on interior cells. Accepts `kind = uniform |
   latitude_step | gaussian_blob | file | netcdf | file_field |
   catrine_co2` for LL/RG meshes, plus `bl_enhanced` on LL. CS supports
-  those shared kinds plus `pressure_layer` and signed `cs_native` fields.
+  those shared kinds plus `pressure_layer`, `pressure_gaussian` and signed
+  `cs_native` fields.
 - [`pack_initial_tracer_mass`](@ref) — basis-aware VMR → conservative model storage
   conversion. Dispatches on `mass_basis::AbstractMassBasis`:
   - `DryBasis` (the default runtime basis): `rm = vmr .* air_mass`.
@@ -23,7 +24,9 @@ topology-dispatched VMR builders for the unified runtime.
 
 - LL/RG and CS `build_initial_mixing_ratio` for the kinds above. CS
   `pressure_layer` selects a level per column from the stored surface pressure
-  and normalizes its dry VMR to the configured global molecule count.
+  and normalizes its dry VMR to the configured global molecule count; CS
+  `pressure_gaussian` does the same for a Gaussian in `p / p_surface`, averaged
+  over each layer so the profile does not depend on the layer thickness.
 - Basis-aware `pack_initial_tracer_mass` (DryBasis + MoistBasis); CS
   output is halo-padded with the halo zeroed.
 - File conventions come from `GriddedIO`: coordinates (`find_coordinate`),
@@ -94,6 +97,7 @@ using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, Vert
 using ...Grids: AbstractHorizontalMesh, nx, ny, ncells
 
 using Printf: @sprintf
+using FastGaussQuadrature: gausslegendre
 
 # ---------------------------------------------------------------------------
 # Longitude-wrap helpers
@@ -117,6 +121,7 @@ struct GaussianBlobInitialConditionSpec <: AbstractInitialConditionSpec end
 struct FileInitialConditionSpec <: AbstractInitialConditionSpec end
 struct CatrineCO2InitialConditionSpec <: AbstractInitialConditionSpec end
 struct PressureLayerInitialConditionSpec <: AbstractInitialConditionSpec end
+struct PressureGaussianInitialConditionSpec <: AbstractInitialConditionSpec end
 struct CSNativeInitialConditionSpec <: AbstractInitialConditionSpec end
 
 # One alias table for typed parsing, topology builders and runner key checks.
@@ -132,6 +137,7 @@ const INITIAL_CONDITION_KINDS = Dict(
     "file_field" => FileInitialConditionSpec,
     "catrine_co2" => CatrineCO2InitialConditionSpec,
     "pressure_layer" => PressureLayerInitialConditionSpec,
+    "pressure_gaussian" => PressureGaussianInitialConditionSpec,
     "cs_native" => CSNativeInitialConditionSpec)
 export INITIAL_CONDITION_KINDS
 
@@ -641,8 +647,9 @@ Bare lat-lon and reduced-Gaussian meshes support the analytic `uniform`,
 Passing an `AtmosGrid` additionally enables file-backed modes (`file`,
 `netcdf`, `file_field`, and `catrine_co2`) with topology-aware horizontal
 mapping and conservative hybrid-coordinate vertical remapping. Cubed-sphere construction
-requires an `AtmosGrid` and also supports `pressure_layer` and `cs_native`.
-File-backed and pressure-layer construction require the transport window's
+requires an `AtmosGrid` and also supports `pressure_layer`, `pressure_gaussian`
+and `cs_native`.
+File-backed, pressure-layer and pressure-Gaussian construction require the transport window's
 `surface_pressure` where indicated by the selected mode. Each public call owns
 fresh output arrays. The driven cubed-sphere runner separately reuses private
 interior buffers between analytic initializers before copying each tracer into
@@ -936,7 +943,8 @@ export FileInitialConditionSource
 export AbstractInitialConditionSpec, UniformInitialConditionSpec
 export LatitudeStepInitialConditionSpec, BoundaryLayerEnhancedInitialConditionSpec
 export GaussianBlobInitialConditionSpec, FileInitialConditionSpec
-export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec
+export CatrineCO2InitialConditionSpec, PressureLayerInitialConditionSpec,
+       PressureGaussianInitialConditionSpec
 export CSNativeInitialConditionSpec, initial_condition_spec
 export build_initial_mixing_ratio
 export pack_initial_tracer_mass

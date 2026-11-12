@@ -20,7 +20,7 @@ these files reuse. The parent overview is [`../README.md`](../README.md).
   - analytic: `uniform`, `latitude_step` (aliases `lat_step`, `hemisphere_step`),
     `gaussian_blob`
   - file-backed: `file`, `netcdf`, `file_field`, `catrine_co2`
-  - CS only: `pressure_layer`, `cs_native`
+  - CS only: `pressure_layer`, `pressure_gaussian`, `cs_native`
 - Cubed-sphere packing: `pack_initial_tracer_mass` (parent) dispatches to the CS
   `_pack_tracer_mass` methods here. They return halo-padded panels with a zeroed
   halo.
@@ -101,7 +101,8 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
 - `InitialConditionIO.jl`: module, LL/RG builders, shared file-column remap and storage packing.
 
 - [`cubed_sphere.jl`](cubed_sphere.jl) — CS `build_initial_mixing_ratio`
-  (analytic, file, `cs_native`, `pressure_layer`), CS dry/moist halo packing
+  (analytic, file, `cs_native`, `pressure_layer`, `pressure_gaussian`), CS dry/moist halo
+  packing
 - [`surface_flux.jl`](surface_flux.jl) — kind and default-file resolution,
   `surface_flux_species` and the storage factor, NetCDF load and unit
   conversion (`_to_flux_density!`, dispatched on the parsed units' area basis),
@@ -213,9 +214,14 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
     hybrid remap, with optional `humidity_variable` dry-carrier weighting and
     the binary's typed total/dry surface-pressure basis.
   - `pressure_layer` with `lowest_layer = true` selects `k = Nz`.
-- CS file ICs and `pressure_layer` need the binary's `surface_pressure` panels.
+  - `pressure_gaussian` stores the mean of a Gaussian in `p / p_surface` over
+    each layer (8-point Gauss-Legendre on sub-intervals no longer than `width`),
+    so the profile does not depend on the layer thickness; `width` is required.
+- CS file ICs, `pressure_layer` and `pressure_gaussian` need the binary's
+  `surface_pressure` panels.
   Target half levels come from the grid's hybrid coefficients and that pressure.
-- `pressure_layer` indexes `air_mass` as halo-padded panels (`[Hp + i, Hp + j, k]`).
+- `pressure_layer` and `pressure_gaussian` index `air_mass` as halo-padded panels
+  (`[Hp + i, Hp + j, k]`).
 - The source lat-lon mesh and the EDGAR fallback cell areas use the destination
   mesh radius, so regridding weights compare areas on one sphere. Both derive
   `SnappedFaces` from the oriented file coordinates, including midpoint faces
