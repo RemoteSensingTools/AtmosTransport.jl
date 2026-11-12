@@ -363,6 +363,18 @@ the same behavior for the split schemes: +6e-7 in 12 days for a uniform
 tracer, and a drift that stops in a steady flow, as it does in the model's
 solid-body rotation.
 
+Measured in units of the machine epsilon of its precision, a `Float32` run of
+these tests is close to its `Float64` twin. Over the 87 twins, the ratio of
+the RMS deviation of a uniform tracer in these units has a median of 1.00 and
+a range of 0.26 to 1.53; for the largest deviation the median is 0.93 and the
+range 0.29 to 6.3 (`results/uniform_tracer_stats.csv` there). The largest
+deviations are 348 (`Float32`) and 1195 eps (`Float64`) on the cubed sphere,
+6414 and 6003 eps on the latitude–longitude grid and 731 and 277 eps on the
+reduced-Gaussian grid. The scale of the gap between the two precisions is
+therefore the ratio of the two epsilons, which is consistent with roundoff
+dominating in both. The global mass drift scales less regularly (ratios of
+0.04 to 23, median 0.8), because the `Float64` drift is only 0 to 12 eps.
+
 The drift is specific to flat tracer fields in smooth, slowly varying flows.
 A hill on a uniform background drifts about 80 times less in the emulation, and
 the Gaussian hills of the model runs stay near 1e-8. It does not grow in
