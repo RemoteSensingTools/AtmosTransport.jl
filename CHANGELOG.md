@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **TM5 convection on binaries of other levels.**
+  `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` gains
+  `--vertical-mapping pressure_overlap`, which attaches the ERA5-based legacy
+  1-degree, 3-hourly TM5 convection to a cubed-sphere binary whose levels are
+  not merged ERA5 levels (for example MERRA-2 L72), so a MERRA-2 run can use
+  `[convection] kind = "tm5"` or `"ifs"` with ERA5 convection. Each column's
+  ERA5 layer totals are distributed over the binary's layers by pressure
+  overlap over the column's total surface pressure (column sums preserved);
+  every section and header key of the input is kept, and the header names the
+  host meteorology and the mapping. The script now takes the archive slot from
+  each window's time and length instead of assuming hourly windows, reads ERA5
+  humidity only for dry-basis binaries, rejects version-5 and Float64 inputs,
+  and keeps the input's hybrid coefficients unrounded in the header. The
+  default `merge_map` mode writes the same payload as before.
+
 - **Gaussian layer initial condition.** `init.kind = "pressure_gaussian"`
   (cubed sphere) gives every column a Gaussian profile of the dry VMR in
   `p / p_surface`, with center `psurf_fraction` and standard deviation `width`,
@@ -9,6 +24,7 @@
   over its own interval, so vertical grids with different layer thicknesses
   (for example 72 and 117 layers) hold the layer means of the same profile; a
   single `pressure_layer` is as thick as the local model layer.
+
 - **IFS convection.** `[convection] kind = "ifs"` (`IFSConvection`) runs the
   tracer transport of the ECMWF IFS convection scheme (OpenIFS CY48R1.1
   `CUCTRACER` with the implicit `CUBIDIAG`, no scavenging) on the four TM5
