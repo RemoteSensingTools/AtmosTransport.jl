@@ -21,16 +21,16 @@ writers that turn these fields into transport binaries live in
   `[preprocessing]`. Keyword arguments override TOML values; the entry point
   passes `root_dir`, `include_*` flags, `physics_dir`, `physics_layout`, and
   `coefficients_file` from the run config.
-- GEOS ([`geos.jl`](GEOS/geos.jl), [`geos_panels.jl`](GEOS/geos_panels.jl), [`geos_read_window.jl`](GEOS/geos_read_window.jl)): `GEOSITSettings`, `GEOSFPSettings`,
+- GEOS ([`geos_native_files.jl`](GEOS/geos_native_files.jl), [`geos_panels.jl`](GEOS/geos_panels.jl), [`geos_read_window.jl`](GEOS/geos_read_window.jl)): `GEOSITSettings`, `GEOSFPSettings`,
   `open_day` (`open_geos_day` / `open_geosfp_native_day`),
   `read_window!(raw::RawWindow, settings, handles, date, win)`,
   `endpoint_dry_mass!`, `detect_level_orientation`.
-- ERA5 N320 ([`era5.jl`](ERA5/era5.jl) and the `era5_n320_*.jl` files): `ERA5N320Settings`, `open_era5_day`,
+- ERA5 N320 ([`era5_native_files.jl`](ERA5/era5_native_files.jl) and the `era5_n320_*.jl` files): `ERA5N320Settings`, `open_era5_day`,
   `read_era5_n320_window_fields!`, `derive_n320_dry_mass!`,
   `derive_c180_dry_mass!`, `regrid_n320_to_c180!`,
   `read_era5_n320_convection_window!`, and the per-window bundle
   `ERA5N320ToC180Pipeline` / `process_era5_n320_window!`.
-- MERRA-2 ([`merra2.jl`](MERRA2/merra2.jl)): `MERRA2Settings`, `NASAArchive`,
+- MERRA-2 ([`merra2_native_files.jl`](MERRA2/merra2_native_files.jl)): `MERRA2Settings`, `NASAArchive`,
   `GEOSChemArchive`, `open_merra2_day`, `read_merra2_window_fields`,
   `read_merra2_physics_window`, `read_merra2_next_day_endpoint`,
   `detect_merra2_level_order`, `validate_merra2_settings`.

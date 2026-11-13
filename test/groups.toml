@@ -23,6 +23,7 @@ quick = [
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
     "core/test_structure.jl",
+    "core/test_case_insensitive_paths.jl",
     "core/test_undefined_names.jl",
     "core/test_physical_constants.jl",
     "core/test_readme_current.jl",
@@ -64,6 +65,7 @@ files = [
     "core/test_test_groups.jl",
     "core/test_keyword_calls.jl",
     "core/test_structure.jl",
+    "core/test_case_insensitive_paths.jl",
     "core/test_undefined_names.jl",
 ]
 paths = [

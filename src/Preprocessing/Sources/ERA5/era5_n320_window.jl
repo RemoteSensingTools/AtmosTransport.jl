@@ -1,5 +1,5 @@
 # ERA5 N320 GRIB reader: per-window spectral and grid-point field synthesis on the N320 source mesh.
-# Split from era5.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Continues era5_native_files.jl; included by ERA5.jl after it.
 
 # ===========================================================================
 # Per-window field synthesis on the N320 source mesh.

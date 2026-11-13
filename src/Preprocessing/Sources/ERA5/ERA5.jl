@@ -236,7 +236,7 @@ export ERA5C180RawConvectionFields,
     remap_era5_humidity!
 
 include("era5_grib_geometry.jl")
-include("era5.jl")
+include("era5_native_files.jl")
 include("configuration.jl")
 include("era5_n320_window.jl")
 include("era5_n320_mass_convection.jl")

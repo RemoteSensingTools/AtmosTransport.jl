@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Three preprocessing source files are renamed because each differed from its
+  module file only by letter case, which cannot be checked out on the default
+  file systems of macOS and Windows: `Sources/ERA5/era5.jl` →
+  `era5_native_files.jl`, `Sources/GEOS/geos.jl` → `geos_native_files.jl`,
+  `Sources/MERRA2/merra2.jl` → `merra2_native_files.jl`. No code changes. A
+  test (`test/core/test_case_insensitive_paths.jl`) now rejects such pairs.
+
 ## 0.7.0 — 2026-11-12
 
 This is a breaking release. It changes numerical results of CMFMC convection

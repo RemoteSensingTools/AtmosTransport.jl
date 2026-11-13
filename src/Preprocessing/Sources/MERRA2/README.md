@@ -6,7 +6,7 @@ Meteorological input readers and transport-binary workflows for MERRA2.
 
 - [`MERRA2.jl`](MERRA2.jl) — module imports and public reader/workflow API.
 - [`configuration.jl`](configuration.jl) — MERRA-2 TOML constructor.
-- [`merra2.jl`](merra2.jl) — NASA/GEOS-Chem archive paths, day handles, orientation and native window readers.
+- [`merra2_native_files.jl`](merra2_native_files.jl) — NASA/GEOS-Chem archive paths, day handles, orientation and native window readers.
 - [`merra2_latlon_regrid.jl`](merra2_latlon_regrid.jl) — lat-lon-to-CS regrid, physics pipeline and daily writer.
 
 ## Depends on
