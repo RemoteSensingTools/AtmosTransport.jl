@@ -2,6 +2,70 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-12
+
+This is a breaking release. It changes numerical results of CMFMC convection
+and of runs without advection, changes several preprocessing paths, replaces
+the adjoint tape API, and rejects unknown or mistyped configuration keys. It
+adds the IFS convection option, a Gaussian layer initial condition, TM5-style
+spectral mass fluxes and boundary-layer diffusion, and the sources of the paper
+figures. The source tree is now organised in logical submodules with a checked
+structure. Preprocessing changes take effect when binaries are regenerated;
+keep the version, forcing binary, run TOML and dependency manifest with
+reproducibility records, and pin 0.6.0 to reproduce older runs. Thank you to
+Kay Suselj for the GEOS-Chem cloud-base order of CMFMC convection, the air-mass
+update in runs without advection and the vector coarsening of the GEOS VDIFF
+winds (PRs #151–#154), and to Vitus Benson for identifying the layer of the
+ERA5 downdraft detrainment (PR #159).
+
+### Summary
+
+- **Result changes at run time.** CMFMC convection follows GEOS-Chem's
+  cloud-base order, which removes a negative cloud-base layer (PR #152), and
+  uses the same "treat as zero" threshold in every precision, so `Float32`
+  runs convect in the same columns as `Float64` runs (PR #157). Runs without
+  advection update the air mass every step (PR #154). Windows with a single
+  step use midpoint forcing (PR #138).
+- **Result changes in preprocessing** (regenerate binaries to take them):
+  the ERA5 downdraft detrainment is assigned to the layer above its level
+  (PRs #159, #166); ERA5 N320 fluxes use the pinned dry thickness (PR #141);
+  the dry-mass pin is compensated and the polar replay closes (PR #140);
+  lat-lon and reduced-Gaussian `tm5_spectral` fluxes default to Gauss–Fourier
+  face quadrature (PR #150); GEOS VDIFF winds are coarsened as vectors
+  (PR #151); the GEOS `pfix_corrected` closure is removed (PR #138).
+- **IFS convection** (`[convection] kind = "ifs"`, PR #169): the tracer
+  transport of the IFS convection scheme on the four TM5 convection fields,
+  for comparing solvers on identical fields. Forward model only.
+- **TM5-style options:** spectral ERA5 → dry mass fluxes for lat-lon,
+  reduced-Gaussian and cubed-sphere targets, with face construction on the GPU
+  (PRs #136, #139, #149, #150, #155), and the TM5 boundary-layer diffusion with
+  its live `Calc_Kzz` on all three grids, with the cubed-sphere adjoint
+  (PRs #135, #145).
+- **Initial conditions and inputs:** `init.kind = "pressure_gaussian"`
+  (PR #170); ERA5-based TM5 convection can be attached to binaries on other
+  levels by pressure overlap (PR #172).
+- **Adjoint (breaking API):** one `tape = AdjointTape(...)` keyword, automatic
+  tape selection, compacted tapes, met windows streamed from host memory,
+  de-duplicated 4D-Var inputs, a single forward run per 4D-Var evaluation, and
+  opt-in stop rules for the optimizers (PRs #124, #126, #131, #133, #137, #146,
+  #158, #160–#162, #165). Gradients are bit-identical across storages.
+- **Configuration is validated strictly:** unknown keys, wrong types and
+  Booleans in numeric fields are errors at run time and in preprocessing
+  (PRs #103, #106, #134).
+- **Source structure:** modules and folders follow one layered layout with a
+  structure checker, per-folder READMEs and a generated code map
+  (PRs #107–#122, #125, #127, #129).
+- **Performance on the cubed sphere:** fewer kernel launches and host
+  synchronizations in advection, seams, halo exchange, surface fluxes and
+  window input (PRs #90–#99, #163).
+- **Paper sources:** `examples/paper/` reproduces the idealized advection
+  tests and the process experiments with layered tracers (PRs #167, #168,
+  #173). A project skill for writing Julia in this repository is in
+  `.claude/skills/` (PR #171).
+- **CI** tests Julia 1.10 and 1.13 (PR #128).
+
+### Changes
+
 - **TM5 convection on binaries of other levels.**
   `scripts/preprocessing/attach_catrine_tm5_convection_cs.jl` gains
   `--vertical-mapping pressure_overlap`, which attaches the ERA5-based legacy
