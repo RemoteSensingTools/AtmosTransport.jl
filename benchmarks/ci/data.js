@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794547670362,
+  "lastUpdate": 1794582731389,
   "repoUrl": "https://github.com/RemoteSensingTools/AtmosTransport.jl",
   "entries": {
     "Benchmark": [
@@ -129280,6 +129280,726 @@ window.BENCHMARK_DATA = {
             "value": 0.010945515,
             "unit": "s/step",
             "extra": "{\"manifest_sha256\":\"7267e431bf87b939f6c3abdbc15e3f21390297177e435d5ff172cf7f1b1ee8a1\",\"commit\":\"ed80ef043b099785f36daa412c80a1f6182bd89a\",\"julia_version\":\"1.13.3\"}"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "fronge@gmail.com",
+            "name": "Christian Frankenberg",
+            "username": "cfranken"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8fbf88971f7da58b65a093bc2ecd506f28fdef26",
+          "message": "Merge pull request #174 from RemoteSensingTools/release/v0.7.0\n\nRelease v0.7.0",
+          "timestamp": "2026-11-13T07:06:07-08:00",
+          "tree_id": "7bbf5fdfc3b6359d3aad5e16f4fb1bf3a3c622cd",
+          "url": "https://github.com/RemoteSensingTools/AtmosTransport.jl/commit/8fbf88971f7da58b65a093bc2ecd506f28fdef26"
+        },
+        "date": 1794582653636,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32",
+            "value": 0.002797574,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.0980942773989178e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_halo_rm_y",
+            "value": 0.000045,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / advection",
+            "value": 0.002789,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_cfl_x",
+            "value": 0.00013,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_sweep_z",
+            "value": 0.000675,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_sweep_y",
+            "value": 0.00079,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_halo_m_x",
+            "value": 0.00008,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_sweep_x",
+            "value": 0.000926,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_halo_rm_x",
+            "value": 0.000089,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float32 / cs_halo_m_y",
+            "value": 0.000041,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32",
+            "value": 0.004221332,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.9109295359853236e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_halo_rm_y",
+            "value": 0.00016,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / advection",
+            "value": 0.004211,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_cfl_x",
+            "value": 0.00013,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_sweep_z",
+            "value": 0.000906,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_sweep_y",
+            "value": 0.00124,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_halo_m_x",
+            "value": 0.000071,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_sweep_x",
+            "value": 0.001316,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_halo_rm_x",
+            "value": 0.000322,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float32 / cs_halo_m_y",
+            "value": 0.00004,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float32",
+            "value": 0.000175711,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.7483253751899425e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float32 / advection",
+            "value": 0.000163,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float32",
+            "value": 0.000236361,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":5.198827217688197e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float32 / advection",
+            "value": 0.000228,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float32",
+            "value": 0.000289158,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.0623949536239702e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float32 / convection",
+            "value": 0.000268,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float32",
+            "value": 0.000437809,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.8067033797843352e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float32 / convection",
+            "value": 0.000429,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32",
+            "value": 0.003633261,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":845521.4200135911,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_halo_rm_y",
+            "value": 0.000071,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / advection",
+            "value": 0.003244,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_cfl_x",
+            "value": 0.000197,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / diffusion",
+            "value": 0.000072,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_sweep_z",
+            "value": 0.000713,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_sweep_y",
+            "value": 0.000846,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / convection",
+            "value": 0.000375,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_halo_m_x",
+            "value": 0.000119,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_sweep_x",
+            "value": 0.000985,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_halo_rm_x",
+            "value": 0.000142,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float32 / cs_halo_m_y",
+            "value": 0.000063,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32",
+            "value": 0.004751488,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.5861372269066027e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_halo_rm_y",
+            "value": 0.00016,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / advection",
+            "value": 0.004332,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_cfl_x",
+            "value": 0.000129,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / diffusion",
+            "value": 0.000135,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_sweep_z",
+            "value": 0.000903,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_sweep_y",
+            "value": 0.001246,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / convection",
+            "value": 0.000407,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_halo_m_x",
+            "value": 0.000072,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_sweep_x",
+            "value": 0.0013,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_halo_rm_x",
+            "value": 0.000309,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float32 / cs_halo_m_y",
+            "value": 0.00004,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float32",
+            "value": 0.000642141,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":4.78399603825328e6,\"bytes_per_second\":6.276098240106144e8,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float32 / io",
+            "value": 0.000642141,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float32",
+            "value": 0.00064127,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.9161975454956573e7,\"bytes_per_second\":9.879972554462239e8,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float32 / io",
+            "value": 0.00064127,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float32",
+            "value": 0.011735921,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":261760.45322731807,\"adjoint_runs_per_second\":85.2084808682676,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float32 / adjoint_forward_reverse",
+            "value": 0.011735921,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64",
+            "value": 0.003081784,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":996825.2155245143,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_halo_rm_y",
+            "value": 0.00005,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / advection",
+            "value": 0.003073,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_cfl_x",
+            "value": 0.000128,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_sweep_z",
+            "value": 0.000702,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_sweep_y",
+            "value": 0.000763,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_halo_m_x",
+            "value": 0.000087,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_sweep_x",
+            "value": 0.001166,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_halo_rm_x",
+            "value": 0.000102,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 1tr / CPU-AMD / Float64 / cs_halo_m_y",
+            "value": 0.000047,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64",
+            "value": 0.004979454,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.4677404390119878e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_halo_rm_y",
+            "value": 0.000184,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / advection",
+            "value": 0.004972,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_cfl_x",
+            "value": 0.000145,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_sweep_z",
+            "value": 0.001139,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_sweep_y",
+            "value": 0.001298,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_halo_m_x",
+            "value": 0.000073,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_sweep_x",
+            "value": 0.001649,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_halo_rm_x",
+            "value": 0.000349,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 advection 4tr / CPU-AMD / Float64 / cs_halo_m_y",
+            "value": 0.000042,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float64",
+            "value": 0.000174498,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.760478630127566e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 diffusion 1tr / CPU-AMD / Float64 / advection",
+            "value": 0.000166,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float64",
+            "value": 0.000254116,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":4.835586897322483e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 diffusion 4tr / CPU-AMD / Float64 / advection",
+            "value": 0.000247,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float64",
+            "value": 0.000313675,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":9.793576153662229e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 convection 1tr / CPU-AMD / Float64 / convection",
+            "value": 0.000306,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float64",
+            "value": 0.000464878,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.6432741493467104e7,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 convection 4tr / CPU-AMD / Float64 / convection",
+            "value": 0.000458,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64",
+            "value": 0.003562635,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":862283.1134820153,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_halo_rm_y",
+            "value": 0.000049,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / advection",
+            "value": 0.003284,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_cfl_x",
+            "value": 0.000127,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / diffusion",
+            "value": 0.000068,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_sweep_z",
+            "value": 0.000716,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_sweep_y",
+            "value": 0.00086,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / convection",
+            "value": 0.000269,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_halo_m_x",
+            "value": 0.000087,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_sweep_x",
+            "value": 0.001215,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_halo_rm_x",
+            "value": 0.000112,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 1tr / CPU-AMD / Float64 / cs_halo_m_y",
+            "value": 0.000046,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64",
+            "value": 0.005669096,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":2.167541350508088e6,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_halo_rm_y",
+            "value": 0.000167,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / advection",
+            "value": 0.00523,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_cfl_x",
+            "value": 0.000152,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / diffusion",
+            "value": 0.000158,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_sweep_z",
+            "value": 0.001139,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_sweep_y",
+            "value": 0.001333,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / convection",
+            "value": 0.000428,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_halo_m_x",
+            "value": 0.000075,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_sweep_x",
+            "value": 0.001692,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_halo_rm_x",
+            "value": 0.000329,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 full 4tr / CPU-AMD / Float64 / cs_halo_m_y",
+            "value": 0.000045,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float64",
+            "value": 0.000734257,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":4.1838211961207045e6,\"bytes_per_second\":1.0963055170056262e9,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 io 1tr / CPU-AMD / Float64 / io",
+            "value": 0.000734257,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float64",
+            "value": 0.00100591,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":1.2215804594844468e7,\"bytes_per_second\":1.2584913163205454e9,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 io 4tr / CPU-AMD / Float64 / io",
+            "value": 0.00100591,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float64",
+            "value": 0.021486865,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"device\":\"AMD EPYC 9V74 80-Core Processor\",\"updates_per_second\":142971.06627700225,\"adjoint_runs_per_second\":46.540060637045,\"julia_version\":\"1.13.3\"}"
+          },
+          {
+            "name": "Operator Breakdown / CPU Synthetic CS Sweep / C4 L32 adjoint 1tr / CPU-AMD / Float64 / adjoint_forward_reverse",
+            "value": 0.021486865,
+            "unit": "s/step",
+            "extra": "{\"manifest_sha256\":\"50a5285d4acf06569896b90e3b4f0e12bb07a6eb0a0881d16d5c76ce8bc0a58b\",\"commit\":\"8fbf88971f7da58b65a093bc2ecd506f28fdef26\",\"julia_version\":\"1.13.3\"}"
           }
         ]
       }
