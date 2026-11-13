@@ -6,7 +6,7 @@ authors:
   - family-names: "Frankenberg"
     given-names: "Christian"
   - name: "AtmosTransport.jl contributors"
-version: 0.6.0
-date-released: 2026-10-20
+version: 0.7.0
+date-released: 2026-11-12
 repository-code: "https://github.com/RemoteSensingTools/AtmosTransport.jl"
 license: MIT
