@@ -1,5 +1,5 @@
 # GEOS native reader: the canonical read_window! surface and the 3-hourly convection binding.
-# Split from geos.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Continues geos_native_files.jl; included by GEOS.jl after it.
 
 # ---------------------------------------------------------------------------
 # Canonical AbstractMetSettings interface implementations.

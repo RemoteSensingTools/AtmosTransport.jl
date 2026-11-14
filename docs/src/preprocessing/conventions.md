@@ -45,7 +45,7 @@ index `Nz` is the top of the model). The runtime expects **top-down**
 flips once at read time.
 
 ```julia
-src/Preprocessing/Sources/GEOS/geos.jl::detect_level_orientation(ctm_a1)
+src/Preprocessing/Sources/GEOS/geos_native_files.jl::detect_level_orientation(ctm_a1)
     -> :bottom_up | :top_down
 ```
 

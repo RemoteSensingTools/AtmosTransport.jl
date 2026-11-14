@@ -1,5 +1,5 @@
 # ERA5 N320 → cubed sphere: conservative regrid of the window fields and the per-window pipeline.
-# Split from era5.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Continues era5_native_files.jl; included by ERA5.jl after it.
 
 # ===========================================================================
 # Conservative regrid from N320 source mesh to a C180

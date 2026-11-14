@@ -7,7 +7,7 @@ Meteorological input readers and transport-binary workflows for ERA5.
 - [`ERA5.jl`](ERA5.jl) — module imports and public reader/workflow API.
 - [`configuration.jl`](configuration.jl) — ERA5-N320 TOML constructor.
 - [`era5_grib_geometry.jl`](era5_grib_geometry.jl) — native reduced-Gaussian GRIB geometry, extending Common protocols.
-- [`era5.jl`](era5.jl) — settings, stream paths and GRIB day handles.
+- [`era5_native_files.jl`](era5_native_files.jl) — settings, stream paths and GRIB day handles.
 - [`era5_n320_window.jl`](era5_n320_window.jl) — N320 grid discovery, spectral synthesis, humidity and ARCO pressure.
 - [`era5_n320_mass_convection.jl`](era5_n320_mass_convection.jl) — native dry mass and forecast convection reader.
 - [`era5_n320_to_cs.jl`](era5_n320_to_cs.jl) — coverage-normalized CS regrid, humidity remap, TM5 conversion and window pipeline.

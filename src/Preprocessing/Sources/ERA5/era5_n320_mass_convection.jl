@@ -1,5 +1,5 @@
 # ERA5 N320 GRIB reader: dry-air mass (N320 and C180) and convection forecast fields, TM5 column scratch.
-# Split from era5.jl (refactor phase 4); included by Preprocessing.jl in this order.
+# Continues era5_native_files.jl; included by ERA5.jl after it.
 
 # ===========================================================================
 # Hybrid pressure → dry-air mass on the N320 source grid.

@@ -194,7 +194,7 @@ export uses_omega, validate_omega_regularization, GEOSDayHandles,
     open_geos_day,
     set_omega_level_parallel!
 
-include("geos.jl")
+include("geos_native_files.jl")
 include("geos_panels.jl")
 include("geos_read_window.jl")
 include("reader.jl")

@@ -7,7 +7,7 @@ Meteorological input readers and transport-binary workflows for GEOS.
 - [`GEOS.jl`](GEOS.jl) — module imports and public reader/workflow API.
 - [`configuration.jl`](configuration.jl) — GEOS-IT/FP TOML settings constructors.
 - [`reader.jl`](reader.jl) — typed GEOSNativeReader and lifecycle extensions.
-- [`geos.jl`](geos.jl) — settings, paths, daily NetCDF handles and orientation.
+- [`geos_native_files.jl`](geos_native_files.jl) — settings, paths, daily NetCDF handles and orientation.
 - [`geos_panels.jl`](geos_panels.jl) — panel slicing, coordinate-aware physics interpolation and endpoint dry mass.
 - [`geos_read_window.jl`](geos_read_window.jl) — GEOS-IT/FP endpoints, fluxes and physics window readers.
 - [`geos_cs_mass_helpers.jl`](geos_cs_mass_helpers.jl) — pressure-to-mass conversion, GEOS pressure-fixer evolution and smoothing.

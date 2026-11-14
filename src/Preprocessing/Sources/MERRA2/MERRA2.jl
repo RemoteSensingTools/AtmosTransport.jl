@@ -161,7 +161,7 @@ export GEOSChemArchive,
     read_merra2_window_fields,
     validate_merra2_settings
 
-include("merra2.jl")
+include("merra2_native_files.jl")
 include("configuration.jl")
 include("merra2_latlon_regrid.jl")
 
