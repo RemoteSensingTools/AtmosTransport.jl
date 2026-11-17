@@ -29,8 +29,14 @@ It retains the structured and CS transport loops.
   - `_validate_capability_match(driver, recipe)` checks the physics against the
     binary.
 - Output resources in [`output.jl`](output.jl) and [`resources.jl`](resources.jl):
-  - `RunSnapshotOutput` holds the snapshot stream, the pending daily write, and
-    the observation sampler.
+  - `RunSnapshotOutput` holds the snapshot stream, the pending daily write, the
+    observation sampler and the time-aggregated products
+    (`TimeAggregateOutputs` of `[output.time_mean]` / `[output.local_time]`).
+  - `_aggregate_window_hours` checks those products against the binaries before
+    transport (one window length, whole windows per period, a 00 UTC start for
+    local time); `_install_time_aggregates!` builds them;
+    `_sample_time_aggregates!` samples each window boundary, sharing the
+    snapshot frame captured at the same instant.
   - `RunInputResources` holds the current driver and `DrivenSimulation`.
   - `_with_run_resource(f, resource)` closes the resource on every exit path.
 - Observation glue in [`observations.jl`](observations.jl):
@@ -67,6 +73,9 @@ It retains the structured and CS transport loops.
   architecture, table-shape and window-bound checks, `validate_config`,
   multi-file window-range guard; `validate_config` also parses the physics,
   run and output settings.
+- [`configuration.jl`](configuration.jl) also holds
+  `_check_output_path_collisions`: snapshot, time-mean, local-time and
+  observation paths expanded for one sample day must all differ.
 - [`config_keys.jl`](config_keys.jl) — the keys each runtime table may hold
   and `_config_key_findings`: unknown keys (with suggestions) are errors of
   `validate_config`, keys the chosen kind leaves unread are its warnings
@@ -75,7 +84,8 @@ It retains the structured and CS transport loops.
   dispatch
 - [`output.jl`](output.jl) — binary date labels, runtime window layout and span, duplicate
   daily-path guard, output path/schedule checks (snapshot hours on window
-  ends), `RunSnapshotOutput`, single-file stream, background daily writes
+  ends), `RunSnapshotOutput`, single-file stream, background daily writes,
+  time-mean/local-time product checks, installation and boundary sampling
 - [`observations.jl`](observations.jl) — observation origin, sampler construction and
   ownership, per-binary day switch, window-end sampling with optional VDIFF
   temperature
@@ -143,6 +153,10 @@ It retains the structured and CS transport loops.
     that date.
   - Sampling runs at t = 0 and at every met-window end. In the LL/RG loop it
     forces per-window stepping even without snapshots (`samples_observations`).
+- Time-mean and local-time products sample at the same instants (t = 0, then
+  every window end, counted as boundaries from the run start) and also force
+  per-window stepping. The capture closures of both loops return their snapshot
+  frame so a boundary is captured at most once per field selection.
 - Each binary's `DrivenSimulation` gets `start_time` equal to the accumulated run
   time in seconds. Time-varying surface sources therefore index slices from the
   run start, not the start of each file.
@@ -153,6 +167,7 @@ Under [`../../../../test/core/`](../../../../test/core/): `test_public_config_an
 (`validate_config`), `test_input_resource_lifetime.jl` (input cleanup, multi-file
 window ranges), `test_async_output_lifetime.jl` (background writes, sampler close),
 `test_observation_runner.jl`, `test_observation_schedules.jl` (daily-path guard),
+`test_output_time_aggregates.jl` (time-mean and local-time runs),
 `test_cs_initial_state_packing.jl` (`_initialize_cs_dry_state`),
 `test_multiday_source_clock.jl`, `test_cs_multifile_equivalence.jl`,
 `test_fv3_vertical_profile.jl` (advection labels).

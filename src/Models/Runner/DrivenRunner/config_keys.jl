@@ -6,7 +6,9 @@
 # keys that the chosen kind or another setting leaves unread are warnings. Each
 # list names the parser it mirrors; a parser that starts reading a new key adds
 # it here.
-# `[output.observations]` is not listed: its parser rejects unknown keys itself.
+# `[output.observations]`, `[output.time_mean]` and `[output.local_time]` are not
+# listed: their parsers reject unknown keys themselves. The `fields` tables of
+# the latter two are checked here like `[output.fields]`.
 # ===========================================================================
 
 const _TOP_LEVEL_TABLES = ("input", "architecture", "numerics", "run", "advection",
@@ -326,19 +328,42 @@ function _output_key_findings!(w, output, carried)
         _report_unread!(w, output, ("start_hour", "stop_hour"), "[output]",
                       "without an interval key ($(join(SNAPSHOT_INTERVAL_KEYS, ", ")))")
     format = get(output, "format", "netcdf")
+    # The time-aggregated NetCDF products read deflate_level and shuffle whatever the format.
+    aggregated = any(("time_mean", "local_time")) do k
+        product = get(output, k, nothing)
+        product isa AbstractDict && get(product, "enabled", true) !== false
+    end
     format isa AbstractString && get(OUTPUT_FORMATS, Symbol(lowercase(format)), nothing) isa BinaryMmapOutput &&
-        _report_unread!(w, output, ("fields", "deflate_level", "shuffle"), "[output]",
-                      "with format = \"binary_mmap\" (snapshots carry every field, uncompressed)")
-    fields = get(output, "fields", nothing)
+        _report_unread!(w, output, aggregated ? ("fields",) : ("fields", "deflate_level", "shuffle"),
+                        "[output]", "with format = \"binary_mmap\" (snapshots carry every field, uncompressed)")
+    _output_fields_key_findings!(w, get(output, "fields", nothing), "output.fields", carried)
+    for table in ("time_mean", "local_time")
+        product = get(output, table, nothing)
+        product isa AbstractDict &&
+            _output_fields_key_findings!(w, get(product, "fields", nothing), "output.$(table).fields",
+                                         carried)
+    end
+    return w
+end
+
+# One `fields` table; `table` is its TOML path, e.g. "output.fields".
+function _output_fields_key_findings!(w, fields, table, carried)
     fields isa AbstractDict || return w
-    _report_unknown!(w, fields, OUTPUT_FIELDS_KEYS, "[output.fields]")
-    _report_shadowed!(w, fields, OUTPUT_PER_TRACER_KEYS, "[output.fields]")
-    _report_shadowed!(w, fields, OUTPUT_COLUMN_MASS_KEYS, "[output.fields]")
+    _report_unknown!(w, fields, OUTPUT_FIELDS_KEYS, "[$(table)]")
+    _report_shadowed!(w, fields, OUTPUT_PER_TRACER_KEYS, "[$(table)]")
+    _report_shadowed!(w, fields, OUTPUT_COLUMN_MASS_KEYS, "[$(table)]")
+    selected = get(fields, "tracers", nothing)
+    if carried !== nothing && selected isa AbstractVector
+        for name in selected
+            name isa AbstractString && !(name in carried) &&
+                push!(w.errors, "[$(table)].tracers: `$(name)` is not a tracer of the run.")
+        end
+    end
     per_tracer_key = findfirst(k -> haskey(fields, k), OUTPUT_PER_TRACER_KEYS)
     per_tracer = per_tracer_key === nothing ? nothing : fields[OUTPUT_PER_TRACER_KEYS[per_tracer_key]]
     per_tracer isa AbstractDict || return w
     for (name, entry) in pairs(per_tracer)
-        label = "[output.fields.per_tracer.$(name)]"
+        label = "[$(table).per_tracer.$(name)]"
         carried === nothing || String(name) in carried ||
             push!(w.errors, "$(label): `$(name)` is not a tracer of the run.")
         entry isa AbstractDict || continue

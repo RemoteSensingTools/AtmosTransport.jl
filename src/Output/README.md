@@ -22,7 +22,9 @@ writing topology-specific NetCDF files directly.
   the mesh definition and radius, Float32 payload).
 - `snapshots.jl` defines `SnapshotFrame`, `SnapshotWriteOptions`, and
   model-state capture.
-- `selected_snapshots.jl` captures requested layers and backend column reductions.
+- `selected_snapshots.jl` captures requested layers and backend column reductions;
+  `_stored_levels` is the one rule for the layers a field selection stores
+  (capture, capture coverage, time-aggregate layout).
 - `snapshot_totals.jl` records compensated Float64 signed tracer totals through
   `Architectures.compensated_total`: in place on CPU and CUDA, in bounded host
   slabs on Metal.
@@ -42,6 +44,21 @@ writing topology-specific NetCDF files directly.
   snapshot writer builds its CS layout from the former and then adds `lev` and
   `time`; snapshot and observation files take their provenance from the latter.
 - `netcdf_writer.jl` writes topology-specific payload variables through one public API.
+  The payload writers take the record axes (`("time",)` for snapshots and time
+  means, `("local_time", "time")` for local-time composites) and a record index
+  per frame, so every product shares one variable layout per topology.
+- `time_aggregates.jl` owns `[output.time_mean]` and `[output.local_time]`:
+  `aggregate_output_specs` (parsing; the parser rejects unknown keys itself),
+  the aggregates `TimeMeanAggregate` / `LocalSolarTimeAggregate` (with
+  `aggregate_output_path` for a day's file and `check_aggregate_origin`), their
+  boundary weightings `TrapezoidalWeights` / `LocalSolarTimeWeights`
+  (`boundary_weights`; local-time weights precompute the nonzero `CellWeights`
+  of every boundary of the day, so accumulation visits only those cells), the
+  Float64 `AveragedSnapshotFrame` sums, one
+  `TimeAggregateOutput` per product with its NetCDF sink, and
+  `TimeAggregateOutputs`, which captures the union of the products' field
+  selections once per window boundary (or reuses a snapshot frame that covers
+  it, `_capture_shortfall`) and writes each period when it completes.
 
 Observation sources, retrievals and sampling live in
 [`../Observations/`](../Observations/README.md).
@@ -79,6 +96,18 @@ without `fields` still returns full native storage for existing callers and
 ATMSNAP output. All selected tracers keep their independent Float64 totals,
 even when no layer or column diagnostic is requested.
 
+Time-mean and local-time products average the diagnostics themselves (VMR,
+column means, column sums, air mass), not tracer storage: an
+`AveragedSnapshotFrame` answers the same `_frame_*` accessors as captured
+frames, so the payload writers need no product-specific code. Weights are
+applied on the host in Float64; zero per-cell weights are skipped, so a cell
+without air mass (NaN) never reaches another sample. Local-time weights use the
+cell longitudes the files record (`_cell_longitudes`). Products with the same
+field selection share one set of diagnostics per boundary
+(`_cached_diagnostics!`), and a selected frame hands out its stored layer
+arrays without copying when every stored layer is requested
+(`_stored_layers`; callers only read them).
+
 Explicit snapshot schedules sort a copy of the supplied hours, including
 `Vector{Float64}` inputs, and reject Boolean and non-finite entries in the constructor.
 `OUTPUT_FORMATS`, `OUTPUT_PER_TRACER_KEYS` and `OUTPUT_COLUMN_MASS_KEYS` are
@@ -96,7 +125,7 @@ Observation placement uses `AbstractPlacementCoordinate`; Grids owns
 - Architectures: `compensated_total`, `CPU` and the shared backend trait
   `_total_accumulator_type` (column sums on Metal).
 - ConfigChecks: `config_bool`, `config_int`, `config_float`, `parse_choice`,
-  `parse_float_type`.
+  `parse_float_type`, `check_known_keys`.
 - Package root: `expand_data_path`, `source_revision`.
 - External: NCDatasets, HDF5_jll (error-handler silencing in
   `_create_netcdf_dataset`), JSON3 and Mmap (ATMSNAP), KernelAbstractions
@@ -106,7 +135,8 @@ Observation placement uses `AbstractPlacementCoordinate`; Grids owns
 
 - Models.DrivenRunner: capture, `NetCDFSnapshotStream`/`append_snapshot!`,
   batch writers, `runtime_output_spec` and its accessors, the key tables and
-  `check_output_targets`.
+  `check_output_targets`; `aggregate_output_specs`, `TimeAggregateOutputs`,
+  `sample_window_boundary!` and `finish_time_aggregates!`.
 - Observations.Sampling: the lock, path, partition and NetCDF primitives below.
 - GriddedIO: `define_cs_horizontal_geometry!`, `define_provenance_attributes!`.
 - Diagnostics and Extras/Analysis: `runtime_output_spec`, output paths,

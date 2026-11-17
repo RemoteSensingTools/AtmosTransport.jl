@@ -604,7 +604,7 @@
         "enabled": {
           "type": "boolean",
           "default": true,
-          "description": "false turns off gridded snapshots; path and snapshot times are then not required. [output.observations] has its own enabled."
+          "description": "false turns off gridded snapshots; path and snapshot times are then not required. [output.observations], [output.time_mean] and [output.local_time] have their own enabled and are not affected."
         },
         "format": {
           "type": "string",
@@ -696,7 +696,54 @@
           "description": "Cadence in seconds; prefer cadence_hours."
         },
         "fields": {"$ref": "#/definitions/output_fields"},
-        "observations": {"$ref": "#/definitions/observation_output"}
+        "observations": {"$ref": "#/definitions/observation_output"},
+        "time_mean": {"$ref": "#/definitions/time_mean_output"},
+        "local_time": {"$ref": "#/definitions/local_time_output"}
+      }
+    },
+    "time_mean_output": {
+      "type": "object",
+      "description": "Time-mean NetCDF output ([output.time_mean] → TimeMeanAggregate): trapezoidal means of the selected diagnostics over consecutive periods counted from the run start, sampled at met-window boundaries. Needs no snapshot path or schedule; files follow [output].split and use its deflate_level and shuffle. An incomplete final period is not written (a warning says so).",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": true, "description": "false turns this product off; only the table's keys are then checked (path and period_hours may be omitted)."},
+        "path": {
+          "type": "string",
+          "description": "Required when enabled. NetCDF file; ~ and $VAR are expanded. With split = \"daily\" one file per UTC day of the period start ({date}, {YYYYMMDD} or {day} substituted, else _<date> inserted before the extension)."
+        },
+        "period_hours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 24,
+          "description": "Averaging period in hours; must be a whole number of met windows (checked when the binaries are opened)."
+        },
+        "fields": {
+          "allOf": [{"$ref": "#/definitions/output_fields"}],
+          "description": "Averaged diagnostics, same keys as [output.fields]; omitted keys default to the tracer column means only. Each diagnostic is averaged itself (the mean of the column-mean VMR, not a ratio of means)."
+        }
+      }
+    },
+    "local_time_output": {
+      "type": "object",
+      "description": "Local-solar-time NetCDF output ([output.local_time] → LocalSolarTimeAggregate): one composite per UTC day and requested local mean solar time (UTC + longitude/15 h), each cell linearly interpolated between the two met-window boundaries bracketing its UTC sample hour. The run must start at 00 UTC; files follow [output].split and use its deflate_level and shuffle; an incomplete final day is not written.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": true, "description": "false turns this product off; only the table's keys are then checked (path and hours may be omitted)."},
+        "path": {
+          "type": "string",
+          "description": "Required when enabled. NetCDF file; ~ and $VAR are expanded. With split = \"daily\" one file per UTC day ({date}, {YYYYMMDD} or {day} substituted, else _<date> inserted before the extension)."
+        },
+        "hours": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "number", "minimum": 0, "exclusiveMaximum": 24},
+          "description": "Required when enabled. Local mean solar times in hours, 0 ≤ h < 24, e.g. [13.5, 4.0]; written sorted along the local_time dimension."
+        },
+        "fields": {
+          "allOf": [{"$ref": "#/definitions/output_fields"}],
+          "description": "Sampled diagnostics, same keys as [output.fields]; omitted keys default to the tracer column means only."
+        }
       }
     },
     "observation_output": {

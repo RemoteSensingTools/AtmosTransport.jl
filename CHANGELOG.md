@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Two optional runtime NetCDF products for long runs that should not write
+  hourly fields: `[output.time_mean]` (trapezoidal means over `period_hours`,
+  default daily) and `[output.local_time]` (one composite per UTC day and local
+  mean solar time, e.g. `hours = [13.5, 4.0]`, interpolated linearly between
+  met-window boundaries). Each takes its own `[output.<product>.fields]`
+  selection with the `[output.fields]` keys (default: tracer column means),
+  accumulates in Float64 on the host from one capture per
+  window boundary shared with snapshots, works on lat-lon, reduced-Gaussian and
+  cubed-sphere grids, and needs no snapshot output. See the TOML and output
+  schema pages.
+- Output configuration is checked earlier. `validate_config` now rejects two
+  outputs that would write the same file (snapshots, time means, local-time
+  composites, observation files; paths compared after day expansion), a
+  `fields` table that writes `layers = "selected"` or
+  `air_mass_layers = "selected"` without `levels` (NetCDF snapshots and the two
+  new products; before, snapshots failed at the first capture), and
+  `fields.tracers` naming a tracer the run does not carry.
+- Fixed: with `air_mass_layers = "selected"` and full tracer layers, capturing a
+  snapshot appended the remaining levels to the configured `levels` list, so
+  later files of the same run could carry a widened `lev_selected` axis.
 - Three preprocessing source files are renamed because each differed from its
   module file only by letter case, which cannot be checked out on the default
   file systems of macOS and Windows: `Sources/ERA5/era5.jl` →

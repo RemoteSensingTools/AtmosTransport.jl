@@ -125,6 +125,14 @@ function _check_config_table_shapes!(cfg, errors)
     end
 
     output = get(cfg, "output", nothing)
+    if output isa AbstractDict
+        for table in ("time_mean", "local_time")
+            haskey(output, table) || continue
+            _check_config_table!(output[table], "[output.$(table)]", errors) || continue
+            haskey(output[table], "fields") &&
+                _check_config_table!(output[table]["fields"], "[output.$(table).fields]", errors)
+        end
+    end
     if output isa AbstractDict && haskey(output, "observations") &&
        _check_config_table!(output["observations"], "[output.observations]", errors)
         sources = get(output["observations"], "sources", nothing)
@@ -330,8 +338,65 @@ function _check_physics_and_output_settings!(cfg, FT, errors)
             spec = runtime_output_spec(output_cfg, FT; default_cap_hours = floatmax(Float64))
             check_output_targets(spec, output_cfg)
         end
+        # `[output.time_mean]` / `[output.local_time]`; their period against the
+        # met window and the 00 UTC start are checked when the binaries are open.
+        _capture_config_error!(() -> aggregate_output_specs(output_cfg, FT), errors)
+        _capture_config_error!(() -> _check_output_path_collisions(output_cfg, FT), errors)
     end
     return errors
+end
+
+# A sample day for `_check_output_path_collisions`: every daily template is
+# expanded with the same label and index, as one day of the run expands them.
+const _SAMPLE_DAY_LABEL = "20000101"
+
+"""
+    _check_output_path_collisions(output_cfg, FT)
+
+Reject two outputs that would write one file on the same day: snapshots,
+`[output.time_mean]`, `[output.local_time]` and both observation files,
+each path expanded for one sample day as its writer expands it (a daily
+template and a plain path can name the same file). Parse errors of the
+individual tables are reported by their own checks.
+"""
+function _check_output_path_collisions(output_cfg::AbstractDict, ::Type{FT}) where {FT}
+    paths = Tuple{String, String}[]
+    snapshots = try
+        runtime_output_spec(output_cfg, FT; default_cap_hours = floatmax(Float64))
+    catch err
+        err isa ArgumentError || rethrow()
+        nothing
+    end
+    snapshots !== nothing && output_enabled(snapshots) && push!(paths,
+        ("[output].path", _output_path_for_partition(snapshots, snapshots.partition,
+                                                     _SAMPLE_DAY_LABEL, 1)))
+    specs = try
+        aggregate_output_specs(output_cfg, FT)
+    catch err
+        err isa ArgumentError || rethrow()
+        []
+    end
+    for spec in specs
+        push!(paths, (aggregate_label(spec) * ".path", aggregate_output_path(spec, _SAMPLE_DAY_LABEL, 1)))
+    end
+    observations = try
+        observation_output_spec(output_cfg)
+    catch err
+        err isa ArgumentError || rethrow()
+        NoObservationOutput()
+    end
+    if observations isa ObservationOutputSpec
+        for mode in (SoundingMode(), SiteMode())
+            push!(paths, ("[output.observations].path",
+                          observation_output_path(observations, mode, _SAMPLE_DAY_LABEL, 1)))
+        end
+    end
+    for i in eachindex(paths), j in 1:(i - 1)
+        paths[i][2] == paths[j][2] && throw(ArgumentError(
+            "$(paths[j][1]) and $(paths[i][1]) would both write $(paths[i][2]) " *
+            "(day $(_SAMPLE_DAY_LABEL) shown); give them distinct paths"))
+    end
+    return nothing
 end
 
 # The `[input]` expectations compared with the first binary's header: their

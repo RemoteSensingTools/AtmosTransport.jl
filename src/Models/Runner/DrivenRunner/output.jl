@@ -143,16 +143,20 @@ function _push_snapshot_frame!(::SingleOutputFile,
 end
 
 # The outer run owns this resource, including exceptional exits from either topology.
-# `observations` is the `[output.observations]` sampler (a no-op by default); it
-# is closed after the snapshot stream so both get the same lifetime guarantees.
+# `observations` is the `[output.observations]` sampler (a no-op by default) and
+# `aggregates` the `[output.time_mean]` / `[output.local_time]` products (none by
+# default); they are closed after the snapshot stream, the sampler last, so all
+# get the same lifetime guarantees.
 mutable struct RunSnapshotOutput
     stream::Union{Nothing,NetCDFSnapshotStream}
     pending_write::Union{Nothing,Task}
     observations::AbstractObservationSampler
+    aggregates::TimeAggregateOutputs
 end
-RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing, NoObservationSampler())
+RunSnapshotOutput() = RunSnapshotOutput(nothing, nothing, NoObservationSampler(),
+                                        TimeAggregateOutputs())
 RunSnapshotOutput(stream, pending_write) =
-    RunSnapshotOutput(stream, pending_write, NoObservationSampler())
+    RunSnapshotOutput(stream, pending_write, NoObservationSampler(), TimeAggregateOutputs())
 
 function _wait_pending_output!(output::RunSnapshotOutput)
     task = output.pending_write
@@ -167,21 +171,69 @@ function _wait_pending_output!(output::RunSnapshotOutput)
 end
 
 function Base.close(output::RunSnapshotOutput)
-    # Take the sampler so a second close cannot close it twice.
+    # Take the sampler and the aggregates so a second close cannot close them twice.
     sampler = output.observations
     output.observations = NoObservationSampler()
+    aggregates = output.aggregates
+    output.aggregates = TimeAggregateOutputs()
     _with_run_resource(sampler) do
-        stream = output.stream
-        if stream === nothing
-            _wait_pending_output!(output)
-        else
-            _with_run_resource(stream) do
+        _with_run_resource(aggregates) do
+            stream = output.stream
+            if stream === nothing
                 _wait_pending_output!(output)
+            else
+                _with_run_resource(stream) do
+                    _wait_pending_output!(output)
+                end
             end
         end
     end
     return nothing
 end
+
+"""
+    _aggregate_window_hours(specs, layout, origin) -> Float64
+
+Check the run against its `[output.time_mean]` / `[output.local_time]`
+products before any transport (`layout` holds `(window_seconds, windows)` per
+binary) and return the met-window length in hours. Every binary must share one
+window length, each period must be a whole number of windows, and a
+local-time product needs a run that starts at 00 UTC (`origin`, the CF time
+origin of the output).
+"""
+function _aggregate_window_hours(specs, layout, origin::DateTime)
+    window_seconds = unique(first.(layout))
+    length(window_seconds) == 1 || throw(ArgumentError(
+        "$(aggregate_label(first(specs))) needs one met-window length for the whole run; " *
+        "the input binaries have $(join(window_seconds, ", ")) s windows"))
+    window_hours = only(window_seconds) / 3600
+    for spec in specs
+        boundaries_per_period(spec.aggregate, window_hours)
+        check_aggregate_origin(spec.aggregate, origin)
+    end
+    return window_hours
+end
+
+# Build the time-aggregated products of the run once the model exists and the
+# physics attributes are resolved; the run owns them through `output`.
+function _install_time_aggregates!(output::RunSnapshotOutput, specs, model, window_hours::Real;
+                                   halo_width::Integer, mass_basis::Symbol, time_origin,
+                                   physics_attributes)
+    isempty(specs) && return output.aggregates
+    output.aggregates = TimeAggregateOutputs(specs, model.grid,
+                                             collect(Symbol, tracer_names(model.state));
+                                             window_hours, halo_width, mass_basis,
+                                             physics_attributes, time_origin)
+    return output.aggregates
+end
+
+# Sample a window boundary for the time-aggregated products; `shared` is the
+# snapshot frame captured at the same instant, if any.
+_sample_time_aggregates!(timer, aggregates::TimeAggregateOutputs, model, hours::Real, shared) =
+    has_time_aggregates(aggregates) ?
+    (timed_io_write!(timer, () -> sample_window_boundary!(aggregates, model, hours;
+                                                          shared_frame = shared)); nothing) :
+    nothing
 
 _snapshot_capture_fields(spec::RuntimeOutputSpec) =
     _snapshot_capture_fields(spec.format, spec.fields)
