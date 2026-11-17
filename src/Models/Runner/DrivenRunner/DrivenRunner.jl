@@ -125,7 +125,12 @@ using ....Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTP
                 runtime_output_spec, snapshot_hours, set_physics_attributes!, set_time_origin!,
                 output_enabled, output_path, output_path_for_day, capture_snapshot,
                 write_snapshot_netcdf, write_snapshot_binary, SNAPSHOT_SCHEDULE_KEYS,
-                SNAPSHOT_INTERVAL_KEYS, schedule_has_times
+                SNAPSHOT_INTERVAL_KEYS, schedule_has_times,
+                TimeAggregateOutputs, aggregate_output_specs, aggregate_label,
+                boundaries_per_period, check_aggregate_origin, aggregate_output_path,
+                has_time_aggregates,
+                sample_window_boundary!, finish_time_aggregates!,
+                TIME_MEAN_OUTPUT_KEYS, LOCAL_TIME_OUTPUT_KEYS
 using ....Observations: NoObservationOutput, ObservationOutputSpec, observation_output_spec,
                       AbstractObservationSampler, NoObservationSampler, build_observation_sampler,
                       samples_observations, begin_observation_day!, observe_window_boundary!,
@@ -546,6 +551,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     _check_snapshot_schedule(output_spec,
                              _window_end_hours(layout; start_window, stop_window_override))
     do_snapshots && _validate_structured_output_format(output_spec.format)
+    aggregate_specs = aggregate_output_specs(output_cfg, FT)
+    aggregate_origin = isempty(aggregate_specs) ? nothing :
+                       _runtime_output_origin(run_origin, first_driver; start_window)
+    aggregate_window_hours = isempty(aggregate_specs) ? 0.0 :
+                             _aggregate_window_hours(aggregate_specs, layout, aggregate_origin)
     recipe = build_runtime_physics_recipe(cfg, first_driver, FT)
     _validate_capability_match(first_driver, recipe)
 
@@ -569,7 +579,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                             span_seconds = 3600 * run_hours)
     # Observation sampling needs the per-window loop even without snapshots.
     # Progress lines need the windows as they finish, so step window by window.
-    do_windows = do_snapshots || samples_observations(sampler) ||
+    do_windows = do_snapshots || samples_observations(sampler) || !isempty(aggregate_specs) ||
                  run_logging(cfg).progress isa ProgressLines
     flux_run_span = _flux_run_span(cfg, run_hours)
     surface_sources = build_surface_flux_sources(grid_of_first, tracer_specs, FT;
@@ -601,6 +611,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
 
     stream = _single_netcdf_stream(output_resources, output_spec, model.grid;
                                     mass_basis=air_mass_basis(first_driver))
+    aggregates = _install_time_aggregates!(output_resources, aggregate_specs, model,
+                                           aggregate_window_hours; halo_width = 0,
+                                           mass_basis = air_mass_basis(first_driver),
+                                           time_origin = aggregate_origin,
+                                           physics_attributes = output_spec.metadata.physics_attributes)
     snapshots = AbstractSnapshotFrame[]
     day_snapshots = AbstractSnapshotFrame[]
     snapshot_count = Ref(0)
@@ -613,27 +628,31 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
     # The timer holds process-wide compile timing until `stop_compile_timing!`;
     # release it on every exit path, including a run that throws.
     try
+        # Returns the captured frame, which the time aggregates may share.
         function capture_structured!(hour_total)
-            timed_io_write!(timer, () -> begin
+            frame = timed_io_write!(timer, () -> begin
                 frame = capture_snapshot(model; time_hours = hour_total,
                                          fields=_snapshot_capture_fields(output_spec))
                 _record_snapshot!(stream, output_spec.partition, snapshots,
                                       day_snapshots, frame)
+                frame
             end)
             snapshot_count[] += 1
-            return nothing
+            return frame
         end
 
+        shared_frame = nothing
         if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
            _snapshot_due(0.0, snapshot_schedule_hours[snap_idx],
                          Float64(window_dt(first_driver)) / 3600)
-            capture_structured!(0.0)
+            shared_frame = capture_structured!(0.0)
             set_progress_status!(timer;
                                  detail = @sprintf("snapshot %d at t=%.0fh",
                                                    snap_idx, 0.0),
                                  redraw = true)
             snap_idx += 1
         end
+        _sample_time_aggregates!(timer, aggregates, model, 0.0, shared_frame)
 
         run_time_seconds = 0.0   # accumulated across binaries (sim clock origin)
         # Observation times are absolute: a single-file run starting at a later
@@ -719,10 +738,11 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                     windows_done += 1
                     _observe_window_end!(timer, sampler, sim,
                                          day_start_seconds + windows_done * Float64(window_dt(driver)))
+                    shared_frame = nothing
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                           _snapshot_due(total_elapsed_hours, snapshot_schedule_hours[snap_idx],
                                         window_hours)
-                        capture_structured!(total_elapsed_hours)
+                        shared_frame = capture_structured!(total_elapsed_hours)
                         set_progress_status!(timer;
                                              detail = @sprintf("snapshot %d at t=%.0fh  output=%s",
                                                                snap_idx,
@@ -731,6 +751,8 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
                                              redraw = true)
                         snap_idx += 1
                     end
+                    _sample_time_aggregates!(timer, aggregates, model, total_elapsed_hours,
+                                             shared_frame)
                 end
             else
                 # Same physics path as above, but without per-window snapshot
@@ -771,6 +793,7 @@ function _run_driven_simulation_structured(binary_paths::Vector{String}, cfg,
         end
 
         finish_observations!(sampler)
+        finish_time_aggregates!(aggregates)
         # Drain the last in-flight async daily write before the final flush / mass
         # accounting, so the run never returns with a write still pending.
         _wait_pending_output!(output_resources)
@@ -868,6 +891,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     _check_snapshot_day_paths(output_spec, binary_paths)
     check_output_targets(output_spec, output_cfg)
     _check_snapshot_schedule(output_spec, _window_end_hours(layout; stop_window_override))
+    aggregate_specs = aggregate_output_specs(output_cfg, FT)
+    aggregate_origin = isempty(aggregate_specs) ? nothing :
+                       _runtime_output_origin(run_origin, driver1)
+    aggregate_window_hours = isempty(aggregate_specs) ? 0.0 :
+                             _aggregate_window_hours(aggregate_specs, layout, aggregate_origin)
     if stop_window_override !== nothing && length(binary_paths) > 1 &&
        Int(stop_window_override) < total_windows(driver1)
         throw(ArgumentError(
@@ -974,6 +1002,11 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # The run owns the stream and any background daily write.
     stream = _single_netcdf_stream(output_resources, output_spec, model.grid;
                                     mass_basis=air_mass_basis(driver1))
+    aggregates = _install_time_aggregates!(output_resources, aggregate_specs, model,
+                                           aggregate_window_hours; halo_width = Hp,
+                                           mass_basis = :dry,
+                                           time_origin = aggregate_origin,
+                                           physics_attributes = output_spec.metadata.physics_attributes)
     snapshots = AbstractSnapshotFrame[]
     day_snapshots = AbstractSnapshotFrame[]
     snapshot_count = Ref(0)
@@ -984,29 +1017,33 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
     # The timer holds process-wide compile timing until `stop_compile_timing!`;
     # release it on every exit path, including a run that throws.
     try
+        # Returns the captured frame, which the time aggregates may share.
         function capture_cs!(hour_total)
-            timed_io_write!(timer, () -> begin
+            frame = timed_io_write!(timer, () -> begin
                 frame = capture_snapshot(model; time_hours = hour_total,
                                          halo_width = Hp,
                                          fields=_snapshot_capture_fields(output_spec))
                 _record_snapshot!(stream, output_spec.partition, snapshots,
                                       day_snapshots, frame)
+                frame
             end)
             snapshot_count[] += 1
-            return nothing
+            return frame
         end
 
         snap_idx = 1
         total_hour = 0.0
+        shared_frame = nothing
         if do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
            _snapshot_due(0.0, snapshot_schedule_hours[snap_idx], Float64(window_dt(driver1)) / 3600)
-            capture_cs!(0.0)
+            shared_frame = capture_cs!(0.0)
             set_progress_status!(timer;
                                  detail = @sprintf("snapshot %d at t=%.1fh",
                                                    snap_idx, 0.0),
                                  redraw = true)
             snap_idx += 1
         end
+        _sample_time_aggregates!(timer, aggregates, model, 0.0, shared_frame)
 
         t0 = time()
         # The previous binary's simulation: the next one refills its window
@@ -1096,9 +1133,10 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                     _observe_window_end!(timer, sampler, sim,
                                          day_start_seconds + windows_done * Float64(window_dt(driver));
                                          humidity = observation_humidity, binary_index = driver_idx)
+                    shared_frame = nothing
                     while do_snapshots && snap_idx <= length(snapshot_schedule_hours) &&
                           _snapshot_due(total_hour, snapshot_schedule_hours[snap_idx], window_hours)
-                        capture_cs!(total_hour)
+                        shared_frame = capture_cs!(total_hour)
                         set_progress_status!(timer;
                                              detail = @sprintf("snapshot %d at t=%.1fh  output=%s",
                                                                snap_idx,
@@ -1107,6 +1145,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
                                              redraw = true)
                         snap_idx += 1
                     end
+                    _sample_time_aggregates!(timer, aggregates, model, total_hour, shared_frame)
                 end
             end
             set_progress_status!(timer;
@@ -1130,6 +1169,7 @@ function _run_driven_simulation_cs(binary_paths::Vector{String}, cfg,
         end
 
         finish_observations!(sampler)
+        finish_time_aggregates!(aggregates)
         # Drain the last in-flight async daily write before the final mass accounting,
         # so the run never returns with a write still pending.
         _wait_pending_output!(output_resources)

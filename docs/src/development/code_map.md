@@ -486,7 +486,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Models/Runner/DrivenRunner`
 
-Size: **158567 bytes / 45304.9 tokens**. Public names: **18**.
+Size: **168155 bytes / 48044.3 tokens**. Public names: **18**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/IFS`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`, `src/State`.
 
@@ -494,13 +494,13 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner`.
 
 Files:
 
-- `DrivenRunner.jl` (65460 bytes)
-- `config_keys.jl` (18364 bytes)
-- `configuration.jl` (19940 bytes)
+- `DrivenRunner.jl` (68282 bytes)
+- `config_keys.jl` (19585 bytes)
+- `configuration.jl` (22790 bytes)
 - `logging.jl` (2067 bytes)
 - `model_setup.jl` (10749 bytes)
 - `observations.jl` (13405 bytes)
-- `output.jl` (13699 bytes)
+- `output.jl` (16394 bytes)
 - `progress.jl` (8396 bytes)
 - `resources.jl` (1296 bytes)
 - `run_layout.jl` (1622 bytes)
@@ -883,7 +883,7 @@ None recorded.
 
 ## `src/Output`
 
-Size: **118951 bytes / 33986.0 tokens**. Public names: **54**.
+Size: **163678 bytes / 46765.1 tokens**. Public names: **54**.
 
 Depends on: `src`, `src/Grids`, `src/Parameters`, `src/State`.
 
@@ -891,17 +891,18 @@ Used by: `src`, `src/Diagnostics`, `src/Extras/Analysis`, `src/GriddedIO`, `src/
 
 Files:
 
-- `Output.jl` (4205 bytes)
+- `Output.jl` (4284 bytes)
 - `binary_reader.jl` (4613 bytes)
 - `binary_writer.jl` (8823 bytes)
 - `diagnostics.jl` (4620 bytes)
 - `netcdf_schema.jl` (21153 bytes)
-- `netcdf_stream.jl` (6157 bytes)
-- `netcdf_writer.jl` (33268 bytes)
-- `runtime_output.jl` (18223 bytes)
-- `selected_snapshots.jl` (8060 bytes)
+- `netcdf_stream.jl` (5380 bytes)
+- `netcdf_writer.jl` (34740 bytes)
+- `runtime_output.jl` (20521 bytes)
+- `selected_snapshots.jl` (8937 bytes)
 - `snapshot_totals.jl` (426 bytes)
 - `snapshots.jl` (9403 bytes)
+- `time_aggregates.jl` (40778 bytes)
 
 Forward ↔ adjoint mirrors:
 

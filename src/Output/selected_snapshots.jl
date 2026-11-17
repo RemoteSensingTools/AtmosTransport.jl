@@ -94,6 +94,24 @@ end
 
 _capture_levels(values::NTuple{6}, levels) = map(a -> _capture_levels(a, levels), values)
 
+"""
+    _stored_levels(fields, names, Nz) -> Vector{Int}
+
+Model levels a capture of `names` under `fields` must store: the air-output
+layers (when air mass is written) and every tracer's layers, sorted and unique.
+Shared by the selected capture, the capture-coverage check and the
+time-aggregate layout.
+"""
+function _stored_levels(fields::OutputFieldSpec, names, Nz::Integer)
+    # `_layer_indices` may return the spec's own level vector: copy it.
+    levels = (fields.air_mass || fields.air_mass_per_area) ?
+             copy(_layer_indices(fields.air_mass_layers, fields, Nz)) : Int[]
+    for name in names
+        append!(levels, _layer_indices(tracer_fields(fields, name).layers, fields, Nz))
+    end
+    return sort!(unique!(levels))
+end
+
 function _capture_selected_snapshot(model, fields::OutputFieldSpec;
                                     time_hours=0, halo_width=0)
     mesh = model.grid.horizontal
@@ -101,12 +119,7 @@ function _capture_selected_snapshot(model, fields::OutputFieldSpec;
     source_air = _output_interior(model.state.air_mass, mesh, halo_width)
     first_air = source_air isa Tuple ? first(source_air) : source_air
     Nz = size(first_air, ndims(first_air))
-    levels = (fields.air_mass || fields.air_mass_per_area) ?
-        _layer_indices(fields.air_mass_layers, fields, Nz) : Int[]
-    for name in names
-        append!(levels, _layer_indices(tracer_fields(fields, name).layers, fields, Nz))
-    end
-    sort!(unique!(levels))
+    levels = _stored_levels(fields, names, Nz)
     air = _capture_levels(source_air, levels)
     # Keep one common layer mapping for air and selected tracers. Column-only
     # output has zero stored layers even when Nz is large.
@@ -135,7 +148,8 @@ _float64_columns(x::AbstractArray) = convert(Array{Float64,ndims(x)}, x)
 _float64_columns(x::Tuple) = map(_float64_columns, x)
 _nlevel(frame::SelectedSnapshotFrame, mesh) = frame.nlevel
 
-function _stored_indices(frame::SelectedSnapshotFrame, levels)
+# `frame` stores layers `frame.levels` (selected or averaged frames).
+function _stored_indices(frame::AbstractSnapshotFrame, levels)
     idx = [searchsortedfirst(frame.levels, k) for k in levels]
     all(i -> i <= length(frame.levels), idx) && frame.levels[idx] == levels ||
         throw(ArgumentError("writer requested levels that were not captured"))
@@ -146,10 +160,13 @@ _layer_positions(::SnapshotFrame, levels) = levels
 _layer_positions(frame::SelectedSnapshotFrame, levels) = _stored_indices(frame, levels)
 _air_layers(frame::SnapshotFrame, levels) = _select_levels(frame.air_mass, levels)
 _air_layers(frame::SelectedSnapshotFrame, levels) =
-    _select_levels(frame.air_mass, _stored_indices(frame, levels))
+    _stored_layers(frame.air_mass, _stored_indices(frame, levels), length(frame.levels))
 _tracer_layers(frame::SnapshotFrame, name, levels) = _select_levels(frame.tracers[name], levels)
 _tracer_layers(frame::SelectedSnapshotFrame, name, levels) =
-    _select_levels(frame.tracers[name], _stored_indices(frame, levels))
+    _stored_layers(frame.tracers[name], _stored_indices(frame, levels), length(frame.levels))
+# The stored layers at positions `idx`: the stored array itself (read-only use)
+# when every stored layer is requested, else a copy of the requested ones.
+_stored_layers(a, idx, nstored::Integer) = idx == 1:nstored ? a : _select_levels(a, idx)
 _frame_vmr(frame, name, levels) =
     mixing_ratio_field(_air_layers(frame, levels), _tracer_layers(frame, name, levels))
 _frame_column_air(frame::SnapshotFrame) = _column_sum(frame.air_mass)

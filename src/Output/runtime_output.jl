@@ -84,7 +84,7 @@ const SNAPSHOT_INTERVAL_KEYS = ("snapshot_interval_hours", "cadence_hours", "int
 const SNAPSHOT_SCHEDULE_KEYS = (_SNAPSHOT_HOURS_KEYS..., SNAPSHOT_INTERVAL_KEYS...)
 const OUTPUT_KEYS = (OUTPUT_PATH_KEYS..., SNAPSHOT_SCHEDULE_KEYS..., "start_hour",
                       "stop_hour", "split", "format", "deflate_level", "shuffle", "enabled",
-                      "fields", "observations")
+                      "fields", "observations", "time_mean", "local_time")
 const OUTPUT_COLUMN_MASS_KEYS = ("column_mass_per_area", "column_mass")
 const OUTPUT_PER_TRACER_KEYS = ("per_tracer", "tracer_fields")
 const OUTPUT_FIELDS_KEYS = ("tracers", "layers", "levels", "column_mean", OUTPUT_COLUMN_MASS_KEYS...,
@@ -108,6 +108,8 @@ const OUTPUT_FORMATS = (netcdf = NetCDFOutput(), nc = NetCDFOutput(),
                          binary_mmap = BinaryMmapOutput(), binary = BinaryMmapOutput(),
                          mmap = BinaryMmapOutput(), atmsnap = BinaryMmapOutput())
 const _DEFAULT_TRACER_FIELDS = TracerOutputFields(FullLayerSelection(), true, true)
+# Time-mean and local-time output default to the tracer column means alone.
+const _COLUMN_MEAN_TRACER_FIELDS = TracerOutputFields(NoLayerSelection(), true, false)
 
 # The first of the alias keys `names` present in `cfg` (`nothing` if none), and
 # its value (`default` if none).
@@ -167,11 +169,11 @@ function _parse_tracer_names(value; label::AbstractString = "[output.fields].tra
     end
 end
 
-function _parse_levels(value)
+function _parse_levels(value; label::AbstractString = "[output.fields]")
     value === nothing && return Int[]
     value isa AbstractVector ||
-        throw(ArgumentError("[output.fields].levels must be an array of 1-based model levels"))
-    levels = Int[config_int(level, "[output.fields].levels"; min = 1) for level in value]
+        throw(ArgumentError("$(label).levels must be an array of 1-based model levels"))
+    levels = Int[config_int(level, "$(label).levels"; min = 1) for level in value]
     return sort!(unique(levels))
 end
 
@@ -188,38 +190,81 @@ function _tracer_fields_from_cfg(cfg::AbstractDict, fallback::TracerOutputFields
 end
 
 function _parse_tracer_overrides(fields_cfg::AbstractDict,
-                                 fallback::TracerOutputFields)
+                                 fallback::TracerOutputFields;
+                                 label::AbstractString = "[output.fields]")
     raw = _first_present(fields_cfg, OUTPUT_PER_TRACER_KEYS, Dict{String, Any}())
+    table = string(chop(label; head = 1, tail = 1), ".per_tracer")
     raw isa AbstractDict ||
-        throw(ArgumentError("[output.fields].per_tracer must be a table keyed by tracer name"))
+        throw(ArgumentError("$(label).per_tracer must be a table keyed by tracer name"))
     out = Dict{Symbol, TracerOutputFields}()
     for (name, cfg) in pairs(raw)
         cfg isa AbstractDict ||
-            throw(ArgumentError("[output.fields.per_tracer.$(name)] must be a table"))
+            throw(ArgumentError("[$(table).$(name)] must be a table"))
         out[Symbol(String(name))] =
-            _tracer_fields_from_cfg(cfg, fallback;
-                                    key_prefix = "[output.fields.per_tracer.$(name)]")
+            _tracer_fields_from_cfg(cfg, fallback; key_prefix = "[$(table).$(name)]")
     end
     return out
 end
 
-function output_field_spec(fields_cfg::AbstractDict)
-    default_tracer = _tracer_fields_from_cfg(fields_cfg, _DEFAULT_TRACER_FIELDS)
-    air_layers = parse_choice(get(fields_cfg, "air_mass_layers", get(fields_cfg, "layers", "full")),
-                              _LAYER_SELECTIONS, "[output.fields].air_mass_layers")
-    return OutputFieldSpec(
-        _parse_tracer_names(get(fields_cfg, "tracers", nothing)),
-        _parse_levels(get(fields_cfg, "levels", nothing)),
+"""
+    output_field_spec(fields_cfg; label="[output.fields]", column_means_only=false)
+
+Parse a TOML `fields` table into an `OutputFieldSpec`.
+
+Omitted keys take the snapshot defaults (every diagnostic), or with
+`column_means_only = true` the time-mean and local-time defaults: tracer
+column means and nothing else. `label` names the table in error messages.
+"""
+function output_field_spec(fields_cfg::AbstractDict; label::AbstractString = "[output.fields]",
+                           column_means_only::Bool = false)
+    fallback = column_means_only ? _COLUMN_MEAN_TRACER_FIELDS : _DEFAULT_TRACER_FIELDS
+    default_air = !column_means_only
+    default_tracer = _tracer_fields_from_cfg(fields_cfg, fallback; key_prefix = label)
+    air_layers = parse_choice(get(fields_cfg, "air_mass_layers",
+                                  get(fields_cfg, "layers", default_air ? "full" : "none")),
+                              _LAYER_SELECTIONS, "$(label).air_mass_layers")
+    spec = OutputFieldSpec(
+        _parse_tracer_names(get(fields_cfg, "tracers", nothing); label = "$(label).tracers"),
+        _parse_levels(get(fields_cfg, "levels", nothing); label),
         default_tracer,
-        _parse_tracer_overrides(fields_cfg, default_tracer),
+        _parse_tracer_overrides(fields_cfg, default_tracer; label),
         air_layers,
-        config_bool(get(fields_cfg, "air_mass", true), "[output.fields].air_mass"),
-        config_bool(get(fields_cfg, "air_mass_per_area", true),
-                    "[output.fields].air_mass_per_area"),
-        config_bool(get(fields_cfg, "column_air_mass_per_area", true),
-                    "[output.fields].column_air_mass_per_area"),
+        config_bool(get(fields_cfg, "air_mass", default_air), "$(label).air_mass"),
+        config_bool(get(fields_cfg, "air_mass_per_area", default_air),
+                    "$(label).air_mass_per_area"),
+        config_bool(get(fields_cfg, "column_air_mass_per_area", default_air),
+                    "$(label).column_air_mass_per_area"),
     )
+    return spec
 end
+
+"""
+    check_selected_levels(fields, label)
+
+Throw unless `fields` lists `levels` for every written field with selected layers.
+
+`label` names the TOML table in the error message.
+"""
+function check_selected_levels(fields::OutputFieldSpec, label::AbstractString)
+    _uses_selected_levels(fields) && isempty(fields.selected_levels) && throw(ArgumentError(
+        "$(label).levels must be non-empty when layers or air_mass_layers = \"selected\""))
+    return nothing
+end
+
+# Whether any written layer field of `fields` uses `levels`. A per-tracer table of a
+# tracer that `tracers` leaves out writes nothing.
+_uses_selected_levels(fields::OutputFieldSpec) =
+    (fields.air_mass || fields.air_mass_per_area) && fields.air_mass_layers isa SelectedLayerSelection ||
+    fields.default_tracer.layers isa SelectedLayerSelection ||
+    any(fields.tracer_overrides) do (name, tracer)
+        tracer.layers isa SelectedLayerSelection &&
+            (fields.tracers === nothing || name in fields.tracers)
+    end
+
+# Only the NetCDF writer reads `[output.fields]`.
+_check_snapshot_fields(::NetCDFOutput, fields::OutputFieldSpec) =
+    check_selected_levels(fields, "[output.fields]")
+_check_snapshot_fields(::AbstractOutputFormat, ::OutputFieldSpec) = nothing
 
 output_field_spec() = output_field_spec(Dict{String, Any}())
 tracer_fields(fields::OutputFieldSpec, name::Symbol) =
@@ -299,6 +344,7 @@ function runtime_output_spec(output_cfg::AbstractDict, ::Type{FT};
     options = _output_options(output_cfg, FT, format)
     fields = output_field_spec(get(output_cfg, "fields", Dict{String, Any}()))
     enabled = config_bool(get(output_cfg, "enabled", true), "[output].enabled")
+    enabled && _check_snapshot_fields(format, fields)
     path = _output_path(output_cfg, default_path)
     return RuntimeOutputSpec(path, schedule, partition, options, fields, enabled, format,
                              RuntimeOutputMetadata())

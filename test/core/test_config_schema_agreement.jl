@@ -31,6 +31,8 @@ property_keys(node) = Set(String.(keys(node.properties)))
     @test property_keys(d.surface_flux) == Set(RunnerKeys._SURFACE_FLUX_KEYS)
     @test property_keys(d.output) == Set(RunnerKeys.OUTPUT_KEYS)
     @test property_keys(d.output_fields) == Set(RunnerKeys.OUTPUT_FIELDS_KEYS)
+    @test property_keys(d.time_mean_output) == Set(RunnerKeys.TIME_MEAN_OUTPUT_KEYS)
+    @test property_keys(d.local_time_output) == Set(RunnerKeys.LOCAL_TIME_OUTPUT_KEYS)
     @test property_keys(d.tracer_output_fields) == Set(RunnerKeys.TRACER_OUTPUT_FIELDS_KEYS)
     @test Set(String.(keys(p))) == Set(RunnerKeys._TOP_LEVEL_TABLES)
     # Flat [tracers.<name>] keys are accepted for old configs but not offered.

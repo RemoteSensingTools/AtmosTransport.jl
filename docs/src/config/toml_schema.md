@@ -40,7 +40,9 @@ readers or allocating model state. It also parses the physics sections,
 `air_mass_reset_mode`, `physics_cadence`, `air_mass_update`, `prefetch_windows`, `[logging]`,
 `[checks]` and `[output]` as the run does, so their errors are reported
 together; decay half-lives must name a tracer, and an enabled `[output]` needs
-both a path and snapshot times (`hours = []` means deliberately none). Nested
+both a path and snapshot times (`hours = []` means deliberately none) unless it
+only holds `[output.time_mean]`, `[output.local_time]` or
+`[output.observations]` tables. Nested
 tracer `init` and `surface_flux` values must be tables. Shape errors are
 returned before value checks; a successful result is not a full physics or
 binary validation. See
@@ -689,6 +691,8 @@ deflate_level = 0              # NetCDF4 deflate (0..9); 0 = no compression
 shuffle       = true           # shuffle filter; only effective when deflate>0
 ```
 
+`enabled = false` turns off the snapshots only; `[output.time_mean]`,
+`[output.local_time]` and `[output.observations]` have their own `enabled`.
 `split = "single"` writes one file after the run. `split = "daily"` writes
 one complete file per daily binary; use `{date}` or `{YYYYMMDD}` in `path`
 for an explicit filename template, otherwise the date is inserted before the
@@ -729,6 +733,72 @@ column_mean = true
 Defaults match the historical writer: all tracers, full per-level tracer VMR,
 column means, column tracer mass per area, stored air mass, layer air mass per
 area, and column air mass per area.
+
+### `[output.time_mean]` and `[output.local_time]` — means and local solar time
+
+Long runs need not write hourly fields to get daily products. Two optional
+NetCDF products are accumulated during the run, each usable with or without
+snapshots (an `[output]` table holding only these sub-tables is valid):
+
+```toml
+[output]
+split = "daily"                              # both products follow [output].split
+
+[output.time_mean]                           # TimeMeanAggregate
+path = "~/data/.../daily_mean_{YYYYMMDD}.nc"
+period_hours = 24                            # default 24
+
+[output.local_time]                          # LocalSolarTimeAggregate
+path = "~/data/.../local_time_{YYYYMMDD}.nc"
+hours = [13.5, 4.0]                          # local mean solar times, 0 ≤ h < 24
+
+[output.local_time.fields]                   # same keys as [output.fields]
+column_mean = true
+```
+
+| Key | Meaning |
+|---|---|
+| `path` | required when enabled; split and day tokens as for `[output].path` (with `split = "daily"` one file per UTC day of the period start) |
+| `period_hours` | time mean only: averaging period, default 24; a positive whole number of met windows |
+| `hours` | local time only, required when enabled: non-empty array of distinct local mean solar times in `[0, 24)` |
+| `fields` | same keys as `[output.fields]`; omitted keys default to the tracer column means only (no layers, no air-mass fields) |
+| `enabled` | default `true`; `false` turns the product off, and then only the table's keys are checked. `[output].enabled` does not affect these products |
+
+Both products sample the selected diagnostics at the met-window boundaries,
+the instants at which snapshots can be taken (hourly for the standard
+binaries). For one period with boundaries `k = 0..n` spaced by the window
+length Δ:
+
+- **Time mean**: trapezoidal weights `1/(2n)` at `k = 0` and `k = n`, `1/n`
+  in between. Periods are counted from the run start; the boundary shared by
+  two periods contributes to both.
+- **Local time**: local mean solar time is UTC + longitude/15 h (no equation
+  of time). For local time `T` and UTC day `D`, cell `c` is sampled at UTC hour
+  `t_c = mod(T − lon_c/15, 24)` of day `D` by linear interpolation: boundary
+  `k` of day `D` (including 24 h, which is 0 h of day `D + 1`) gets weight
+  `max(0, 1 − |t_c − kΔ|/Δ)`. The run must start at 00 UTC.
+
+The averaged quantity is each diagnostic itself: the mean of the column-mean
+VMR, not a ratio of mean tracer and air columns. Sums are kept in Float64 on
+the host from the selected-snapshot capture (column reductions run on the
+device); the state is captured once per boundary for all products together
+and not again when a snapshot taken at that instant already holds the needed
+diagnostics. An incomplete final period is not written; a warning says so.
+
+Every written file must be distinct: `validate_config` expands the snapshot,
+time-mean, local-time and observation paths for one sample day, as their
+writers do, and rejects two that name the same file (for example a daily
+`x_{date}.nc` snapshot path and a time-mean path `x.nc`, which both become
+`x_<date>.nc`). In a run that writes one file (`split = "single"`), a day
+token in a time-mean, local-time or observation path is replaced by the run's
+first day, while a snapshot path is used as written.
+
+These are forward-run products. The 4D-Var driver
+(`scripts/inversions/cs_4dvar.jl`) has no `[output]` table and rejects one as
+an unknown top-level table. The checks that need the binaries (one window
+length for the run, the period a multiple of it, the 00 UTC start of a
+local-time run) run before the first transport step. See
+[Output schema](@ref) for the file layout.
 
 ### `[output.observations]` — sampling at observation points
 

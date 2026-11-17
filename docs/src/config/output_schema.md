@@ -238,6 +238,73 @@ center law, panel convention (`gnomonic` / `geos_native`), and longitude offset
 are in the global header so consumers can reconstruct the panel layout if needed (see
 [Cubed-sphere](@ref Grids)).
 
+## Time-mean and local-time files
+
+`[output.time_mean]` and `[output.local_time]` (see [TOML schema](@ref)) write
+NetCDF files with the snapshot layout of the run's topology: the same global
+attributes (provenance and `physics_*`), geometry, coordinates, variable names,
+units and fill value, selected by their own `fields` table (default: the
+`<tracer>_column_mean` variables only). Each record is appended and flushed
+when its period completes; `completed_records` counts the flushed records. An
+incomplete final period is not written. Both files add:
+
+| Item | Meaning |
+|---|---|
+| `title` | `"AtmosTransport runtime time mean"` or `"AtmosTransport runtime local solar time composite"` |
+| `output_product` | `"time_mean"` or `"local_solar_time"` |
+| `period_hours`, `window_hours`, `time_weighting` | period length, met-window spacing of the samples, weighting rule |
+| `time(time)` | period midpoint, hours since the run start (CF units as for snapshots) |
+| `time_bnds(bnds, time)` | period start and end; `time:bounds = "time_bnds"` |
+
+Time-mean files store one record per period along `time`. Every time-varying
+variable carries `cell_methods` ending in `time: mean` (for example
+`"lev: mean time: mean"` on column means), and `<tracer>_total_mass(time)` is
+the trapezoidal mean of the compensated global totals.
+
+Local-time files store one record per UTC day (`time_bnds` spans the day) and
+requested local mean solar time, with the record axes `(local_time, time)`
+after the horizontal (and level) axes:
+
+| Variable | Shape (lat-lon; RG uses `cell`, CS `Xdim, Ydim, nf`) | Meaning |
+|---|---|---|
+| `local_time` | `(local_time,)` | requested local mean solar times, hours, ascending |
+| `utc_sample_hour` | `(lon, lat, local_time)` | UTC hour of the day at which the cell is sampled, `mod(local_time − lon/15, 24)` |
+| `<tracer>_column_mean` | `(lon, lat, local_time, time)` | composite column mean |
+| `<tracer>` | `(lon, lat, lev, local_time, time)` | composite per-level VMR, when layers are selected |
+
+Local-time files carry no `<tracer>_total_mass`: a composite of different
+sample times has no global total. Each composite interpolates linearly between
+the two met-window boundaries of the day that bracket `utc_sample_hour`.
+
+Excerpt of `ncdump -h` for a lat-lon local-time file (column means of `co2`,
+`hours = [13.5, 4.0, 0.0]`):
+
+```text
+dimensions:
+	lon = 12 ;
+	lat = 6 ;
+	nv = 2 ;
+	lev = 2 ;
+	time = UNLIMITED ; // (1 currently)
+	bnds = 2 ;
+	local_time = 3 ;
+variables:
+	double time(time) ;
+		time:units = "hours since 2021-12-01 00:00:00" ;
+		time:bounds = "time_bnds" ;
+	double time_bnds(time, bnds) ;
+	double local_time(local_time) ;
+		local_time:units = "hours" ;
+	double utc_sample_hour(local_time, lat, lon) ;
+	double co2_column_mean(time, local_time, lat, lon) ;
+		co2_column_mean:cell_methods = "lev: mean" ;
+// global attributes:
+		:title = "AtmosTransport runtime local solar time composite" ;
+		:output_product = "local_solar_time" ;
+		:period_hours = 24. ;
+		:window_hours = 1. ;
+```
+
 ## Observation sampling files
 
 `[output.observations]` writes `<path>_soundings.nc` for point events and

@@ -405,13 +405,14 @@ paths = [
 ]
 
 [topics.output]
-description = "Run output: NetCDF snapshots and streams, selected captures, cubed-sphere geometry helpers, asynchronous writes"
+description = "Run output: NetCDF snapshots and streams, selected captures, time-mean and local-time products, cubed-sphere geometry helpers, asynchronous writes"
 files = [
     "core/test_output_snapshots.jl",
     "core/test_selected_snapshots.jl",
     "core/test_netcdf_stream.jl",
     "core/test_output_cs_geometry_helpers.jl",
     "core/test_async_output_lifetime.jl",
+    "core/test_output_time_aggregates.jl",
 ]
 paths = [
     "src/Output/*.jl",

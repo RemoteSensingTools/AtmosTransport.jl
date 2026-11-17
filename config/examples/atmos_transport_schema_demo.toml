@@ -54,6 +54,22 @@ split = "daily"
 deflate_level = 1
 shuffle = true
 
+# Optional: daily means and local-solar-time composites instead of (or in
+# addition to) hourly snapshots. Both sample the state at met-window ends and
+# follow [output].split; without a `fields` table they write column means only.
+[output.time_mean]
+enabled = false
+path = "~/data/AtmosTransport/output/schema_demo_daily_mean_{date}.nc"
+period_hours = 24                    # a whole number of met windows
+
+[output.local_time]
+enabled = false
+path = "~/data/AtmosTransport/output/schema_demo_local_time_{date}.nc"
+hours = [13.5, 4.0]                  # local mean solar time (UTC + lon/15 h)
+
+[output.local_time.fields]
+column_mean = true
+
 # Optional: sample tracer profiles at observation points instead of (or in
 # addition to) gridded snapshots. Sampling happens at met-window ends from the
 # containing model cell. Set enabled = true and point the sources at real files.

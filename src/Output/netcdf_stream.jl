@@ -68,26 +68,9 @@ function _validate_stream_frame(stream, frame)
         _shape_signature(frame.air_mass) == stream.shape ||
             throw(DimensionMismatch("snapshot stored-layer shape changed"))
     end
-    fields = stream.fields
-    names = _select_tracer_keys(keys, fields)
-    levels = (fields.air_mass || fields.air_mass_per_area) ?
-             _layer_indices(fields.air_mass_layers, fields, Nz) : Int[]
-    for name in names
-        append!(levels, _layer_indices(tracer_fields(fields, name).layers, fields, Nz))
-    end
-    if frame isa SelectedSnapshotFrame
-        _stored_indices(frame, sort!(unique!(levels)))
-        needs_air = fields.column_air_mass_per_area ||
-                    any(name -> tracer_fields(fields, name).column_mean, names)
-        needs_air && frame.column_air === nothing &&
-            throw(ArgumentError("column air mass was not captured"))
-        for name in names
-            tf = tracer_fields(fields, name)
-            (tf.column_mean || tf.column_mass_per_area) &&
-                !haskey(frame.column_tracers, name) &&
-                throw(ArgumentError("column tracer $(name) was not captured"))
-        end
-    end
+    names = _select_tracer_keys(keys, stream.fields)
+    shortfall = _capture_shortfall(frame, stream.fields, names, Nz)
+    shortfall === nothing || throw(ArgumentError(shortfall))
     return keys, names, Nz
 end
 
