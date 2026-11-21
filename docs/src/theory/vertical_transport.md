@@ -482,7 +482,7 @@ the outflow side of the donor cell:
 - the edges are limited with the Colella–Woodward (1984) monotonicity
   conditions (flattening at extrema, overshoot correction);
 - the limited edge sets a linear slope toward the outflow face, which is
-  bounded by the cell content (`_limited_moment`), and the flux uses the
+  bounded by the cell content (`limited_moment`), and the flux uses the
   Russell–Lerner form above (`_slopes_face_flux`,
   `src/Operators/Advection/Reconstruction/reconstruction.jl`).
 

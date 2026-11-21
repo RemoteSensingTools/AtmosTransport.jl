@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Limiter extension points are public: `limited_slope`, `limited_moment` and
+  `ppm_limit_profile` (formerly `_limited_slope`, `_limited_moment`,
+  `_ppm_limit_profile`) are exported from `Operators`, and a limiter defined
+  outside the package runs through the unchanged forward kernels
+  (`SlopesScheme(MyLimiter())`; see the `AbstractLimiter` docstring). Results
+  are unchanged. The adjoint kernels and the configuration parser support the
+  built-in limiters only.
 - Two optional runtime NetCDF products for long runs that should not write
   hourly fields: `[output.time_mean]` (trapezoidal means over `period_hours`,
   default daily) and `[output.local_time]` (one composite per UTC day and local
