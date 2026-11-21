@@ -12,6 +12,17 @@ This is a plain sub-folder of the Advection module; see the
 - `reconstruction.jl`: face fluxes and the shared fourth-order PPM edge expression.
 - `ppm_subgrid_distributions.jl`: PPM edge distributions used by Lin–Rood.
 
+## Adding a limiter
+
+A limiter is a subtype of `AbstractLimiter` with methods for `limited_slope`,
+`limited_moment` and, for PPM, `ppm_limit_profile` (signatures in the
+`AbstractLimiter` docstring, with the limits of the interface). These three
+functions are exported from `Operators` and may be extended outside the
+package; `test/core/test_advection_kernels.jl` runs such a limiter through the
+sweep kernel. The FV3 vertical profile and Lin–Rood do not read the limiter,
+and the adjoint kernels and the configuration parser support the built-in
+limiters only.
+
 ## Depends on
 
 Parent operator types and Parameters; no topology driver dependency.

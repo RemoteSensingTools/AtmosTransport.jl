@@ -159,7 +159,7 @@ cell,
 with `Δχ_c = χ^R_c − χ^L_c` and `χ^{(6)}_c = 6(χ_c − ½(χ^L_c + χ^R_c))`. The
 edge values come from the uniform-index fourth-order formula
 `χ_{c+½} = 7/12 (χ_c + χ_{c+1}) − 1/12 (χ_{c−1} + χ_{c+2})` and are limited with
-the Colella–Woodward monotonicity conditions (`_ppm_limit_profile`).
+the Colella–Woodward monotonicity conditions (`ppm_limit_profile`).
 
 The face flux does not integrate the parabola. Only the limited edge on the
 outflow side is used: it sets the edge offset `s_x = m_c (χ^R_c − χ_c)` (outflow

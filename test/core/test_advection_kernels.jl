@@ -24,7 +24,7 @@ using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
 using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter,
                                   strang_split!, strang_split_mt!
-using .AtmosTransport.Operators.Advection: _limited_moment, _xface_tracer_flux
+using .AtmosTransport.Operators.Advection: limited_moment, _xface_tracer_flux
 using .AtmosTransport.State: StructuredFaceFluxState
 
 # Try to load CUDA; tests gracefully skip if unavailable
@@ -146,16 +146,54 @@ function to_gpu(arrays...)
     return map(a -> CuArray(a), arrays)
 end
 
+# A limiter defined outside the package (superbee, Roe 1986): the extension
+# path documented on `AbstractLimiter`.
+struct ExternalSuperbeeLimiter <: Operators.AbstractLimiter end
+_ext_minmod(a, b) = ifelse(a * b > 0, ifelse(abs(a) < abs(b), a, b), zero(a))
+_ext_maxmod(a, b) = ifelse(a * b > 0, ifelse(abs(a) > abs(b), a, b), zero(a))
+function Operators.Advection.limited_slope(c_left, c_center, c_right, ::ExternalSuperbeeLimiter)
+    a, b = c_center - c_left, c_right - c_center
+    return _ext_maxmod(_ext_minmod(2a, b), _ext_minmod(a, 2b))
+end
+Operators.Advection.limited_moment(sx, rm_cell, ::ExternalSuperbeeLimiter) = sx
+
 # =========================================================================
 # Test suite
 # =========================================================================
 
+@testset "a limiter defined outside the package runs through the sweep kernel" begin
+    N, C = 100, 0.4
+    nrev = round(Int, N / C)
+    c0 = 1.0 .* (abs.((1:N) .- 50.5) .< 10)          # square pulse
+    function revolve(lim, FT)
+        m = ones(FT, N, 1, 1); rm = reshape(FT.(c0), N, 1, 1)
+        am = fill(FT(C), N + 1, 1, 1); ws = AdvectionWorkspace(m)
+        for _ in 1:nrev
+            Operators.Advection.sweep_x_mt!(reshape(rm, size(rm)..., 1),
+                reshape(ws.rm_B, size(rm)..., 1), m, ws.m_B, am, SlopesScheme(lim), ws)
+            copyto!(rm, ws.rm_B); copyto!(m, ws.m_B)
+        end
+        return vec(rm) ./ vec(m)
+    end
+    l1(c) = sum(abs.(c .- c0)) / N
+    unlimited = revolve(Operators.NoLimiter(), Float64)
+    monotone = revolve(MonotoneLimiter(), Float64)
+    superbee = revolve(ExternalSuperbeeLimiter(), Float64)
+    @test maximum(unlimited) > 1.05                   # the unlimited scheme overshoots
+    @test -1e-12 <= minimum(superbee) && maximum(superbee) <= 1 + 1e-12
+    @test abs(sum(superbee) - sum(c0)) < 1e-11
+    @test l1(superbee) < 0.7 * l1(monotone)           # sharper edges than the default
+    superbee32 = revolve(ExternalSuperbeeLimiter(), Float32)
+    @test eltype(superbee32) == Float32
+    @test maximum(abs.(superbee32 .- superbee)) < 1e-4
+end
+
 @testset "default monotone moment is signed and offset-neutral" begin
     limiter = MonotoneLimiter()
-    @test _limited_moment(0.0, -1.0, limiter) == 0.0
-    @test _limited_moment(-0.25, -1.0, limiter) == -0.25
-    @test _limited_moment(2.0, 1.0, limiter) == 2.0
-    @test _limited_moment(-0.25, -1.0, PositivityLimiter()) == 0.0
+    @test limited_moment(0.0, -1.0, limiter) == 0.0
+    @test limited_moment(-0.25, -1.0, limiter) == -0.25
+    @test limited_moment(2.0, 1.0, limiter) == 2.0
+    @test limited_moment(-0.25, -1.0, PositivityLimiter()) == 0.0
 end
 
 # Issue #62: the positivity slope keeps its sign and is clipped to |s| ≤ 2c, the
@@ -163,7 +201,7 @@ end
 # zeroed every downhill slope made the transport depend on the flow direction.
 @testset "PositivityLimiter slope keeps its sign, |s| ≤ 2c" begin
     lim = PositivityLimiter()
-    slope = Operators.Advection._limited_slope
+    slope = Operators.Advection.limited_slope
     @test slope(10.5, 10.0, 9.5, lim) == -0.5      # downhill slope kept
     @test slope(9.5, 10.0, 10.5, lim) == 0.5
     @test slope(0.0, 0.1, 0.6, lim) == 0.2         # clipped at 2c

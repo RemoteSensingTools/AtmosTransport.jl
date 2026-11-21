@@ -127,6 +127,35 @@ Available limiters:
 - [`CW84Limiter`](@ref): the complete Colella–Woodward PPM (`PPMScheme` only)
 
 See `limiters.jl` for the `@inline` implementations.
+
+# Adding a limiter
+
+A limiter is a subtype with methods for the functions the forward kernels call:
+
+- `limited_slope(c_left, c_center, c_right, ::MyLimiter)`: the slope of the
+  centre cell from three consecutive cell means, as the difference across one
+  cell (the centred value is `(c_right - c_left) / 2`). Called by
+  `SlopesScheme`.
+- `limited_moment(sx, rm_cell, ::MyLimiter)`: returns the slope moment `sx`
+  (tracer mass), optionally clamped with the cell's tracer mass `rm_cell`;
+  return `sx` for no clamp. Called by `SlopesScheme` and `PPMScheme`.
+- `ppm_limit_profile(q_L, c_bar, q_R, ::MyLimiter)`: returns the limited edge
+  values `(q_L, q_R)` of the parabola. Called by `PPMScheme` only.
+
+The methods must be branch-free scalar code (`ifelse`, no allocation) to run
+inside GPU kernels. They can be defined outside the package:
+`SlopesScheme(MyLimiter())` then runs through the unchanged kernels.
+
+Limits of this interface:
+
+- For PPM, a new limiter changes the profile limiting and the moment clamp.
+  The edge values before limiting stay the unlimited fourth-order ones, as for
+  every limiter except `CW84Limiter`.
+- The `FV3ScalarProfile` vertical reconstruction and `LinRoodPPMScheme` do not
+  read the limiter of the scheme, built in or added.
+- The adjoint kernels and the run-configuration parser support the built-in
+  limiters only; the adjoint entry points reject other limiters with an
+  `ArgumentError`.
 """
 abstract type AbstractLimiter end
 
@@ -292,7 +321,7 @@ donor cell tracer mass, and ``s_{x,L}`` is the limited first moment
 ``s_x = m \\cdot \\text{slope}(c_{i-1}, c_i, c_{i+1})``.
 
 See `_slopes_face_flux` in `reconstruction.jl` for the full
-derivation and `_limited_slope` in `limiters.jl` for the
+derivation and `limited_slope` in `limiters.jl` for the
 limiter implementations.
 
 # Fields
@@ -487,6 +516,7 @@ paths.
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
 export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
+export limited_slope, limited_moment, ppm_limit_profile
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile
 export required_halo_width

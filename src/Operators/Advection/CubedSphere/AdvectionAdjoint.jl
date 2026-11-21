@@ -133,7 +133,7 @@ end
 # and cells 2:Nz-1 carry slope weight; clamped end codes have zero weight.
 # ---------------------------------------------------------------------------
 
-# The minmod of the van Leer slope (`_limited_slope(…, MonotoneLimiter())`)
+# The minmod of the van Leer slope (`limited_slope(…, MonotoneLimiter())`)
 # and its branch: 0 zero (the three one-sided slopes do not share a sign),
 # 1 centred, 2 forward, 3 backward.
 @inline function _limited_slope_branch(c_m, c_0, c_p)
@@ -162,7 +162,7 @@ end
     return (c_l + c_r) / FT(2) - (δc_r - δc_l) / FT(6)
 end
 
-# The branch of the CW84 monotonicity constraints (`_ppm_limit_profile`) for a
+# The branch of the CW84 monotonicity constraints (`ppm_limit_profile`) for a
 # cell with mean `c_bar` and edges `q_L`, `q_R`: 0 extremum, 1 left edge reset,
 # 2 right edge reset, 3 unchanged. Both resets cannot apply: that would need
 # dc² < dc·c6 < −dc².
