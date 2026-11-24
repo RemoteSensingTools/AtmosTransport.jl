@@ -3,8 +3,8 @@
 
 Physical constants and scheme parameters for the Beljaars-Viterbo
 (revised LTG) boundary-layer diffusivity parameterization, as implemented
-in TM5 (`diffusion.F90`, `bldiff`). Defaults reproduce the values used in
-the legacy `PBLDiffusion`. `WindowPBLKzField` and
+in TM5 (`diffusion.F90`, `bldiff`). Defaults use the legacy local scheme’s
+physical constants and safeguards. `WindowPBLKzField` and
 `LocalHoltslagBovilleKzField` all read their constants, surface-input
 floors and profile shape from here.
 
@@ -47,8 +47,8 @@ end
 @inline _pbl_cbrt(x::FT) where FT <: AbstractFloat = x^(one(FT) / FT(3))
 
 # =========================================================================
-# Pure helper functions — line-for-line port from the legacy PBL
-# diffusion module. Git archaeology: commit ec2d2c0 contains
+# Pure helpers for the local PBL diffusion schemes.
+# Git archaeology: commit ec2d2c0 contains
 # src_legacy/Diffusion/pbl_diffusion.jl.
 # =========================================================================
 
@@ -57,8 +57,8 @@ end
 
 Return Kz [m²/s] at height `z` using the revised Louis-Tiedtke-Geleyn
 scheme (Beljaars & Viterbo 1998). `L_ob` is the Obukhov length,
-`Pr_inv = Kh/Km ≥ 1` the Prandtl-number inverse (unstable convective
-amplification; pass `one(FT)` for stable/neutral).
+`Pr_inv = Kh/Km` the inverse Prandtl number (pass `one(FT)` for
+stable/neutral).
 
 Line-for-line port of `_pbl_kz` in the legacy PBL diffusion module
 (git commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:66`).
@@ -91,7 +91,7 @@ Pure: no side effects, no allocation — safe to call inside a kernel.
             w_m = ustar * _pbl_cbrt(FT(1) - p.surface_layer_fraction * p.β_h * h_pbl / L_ob)
             Kz = w_m * κ * z_eff * zzh2
         end
-        # Convective Prandtl correction (Kh ≥ Km)
+        # Convective Prandtl correction
         Kz *= Pr_inv
     else
         # Stable BL
@@ -134,14 +134,26 @@ end
 """
     _prandtl_inverse(h_pbl, ustar, H_kin, t2m, L_ob, p) -> FT
 
-Inverse Prandtl number `Kh/Km ≥ 1` for the unstable convective BL,
-following TM5 (`diffusion.F90:1213-1230`). Returns `one(FT)` whenever
-conditions are not clearly unstable (`L_ob ≥ 0`, `H_kin ≤ 0`, or
-`h_pbl ≤ 10 m`). Port of the legacy PBL diffusion module (git
-commit ec2d2c0, path `src_legacy/Diffusion/pbl_diffusion.jl:198-210`).
+Inverse Prandtl number `Kh/Km` for the unstable convective boundary layer,
+following TM5's `bldiff`. Returns one outside the convective branch.
 """
 @inline function _prandtl_inverse(h_pbl, ustar, H_kin, t2m, L_ob,
                                   p::PBLPhysicsParameters{FT}) where FT
+    if L_ob < zero(FT) && H_kin > zero(FT) && h_pbl > FT(10)
+        fL = one(FT) - p.surface_layer_fraction * p.β_h * h_pbl / L_ob
+        x_h = _pbl_cbrt(fL)
+        w_star = _pbl_cbrt(H_kin * p.gravity * h_pbl / t2m)
+        ccon = p.surface_layer_fraction * p.kappa_vk
+        Pr = x_h / sqrt(fL) + ccon * FT(7.2) * w_star / (ustar * x_h)
+        return inv(Pr)
+    end
+    return one(FT)
+end
+
+# Preserve the legacy correction for the separate local Holtslag–Boville
+# scheme. The TM5 bldiff reference does not validate that closure.
+@inline function _legacy_hb_prandtl_factor(h_pbl, ustar, H_kin, t2m, L_ob,
+                                           p::PBLPhysicsParameters{FT}) where FT
     if L_ob < zero(FT) && H_kin > zero(FT) && h_pbl > FT(10)
         fL     = max(FT(1) - FT(0.5) * h_pbl / L_ob, FT(1))
         x_h    = _pbl_cbrt(fL)
@@ -205,7 +217,7 @@ end
     T_sfc = max(max(FT(t2m[i, j]), FT(t[i, j, Nz])), p.T_sfc_min)
 
     L_ob, H_kin = _obukhov_length(H_sfc, us, T_sfc, p)
-    Pr_inv = _prandtl_inverse(h_pbl, us, H_kin, T_sfc, L_ob, p)
+    Pr_inv = _legacy_hb_prandtl_factor(h_pbl, us, H_kin, T_sfc, L_ob, p)
 
     z_col = zero(FT)
     p_top = zero(FT)
