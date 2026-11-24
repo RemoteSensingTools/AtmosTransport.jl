@@ -349,9 +349,55 @@
           "description": "Check the air mass and tracers for NaN or Inf after every n-th met window, counted over the whole run (across input files); 1 checks every window."
         }
       }
+    },
+    "tagged_fluxes": {
+      "type": "object",
+      "description": "Region-tagged fluxes: each [tagged_fluxes.<group>] splits one surface-flux dataset into one tracer per selected value of an integer region mask on the flux's own grid. The tracers are added to [tracers].",
+      "additionalProperties": {"$ref": "#/definitions/tagged_flux_group"}
     }
   },
   "definitions": {
+    "tagged_flux_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flux", "mask_file", "mask_variable"],
+      "properties": {
+        "flux": {
+          "allOf": [{"$ref": "#/definitions/surface_flux"}],
+          "description": "The surface flux to split (any [tracers.<name>.surface_flux] table), read once for the group. Set species unless the tracer names imply it."
+        },
+        "mask_file": {
+          "type": "string",
+          "description": "NetCDF file of the integer region mask, on the flux's own grid: a lat-lon (lon, lat) field with the flux file's coordinates, or an (Xdim, Ydim, nf) field on the run's cube for cs_native fluxes."
+        },
+        "mask_variable": {
+          "type": "string",
+          "description": "Mask variable: one integer code per cell (any integers, e.g. 100*region + pft); fill values hold no code."
+        },
+        "values": {
+          "type": "array",
+          "items": {"type": "integer"},
+          "uniqueItems": true,
+          "description": "Mask values to run as separate tracers; default: every value in the mask."
+        },
+        "names": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true,
+          "description": "Tracer names, one per entry of values (requires values); default <group>_<value>."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {"type": "integer"},
+          "uniqueItems": true,
+          "description": "Mask values never run."
+        },
+        "init": {
+          "allOf": [{"$ref": "#/definitions/initial_condition"}],
+          "description": "Initial condition of every tagged tracer; default uniform 0."
+        }
+      }
+    },
     "date": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",

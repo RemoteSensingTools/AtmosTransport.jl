@@ -110,8 +110,11 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
   source mesh's band areas), time-varying series loader (with a run span,
   checks that the slices of all files together cover it,
   `_timevarying_source_intervals` and `_check_flux_time_coverage`, and
-  reads flux data only for the slices of the run period), topology builders;
-  includes the two files below
+  reads flux data only for the slices of the run period), topology builders
+  (`_static_surface_flux_source` and `_timevarying_cs_surface_flux_source`
+  build a source from a loaded field), `build_surface_flux_sources` (hands the
+  tracers of one `[tagged_fluxes]` group to the tagged builder); includes the
+  three files below
 - [`surface_flux_regridding.jl`](surface_flux_regridding.jl) — the regridding
   methods `ConservativeFluxRegridding` (default; per-cell rate `F × A` over the
   source cells' covered areas) and `BilinearFluxRegridding` (explicit LL/RG;
@@ -119,6 +122,16 @@ near-surface difference for a uniform 400 Pa surface-pressure shift.
   beyond 10 %, or an error), parsed by
   `_regridding_method`; cached conservative regridder build, the per-slice
   density regrid of time-varying series
+- [`surface_flux_tagged.jl`](surface_flux_tagged.jl) — region-tagged groups
+  (`[tagged_fluxes]`): `TaggedFluxRegion` (the selection the runner's
+  `_expand_tagged_fluxes` stores under `TAGGED_REGION_KEY` in each tagged
+  tracer's surface-flux table), `tagged_flux_region`, and
+  `_build_tagged_surface_flux_sources`, which reads a group's flux and mask
+  once (`GriddedIO.read_region_mask`, same-grid gate
+  `GriddedIO.check_region_mask_grid`), multiplies the flux by each value's 0/1
+  indicator and builds each source with the untagged builders' code
+  (`_static_surface_flux_source`, `_timevarying_cs_surface_flux_source`, the
+  `cs_native` builder), then logs per-tracer and group totals
 - [`surface_flux_native.jl`](surface_flux_native.jl) — `cs_native` time-varying
   source: checks the file with `GriddedIO.cs_native_flux_info` (layout, units,
   `cell_area` gate, time checks live there), checks that its slices
@@ -240,6 +253,10 @@ error (`_surface_flux_kind`); `none` (the default) emits nothing.
   emission, uptake to its uptake) or refused; CS warns and stays conservative.
   `cs_native` sources are read on the run's panels. Time-varying LL series are
   regridded per slice as densities (great-circle source areas, no file areas).
+- Region-tagged tracers (`[tagged_fluxes]`) of one group share one read of
+  the flux; the group's mask must be on the flux's grid (lat-lon coordinates,
+  or the run's cube for `cs_native`), so each tracer is the flux times an
+  exact 0/1 indicator, and the group sums to the flux over its values.
 - Time-varying sources are cubed-sphere only (LL/RG builders throw):
   - Slice times are seconds since `reference_time`, from the file's time axis
     as `GriddedIO.decode_time` decodes it (`days`/`hours`/`minutes`/`seconds
@@ -274,7 +291,8 @@ Under [`../../../test/core/`](../../../test/core/): `test_initial_condition_io.j
 `test_cs_driven_builders.jl`,
 `test_binary_planet_radius.jl` (source-mesh radius, inventory totals),
 `test_float32_conservation.jl` (source-mesh extents),
-`test_config_matrix_contract.jl` (every shipped config's fluxes have a species).
+`test_config_matrix_contract.jl` (every shipped config's fluxes have a species),
+`test_tagged_region_fluxes.jl` (region-tagged groups).
 The file conventions are tested under `test_gridded_io_*.jl` and
 `test_flux_units.jl`.
 

@@ -11,9 +11,11 @@
 # the latter two are checked here like `[output.fields]`.
 # ===========================================================================
 
+# `tagged_fluxes` is expanded into `tracers` before the key checks
+# (`_expand_tagged_fluxes`, which checks the keys of its groups).
 const _TOP_LEVEL_TABLES = ("input", "architecture", "numerics", "run", "advection",
                            "diffusion", "convection", "chemistry", "tracers", "output",
-                           "init", "logging", "checks")
+                           "init", "logging", "checks", "tagged_fluxes")
 
 # `expand_binary_paths`, `_validate_input_binary_expectations`, `InputStager`.
 const _INPUT_KEYS = ("binary_paths", "folder", "start_date", "end_date", "file_pattern",
@@ -183,6 +185,10 @@ function _config_key_findings(cfg::AbstractDict)
     carried = tracers isa AbstractDict ? Set(String.(keys(tracers))) :
               run_tracer isa AbstractString ? Set([run_tracer]) : nothing
     _output_key_findings!(w, get(cfg, "output", nothing), carried)
+    # The tracers of one `[tagged_fluxes]` group share their tables, so their
+    # findings repeat under the group's label; report each once.
+    unique!(w.errors)
+    unique!(w.warnings)
     return w
 end
 
@@ -303,6 +309,14 @@ function _tracer_key_findings!(w, tracer, table)
         _report_unread!(w, tracer, flat_init, label, "because [$(table).init] exists")
     haskey(tracer, "surface_flux") &&
         _report_unread!(w, tracer, flat_flux, label, "because [$(table).surface_flux] exists")
+    region = haskey(tracer, "surface_flux") ? tagged_flux_region(tracer["surface_flux"]) : nothing
+    if region !== nothing
+        # A `[tagged_fluxes]` tracer: its tables are the group's.
+        group = "[tagged_fluxes.$(region.group)"
+        _init_key_findings!(w, tracer["init"], "$(group).init]")
+        sf = filter(kv -> first(kv) != TAGGED_REGION_KEY, tracer["surface_flux"])
+        return _surface_flux_key_findings!(w, sf, "$(group).flux]")
+    end
     if haskey(tracer, "init")
         _init_key_findings!(w, tracer["init"], "[$(table).init]")
     else    # flat init keys keep their names

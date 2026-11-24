@@ -236,6 +236,7 @@ files = [
     "core/test_timevarying_surface_flux.jl",
     "core/test_native_cs_surface_flux.jl",
     "core/test_surface_flux_ingestion.jl",
+    "core/test_tagged_region_fluxes.jl",
     "core/test_multiday_source_clock.jl",
     "core/test_runtime_chemistry_recipe.jl",
     "core/test_chemistry.jl",

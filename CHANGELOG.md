@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Region-tagged fluxes: `[tagged_fluxes.<group>]` splits one surface-flux
+  dataset into one tracer per selected value of an integer region mask
+  (TransCom regions, PFTs, combined codes) on the flux's own grid (lat-lon, or
+  the run's cube for `cs_native` fluxes). The flux is read once per group;
+  `values`, `names`, `exclude` and `init` select and name the tracers (default:
+  every value in the mask, named `<group>_<value>`). The tagged tracers sum to
+  the flux over the selected values. A mask on another grid is an error. See
+  the TOML schema page. Configs without `[tagged_fluxes]` are unchanged.
 - Limiter extension points are public: `limited_slope`, `limited_moment` and
   `ppm_limit_profile` (formerly `_limited_slope`, `_limited_moment`,
   `_ppm_limit_profile`) are exported from `Operators`, and a limiter defined

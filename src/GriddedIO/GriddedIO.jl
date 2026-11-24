@@ -49,6 +49,10 @@ methods dispatch on it.
   [`check_cell_area`](@ref).
 - Lat-lon flux files for `kind = "file"` (`latlon_flux.jl`):
   [`write_latlon_flux`](@ref).
+- Integer region masks for `[tagged_fluxes]` (`region_mask.jl`):
+  [`read_region_mask`](@ref) (lat-lon or `cs_native`-layout cube),
+  [`region_mask_values`](@ref), [`region_indicator`](@ref) and the same-grid
+  gate [`check_region_mask_grid`](@ref).
 - Static ground fields for observation placement (`surface_height.jl`): the
   per-grid model surface height dataset, written by
   [`write_model_surface_height`](@ref) and read by
@@ -114,6 +118,9 @@ export CS_NATIVE_FLUX_DIMS, CSNativeFluxWriter, open_cs_native_writer, write_sli
        abandon!, cs_native_flux_info, read_cs_native_flux!, read_cs_native_flux, check_cell_area
 # latlon_flux.jl
 export write_latlon_flux, check_latlon_cell_area
+# region_mask.jl
+export AbstractRegionMask, LatLonRegionMask, CubedSphereRegionMask, CS_REGION_MASK_DIMS,
+       read_region_mask, region_mask_values, region_indicator, check_region_mask_grid
 # surface_height.jl
 export write_model_surface_height, read_model_surface_height, LatLonPointElevation, read_point_elevation
 
@@ -127,6 +134,7 @@ include("staging.jl")
 include("flux_units.jl")
 include("cs_native_flux.jl")
 include("latlon_flux.jl")
+include("region_mask.jl")
 include("surface_height.jl")
 
 end # module GriddedIO

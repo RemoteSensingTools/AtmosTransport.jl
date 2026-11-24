@@ -15,6 +15,16 @@ It retains the structured and CS transport loops.
 - `validate_config(cfg) -> (ok, errors)` in [`configuration.jl`](configuration.jl)
   is public. `run_driven_simulation` calls it first. It opens no binaries and
   allocates no state.
+- `_expand_tagged_fluxes(cfg)` in [`configuration.jl`](configuration.jl)
+  turns each `[tagged_fluxes.<group>]` into ordinary `[tracers.<name>]`
+  entries (one per selected value of the group's region mask, read with
+  `GriddedIO.read_region_mask`), each carrying an
+  `InitialConditionIO.TaggedFluxRegion` in its surface-flux table, and checks
+  the group's keys and selection. `validate_config`, `run_driven_simulation`
+  and `_parse_tracer_specs` expand first, so every reader of `[tracers]` sees
+  the tagged tracers; it returns `cfg` itself when there is nothing to expand.
+  `config_keys.jl` checks a tagged tracer's tables once, under the group's
+  label.
 - `TransportTracerSpec` and `_parse_tracer_specs(cfg)` in
   [`configuration.jl`](configuration.jl) turn `[tracers.<name>]` into name,
   `init`, and `surface_flux` dicts. Legacy flat keys are mapped into those
