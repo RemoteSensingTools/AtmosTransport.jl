@@ -22,6 +22,9 @@ runtime flows with dispatch driven by the first binary's header
   — validated against binary capabilities by
   `validate_runtime_physics_recipe` / `build_runtime_physics_recipe`
   before the loop.
+- **TOML `[tagged_fluxes.*]`** — expanded into `[tracers.*]` entries
+  (one per selected region-mask value) by `_expand_tagged_fluxes` before
+  validation, so every reader sees them.
 - **TOML `[tracers.*]`** — tracer specs consumed via
   `build_initial_mixing_ratio` + `pack_initial_tracer_mass`
   (basis-aware per `feedback_vmr_to_mass_basis_aware`) and
@@ -109,12 +112,15 @@ using ....Models.InitialConditionIO: INITIAL_CONDITION_KINDS,
                             CSNativeInitialConditionSpec, PressureLayerInitialConditionSpec,
                             PressureGaussianInitialConditionSpec,
                             _regridding_method, _surface_flux_kind, surface_flux_species,
-                            _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS
+                            _hold_outside_coverage, RUN_SPAN_CLOCK_SLACK_SECONDS,
+                            TaggedFluxRegion, TAGGED_REGION_KEY, tagged_flux_region,
+                            tagged_flux_species, BilinearFluxRegridding
 using ....Models.InitialConditionIO: build_initial_mixing_ratio, _build_cs_initial_mixing_ratio,
                              pack_initial_tracer_mass, _cs_pack_interior_into_halo!,
                              build_surface_flux_sources,
                              TotalSurfacePressure
-using ....GriddedIO: read_model_surface_height, read_point_elevation
+using ....GriddedIO: read_model_surface_height, read_point_elevation,
+                    read_region_mask, region_mask_values
 using ..BinaryPathExpander: expand_binary_paths
 using ..InputStaging: InputStager, staged_path_for!, cleanup_staging!
 using ....Output: OUTPUT_PATH_KEYS, OUTPUT_KEYS, OUTPUT_FIELDS_KEYS, TRACER_OUTPUT_FIELDS_KEYS,
@@ -236,6 +242,9 @@ function run_driven_simulation(cfg::AbstractDict)
         ok, errors = validate_config(cfg)
         ok || throw(ArgumentError(
             "Invalid AtmosTransport run config:\n  - " * join(errors, "\n  - ")))
+        # `[tagged_fluxes]` groups become ordinary `[tracers]` entries once,
+        # so every reader of the run sees the tagged tracers.
+        cfg = _expand_tagged_fluxes(cfg)
         arch = _cfg_architecture(cfg)
         ensure_runtime!(arch)
         # Loading an optional GPU package adds its array and Adapt methods in a new

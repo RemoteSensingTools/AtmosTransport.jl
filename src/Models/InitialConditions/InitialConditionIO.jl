@@ -60,7 +60,8 @@ using ...ConfigChecks: config_bool as _config_bool
 import ...expand_data_path
 using ...ConfigChecks: key_suggestion
 using ...Parameters: AVOGADRO, EARTH_RADIUS, SPECIES_MOLAR_MASS, STANDARD_PRESSURE, DRY_AIR_MOLAR_MASS,
-                     DEFAULT_BACKGROUND_VMR, DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG
+                     DEFAULT_BACKGROUND_VMR, DEFAULT_GAUSSIAN_BLOB_SIGMA_DEG,
+                     DAYS_PER_JULIAN_YEAR, SECONDS_PER_DAY
 using ...State: AbstractMassBasis, DryBasis, MoistBasis,
                AbstractSurfacePressureBasis, TotalSurfacePressure,
                DrySurfacePressure
@@ -72,7 +73,7 @@ using ...Regridding: build_regridder, apply_regridder!, default_regrid_cache_dir
 using ...Grids: unpack_flat_to_panels_3d!, unpack_flat_to_panels_2d!,
                        CS_PANEL_COUNT
 using ...Operators.SurfaceFlux: SurfaceFluxSource, TimeVaryingSurfaceFluxSource,
-                               StepwiseFlux, flux_temporal_scheme
+                               StepwiseFlux, flux_temporal_scheme, total_emission_rate
 # The conventions of native gridded input files (coordinates, orientation,
 # fill values, source meshes, time axes, flux units) and the `cs_native` flux
 # file (reader, cell-area gate) are owned by GriddedIO.
@@ -92,7 +93,8 @@ using ...GriddedIO: find_coordinate, LongitudeAxis, LatitudeAxis, TimeAxis, Vert
                     AbstractTimeBasis, PerSquareMetre, PerCell, PerMonth, TimeInterval,
                     FluxUnits, kg_per_unit, period_seconds, seconds_since,
                     mass_rate_factor, cs_native_flux_info, read_cs_native_flux!,
-                    check_latlon_cell_area
+                    check_latlon_cell_area,
+                    read_region_mask, region_indicator, check_region_mask_grid, region_mask_values
 # Grid accessors used by both LL/RG and CS surface-flux builders
 using ...Grids: AbstractHorizontalMesh, nx, ny, ncells
 
@@ -951,5 +953,6 @@ export pack_initial_tracer_mass
 export FileSurfaceFluxField, TimeVaryingFileSurfaceFluxField
 export build_surface_flux_source, build_surface_flux_sources
 export surface_flux_species
+export TaggedFluxRegion, TAGGED_REGION_KEY, tagged_flux_region, tagged_flux_species
 
 end # module InitialConditionIO

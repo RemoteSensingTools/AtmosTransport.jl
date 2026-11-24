@@ -542,6 +542,69 @@ units with the tracer's species. It defaults to `temporal_scheme = "stepwise"`;
 signed uptake is retained. The TRENDY ensemble example is
 `config/runs/trendy_v14_s3_all_models_npp_rh_c30_2014_2024.toml`.
 
+#### Region-tagged fluxes (`[tagged_fluxes.<group>]`)
+
+One global flux and an integer region mask (TransCom regions, PFTs, or
+combined codes such as `100 * region + pft`) become one tracer per selected
+mask value, without one flux file per tracer:
+
+```toml
+[tagged_fluxes.nee]
+flux          = { kind = "lmdz_co2", file_pattern = "/path/to/z_cams_l_cams55_{YYYYMM}_FT24r2_ra_sfc_3h_co2_flux.nc", time_varying = true, species = "co2" }   # any surface_flux table
+mask_file     = "/path/to/transcom_regions.nc"
+mask_variable = "region"
+values        = [1, 2, 3, 7]        # optional; default: every value in the mask
+names         = ["nam_boreal", "nam_temperate", "sam_tropical", "eur"]  # optional; default nee_<value>
+exclude       = [0]                 # optional: values never run
+init          = { kind = "uniform", background = 0.0 }  # optional (the default), for every tagged tracer
+```
+
+- **The mask is on the flux's own grid.** A lat-lon mask is a 2-D variable
+  over the dimensions of its `lon`/`lat` coordinates (in either order; found by
+  name and oriented as flux fields are, `GriddedIO.read_region_mask`) whose
+  centres equal the flux file's within 1e-4° (for a series, every listed
+  file's). For a `cs_native` flux the mask is an `(Xdim, Ydim, nf)` variable
+  (NetCDF `(nf, Ydim, Xdim)`) on the run's cube, with `lons`/`lats` cell
+  centres `(Xdim, Ydim, nf)` that must be the cube's (so the panel layout is
+  checked); a `cell_area` in it must match the mesh. A mask on any other grid
+  is an error naming both grids, raised when the sources are built at the
+  start of the run (for a time-varying lat-lon flux before its series is
+  read); put the mask on the flux grid first.
+- Each flux cell holds one code, so the selection is exact: a tagged tracer
+  is the flux times the 0/1 indicator of its value on the flux grid, regridded
+  like an ordinary source. The tagged tracers sum to the flux over the
+  selected values; with every value selected and no fill cells they sum to the
+  untagged source cell by cell (to rounding). Excluded and unselected values,
+  and fill cells, emit nothing.
+- Values are arbitrary integers (any sign, not contiguous), stored as any
+  integer type (read exactly) or float type (integers up to 2^53); a
+  non-integer value is an error.
+  `_FillValue` and `missing_value` cells (and NaN) hold no code.
+- The flux table is any surface-flux table, with the usual rules: a
+  time-varying flux (as in the example) needs a cubed-sphere run, and
+  `regridding = "bilinear"` is refused (each tagged field would be
+  renormalised on its own, so the tracers would not sum to the flux).
+- The group's tracers are added to `[tracers]` before the run, so output,
+  observation and chemistry settings name them like any tracer. A default
+  name is `<group>_<value>` (`nee_7`; a negative value `-4` gives `nee_m4`).
+  Tagged names imply no species: set `flux.species` (unless every name is one
+  that implies it, such as `co2_natural`).
+- The flux is read once per group. Each tracer then holds its own source in
+  host memory: a time-varying C90 source, 3-hourly over a year, is
+  2920 slices × 6 × 90² cells × 4 bytes ≈ 0.57 GB per tracer in Float32
+  (twice that in Float64).
+- The setup log gives each tagged tracer's emission (kg/s and Pg/yr; for a
+  time-varying source the mean over the loaded slices), the group total on the
+  model grid and, on the flux grid, the flux over the selected values (with
+  the absolute residual) and the whole flux.
+- Errors when the config is checked: unknown keys, a missing `flux`,
+  `mask_file` or `mask_variable`, `values` or `exclude` that are not arrays of
+  integers, `names` that are not strings, without `values` or of another
+  length, a repeated value or name, a name that is already a tracer, a value
+  the mask does not hold (the message lists the values it holds), a value both
+  in `values` and `exclude`, no values left, a flux of kind `none` or with
+  bilinear regridding, and tracers without one species.
+
 ### `[advection]`, `[diffusion]`, `[convection]`, `[chemistry]`
 
 Numeric physics settings (for example constant diffusion `value`) reject Booleans.

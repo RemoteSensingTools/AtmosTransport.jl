@@ -265,7 +265,7 @@ None recorded.
 
 ## `src/GriddedIO`
 
-Size: **159760 bytes / 45645.7 tokens**. Public names: **86**.
+Size: **170994 bytes / 48855.4 tokens**. Public names: **94**.
 
 Depends on: `src`, `src/Grids`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Output`, `src/Parameters`.
 
@@ -273,12 +273,13 @@ Used by: `src`, `src/Diagnostics`, `src/Extras/Visualization`, `src/Models/Initi
 
 Files:
 
-- `GriddedIO.jl` (6667 bytes)
+- `GriddedIO.jl` (7135 bytes)
 - `coordinates.jl` (11894 bytes)
 - `cs_native_flux.jl` (27484 bytes)
 - `flux_units.jl` (16584 bytes)
 - `initial_condition_conventions.jl` (4404 bytes)
 - `latlon_flux.jl` (12712 bytes)
+- `region_mask.jl` (10766 bytes)
 - `source_meshes.jl` (13085 bytes)
 - `staging.jl` (4365 bytes)
 - `surface_height.jl` (19736 bytes)
@@ -423,7 +424,7 @@ None recorded.
 
 ## `src/Models/InitialConditions`
 
-Size: **147727 bytes / 42207.7 tokens**. Public names: **24**.
+Size: **165019 bytes / 47148.3 tokens**. Public names: **28**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Operators/SurfaceFlux`, `src/Parameters`, `src/Regridding`, `src/State`.
 
@@ -431,11 +432,12 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner/DrivenRunner`.
 
 Files:
 
-- `InitialConditionIO.jl` (46152 bytes)
+- `InitialConditionIO.jl` (46417 bytes)
 - `cubed_sphere.jl` (34052 bytes)
-- `surface_flux.jl` (49611 bytes)
+- `surface_flux.jl` (53406 bytes)
 - `surface_flux_native.jl` (4302 bytes)
-- `surface_flux_regridding.jl` (13610 bytes)
+- `surface_flux_regridding.jl` (14118 bytes)
+- `surface_flux_tagged.jl` (12724 bytes)
 
 Forward ↔ adjoint mirrors:
 
@@ -486,7 +488,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Models/Runner/DrivenRunner`
 
-Size: **168155 bytes / 48044.3 tokens**. Public names: **18**.
+Size: **177872 bytes / 50820.6 tokens**. Public names: **18**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/InitialConditions`, `src/Models/Physics`, `src/Models/Runner`, `src/Observations`, `src/Observations/Sampling`, `src/Observations/Sources`, `src/Operators`, `src/Operators/Advection/Reconstruction`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/IFS`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/Output`, `src/Parameters`, `src/State`.
 
@@ -494,9 +496,9 @@ Used by: `src/Diagnostics`, `src/Models`, `src/Models/Runner`.
 
 Files:
 
-- `DrivenRunner.jl` (68282 bytes)
-- `config_keys.jl` (19585 bytes)
-- `configuration.jl` (22790 bytes)
+- `DrivenRunner.jl` (68863 bytes)
+- `config_keys.jl` (20387 bytes)
+- `configuration.jl` (31124 bytes)
 - `logging.jl` (2067 bytes)
 - `model_setup.jl` (10749 bytes)
 - `observations.jl` (13405 bytes)

@@ -18,7 +18,8 @@
 # The file conventions (coordinates, orientation, fill values, time axes, flux
 # units, source meshes) come from `GriddedIO`. Regridding helpers live in
 # `surface_flux_regridding.jl`; the GEOS-native CS series loader lives in
-# `surface_flux_native.jl`.
+# `surface_flux_native.jl`; region-tagged groups (`[tagged_fluxes]`) in
+# `surface_flux_tagged.jl`.
 # ===========================================================================
 
 # Tracer names that imply the species of their surface flux, so that
@@ -434,6 +435,8 @@ function _load_file_surface_flux_field(cfg, ::Type{FT}; species::Symbol,
 
         raw .*= FT(get(cfg, "scale", 1.0))
         native_total_mass_rate = sum(Float64.(raw) .* cell_area_src)
+        # Debug record of each read (one per `[tagged_fluxes]` group, not per tracer).
+        @debug "Loaded static surface flux" kind file variable native_total_mass_rate
         return FileSurfaceFluxField{FT}(raw, lon_src, lat_src, cell_area_src,
                                         native_total_mass_rate)
     finally
@@ -763,10 +766,17 @@ _build_surface_flux_source_spanned(grid, name, cfg, ::Type{FT}, reference_time, 
 
 include("surface_flux_regridding.jl")
 include("surface_flux_native.jl")
+include("surface_flux_tagged.jl")
 
 # ---------------------------------------------------------------------------
 # build_surface_flux_source — LL / RG / CS
 # ---------------------------------------------------------------------------
+
+# A region-tagged tracer's flux table holds the group's whole flux; only
+# `build_surface_flux_sources` applies its selection.
+_check_untagged(tracer_name, cfg) = tagged_flux_region(cfg) === nothing || throw(ArgumentError(
+    "tracer $(tracer_name) is a [tagged_fluxes] tracer; build its source with " *
+    "build_surface_flux_sources, which applies its region selection"))
 
 # Opt-in flag for the time-varying surface-flux path (default false → one
 # static field: the configured time slice, or the time mean for `lmdz_co2`).
@@ -780,6 +790,7 @@ include("surface_flux_native.jl")
 function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
+    _check_untagged(tracer_name, cfg)
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     kind === :cs_native && throw(ArgumentError(
@@ -789,17 +800,13 @@ function build_surface_flux_source(grid::AtmosGrid{<:LatLonMesh},
 
     source = _load_file_surface_flux_field(cfg, FT; species = surface_flux_species(tracer_name, cfg),
                                            radius = grid.horizontal.radius)
-    mesh = grid.horizontal
-    rate = reshape(_surface_flux_rate(_regridding_method(cfg), source, mesh, FT;
-                                      label = "surface flux of tracer $(tracer_name)"),
-                   nx(mesh), ny(mesh))
-    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-    return SurfaceFluxSource(tracer_name, rate)
+    return _static_surface_flux_source(grid.horizontal, tracer_name, cfg, source, FT)
 end
 
 function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
                                    reference_time::Union{DateTime, Nothing} = nothing) where FT
+    _check_untagged(tracer_name, cfg)
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     kind === :cs_native && throw(ArgumentError(
@@ -809,10 +816,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:ReducedGaussianMesh},
 
     source = _load_file_surface_flux_field(cfg, FT; species = surface_flux_species(tracer_name, cfg),
                                            radius = grid.horizontal.radius)
-    rate = _surface_flux_rate(_regridding_method(cfg), source, grid.horizontal, FT;
-                              label = "surface flux of tracer $(tracer_name)")
-    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
-    return SurfaceFluxSource(tracer_name, rate)
+    return _static_surface_flux_source(grid.horizontal, tracer_name, cfg, source, FT)
 end
 
 """
@@ -847,6 +851,7 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
                                    tracer_name::Symbol, cfg, ::Type{FT};
                                    reference_time::Union{DateTime, Nothing} = nothing,
                                    run_span = nothing) where FT
+    _check_untagged(tracer_name, cfg)
     kind = _surface_flux_kind(cfg)
     kind === :none && return nothing
     kind === :cs_native && !_surface_flux_time_varying(cfg) && throw(ArgumentError(
@@ -870,11 +875,45 @@ function build_surface_flux_source(grid::AtmosGrid{<:CubedSphereMesh},
 
     source = _load_file_surface_flux_field(cfg, FT; species = surface_flux_species(tracer_name, cfg),
                                            radius = grid.horizontal.radius)
+    return _static_surface_flux_source(mesh, tracer_name, cfg, source, FT)
+end
 
+# ---------------------------------------------------------------------------
+# A source from a loaded field. `build_surface_flux_source` loads the field of
+# one tracer; the region-tagged builder (`surface_flux_tagged.jl`) loads it
+# once per group and builds one source per mask value from the masked fields,
+# passing one prebuilt conservative `regridder` (`nothing`: build it here).
+# ---------------------------------------------------------------------------
+
+_static_source_label(tracer_name) = "surface flux of tracer $(tracer_name)"
+
+function _static_surface_flux_source(mesh::LatLonMesh, tracer_name::Symbol, cfg,
+                                     source::FileSurfaceFluxField, ::Type{FT};
+                                     regridder = nothing) where FT
+    rate = reshape(_surface_flux_rate(_regridding_method(cfg), source, mesh, FT;
+                                      label = _static_source_label(tracer_name), regridder),
+                   nx(mesh), ny(mesh))
+    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
+    return SurfaceFluxSource(tracer_name, rate)
+end
+
+function _static_surface_flux_source(mesh::ReducedGaussianMesh, tracer_name::Symbol, cfg,
+                                     source::FileSurfaceFluxField, ::Type{FT};
+                                     regridder = nothing) where FT
+    rate = _surface_flux_rate(_regridding_method(cfg), source, mesh, FT;
+                              label = _static_source_label(tracer_name), regridder)
+    rate .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
+    return SurfaceFluxSource(tracer_name, rate)
+end
+
+function _static_surface_flux_source(mesh::CubedSphereMesh, tracer_name::Symbol, cfg,
+                                     source::FileSurfaceFluxField, ::Type{FT};
+                                     regridder = nothing) where FT
+    Nc = mesh.Nc
     # _conservative_surface_flux_rate already returns kg/s per cell
     # (regridder.dst_areas × regridded flux density), so the panel unpack
     # only needs to reshape the flat `6*Nc^2` vector into 6 × (Nc, Nc).
-    rate_flat = _conservative_surface_flux_rate(source, mesh, FT)
+    rate_flat = _conservative_surface_flux_rate(source, mesh, FT; regridder)
     rate_flat .*= FT(_surface_flux_storage_scale(tracer_name, cfg))
     length(rate_flat) == CS_PANEL_COUNT * Nc * Nc || throw(DimensionMismatch(
         "CS surface-flux conservative regrid returned $(length(rate_flat)) cells; expected $(CS_PANEL_COUNT * Nc * Nc)"))
@@ -891,21 +930,32 @@ function _build_timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cf
                                                    ::Type{FT},
                                                    reference_time::Union{DateTime, Nothing};
                                                    run_span = nothing) where FT
-    Nc = mesh.Nc
     field = _load_timevarying_surface_flux_field(cfg, FT, reference_time;
                                                  species = surface_flux_species(tracer_name, cfg),
                                                  run_span,
                                                  source = "surface flux of tracer $(tracer_name)")
+    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh)
+    return _timevarying_cs_surface_flux_source(mesh, tracer_name, cfg, field, regridder, FT)
+end
+
+# The time-varying CS source of a loaded series `field` with a prebuilt
+# `regridder`. `weight` (source-grid `(Nx, Ny)`, or `nothing`) multiplies each
+# slice's density before the regrid: the 0/1 selection of a region-tagged tracer.
+function _timevarying_cs_surface_flux_source(mesh, tracer_name::Symbol, cfg,
+                                             field::TimeVaryingFileSurfaceFluxField,
+                                             regridder, ::Type{FT};
+                                             weight = nothing) where FT
+    Nc = mesh.Nc
     ntime = length(field.times_sec)
     storage_scale = FT(_surface_flux_storage_scale(tracer_name, cfg))
-
-    regridder = _build_surface_flux_regridder(field.lon, field.lat, mesh)
     panels_series = ntuple(_ -> Array{FT, 3}(undef, Nc, Nc, ntime), CS_PANEL_COUNT)
 
     slice_panels = ntuple(_ -> Matrix{FT}(undef, Nc, Nc), CS_PANEL_COUNT)
     @inbounds for t in 1:ntime
+        slice = @view(field.raw_series[:, :, t])
         # Only report mass conservation on the first slice to avoid log spam.
-        rate_flat = _apply_surface_flux_regridder(regridder, @view(field.raw_series[:, :, t]),
+        rate_flat = _apply_surface_flux_regridder(regridder,
+                                                  weight === nothing ? slice : slice .* weight,
                                                   FT; report = (t == 1))
         rate_flat .*= storage_scale
         length(rate_flat) == CS_PANEL_COUNT * Nc * Nc || throw(DimensionMismatch(
@@ -938,17 +988,33 @@ per-tracer builder so the time-varying CS path can align its slice times
 to the simulation clock. `run_span = (t_start, t_end)` (seconds since the run
 start) lets the time-varying CS path read only the slices the run can use.
 Both are ignored by static sources.
+
+The tracers of one `[tagged_fluxes]` group (a [`TaggedFluxRegion`](@ref) in
+their surface-flux table) are built together by
+`_build_tagged_surface_flux_sources`, which reads the group's flux once. The
+sources keep the order of `tracer_specs`.
 """
 function build_surface_flux_sources(grid, tracer_specs, ::Type{FT};
                                     reference_time::Union{DateTime, Nothing} = nothing,
                                     run_span = nothing) where FT
-    sources = Any[]
-    for spec in tracer_specs
-        source = _build_surface_flux_source_spanned(grid, spec.name, spec.surface_flux_cfg, FT,
-                                                    reference_time, run_span)
-        source === nothing || push!(sources, source)
+    specs = collect(tracer_specs)
+    sources = Vector{Any}(nothing, length(specs))
+    groups = Dict{String, Vector{Int}}()
+    for (k, spec) in enumerate(specs)
+        region = tagged_flux_region(spec.surface_flux_cfg)
+        if region === nothing
+            sources[k] = _build_surface_flux_source_spanned(grid, spec.name, spec.surface_flux_cfg,
+                                                            FT, reference_time, run_span)
+        else
+            push!(get!(groups, region.group, Int[]), k)
+        end
     end
-    return Tuple(sources)
+    for group in sort!(collect(keys(groups)))
+        members = groups[group]
+        sources[members] .= _build_tagged_surface_flux_sources(grid, specs[members], FT;
+                                                               reference_time, run_span)
+    end
+    return Tuple(s for s in sources if s !== nothing)
 end
 
 const load_file_surface_flux_field = _load_file_surface_flux_field

@@ -89,15 +89,19 @@ end
 
 Physical per-cell rates [kg species s⁻¹] of the static field `source` on
 `mesh`, in the mesh's flat cell order (lat-lon: `i` fastest). `label` names
-the source in errors.
+the source in errors. The conservative method uses `regridder` when given
+(one regridder shared by the fields of one source grid); the bilinear method
+ignores it.
 """
 _surface_flux_rate(::ConservativeFluxRegridding, source::FileSurfaceFluxField, mesh,
-                   ::Type{FT}; label::AbstractString = "surface flux") where FT =
-    _conservative_surface_flux_rate(source, mesh, FT)
+                   ::Type{FT}; label::AbstractString = "surface flux",
+                   regridder = nothing) where FT =
+    _conservative_surface_flux_rate(source, mesh, FT; regridder)
 
 function _surface_flux_rate(::BilinearFluxRegridding, source::FileSurfaceFluxField,
                             mesh::LatLonMesh, ::Type{FT};
-                            label::AbstractString = "surface flux") where FT
+                            label::AbstractString = "surface flux",
+                            regridder = nothing) where FT
     rate = Array{FT}(undef, nx(mesh), ny(mesh))
     for j in axes(rate, 2)
         area = Float64(cell_area(mesh, 1, j))
@@ -112,7 +116,8 @@ end
 
 function _surface_flux_rate(::BilinearFluxRegridding, source::FileSurfaceFluxField,
                             mesh::ReducedGaussianMesh, ::Type{FT};
-                            label::AbstractString = "surface flux") where FT
+                            label::AbstractString = "surface flux",
+                            regridder = nothing) where FT
     rate = Array{FT}(undef, ncells(mesh))
     for j in 1:nrings(mesh)
         lat = mesh.latitudes[j]
@@ -246,7 +251,7 @@ function _apply_surface_flux_regridder(regridder, raw2d::AbstractMatrix, ::Type{
 end
 
 """
-    _conservative_surface_flux_rate(source, dst_mesh, FT) -> Vector{FT}
+    _conservative_surface_flux_rate(source, dst_mesh, FT; regridder = nothing) -> Vector{FT}
 
 Per-cell rates [kg s⁻¹] of the static field `source` on `dst_mesh`, flat:
 its per-cell rate ``m_s`` = `source.raw .* source.cell_area` divided by the
@@ -258,11 +263,14 @@ rounding. On a regional target, a source cell that no target cell covers is
 dropped (the conservation report warns), and a source cell covered only in
 part puts its whole rate into the covered part (see
 [`ConservativeFluxRegridding`](@ref)). Callers reshape/wrap per topology.
+`regridder` is the conservative regridder from the source's grid to
+`dst_mesh` (`_build_surface_flux_regridder`), built here when `nothing`.
 """
 function _conservative_surface_flux_rate(source::FileSurfaceFluxField,
                                          dst_mesh::AbstractHorizontalMesh,
-                                         ::Type{FT}) where FT
-    regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh)
+                                         ::Type{FT}; regridder = nothing) where FT
+    regridder === nothing &&
+        (regridder = _build_surface_flux_regridder(source.lon, source.lat, dst_mesh))
     mass_rate = vec(Float64.(source.raw) .* source.cell_area)
     coverage = source_coverage(regridder)
     density = [c > 0 ? m / c : 0.0 for (m, c) in zip(mass_rate, coverage)]

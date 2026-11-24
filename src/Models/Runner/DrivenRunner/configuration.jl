@@ -60,7 +60,142 @@ function _tracer_surface_flux_cfg(tracer_cfg)
     return cfg
 end
 
+# ===========================================================================
+# Region-tagged fluxes: `[tagged_fluxes.<group>]` → ordinary `[tracers.<name>]`
+# ===========================================================================
+
+const _TAGGED_FLUX_KEYS = ("flux", "mask_file", "mask_variable", "values", "names", "exclude",
+                           "init")
+
+# An array of integers (not Booleans) from the group's `key`.
+function _tagged_int_list(g, key, group)
+    raw = g[key]
+    raw isa AbstractVector && all(x -> x isa Integer && !(x isa Bool), raw) || throw(ArgumentError(
+        "[tagged_fluxes.$(group)].$(key) must be an array of integers; got $(repr(raw))"))
+    values = Int64.(raw)
+    allunique(values) || throw(ArgumentError(
+        "[tagged_fluxes.$(group)].$(key) lists a value twice: $(repr(raw))"))
+    return values
+end
+
+# Default tracer name of mask value `v` of `group`: `<group>_<v>`, with `m` for
+# the sign of a negative value (`nee_m1`), so names stay valid identifiers.
+_tagged_default_name(group, v::Integer) = v < 0 ? "$(group)_m$(-v)" : "$(group)_$(v)"
+
+"""
+    _expand_tagged_fluxes(cfg) -> cfg
+
+Expand the `[tagged_fluxes.<group>]` tables of a run config into ordinary
+`[tracers.<name>]` entries, one per selected value of the group's integer
+region mask, and return a copy of `cfg` without `tagged_fluxes` (`cfg`
+itself when it has none, so the expansion is idempotent and every reader of
+`[tracers]` sees the tagged tracers). Each tracer gets the group's `init`
+table (default uniform 0) and its `flux` table plus a
+`InitialConditionIO.TaggedFluxRegion` under `TAGGED_REGION_KEY`, from which
+`build_surface_flux_sources` builds the group with one read of the flux.
+
+Keys of a group: `flux` (a surface-flux table, required), `mask_file` and
+`mask_variable` (required; read by `GriddedIO.read_region_mask`), `values`
+(the mask values to run; default every value present in the mask, fill
+values never count), `names` (one per value; default `<group>_<value>`),
+`exclude` (values never run) and `init`. An `ArgumentError` reports unknown
+keys (with a suggestion), names without values or of another length,
+duplicate values or names, a name that is already a tracer, a value that the
+mask does not hold (listing the values it holds), a value both selected and
+excluded, a group with no values left, a flux of kind `none` or with
+`regridding = "bilinear"`, and tracers of one group without one species
+(`InitialConditionIO.tagged_flux_species`).
+"""
+function _expand_tagged_fluxes(cfg::AbstractDict)
+    haskey(cfg, "tagged_fluxes") || return cfg
+    groups = cfg["tagged_fluxes"]
+    groups isa AbstractDict || throw(ArgumentError(
+        "[tagged_fluxes] must be a TOML table of groups ([tagged_fluxes.<group>]); got $(typeof(groups))"))
+    # An empty table adds no tracers (and keeps the legacy single-tracer
+    # fallback of a config without `[tracers]`).
+    isempty(groups) && return Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg)
+                                                if String(k) != "tagged_fluxes")
+    existing = get(cfg, "tracers", Dict{String, Any}())
+    existing isa AbstractDict || throw(ArgumentError(
+        "[tracers] must be a TOML table; got $(typeof(existing))"))
+    tracers = Dict{String, Any}(String(k) => v for (k, v) in pairs(existing))
+    origin = Dict{String, String}(name => "[tracers.$(name)]" for name in keys(tracers))
+    for group in sort!([String(k) for k in keys(groups)])
+        g = groups[group]
+        label = "[tagged_fluxes.$(group)]"
+        g isa AbstractDict || throw(ArgumentError("$(label) must be a TOML table; got $(typeof(g))"))
+        unknown = unknown_key_messages(g, _TAGGED_FLUX_KEYS)
+        isempty(unknown) || throw(ArgumentError("$(label): unknown option(s) $(join(unknown, ", "))."))
+        for key in ("flux", "mask_file", "mask_variable")
+            haskey(g, key) || throw(ArgumentError("$(label) requires `$(key)`"))
+        end
+        flux = g["flux"]
+        flux isa AbstractDict || throw(ArgumentError(
+            "$(label).flux must be a surface-flux table, e.g. { kind = \"lmdz_co2\", species = \"co2\" }"))
+        init = get(g, "init", Dict{String, Any}("kind" => "uniform", "background" => 0.0))
+        init isa AbstractDict || throw(ArgumentError("$(label).init must be a table like [tracers.X.init]"))
+        for key in ("mask_file", "mask_variable")
+            g[key] isa AbstractString || throw(ArgumentError("$(label).$(key) must be a string"))
+        end
+        haskey(flux, TAGGED_REGION_KEY) && throw(ArgumentError(
+            "$(label).flux: unknown option(s) $(TAGGED_REGION_KEY) (an internal key)."))
+        _surface_flux_kind(flux) === :none && throw(ArgumentError(
+            "$(label).flux needs a flux kind other than \"none\""))
+        # Bilinear sampling renormalises each field on its own, so the tagged
+        # tracers would not sum to the flux (and small regions would be refused).
+        _regridding_method(flux) isa BilinearFluxRegridding && throw(ArgumentError(
+            "$(label).flux: tagged fluxes need conservative regridding; remove " *
+            "regridding = \"bilinear\""))
+        mask_file = expand_data_path(String(g["mask_file"]))
+        mask_variable = String(g["mask_variable"])
+        present = region_mask_values(read_region_mask(mask_file, mask_variable))
+        exclude = haskey(g, "exclude") ? _tagged_int_list(g, "exclude", group) : Int64[]
+        values = if haskey(g, "values")
+            selected = _tagged_int_list(g, "values", group)
+            absent = filter(v -> !insorted(v, present), selected)
+            isempty(absent) || throw(ArgumentError(
+                "$(label).values: $(join(absent, ", ")) $(length(absent) == 1 ? "is" : "are") not " *
+                "in mask '$(mask_variable)' of $(mask_file); it holds $(join(present, ", "))"))
+            both = intersect(selected, exclude)
+            isempty(both) || throw(ArgumentError(
+                "$(label): $(join(both, ", ")) $(length(both) == 1 ? "is" : "are") both in " *
+                "`values` and in `exclude`"))
+            selected
+        else
+            filter(v -> !(v in exclude), present)
+        end
+        isempty(values) && throw(ArgumentError(
+            "$(label): no mask values left to run (mask holds $(isempty(present) ? "no values" :
+            join(present, ", ")); exclude = $(exclude))"))
+        names = if haskey(g, "names")
+            haskey(g, "values") || throw(ArgumentError(
+                "$(label).names needs `values`: the names are matched to the values by position"))
+            raw = g["names"]
+            raw isa AbstractVector && all(x -> x isa AbstractString, raw) || throw(ArgumentError(
+                "$(label).names must be an array of strings"))
+            length(raw) == length(values) || throw(ArgumentError(
+                "$(label): names has $(length(raw)) entries but values has $(length(values))"))
+            String.(raw)
+        else
+            [_tagged_default_name(group, v) for v in values]
+        end
+        for (name, v) in zip(names, values)
+            haskey(origin, name) && throw(ArgumentError(
+                "$(label): tracer name `$(name)` (value $(v)) is already defined by $(origin[name])"))
+            origin[name] = "$(label) value $(v)"
+            sf = _copy_cfg_dict(flux)
+            sf[TAGGED_REGION_KEY] = TaggedFluxRegion(group, mask_file, mask_variable, v)
+            tracers[name] = Dict{String, Any}("init" => _copy_cfg_dict(init), "surface_flux" => sf)
+        end
+        tagged_flux_species(group, names, flux)
+    end
+    out = Dict{String, Any}(String(k) => v for (k, v) in pairs(cfg) if String(k) != "tagged_fluxes")
+    out["tracers"] = tracers
+    return out
+end
+
 function _parse_tracer_specs(cfg)
+    cfg = _expand_tagged_fluxes(cfg)
     tracers_cfg = get(cfg, "tracers", nothing)
     tracers_cfg isa AbstractDict || return nothing
     names = sort!(collect(keys(tracers_cfg)))
@@ -193,7 +328,9 @@ advection scheme and reset mode), `prefetch_windows` and `[output]` are
 parsed as the run parses them; decay
 half-lives must name a tracer, and an enabled `[output]` needs both a path and
 snapshot times (an explicit `hours = []` means none). Shape errors are
-reported before value checks. Window indices accept integers, not Booleans or
+reported before value checks. `[tagged_fluxes]` groups are expanded into
+tracers first (`_expand_tagged_fluxes`, which reads each group's mask), and
+the checks see those tracers. Window indices accept integers, not Booleans or
 floating-point values. Explicit halo widths must be integers ≥ 1; input dates
 accept TOML dates or date strings in either input mode.
 
@@ -209,6 +346,12 @@ GPU backend auto-detection can load and probe optional runtime packages.
 """
 function validate_config(cfg::AbstractDict)
     errors = String[]
+
+    # `[tagged_fluxes]` groups become ordinary tracers before any other check.
+    expanded = Ref{Any}(nothing)
+    _capture_config_error!(() -> (expanded[] = _expand_tagged_fluxes(cfg)), errors)
+    isempty(errors) || return false, errors
+    cfg = expanded[]
 
     _check_config_table_shapes!(cfg, errors)
     isempty(errors) || return false, errors
@@ -270,6 +413,9 @@ function validate_config(cfg::AbstractDict)
 
     findings = _config_key_findings(cfg)
     append!(errors, findings.errors)
+    # The tracers of a `[tagged_fluxes]` group share one flux table: report a
+    # repeated message once.
+    unique!(errors)
     for warning in findings.warnings
         @warn "Run config: $(warning)"
     end
