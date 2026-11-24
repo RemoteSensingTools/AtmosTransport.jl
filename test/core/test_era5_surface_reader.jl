@@ -230,3 +230,53 @@ const _HAVE_ZIP_TOOLS = Sys.which("zip") !== nothing && Sys.which("unzip") !== n
     end
     end
 end
+
+@testset "ERA5 accumulated heat uses the window end" begin
+    PP = AtmosTransport.Preprocessing
+    function write_surface(path, first_value, records)
+        NCDataset(path, "c") do ds
+            defVar(ds, "longitude", [0.0, 90.0], ("longitude",))
+            defVar(ds, "latitude", [-90.0, 90.0], ("latitude",))
+            defVar(ds, "time", collect(0:records-1), ("time",))
+            values = repeat(reshape(Float64.(first_value:first_value+records-1),
+                                    1, 1, records), 2, 2, 1)
+            dims = ("longitude", "latitude", "time")
+            defVar(ds, "blh", 1000 .+ values, dims)
+            defVar(ds, "zust", fill(0.25, size(values)), dims)
+            defVar(ds, "t2m", fill(290.0, size(values)), dims)
+            defVar(ds, "sshf", -3600 .* values, dims; attrib = ["units" => "J m**-2"])
+            defVar(ds, "slhf", -7200 .* values, dims; attrib = ["units" => "J m**-2"])
+        end
+    end
+    mktempdir() do dir
+        write_surface(joinpath(dir, "era5_surface_20211231.nc"), 1, 24)
+        reader = PP.open_era5_surface_reader(dir, Date(2021, 12, 31), 2, 2)
+        try
+            late = PP.load_era5_surface_window(reader, 13, Float64; with_latent = true)
+            @test all(==(1013), late.pblh) # instantaneous fields still use the start
+            @test all(==(14), late.hflux)
+            @test all(==(28), late.lhflux)
+            @test_throws ArgumentError PP.load_era5_surface_window(reader, 24, Float64)
+            write_surface(joinpath(dir, "era5_surface_20220101.nc"), 51, 24)
+            midnight = PP.load_era5_surface_window(reader, 24, Float64; with_latent = true)
+            @test all(==(1024), midnight.pblh)
+            @test all(==(51), midnight.hflux)
+            @test all(==(102), midnight.lhflux)
+        finally
+            PP.close_era5_surface_reader(reader)
+        end
+    end
+    mktempdir() do dir
+        # Two days in the same packed file: no separate endpoint file needed.
+        write_surface(joinpath(dir, "era5_surface_202112.nc"), 1, 48)
+        reader = PP.open_era5_surface_reader(dir, Date(2021, 12, 1), 2, 2)
+        try
+            midnight = PP.load_era5_surface_window(reader, 24, Float32; with_latent = true)
+            @test all(==(1024f0), midnight.pblh)
+            @test all(==(25f0), midnight.hflux)
+            @test all(==(50f0), midnight.lhflux)
+        finally
+            PP.close_era5_surface_reader(reader)
+        end
+    end
+end
