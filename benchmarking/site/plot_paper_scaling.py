@@ -37,11 +37,10 @@ def plot(output):
                 seconds = bench.s(device, "main", f"C{config_grid}", count, "all")
                 if seconds is None:
                     continue
+                points.append((x, 365 * seconds))
                 if config_grid == 720:  # Different meteorology
                     ax.plot(x, 365 * seconds, marker=marker, color=color,
-                            mfc="white", ms=5, ls="none")
-                else:
-                    points.append((x, 365 * seconds))
+                            mfc="white", ms=5, ls="none", zorder=3)
             if points:
                 xs, ys = zip(*points)
                 ax.plot(xs, ys, label=label, color=color, marker=marker,
