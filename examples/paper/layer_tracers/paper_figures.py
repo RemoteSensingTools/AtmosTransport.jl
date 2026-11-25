@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch, Rectangle
 
 from plot_spread import CASE_COLORS, CASES, GRID, INK, INK2, MUTED, TRACERS, case_label, draw_case, percentiles
 
@@ -86,17 +86,36 @@ def save(fig, folder, name):
     print(f"wrote {folder}/{name}.pdf")
 
 
+# Match the meteorological drivers in the full CATRINE comparison.
+DRIVERS = {"era5": ("ERA5", "#D55E00", "-"), "merra2": ("MERRA-2", "#0072B2", "--")}
+
+
+def draw_distribution(ax, z, tracer, region, case):
+    _, color, style = DRIVERS[case]
+    days = z["hours"] / 24
+    p = percentiles(z, tracer, region)
+    ax.fill_between(days, p[:, 1], p[:, 3], color=color, alpha=.13, lw=0)
+    ax.plot(days, p[:, 5], color=color, ls=style, lw=1.5)
+
+
+def distribution_legend(fig):
+    handles = [Line2D([], [], color=color, ls=style, lw=1.5, label=name)
+               for name, color, style in DRIVERS.values()]
+    handles.append(Patch(facecolor="0.85", label="Central 68% of tracer mass"))
+    fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
+
+
 def figure_processes(spread, figures, month):
-    tracers, arms, cases = ("sfc", "s085", "s050", "s025"), ("AP", "APC", "C"), ("era5", "merra2")
-    height = 6.3
+    tracers, arms, cases = ("sfc", "s070", "s025"), ("AP", "APC", "C"), ("era5", "merra2")
+    height = 5.1
     fig, axes = plt.subplots(len(arms), len(tracers), figsize=(WIDTH, height), sharex=True, sharey=True,
-                             gridspec_kw=dict(wspace=0.08, hspace=0.14, left=0.085, right=0.99, top=1 - 0.78 / height,
+                             gridspec_kw=dict(wspace=0.08, hspace=0.14, left=0.085, right=0.99, top=1 - 0.53 / height,
                                               bottom=0.42 / height))
     for r, arm in enumerate(arms):
         for case in cases:
             z = load(spread, case, month, arm)
             for c, tracer in enumerate(tracers):
-                panel(axes[r, c], z, tracer, 0, CASE_COLORS[case])
+                draw_distribution(axes[r, c], z, tracer, 0, case)
         for c, tracer in enumerate(tracers):
             ax = axes[r, c]
             finish(ax, tracer, z["hours"][-1] / 24.0)
@@ -109,7 +128,7 @@ def figure_processes(spread, figures, month):
             if c == 0:
                 ax.text(0.97, 0.94, f"({'abc'[r]}) {ARM_NAMES[arm]}", transform=ax.transAxes, ha="right", va="top",
                         color=INK, fontsize=7.5, fontweight="bold")
-    legends(fig, cases, 1 - 0.02 / height)
+    distribution_legend(fig)
     save(fig, figures, "layer_processes")
 
 
@@ -139,23 +158,23 @@ def figure_regions(spread, figures, month, regions):
     cases = ("era5", "merra2")
     n_cols = 4
     n_rows = int(np.ceil(len(regions) / n_cols))
-    height = 2.05 * n_rows + 0.95
+    height = 1.66 * n_rows + 0.85
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(WIDTH, height), sharex=True, sharey=True, squeeze=False,
-                             gridspec_kw=dict(wspace=0.08, hspace=0.30, left=0.085, right=0.99, top=1 - 0.95 / height,
+                             gridspec_kw=dict(wspace=0.08, hspace=0.30, left=0.085, right=0.99, top=1 - 0.59 / height,
                                               bottom=0.42 / height))
     data = {case: load(spread, case, month, "C") for case in cases}
     names = [str(r) for r in data["era5"]["regions"]]
     for k, name in enumerate(regions):
         ax = axes[k // n_cols, k % n_cols]
         for case in cases:
-            panel(ax, data[case], "sfc", names.index(name), CASE_COLORS[case])
+            draw_distribution(ax, data[case], "sfc", names.index(name), case)
         finish(ax, "sfc", data["era5"]["hours"][-1] / 24.0)
         ax.set_title(f"({'abcdefghijkl'[k]}) {name}", color=INK, loc="left", pad=3)
         if k // n_cols == n_rows - 1:
             ax.set_xlabel("days")
         if k % n_cols == 0:
             ax.set_ylabel("σ = p / p$_\\mathrm{s}$")
-    legends(fig, cases, 1 - 0.02 / height)
+    distribution_legend(fig)
     save(fig, figures, "layer_regions")
 
 
@@ -179,16 +198,21 @@ def figure_lift_map(maps, spread, figures, months, regions):
             ax.coastlines(resolution="110m", lw=0.3, color=INK2)
             ax.spines["geo"].set_linewidth(0.4)
             ax.spines["geo"].set_edgecolor(MUTED)
-            for name in regions:
+            for region_index, name in enumerate(regions):
                 south, north, west, east = boxes["region_boxes"][names.index(name)]
                 width = east - west if east >= west else east - west + 360
                 ax.add_patch(Rectangle((west, south), width, north - south, fill=False, ec="#eb6834", lw=0.7,
                                        transform=ccrs.PlateCarree()))
+                if r == 0 and c == 0:
+                    ax.text(west + width / 2, (south + north) / 2, chr(97 + region_index),
+                            transform=ccrs.PlateCarree(), ha="center", va="center", fontsize=7,
+                            color="#222222", bbox=dict(facecolor="white", edgecolor="none",
+                                                       alpha=.85, pad=.35))
             ax.set_title(f"({'abcdefgh'[2 * r + c]}) {MONTHS[month[4:]]}: {'ERA5' if case == 'era5' else 'MERRA-2'} convection",
                          color=INK, loc="left", pad=2)
     cax = fig.add_axes([0.25, 0.42 / height, 0.5, 0.09 / height])
     bar = fig.colorbar(mesh, cax=cax, orientation="horizontal", ticks=LIFT_LEVELS)
-    bar.set_label("share of the surface tracer above σ = 0.5 after 3 days (%)")
+    bar.set_label("Surface tracer mass at σ < 0.5 after 3 days (%)")
     bar.outline.set_linewidth(0.4)
     save(fig, figures, "layer_lift_map")
 
