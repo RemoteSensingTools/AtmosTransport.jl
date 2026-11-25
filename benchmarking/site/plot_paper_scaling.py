@@ -46,6 +46,11 @@ def plot(output):
                 xs, ys = zip(*points)
                 ax.plot(xs, ys, label=label, color=color, marker=marker,
                         lw=1.15, ms=4, ls="none" if device == "CPU-wurst" else "-")
+        if grid:
+            single = bench.s("L40S", "main", f"C{grid}", 1, "all")
+            ax.plot(TRACERS, [365 * single * n for n in TRACERS],
+                    color="#595959", lw=1.15, ls="--", zorder=1,
+                    label="Linear scaling")
         ax.set(xscale="log", yscale="log", title=title,
                xlabel="Tracer count" if grid else "Cubed-sphere resolution")
         ax.set_xticks(ticks, [str(x) if grid else f"C{x}" for x in ticks], fontsize=7)
@@ -58,8 +63,8 @@ def plot(output):
     axes[0].set_yticks([60, 600, 3600, 21600, 86400, 345600],
                        ["1 min", "10 min", "1 h", "6 h", "1 d", "4 d"])
     axes[0].set_ylabel("Time per simulated year")
-    fig.legend(*axes[1].get_legend_handles_labels(), loc="lower center", ncol=4,
-               frameon=False, handlelength=1.55, columnspacing=1.6)
+    fig.legend(*axes[1].get_legend_handles_labels(), loc="lower center", ncol=5,
+               frameon=False, handlelength=1.55, columnspacing=1.2)
     fig.savefig(output)
     plt.close(fig)
 
