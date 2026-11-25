@@ -21,6 +21,10 @@ The output folder must be empty or an earlier build (marker file `.atmostr_bench
 dashboard is at `benchmarks/ci/`). The site compares Float32 runs; records of other precisions stay in
 the downloadable records.csv and are counted on the Methods page.
 
+## Paper figure
+
+From the repository root, run `python3 benchmarking/site/plot_paper_scaling.py performance_scaling.pdf` with Matplotlib installed. The figure uses the same Float32 records and per-pass aggregation as the dashboard. It converts steady seconds per simulated day to elapsed seconds per 365-day year.
+
 ## Adding records
 
 The records in `data/` are copied from the lab data folders with
