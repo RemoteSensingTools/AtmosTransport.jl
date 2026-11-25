@@ -6,8 +6,8 @@
 Reads the percentile files of sigma_spread.py and the column maps of column_lift.py and writes, as
 PDF and PNG:
 
-* `layer_processes`: vertical spread with time for advection + mixing, all processes and convection
-  only, two cases overlaid;
+* `layer_processes`: vertical spread with time for advection + mixing, convection only and all
+  processes, two cases overlaid;
 * `layer_attribution`: convection only, with the cases that exchange the convective fields or the solver;
 * `layer_lift_map`: where convection lifts the surface tracer, both cases, January and July;
 * `layer_regions`: the surface tracer in selected regions, convection only.
@@ -106,7 +106,7 @@ def distribution_legend(fig):
 
 
 def figure_processes(spread, figures, month):
-    tracers, arms, cases = ("sfc", "s070", "s025"), ("AP", "APC", "C"), ("era5", "merra2")
+    tracers, arms, cases = ("sfc", "s070", "s025"), ("AP", "C", "APC"), ("era5", "merra2")
     height = 5.1
     fig, axes = plt.subplots(len(arms), len(tracers), figsize=(WIDTH, height), sharex=True, sharey=True,
                              gridspec_kw=dict(wspace=0.08, hspace=0.14, left=0.085, right=0.99, top=1 - 0.53 / height,
