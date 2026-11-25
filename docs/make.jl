@@ -78,6 +78,7 @@ const PAGES = [
     "Theory" => [
         "theory/mass_conservation.md",
         "theory/advection_schemes.md",
+        "theory/analytic_transport_tests.md",
         "theory/vertical_transport.md",
         "theory/tm5_boundary_layer.md",
         "theory/conservation_budgets.md",
