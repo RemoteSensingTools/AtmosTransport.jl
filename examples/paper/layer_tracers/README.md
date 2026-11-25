@@ -133,3 +133,16 @@ time, over the four months:
 So the difference between the two main cases is set by the convective mass fluxes and not by
 the rest of the meteorology; the solver does not matter on the ERA5 fields, and on the MERRA-2
 mass flux it matters only for the lowest layers when convection acts alone.
+
+### Latitude and height of the surface release
+
+The [July latitude–pressure comparison](figures/layer_latitude_pressure.pdf) shows the Gaussian surface tracer after three days. Read across each row for the ERA5 and MERRA-2 fields and their difference. The same scales apply in every row. Tracer mole fraction is divided by its globally well-mixed value. Grey cells contain too little air for a zonal mean. All columns are included, with no surface-pressure cutoff.
+
+After the July C90 Gaussian layer runs, these commands regenerate the sections from their saved snapshots (Bash, from this directory):
+
+```bash
+WORK="$LAYER_TRACERS_WORKDIR"
+python3 zonal_reduce.py --runs "$WORK/runs" --out "$WORK/zonal_day3" --hours 72 \
+    --names {era5,merra2}_c90_202207_{AP,C,APC}_f32 --jobs 2
+python3 plot_surface_sections.py "$WORK/zonal_day3" figures/layer_latitude_pressure.pdf
+```
