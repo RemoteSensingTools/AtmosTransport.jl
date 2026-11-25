@@ -10,7 +10,7 @@ PDF and PNG:
   processes, two cases overlaid;
 * `layer_attribution`: convection only, with the cases that exchange the convective fields or the solver;
 * `layer_lift_map`: where convection lifts the surface tracer, both cases, January and July;
-* `layer_regions`: the surface tracer in selected regions, convection only.
+* `layer_regions`: the surface tracer in selected regions, convection alone and all processes.
 """
 import argparse
 from pathlib import Path
@@ -162,19 +162,35 @@ def figure_regions(spread, figures, month, regions):
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(WIDTH, height), sharex=True, sharey=True, squeeze=False,
                              gridspec_kw=dict(wspace=0.08, hspace=0.30, left=0.085, right=0.99, top=1 - 0.59 / height,
                                               bottom=0.42 / height))
-    data = {case: load(spread, case, month, "C") for case in cases}
-    names = [str(r) for r in data["era5"]["regions"]]
+    convection = {case: load(spread, case, month, "C") for case in cases}
+    full = {case: load(spread, case, month, "APC") for case in cases}
+    markers = {"era5": "o", "merra2": "s"}
+    # Stagger the symbols so both runs remain visible where the means coincide.
+    marker_days = {"era5": [1, 5, 10, 19, 26], "merra2": [2, 7, 14, 22, 28]}
     for k, name in enumerate(regions):
         ax = axes[k // n_cols, k % n_cols]
         for case in cases:
-            draw_distribution(ax, data[case], "sfc", names.index(name), case)
-        finish(ax, "sfc", data["era5"]["hours"][-1] / 24.0)
+            z = convection[case]
+            draw_distribution(ax, z, "sfc", list(z["regions"]).index(name), case)
+            z = full[case]
+            days = z["hours"] / 24
+            mean = z["mean_sfc"][:, list(z["regions"]).index(name)]
+            ax.plot(days, mean, color=DRIVERS[case][1], ls=":", lw=1.35,
+                    marker=markers[case], ms=3, mfc="white", mew=.7,
+                    markevery=np.flatnonzero(np.isin(days, marker_days[case])).tolist())
+        finish(ax, "sfc", days[-1])
         ax.set_title(f"({'abcdefghijkl'[k]}) {name}", color=INK, loc="left", pad=3)
         if k // n_cols == n_rows - 1:
             ax.set_xlabel("days")
         if k % n_cols == 0:
             ax.set_ylabel("σ = p / p$_\\mathrm{s}$")
-    distribution_legend(fig)
+    handles = []
+    for case in cases:
+        label, color, style = DRIVERS[case]
+        handles.append(Line2D([], [], color=color, ls=style, lw=1.5, label=f"{label}, convection"))
+        handles.append(Line2D([], [], color=color, ls=":", lw=1.35, marker=markers[case],
+                              ms=3, mfc="white", label=f"{label}, all processes"))
+    fig.legend(handles=handles, loc="upper center", ncol=4, frameon=False, columnspacing=1.0)
     save(fig, figures, "layer_regions")
 
 
