@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The legacy local TM5 PBL scheme now applies the TM5 convective Prandtl
+  correction. The separate local Holtslag–Boville closure is unchanged.
+- ERA5 surface preprocessing aligns hourly sensible and latent heat
+  accumulations with the window they cover, including the next day's 00 UTC
+  record for the last window. Instantaneous fields retain their start time.
+  Regenerate affected preprocessed payloads to pick up the fix; the separate
+  live `tm5_calc_kzz` input path already uses the correct endpoint.
+
 - Region-tagged fluxes: `[tagged_fluxes.<group>]` splits one surface-flux
   dataset into one tracer per selected value of an integer region mask
   (TransCom regions, PFTs, combined codes) on the flux's own grid (lat-lon, or

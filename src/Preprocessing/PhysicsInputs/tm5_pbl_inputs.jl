@@ -88,5 +88,5 @@ function open_tm5_pbl_surface_reader(dir,date)
         tmp === nothing || rm(tmp;recursive=true,force=true)
         rethrow()
     end
-    return _open_era5_surface_reader_from(paths,tmp,path,date,dims...)
+    return _open_era5_surface_reader_from(paths,tmp,path,date,dims...; source_dir=dir)
 end

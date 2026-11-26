@@ -27,6 +27,7 @@ const ERA5_USTAR_DRAG_COEFFICIENT = 1.2e-3
 mutable struct ERA5SurfaceReader
     datasets :: Vector{NCDataset}
     path     :: String
+    source_dir :: String
     tmp_dir  :: Union{Nothing, String}
     date     :: Date
     Nx       :: Int
@@ -140,18 +141,20 @@ function open_era5_surface_reader(surface_dir::AbstractString, date::Date,
                                 readdir(arco_dir; join = true)))
         isempty(arco_ncs) ||
             return _open_era5_surface_reader_from(arco_ncs, nothing, arco_dir,
-                                                  date, Nx, Ny)
+                                                  date, Nx, Ny; source_dir = surface_dir)
     end
 
     path = resolve_era5_surface_path(surface_dir, date)
     nc_paths, tmp_dir = _surface_nc_paths(path)
-    return _open_era5_surface_reader_from(nc_paths, tmp_dir, path, date, Nx, Ny)
+    return _open_era5_surface_reader_from(nc_paths, tmp_dir, path, date, Nx, Ny;
+                                         source_dir = surface_dir)
 end
 
 function _open_era5_surface_reader_from(nc_paths::Vector{String},
                                         tmp_dir::Union{Nothing, String},
                                         path::AbstractString, date::Date,
-                                        Nx::Int, Ny::Int)
+                                        Nx::Int, Ny::Int;
+                                        source_dir::AbstractString)
     datasets = NCDataset[]
     try
         for nc_path in nc_paths
@@ -167,7 +170,8 @@ function _open_era5_surface_reader_from(nc_paths::Vector{String},
     try
         time_len = isempty(datasets) ? 0 : maximum(_surface_time_len, datasets)
         lons, lats = _era5_surface_coordinates(datasets, path, Nx, Ny)
-        return ERA5SurfaceReader(datasets, String(path), tmp_dir, date, Nx, Ny,
+        return ERA5SurfaceReader(datasets, String(path), abspath(expand_data_path(source_dir)),
+                                 tmp_dir, date, Nx, Ny,
                                  time_len, lons, lats)
     catch
         for ds in datasets
@@ -347,13 +351,16 @@ either from the `units` attribute containing `J` or from the canonical
 short/long names of the two accumulated fluxes.
 """
 function surface_flux_to_upward_wm2(raw, ds::NCDataset, var_name::String, ::Type{FT}) where FT
+    # The Int divisor keeps Float32 data in Float32 before the FT conversion.
+    return _surface_flux_is_accumulated(ds, var_name) ?
+        FT.(-raw ./ round(Int, ERA5_MET_INTERVAL_SECONDS)) : FT.(raw)
+end
+
+function _surface_flux_is_accumulated(ds::NCDataset, var_name::String)
     units = lowercase(String(get(ds[var_name].attrib, "units", "")))
-    lname = lowercase(var_name)
-    accumulated = occursin("j", units) || lname in (
+    return occursin("j", units) || lowercase(var_name) in (
         "sshf", "surface_sensible_heat_flux",
         "slhf", "surface_latent_heat_flux")
-    # The Int divisor keeps Float32 data in Float32 before the FT conversion.
-    return accumulated ? FT.(-raw ./ round(Int, ERA5_MET_INTERVAL_SECONDS)) : FT.(raw)
 end
 
 # ERA5 surface slices occasionally carry a handful of `_FillValue`-masked cells
@@ -495,6 +502,9 @@ end
 
 Read one time window of ERA5 surface fields, normalised to the lat-lon
 transport-binary convention (longitude on `[-180, 180)`, latitude south→north).
+Instantaneous fields use the start of the window. Hourly heat accumulations
+use its end (the next day's 00 UTC record for the last window of the day);
+the source archive must include that record.
 
 Returns `(pblh, t2m, ustar, hflux)`:
 
@@ -519,15 +529,43 @@ function load_era5_surface_window(reader::ERA5SurfaceReader,
                                   with_latent::Bool = false) where FT
     pblh, _, _ = _load_surface_field(reader, :pblh, win_idx, FT)
     ustar = _load_surface_ustar(reader, win_idx, FT)
-    hflux_raw, hflux_ds, hflux_name = _load_surface_field(reader, :hflux, win_idx, FT)
-    hflux = surface_flux_to_upward_wm2(hflux_raw, hflux_ds, hflux_name, FT)
     t2m, _, _ = _load_surface_field(reader, :t2m, win_idx, FT)
 
-    surface = (pblh = pblh, t2m = t2m, ustar = ustar, hflux = hflux)
-    if with_latent
-        lh_raw, lh_ds, lh_name = _load_surface_field(reader, :lhflux, win_idx, FT)
-        surface = merge(surface,
-                        (lhflux = surface_flux_to_upward_wm2(lh_raw, lh_ds, lh_name, FT),))
+    endpoint_reader = nothing
+    heat_flux = function (key)
+        ds, var_name = _surface_var_binding(reader, key)
+        source = reader
+        idx = _surface_time_index(reader, ds, win_idx)
+        time_dim = findfirst(d -> d in ERA5_SURFACE_TIME_DIMS, dimnames(ds[var_name]))
+        if time_dim !== nothing && _surface_time_len(ds) > 1 &&
+                _surface_flux_is_accumulated(ds, var_name)
+            # ERA5 labels each accumulation by its end time. Use the following
+            # record in the same file when possible (including monthly archives).
+            idx += 1
+            if idx > _surface_time_len(ds)
+                records_per_day = round(Int, 86400 / ERA5_MET_INTERVAL_SECONDS)
+                win_idx == records_per_day || throw(ArgumentError(
+                    "ERA5 surface file $(reader.path) lacks the end record for window $win_idx"))
+                if endpoint_reader === nothing
+                    endpoint_reader = open_era5_surface_reader(
+                        reader.source_dir, reader.date + Day(1), reader.Nx, reader.Ny)
+                    reader.lons == endpoint_reader.lons && reader.lats == endpoint_reader.lats ||
+                        throw(ArgumentError("ERA5 surface endpoint grids differ"))
+                end
+                source = endpoint_reader
+                ds, var_name = _surface_var_binding(source, key)
+                idx = _surface_time_index(source, ds, 1)
+            end
+        end
+        raw = _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, idx, FT), ds)
+        return surface_flux_to_upward_wm2(raw, ds, var_name, FT)
+    end
+    surface = try
+        hflux = heat_flux(:hflux)
+        fields = (; pblh, t2m, ustar, hflux)
+        with_latent ? merge(fields, (lhflux = heat_flux(:lhflux),)) : fields
+    finally
+        endpoint_reader === nothing || close_era5_surface_reader(endpoint_reader)
     end
 
     _validate_surface_shapes!(surface, (reader.Nx, reader.Ny))

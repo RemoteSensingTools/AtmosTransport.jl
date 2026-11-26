@@ -143,11 +143,18 @@ end
         @test _prandtl_inverse(5.0, 0.3, 0.1, 285.0, -50.0, p) === 1.0
     end
 
-    @testset "unstable convective → > 1" begin
-        # Classic daytime setup
-        Pr_inv = _prandtl_inverse(1000.0, 0.3, 0.08, 295.0, -25.0, p)
-        @test Pr_inv > 1.0
-        @test isfinite(Pr_inv)
+    @testset "TM5 convective Prandtl correction" begin
+        # Issue #177: prescribed daytime column, before Kz clipping.
+        for FT in (Float32, Float64)
+            params = PBLPhysicsParameters{FT}(kappa_vk = FT(0.4), Kz_max = FT(1e9))
+            h, L, us, ws, T = FT.((1522.0, -18.1, 0.4, 2.38, 303.0))
+            H = ws^3 * T / (params.gravity * h)
+            factor = _prandtl_inverse(h, us, H, T, L, params)
+            @test factor ≈ FT(1.27105613) rtol = 2e-5
+            @test _beljaars_viterbo_kz(FT(500), h, us, L, factor, params) ≈ FT(230.54) rtol = 3e-5
+        end
+        # A large w*/u* can give Pr > 1. Do not clamp its inverse to 1.
+        @test _prandtl_inverse(1200.0, 0.1, 0.25, 295.0, -150.0, p) < 1.0
     end
 end
 
@@ -226,7 +233,12 @@ end
     R_dry = params.cp_dry / FT(3.5)
     tv = max.(t_profile, FT(180)) .* (one(FT) .+ FT(0.61) .* max.(q_profile, zero(FT)))
     L_ob, H_kin = _obukhov_length(hflux, ustar, t2m, params)
-    Pr_inv = _prandtl_inverse(pblh, ustar, H_kin, t2m, L_ob, params)
+    # Keep the independent legacy HB reference; changing the TM5 factor
+    # must not silently retune this scheme.
+    fL = max(one(FT) - FT(0.5) * pblh / L_ob, one(FT))
+    x_h = cbrt(fL)
+    w_star = cbrt(H_kin * params.gravity * pblh / t2m)
+    Pr_inv = max(x_h / sqrt(fL) + FT(7.2) * w_star / (ustar * x_h), one(FT))
     z_col = zero(FT)
     p_top = zero(FT)
     for k in 1:Nz
