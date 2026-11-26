@@ -26,6 +26,11 @@ using ...Operators.Diffusion: TM5CalcKzzField, refresh_tm5_calc_kzz!, NoDiffusio
 
 @inline _refresh_dz_for_window!(_sim::DrivenSimulation, ::NoDiffusion) = nothing
 
+# The local TM5 PBL closure writes its own matching thickness in the Kz
+# refresh below. A separate hybrid/260 K fill would use different geometry.
+@inline _refresh_dz_for_window!(_sim::DrivenSimulation,
+    ::ImplicitVerticalDiffusion{FT, <:WindowPBLKzField}) where FT = nothing
+
 # Dkg fields advance tracer mass with precomputed conservative exchange
 # factors and never read `layer_thickness`; do not reconstruct an unused ps.
 @inline _refresh_dz_for_window!(_sim::DrivenSimulation,
@@ -76,7 +81,7 @@ end
 # the previous inconsistency where the kernel divided by a 260 K-constant
 # `dz` while Kz had been computed on layer-varying `dz`.
 #
-# All other diffusion configurations stay on the constant-T_ref path.
+# The generic fill uses constant T_ref unless the operator overrides it.
 @inline _fill_dz_for_diffusion!(layer_thickness, ps, _ak, _bk, _diffop, _window,
                                 coefficients) =
     fill_dz_hydrostatic_constT_staged!(layer_thickness, ps, coefficients; sync = true)
@@ -111,8 +116,11 @@ end
 function _refresh_pbl_kz_for_window!(field::WindowPBLKzField,
                                      sim::DrivenSimulation)
     mesh = sim.model.grid.horizontal
+    workspace = sim.model.workspace.diffusion_ws
     refresh_pbl_kz_cache!(field, sim.window.surface, sim.window.air_mass,
-                           mesh.cell_areas; halo_width = mesh.Hp)
+                           mesh.cell_areas; halo_width = mesh.Hp,
+                           layer_thickness = workspace === nothing ? nothing :
+                                             workspace.layer_thickness)
     return nothing
 end
 
