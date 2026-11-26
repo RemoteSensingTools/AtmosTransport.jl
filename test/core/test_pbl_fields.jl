@@ -2,6 +2,7 @@
 using Test
 import AtmosTransport
 using Adapt
+using KernelAbstractions: CPU, synchronize
 using AtmosTransport.Operators.Diffusion: PBLPhysicsParameters,
     LocalHoltslagBovilleKzField, refresh_local_holtslag_boville_kz_cache!,
     _beljaars_viterbo_kz, _obukhov_length, _prandtl_inverse
@@ -170,7 +171,9 @@ end
         areas = fill(FT(1e8), Nx, Ny)
         mass = ntuple(_ -> fill(FT(10132.5) * FT(1e8) / f.params.gravity,
                                 Nx + 2Hp, Ny + 2Hp, Nz), 6)
-        AtmosTransport.refresh_pbl_kz_cache!(f, surface, mass, areas; halo_width = Hp)
+        thickness = ntuple(_ -> fill(FT(NaN), Nx, Ny, Nz), 6)
+        AtmosTransport.refresh_pbl_kz_cache!(f, surface, mass, areas;
+                                             halo_width = Hp, layer_thickness = thickness)
         for p in 1:6
             data = f.panels[p].data
             @test all(isfinite, data)
@@ -187,7 +190,21 @@ end
             heights = [sum(dz[k+1:end]) + dz[k]/FT(2) for k in 1:Nz]
             expected = [_beljaars_viterbo_kz(z, FT(3000), FT(0.3), L, Pr, f.params) for z in heights]
             @test data[1, 1, :] ≈ expected rtol = 32eps(FT)
+            @test all(isfinite, thickness[p])
+            @test thickness[p][1, 1, :] ≈ dz rtol = 16eps(FT)
         end
+        # Exercise the backend kernel signature on CPU as well as the host path.
+        d = AtmosTransport.Operators.Diffusion
+        kernel = d._window_pbl_kz_cs_panel_kernel!(CPU())
+        kernel_kz = similar(cache[1])
+        kernel_dz = similar(cache[1])
+        kernel(kernel_kz, mass[1], surface.pblh[1], surface.ustar[1],
+               surface.hflux[1], surface.t2m[1], kernel_dz, areas, f.params, Hp;
+               ndrange = (Nx, Ny))
+        synchronize(CPU())
+        @test kernel_kz == cache[1]
+        @test kernel_dz == thickness[1]
+
         adapted = Adapt.adapt(Array, f)
         AtmosTransport.refresh_pbl_kz_cache!(adapted, surface, mass, areas; halo_width = Hp)
         @test all(p -> adapted.panels[p].data == f.panels[p].data, 1:6)

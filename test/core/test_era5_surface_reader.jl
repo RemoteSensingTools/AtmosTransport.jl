@@ -5,6 +5,7 @@
 
 using Test
 using Dates
+using Logging: Warn
 using NCDatasets
 
 import AtmosTransport
@@ -156,8 +157,10 @@ end
         reader = AtmosTransport.Preprocessing.open_era5_surface_reader(
             dir, date, 4, 3)
         try
-            surface = AtmosTransport.Preprocessing.load_era5_surface_window(
-                reader, 1, Float64; with_latent = true)
+            surface = @test_logs min_level=Warn begin
+                AtmosTransport.Preprocessing.load_era5_surface_window(
+                    reader, 1, Float64; with_latent = true)
+            end
             @test all(surface.pblh .== 1000.0)
             @test all(surface.ustar .== 0.25)
             @test all(surface.hflux .== 0.1)
@@ -217,7 +220,31 @@ const _HAVE_ZIP_TOOLS = Sys.which("zip") !== nothing && Sys.which("unzip") !== n
 
         reader = AtmosTransport.Preprocessing.open_era5_surface_reader(dir, Date(2021, 12, 2), 4, 3)
         try
-            surface = AtmosTransport.Preprocessing.load_era5_surface_window(reader, 3, Float64)
+            PP = AtmosTransport.Preprocessing
+            surface = @test_logs (:warn, r"lacks direct friction velocity") begin
+                first_surface = PP.load_era5_surface_window(reader, 3, Float64)
+                PP.load_era5_surface_window(reader, 4, Float64)
+                # Monthly inputs can be reopened by a later day's preprocessor.
+                reopened = PP.open_era5_surface_reader(dir, Date(2021, 12, 2), 4, 3)
+                try
+                    PP.load_era5_surface_window(reopened, 5, Float64)
+                finally
+                    PP.close_era5_surface_reader(reopened)
+                end
+                first_surface
+            end
+            # A distinct source should get its own warning in the same logger.
+            other_path = joinpath(dir, "era5_surface_20211203.nc")
+            cp(zip_path, other_path)
+            other = PP.open_era5_surface_reader(dir, Date(2021, 12, 3), 4, 3)
+            try
+                @test_logs (:warn, r"lacks direct friction velocity") (:warn, r"lacks direct friction velocity") begin
+                    PP.load_era5_surface_window(reader, 3, Float64)
+                    PP.load_era5_surface_window(other, 3, Float64)
+                end
+            finally
+                PP.close_era5_surface_reader(other)
+            end
             raw = [100i + 10j + 3 + 1000 for i in 1:4, j in 1:3]
             expected = circshift(raw[:, end:-1:1], (2, 0))
             @test surface.pblh == expected
