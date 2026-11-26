@@ -45,7 +45,7 @@ end
 
 
 function _try_refresh_window_kz_backend!(field::AbstractWindowKzCache{FT},
-                                            surface, vdiff,
+                                            surface, inputs,
                                             air_mass::NTuple{6},
                                             cell_areas::AbstractMatrix;
                                             halo_width::Integer = 0) where FT
@@ -53,7 +53,7 @@ function _try_refresh_window_kz_backend!(field::AbstractWindowKzCache{FT},
     (_backend_ready_array(data1) &&
      all(p -> _backend_ready_array(air_mass[p]), 1:6) &&
      _backend_ready_surface(surface) &&
-     _window_vdiff_ready(field, vdiff)) || return false
+     _window_inputs_ready(field, inputs)) || return false
 
     areas = _cached_backend_cell_areas!(field, cell_areas, data1)
     backend = get_backend(data1)
@@ -63,7 +63,7 @@ function _try_refresh_window_kz_backend!(field::AbstractWindowKzCache{FT},
         kernel! = _window_kz_kernel(field)(backend)
         kernel!(cache, air_mass[panel], surface.pblh[panel],
                 surface.ustar[panel], surface.hflux[panel], surface.t2m[panel],
-                _window_vdiff_args(field, vdiff, panel)..., areas, field.params, Hp;
+                _window_input_args(field, inputs, panel)..., areas, field.params, Hp;
                 ndrange = (size(cache, 1), size(cache, 2)))
     end
     synchronize(backend)
@@ -72,8 +72,9 @@ end
 
 _window_kz_kernel(::WindowPBLKzField) = _window_pbl_kz_cs_panel_kernel!
 _window_kz_kernel(::LocalHoltslagBovilleKzField) = _local_hb_kz_cs_panel_kernel!
-_window_vdiff_ready(::WindowPBLKzField, _) = true
-_window_vdiff_ready(::LocalHoltslagBovilleKzField, vdiff) = _vdiff_ready(vdiff)
-_window_vdiff_args(::WindowPBLKzField, _, p) = ()
-_window_vdiff_args(::LocalHoltslagBovilleKzField, vdiff, p) =
+_window_inputs_ready(::WindowPBLKzField, dz) =
+    dz === nothing || all(_backend_ready_array, dz)
+_window_inputs_ready(::LocalHoltslagBovilleKzField, vdiff) = _vdiff_ready(vdiff)
+_window_input_args(::WindowPBLKzField, dz, p) = (dz === nothing ? nothing : dz[p],)
+_window_input_args(::LocalHoltslagBovilleKzField, vdiff, p) =
     (vdiff.u[p], vdiff.v[p], vdiff.t[p], vdiff.qv[p])

@@ -166,7 +166,7 @@ end
 
 abstract type AbstractWindowKzCache{FT} <: AbstractCubedSphereField{FT} end
 
-@inline function _window_pbl_column!(cache, air_mass, pblh, ustar, hflux, t2m, areas, p, Hp, i, j)
+@inline function _window_pbl_column!(cache, thickness, air_mass, pblh, ustar, hflux, t2m, areas, p, Hp, i, j)
     Nz = size(cache, 3)
     FT = eltype(cache)
     R_dry = p.cp_dry / FT(CP_OVER_R_DIATOMIC)
@@ -197,6 +197,7 @@ abstract type AbstractWindowKzCache{FT} <: AbstractCubedSphereField{FT} end
         p_bot = p_top + delp_k
         p_mid = max((p_top + p_bot) / FT(2), FT(1))
         dz_k = delp_k * R_T_over_g / p_mid
+        thickness === nothing || (thickness[i, j, k] = dz_k)
         z_center = z_above - dz_k / FT(2)
         cache[i, j, k] = _beljaars_viterbo_kz(z_center, h_pbl, us, L_ob,
                                               Pr_inv, p)
