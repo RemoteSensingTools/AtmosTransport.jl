@@ -465,7 +465,7 @@ None recorded.
 
 ## `src/Models/Runner`
 
-Size: **103089 bytes / 29454.0 tokens**. Public names: **10**.
+Size: **103573 bytes / 29592.3 tokens**. Public names: **10**.
 
 Depends on: `src`, `src/Adjoints`, `src/Adjoints/Footprint`, `src/Grids`, `src/MetDrivers`, `src/MetDrivers/BinaryFormat`, `src/MetDrivers/BinaryReaders`, `src/Models/Core`, `src/Models/Runner/DrivenRunner`, `src/Operators`, `src/Operators/Chemistry`, `src/Operators/Convection`, `src/Operators/Convection/CMFMC`, `src/Operators/Convection/IFS`, `src/Operators/Convection/TM5`, `src/Operators/Diffusion`, `src/Operators/StepPlan`, `src/Operators/SurfaceFlux`, `src/State`, `src/State/Fields`.
 
@@ -478,7 +478,7 @@ Files:
 - `InputStaging.jl` (12458 bytes)
 - `Runner.jl` (2192 bytes)
 - `adjoint_schedule.jl` (22325 bytes)
-- `driven_physics_refresh.jl` (16597 bytes)
+- `driven_physics_refresh.jl` (17081 bytes)
 - `driven_stepping.jl` (21095 bytes)
 - `driven_window_state.jl` (12746 bytes)
 
@@ -813,7 +813,7 @@ Forward ↔ adjoint mirrors:
 
 ## `src/Operators/Diffusion`
 
-Size: **161057 bytes / 46016.3 tokens**. Public names: **27**.
+Size: **161993 bytes / 46283.7 tokens**. Public names: **27**.
 
 Depends on: `src`, `src/MetDrivers`, `src/Operators`, `src/Parameters`, `src/State`, `src/State/Fields`.
 
@@ -825,16 +825,16 @@ Files:
 - `LocalHoltslagBovilleKzField.jl` (7493 bytes)
 - `TM5CalcKzzCSField.jl` (4524 bytes)
 - `TM5CalcKzzField.jl` (8047 bytes)
-- `WindowPBLKzField.jl` (4536 bytes)
+- `WindowPBLKzField.jl` (5312 bytes)
 - `adjoint_kernels.jl` (7588 bytes)
 - `conservative_dkg.jl` (11517 bytes)
 - `diffusion_kernels.jl` (17829 bytes)
 - `dz_helpers.jl` (20670 bytes)
 - `gchp_nonlocal_pbl.jl` (8854 bytes)
 - `operators.jl` (27596 bytes)
-- `pbl_physics.jl` (10998 bytes)
+- `pbl_physics.jl` (11070 bytes)
 - `tm5_calc_kzz.jl` (11424 bytes)
-- `window_kz_cache.jl` (3689 bytes)
+- `window_kz_cache.jl` (3777 bytes)
 - `workspace.jl` (5616 bytes)
 - `workspace_validation.jl` (7229 bytes)
 
@@ -1000,7 +1000,7 @@ None recorded.
 
 ## `src/Preprocessing/PhysicsInputs`
 
-Size: **97997 bytes / 27999.1 tokens**. Public names: **22**.
+Size: **98285 bytes / 28081.4 tokens**. Public names: **22**.
 
 Depends on: `src`, `src/GriddedIO`, `src/Grids`, `src/Parameters`, `src/Preprocessing/Spectral`, `src/State`.
 
@@ -1010,7 +1010,7 @@ Files:
 
 - `PhysicsInputs.jl` (1345 bytes)
 - `convection_mass_basis.jl` (11596 bytes)
-- `era5_surface_reader.jl` (24805 bytes)
+- `era5_surface_reader.jl` (25093 bytes)
 - `tm5_bldiff.jl` (28154 bytes)
 - `tm5_convection_conversion.jl` (27510 bytes)
 - `tm5_pbl_inputs.jl` (4587 bytes)
