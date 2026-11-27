@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The local TM5 PBL scheme now uses the same window-derived layer thickness
+  for Kz heights and implicit tracer exchange. Its Kz closure is unchanged.
+- ERA5 surface preprocessing now warns once per source path when direct
+  friction velocity is absent and it estimates friction velocity from 10 m
+  winds. The fallback value and instantaneous-field timing are unchanged.
 - The legacy local TM5 PBL scheme now applies the TM5 convective Prandtl
   correction. The separate local Holtslag–Boville closure is unchanged.
 - ERA5 surface preprocessing aligns hourly sensible and latent heat

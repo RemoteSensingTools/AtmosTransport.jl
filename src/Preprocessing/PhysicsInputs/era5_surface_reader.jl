@@ -457,7 +457,7 @@ function _load_surface_ustar(reader::ERA5SurfaceReader,
     if direct !== nothing
         ds, var_name = direct
         time_idx = _surface_time_index(reader, ds, win_idx)
-        return _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds)
+        return _normalize_surface_ll!(_surface_slice_to_FT(ds, var_name, time_idx, FT), ds), false
     end
 
     u10, _, _ = _load_surface_field(reader, :u10, win_idx, FT)
@@ -468,7 +468,7 @@ function _load_surface_ustar(reader::ERA5SurfaceReader,
     ustar = similar(u10, FT)
     drag = FT(sqrt(ERA5_USTAR_DRAG_COEFFICIENT))
     @. ustar = drag * hypot(u10, v10)
-    return ustar
+    return ustar, true
 end
 
 function _validate_era5_surface!(surface, path::String, win_idx::Int)
@@ -512,7 +512,7 @@ Returns `(pblh, t2m, ustar, hflux)`:
   * `t2m`   — 2 m temperature (K),
   * `ustar` — friction velocity (m s⁻¹), read directly when ERA5 `zust` is
     present, otherwise estimated from the 10 m wind via a constant drag
-    coefficient,
+    coefficient (warns once per source path),
   * `hflux` — surface **sensible** heat flux, upward-positive (W m⁻²).
 
 With `with_latent = true` the result additionally carries
@@ -528,7 +528,7 @@ function load_era5_surface_window(reader::ERA5SurfaceReader,
                                   ::Type{FT};
                                   with_latent::Bool = false) where FT
     pblh, _, _ = _load_surface_field(reader, :pblh, win_idx, FT)
-    ustar = _load_surface_ustar(reader, win_idx, FT)
+    ustar, estimated_ustar = _load_surface_ustar(reader, win_idx, FT)
     t2m, _, _ = _load_surface_field(reader, :t2m, win_idx, FT)
 
     endpoint_reader = nothing
@@ -570,5 +570,9 @@ function load_era5_surface_window(reader::ERA5SurfaceReader,
 
     _validate_surface_shapes!(surface, (reader.Nx, reader.Ny))
     _validate_era5_surface!(surface, reader.path, win_idx)
+    if estimated_ustar
+        source = reader.path
+        @warn "ERA5 surface source lacks direct friction velocity; estimating ustar from 10 m winds" source maxlog=1 _id=(:era5_surface_ustar_fallback, abspath(source))
+    end
     return surface
 end

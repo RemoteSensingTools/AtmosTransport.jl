@@ -223,7 +223,8 @@ end
 @testset "CubedSphere binary carries raw PBL surface fields and drives pbl diffusion" begin
     FT = Float64
     Nc, Nz = 4, 5
-    surface = make_cs_surface_panels(FT, Nc)
+    surface = make_cs_surface_panels(FT, Nc; t2m = FT(300))
+    cooler = make_cs_surface_panels(FT, Nc; t2m = FT(280))
 
     mktemp() do path, io
         close(io)
@@ -231,8 +232,8 @@ end
                                FT = FT,
                                Nc = Nc,
                                Nz = Nz,
-                               window_mass_scales = (FT(5e15),),
-                               surface_windows = (surface,))
+                               window_mass_scales = (FT(5e15), FT(5e15)),
+                               surface_windows = (surface, cooler))
 
         reader = TransportBinaryReader(path; FT = FT)
         @test has_surface(reader)
@@ -270,11 +271,29 @@ end
         fluxes = allocate_face_fluxes(mesh, Nz; FT = FT, basis = DryBasis)
         model = TransportModel(state, fluxes, driver_grid(driver), UpwindScheme();
                                diffusion = recipe.diffusion)
-        sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 1)
+        sim = DrivenSimulation(model, driver; start_window = 1, stop_window = 2)
 
         @test maximum(sim.model.diffusion.kz_field.host_cache[1]) > 0
+        field = sim.model.diffusion.kz_field
+        ws = sim.model.workspace.diffusion_ws
+        # The synthetic binary's hybrid ps is intentionally not used here.
+        # For equal mass increments, midpoint hydrostatics reduces to 1/(k-1/2).
+        R_T_over_g = (field.params.cp_dry / 3.5) * 300 / field.params.gravity
+        expected_dz = [R_T_over_g / (k - 0.5) for k in 1:Nz]
+        @test ws.layer_thickness[1][1, 1, :] ≈ expected_dz
+        mass_before = sum(get_tracer(sim.model.state, :CO2)[1][2, 2, :])
+        step!(sim)
+        k = Nz - 1
+        m1, m2 = sim.window.air_mass[1][2, 2, k:Nz]
+        kz = field.panels[1].data[1, 1, k:Nz]
+        expected_exchange = (m1 + m2) * sum(kz) /
+                            (expected_dz[k] + expected_dz[Nz])^2
+        @test ws.exchange[1][1, 1, k] ≈ expected_exchange
+        @test sum(get_tracer(sim.model.state, :CO2)[1][2, 2, :]) ≈ mass_before
+
         run!(sim)
-        @test sim.iteration == 2
+        @test sim.iteration == 4
+        @test ws.layer_thickness[1][1, 1, :] ≈ expected_dz .* (280 / 300)
         @test all(isfinite, sim.model.diffusion.kz_field.host_cache[1])
         @test all(isfinite, get_tracer(sim.model.state, :CO2)[1])
 

@@ -47,9 +47,9 @@ end
 @kernel function _window_pbl_kz_cs_panel_kernel!(cache, @Const(air_mass),
                                                  @Const(pblh), @Const(ustar),
                                                  @Const(hflux), @Const(t2m),
-                                                 @Const(areas), params, Hp)
+                                                 thickness, @Const(areas), params, Hp)
     i, j = @index(Global, NTuple)
-    _window_pbl_column!(cache, air_mass, pblh, ustar, hflux, t2m, areas, params, Hp, i, j)
+    _window_pbl_column!(cache, thickness, air_mass, pblh, ustar, hflux, t2m, areas, params, Hp, i, j)
 end
 
 @inline _backend_ready_array(a::Array) = false
@@ -64,21 +64,27 @@ function _backend_ready_surface(surface)
 end
 
 """
-    refresh_pbl_kz_cache!(field, surface, air_mass, cell_areas; halo_width)
+    refresh_pbl_kz_cache!(field, surface, air_mass, cell_areas; halo_width, layer_thickness = nothing)
 
 Recompute `field` from a window's raw PBL surface forcing and dry air mass.
 `air_mass` may be halo-padded; `halo_width` selects the interior. The computed
 host cache is copied back into the field panels, which may be CPU or device
-arrays.
+arrays. When provided, write the exact closure thicknesses [m] into the
+six interior `layer_thickness` panels for the implicit diffusion solve.
 """
 function refresh_pbl_kz_cache!(field::WindowPBLKzField{FT},
                                surface,
                                air_mass::NTuple{6},
                                cell_areas::AbstractMatrix;
-                               halo_width::Integer = 0) where FT
+                               halo_width::Integer = 0,
+                               layer_thickness::Union{Nothing, NTuple{6}} = nothing) where FT
     surface === nothing &&
         throw(ArgumentError("[diffusion] kind=\"pbl\" requires pblh/ustar/hflux/t2m surface fields in the transport window"))
-    if _try_refresh_window_kz_backend!(field, surface, nothing, air_mass, cell_areas;
+    if layer_thickness !== nothing
+        all(panel -> size(layer_thickness[panel]) == size(field.panels[panel].data), 1:6) ||
+            throw(DimensionMismatch("PBL thickness must match the interior Kz panel shapes"))
+    end
+    if _try_refresh_window_kz_backend!(field, surface, layer_thickness, air_mass, cell_areas;
                                           halo_width = halo_width)
         return field
     end
@@ -93,13 +99,17 @@ function refresh_pbl_kz_cache!(field::WindowPBLKzField{FT},
         ustar = _surface_panel(surface, :ustar, panel)
         hflux = _surface_panel(surface, :hflux, panel)
         t2m   = _surface_panel(surface, :t2m,   panel)
-        Nc, Ny, Nz = size(cache)
+        dest = layer_thickness === nothing ? nothing : layer_thickness[panel]
+        thickness = dest === nothing || dest isa Array ? dest :
+                    similar(cache, eltype(dest), size(dest))
+        Nc, Ny, _ = size(cache)
 
         for j in 1:Ny, i in 1:Nc
-            _window_pbl_column!(cache, mhost, pblh, ustar, hflux, t2m, areas, p, Hp, i, j)
+            _window_pbl_column!(cache, thickness, mhost, pblh, ustar, hflux, t2m, areas, p, Hp, i, j)
         end
 
         copyto!(field.panels[panel].data, cache)
+        thickness === dest || copyto!(dest, thickness)
     end
     return field
 end
