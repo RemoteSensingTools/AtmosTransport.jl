@@ -603,6 +603,10 @@ end
     return seven_twelfths * (c_l + c_r) - one_twelfth * (c_ll + c_rr)
 end
 
+# Limiters whose PPM face flux integrates the limited parabola over the swept
+# fraction and whose edges use van Leer-limited slopes.
+const _SweptParabolaLimiter = Union{CW84Limiter, Hord12Limiter}
+
 """
     _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter) → FT
 
@@ -615,12 +619,14 @@ e_{i+1/2} = \\frac{c_i + c_{i+1}}{2} - \\frac{δc_{i+1} - δc_i}{6},
 ```
 
 which lies between `c_l` and `c_r` and equals the fourth-order edge where
-neither slope is limited.
+neither slope is limited. `Hord12Limiter` uses the same edge: FV3's
+`al = (c_l + c_r)/2 + (dm_l − dm_r)/3` (`tp_core.F90`, `xppm`) with
+`dm = δc / 2`, the same value up to the rounding of FV3's `r3 = 1/3`.
 """
 @inline _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::AbstractLimiter) =
     _ppm_edge_value(c_ll, c_l, c_r, c_rr)
 
-@inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::CW84Limiter)
+@inline function _ppm_edge_value(c_ll, c_l, c_r, c_rr, ::_SweptParabolaLimiter)
     FT = typeof(c_l)
     δc_l = limited_slope(c_ll, c_l, c_r, MonotoneLimiter())
     δc_r = limited_slope(c_l, c_r, c_rr, MonotoneLimiter())
@@ -668,6 +674,26 @@ All conditions are evaluated branchlessly via `ifelse` for GPU safety.
 end
 
 """
+    ppm_limit_profile(q_L, c_bar, q_R, ::AbstractLimiter) → (q_L, q_R)
+
+Fallback for a limiter without its own profile rule: the monotonicity
+conditions of `MonotoneLimiter` (CW84 eq. 1.10).
+"""
+@inline ppm_limit_profile(q_L, c_bar, q_R, ::AbstractLimiter) =
+    ppm_limit_profile(q_L, c_bar, q_R, MonotoneLimiter())
+
+"""
+    ppm_limit_profile(q_L, c_bar, q_R, neighbours, limiter) → (q_L, q_R)
+
+The profile limiter as the PPM face fluxes call it, with the means of the two
+cells on either side of the cell, `neighbours = (c_mm, c_m, c_p, c_pp)`, for a
+limiter whose constraints read five cells. The fallback ignores them and calls
+the three-value method `ppm_limit_profile(q_L, c_bar, q_R, limiter)`.
+"""
+@inline ppm_limit_profile(q_L, c_bar, q_R, _neighbours, limiter::AbstractLimiter) =
+    ppm_limit_profile(q_L, c_bar, q_R, limiter)
+
+"""
     ppm_limit_profile(q_L, c_bar, q_R, ::NoLimiter) → (q_L, q_R)
 
 No limiting — return raw 4th-order edge values unchanged.
@@ -695,6 +721,46 @@ The monotonicity conditions of `MonotoneLimiter` (CW84 eq. 1.10).
     ppm_limit_profile(q_L, c_bar, q_R, MonotoneLimiter())
 
 """
+    ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::Hord12Limiter) → (q_L, q_R)
+
+FV3's `hord = 12` profile constraint (`tp_core.F90`, `xppm`, GCHP fork; the
+`hord = 10` branch of current NOAA-GFDL FV3), "Lin's modification of Huynh 2nd
+constraint", on the edge offsets `b_L = q_L − c̄`, `b_R = q_R − c̄` of the cell
+with mean `c̄ = c_bar` and neighbours `c_mm, c_m | c_p, c_pp`:
+
+- if `|dm_{i-1}| + |dm_i| + |dm_{i+1}| < 10⁻²⁵` (`dm` half the van Leer slope),
+  `b_L = b_R = 0`;
+- else if `|3(b_L + b_R)| > |b_L − b_R|`, with `Δ_k = 2(χ_{k+1} − χ_k)`,
+
+      b_R ← min(max(0, p₂, l₂), max(b_R, min(0, p₂, l₂))),   p₂ = Δ_{i-1}, l₂ = p₂ − ¾ Δ_{i-2},
+      b_L ← min(max(0, p₁, l₁), max(b_L, min(0, p₁, l₁))),   p₁ = −Δ_i,    l₁ = p₁ + ¾ Δ_{i+1}.
+
+Branch-free. The three-value method has no neighbours and falls back to the
+CW84 conditions.
+"""
+@inline function ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::Hord12Limiter)
+    FT = typeof(c_bar)
+    z = zero(FT)
+    b_L = q_L - c_bar
+    b_R = q_R - c_bar
+    mono = MonotoneLimiter()
+    sum_dm = (abs(limited_slope(c_mm, c_m, c_bar, mono)) + abs(limited_slope(c_m, c_bar, c_p, mono)) +
+              abs(limited_slope(c_bar, c_p, c_pp, mono))) / FT(2)
+    flat = sum_dm < FT(1e-25)
+    constrain = abs(FT(3) * (b_L + b_R)) > abs(b_L - b_R)
+    three_quarters = FT(3) / FT(4)
+    pmp_2 = FT(2) * (c_bar - c_m)
+    lac_2 = pmp_2 - three_quarters * (FT(2) * (c_m - c_mm))
+    b_R_h = min(max(z, pmp_2, lac_2), max(b_R, min(z, pmp_2, lac_2)))
+    pmp_1 = -(FT(2) * (c_p - c_bar))
+    lac_1 = pmp_1 + three_quarters * (FT(2) * (c_pp - c_p))
+    b_L_h = min(max(z, pmp_1, lac_1), max(b_L, min(z, pmp_1, lac_1)))
+    b_L = ifelse(flat, z, ifelse(constrain, b_L_h, b_L))
+    b_R = ifelse(flat, z, ifelse(constrain, b_R_h, b_R))
+    return c_bar + b_L, c_bar + b_R
+end
+
+"""
     _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, limiter) → (sx_l, sx_r)
 
 Moments of the two donor cells of a face for `_slopes_face_flux`: the left cell
@@ -710,12 +776,14 @@ the swept fraction `α` (clamped like in `_slopes_face_flux`),
     sx_l = m_l ((q_R_l − c_l) − α₊ b₀_l),   sx_r = m_r ((c_r − q_L_r) − α₋ b₀_r),
 
 so that `_slopes_face_flux` returns `F` times the mean of the donor parabola
-over the swept part of the cell (CW84 eq. 1.12).
+over the swept part of the cell (CW84 eq. 1.12). `Hord12Limiter` uses the same
+moments: with `b_L = q_L − c`, `b_R = q_R − c` this is FV3's face value
+`c + (1 − α)(b_R − α(b_L + b_R))` (`tp_core.F90`, `xppm`).
 """
 @inline _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, ::AbstractLimiter) =
     (m_l * (q_R_l - c_l), m_r * (c_r - q_L_r))
 
-@inline function _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, ::CW84Limiter)
+@inline function _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, ::_SweptParabolaLimiter)
     α_pos = clamp(F / m_l, zero(F), one(F))
     α_neg = clamp(F / m_r, -one(F), zero(F))
     b0_l = (q_L_l - c_l) + (q_R_l - c_l)
@@ -747,7 +815,8 @@ Tracer mass flux through x-face `face_i` for PPM advection.
 # Algorithm
 1. Load 6 mixing ratios from the stencil
 2. Compute 3 CW84 4th-order edge values
-3. Apply monotone profile limiting to each donor cell
+3. Limit the profile of each donor cell (`ppm_limit_profile`, with its
+   neighbours)
 4. Compute edge-offset moments (PPM analogue of slopes `sx`)
 5. Evaluate Courant-fraction flux via `_slopes_face_flux`
 """
@@ -775,8 +844,8 @@ Base.@propagate_inbounds function _xface_tracer_flux(face_i, j, k, rm, m, F, sch
     e_face  = _ppm_edge_value(c_2, c_1, c_0, c_p, limiter)
     e_right = _ppm_edge_value(c_1, c_0, c_p, c_pp, limiter)
 
-    q_L_l, q_R_l = ppm_limit_profile(e_left, c_1, e_face, limiter)
-    q_L_r, q_R_r = ppm_limit_profile(e_face, c_0, e_right, limiter)
+    q_L_l, q_R_l = ppm_limit_profile(e_left, c_1, e_face, (c_3, c_2, c_0, c_p), limiter)
+    q_L_r, q_R_r = ppm_limit_profile(e_face, c_0, e_right, (c_2, c_1, c_p, c_pp), limiter)
 
     m_l = max(m[i_1, j, k], m_floor)
     m_r = max(m[i_0, j, k], m_floor)
@@ -825,8 +894,8 @@ Tracer mass flux through y-face `face_j` for PPM advection.
     e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter)
     e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r, limiter)
 
-    q_L_l, q_R_l = ppm_limit_profile(e_left, c_l, e_face, limiter)
-    q_L_r, q_R_r = ppm_limit_profile(e_face, c_r, e_right, limiter)
+    q_L_l, q_R_l = ppm_limit_profile(e_left, c_l, e_face, (c_3l, c_ll, c_r, c_rr), limiter)
+    q_L_r, q_R_r = ppm_limit_profile(e_face, c_r, e_right, (c_ll, c_l, c_rr, c_3r), limiter)
 
     m_l = max(m[i, jl, k], m_floor)
     m_r = max(m[i, jr, k], m_floor)
@@ -880,8 +949,8 @@ Base.@propagate_inbounds function _zface_tracer_flux(i, j, face_k, rm, m, F, sch
     e_face  = _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter)
     e_right = _ppm_edge_value(c_l, c_r, c_rr, c_3r, limiter)
 
-    q_L_l, q_R_l = ppm_limit_profile(e_left, c_l, e_face, limiter)
-    q_L_r, q_R_r = ppm_limit_profile(e_face, c_r, e_right, limiter)
+    q_L_l, q_R_l = ppm_limit_profile(e_left, c_l, e_face, (c_3l, c_ll, c_r, c_rr), limiter)
+    q_L_r, q_R_r = ppm_limit_profile(e_face, c_r, e_right, (c_ll, c_l, c_rr, c_3r), limiter)
 
     m_l = max(m[i, j, kl], m_floor)
     m_r = max(m[i, j, kr], m_floor)

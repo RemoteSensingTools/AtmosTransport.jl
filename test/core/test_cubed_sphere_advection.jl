@@ -6,7 +6,7 @@ using Logging, Random
 
 using AtmosTransport
 using .AtmosTransport.Grids: reciprocal_edge
-using .AtmosTransport.Operators: MonotoneLimiter, CW84Limiter, required_halo_width
+using .AtmosTransport.Operators: MonotoneLimiter, CW84Limiter, Hord12Limiter, required_halo_width
 using .AtmosTransport.Operators.Advection: fill_panel_halos!,
     strang_split_cs_mt!, strang_split!, CSAdvectionWorkspace,
     _sweep_x_panels_mt_pingpong!, _sweep_y_panels_mt_pingpong!,
@@ -244,7 +244,8 @@ end
 
 @testset "CS Z ping-pong sweep matches scalar reference" begin
     for FT in (Float32, Float64), Nz in (1, 5), Nt in (1, 3), scheme in
-            (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(), PPMScheme(CW84Limiter()))
+            (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(), PPMScheme(CW84Limiter()),
+             PPMScheme(Hord12Limiter()))
         Nc, Hp = 5, required_halo_width(scheme)
         N = Nc + 2Hp
         mesh = CubedSphereMesh(; Nc, Hp, FT)
@@ -318,7 +319,8 @@ end
                        AtmosTransport.Grids.GEOSNativePanelConvention()),
             FT in (Float32, Float64), scheme in
             (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(),
-             PPMScheme(CW84Limiter()), LinRoodPPMScheme(5), LinRoodPPMScheme(7))
+             PPMScheme(CW84Limiter()), PPMScheme(Hord12Limiter()), LinRoodPPMScheme(5),
+             LinRoodPPMScheme(7))
         air_rel, tracer_rel = run_mirrored_seam_advection_conservation(
             scheme; FT, flux_gain=100, convention)
         tolerance = FT == Float32 ? 3e-7 : 2e-14
@@ -364,6 +366,7 @@ end
         SlopesScheme(MonotoneLimiter()),
         PPMScheme(MonotoneLimiter()),
         PPMScheme(CW84Limiter()),
+        PPMScheme(Hord12Limiter()),
         LinRoodPPMScheme(5),
     )
 

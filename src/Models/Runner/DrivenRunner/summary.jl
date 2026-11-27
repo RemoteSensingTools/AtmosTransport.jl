@@ -18,6 +18,7 @@ _advection_label(::SlopesScheme) = "Slopes"
 _advection_label(::UpwindScheme) = "Upwind"
 _limiter_suffix(::Any) = ""
 _limiter_suffix(::CW84Limiter) = ", CW84"
+_limiter_suffix(::Hord12Limiter) = ", FV3 hord 12"
 _vertical_suffix(::Any) = ""
 _vertical_suffix(v::PPMScheme) = _vertical_suffix(v.vertical)          # Lin-Rood's vertical sweeps
 _vertical_suffix(::FV3ScalarProfile{true}) = ", FV3 kord 8 vertical"

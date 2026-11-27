@@ -177,9 +177,9 @@
         },
         "limiter": {
           "type": "string",
-          "enum": ["monotone", "cw84"],
+          "enum": ["monotone", "cw84", "hord12"],
           "default": "monotone",
-          "description": "PPM only: monotone, or cw84 for the complete Colella-Woodward scheme."
+          "description": "PPM only: monotone, cw84 for the complete Colella-Woodward scheme, or hord12 for FV3's hord = 12 (GCHP's tracer PPM; forward runs only, no adjoint)."
         },
         "check_binary_cfl": {
           "type": "boolean",

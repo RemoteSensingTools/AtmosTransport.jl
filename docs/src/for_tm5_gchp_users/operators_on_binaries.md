@@ -134,7 +134,7 @@ no adjoint record.
 | --- | --- | --- | --- |
 | `UpwindScheme` | First-order upwind (debugging only) | LL, RG, CS | yes |
 | `SlopesScheme` | TM5's Russell–Lerner face flux, but with van Leer slopes re-diagnosed every sweep instead of TM5's prognostic moments | LL, CS | yes |
-| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5) | LL, CS split-sweep | yes |
+| `PPMScheme` | PPM with Colella-Woodward monotonicity (GCHP PPM-NV5); `PPMScheme(Hord12Limiter())` is GCHP's tracer reconstruction, `hord_tr = 12`, in split sweeps | LL, CS split-sweep | yes |
 | `LinRoodPPMScheme{ORD}` (ORD ∈ {5,7}) | FV3 Lin-Rood PPM (GCHP dynamics) | CS only | **no** (per-tracer loop) |
 
 Reduced Gaussian currently supports `UpwindScheme` only; requesting a

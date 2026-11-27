@@ -125,22 +125,31 @@ Available limiters:
 - [`MonotoneLimiter`](@ref): van Leer minmod (monotone, TVD)
 - [`PositivityLimiter`](@ref): ensures non-negative face values
 - [`CW84Limiter`](@ref): the complete Colella–Woodward PPM (`PPMScheme` only)
+- [`Hord12Limiter`](@ref): FV3's tracer PPM, `hord = 12` (`PPMScheme` only)
 
 See `limiters.jl` for the `@inline` implementations.
 
 # Adding a limiter
 
-A limiter is a subtype with methods for the functions the forward kernels call:
+A limiter is a subtype with methods for the functions the forward kernels call.
+Each has a fallback on `AbstractLimiter` that behaves as `MonotoneLimiter`, so a
+new limiter defines only the functions in which it differs:
 
 - `limited_slope(c_left, c_center, c_right, ::MyLimiter)`: the slope of the
   centre cell from three consecutive cell means, as the difference across one
   cell (the centred value is `(c_right - c_left) / 2`). Called by
-  `SlopesScheme`.
+  `SlopesScheme`. Fallback: the van Leer minmod slope.
 - `limited_moment(sx, rm_cell, ::MyLimiter)`: returns the slope moment `sx`
   (tracer mass), optionally clamped with the cell's tracer mass `rm_cell`;
   return `sx` for no clamp. Called by `SlopesScheme` and `PPMScheme`.
+  Fallback: no clamp.
 - `ppm_limit_profile(q_L, c_bar, q_R, ::MyLimiter)`: returns the limited edge
-  values `(q_L, q_R)` of the parabola. Called by `PPMScheme` only.
+  values `(q_L, q_R)` of the parabola. Called by `PPMScheme` only. Fallback:
+  the Colella–Woodward monotonicity conditions.
+  The face fluxes call it as `ppm_limit_profile(q_L, c_bar, q_R, neighbours,
+  ::MyLimiter)` with `neighbours = (c_mm, c_m, c_p, c_pp)`, the means of the
+  two cells on either side; a limiter whose constraints read five cells
+  defines this method instead (the fallback drops `neighbours`).
 
 The methods must be branch-free scalar code (`ifelse`, no allocation) to run
 inside GPU kernels. They can be defined outside the package:
@@ -150,7 +159,7 @@ Limits of this interface:
 
 - For PPM, a new limiter changes the profile limiting and the moment clamp.
   The edge values before limiting stay the unlimited fourth-order ones, as for
-  every limiter except `CW84Limiter`.
+  every limiter except `CW84Limiter` and `Hord12Limiter`.
 - The `FV3ScalarProfile` vertical reconstruction and `LinRoodPPMScheme` do not
   read the limiter of the scheme, built in or added.
 - The adjoint kernels and the run-configuration parser support the built-in
@@ -224,6 +233,45 @@ monotone. The stencil is the same six cells as the default, so halo widths do
 not change.
 """
 struct CW84Limiter <: AbstractLimiter end
+
+"""
+    Hord12Limiter <: AbstractLimiter
+
+FV3's horizontal tracer PPM with `hord = 12`, the GEOS-Chem High Performance
+default (`hord_tr = 12`), for [`PPMScheme`](@ref) only. It is `xppm`/`yppm` of
+FV3's `tp_core.F90` in the GCHP fork (`geoschem/GFDL_atmos_cubed_sphere`,
+branch `gchp/main`), where every `hord ≥ 8` other than 8 and 11 takes this
+branch (9 and 13 then add a positive-definite filter). In current NOAA-GFDL and GEOS-ESM FV3 that branch is `hord = 10` and
+`hord = 12` is a different, positive-definite limiter (Lin & Rood 1996).
+
+Of the three parts of the FV3 scheme:
+
+1. Edge values: `al = (χ_{i-1} + χ_i)/2 + (dm_{i-1} − dm_i)/3` (Lin 2004,
+   eq. B2) with the monotonised quarter difference `dm`, which is half the van
+   Leer slope, so the edges are those of `CW84Limiter` (CW84 eqs. 1.7–1.8).
+2. Profile: what FV3 calls "Lin's modification of Huynh 2nd constraint"
+   (Huynh 1996; compare Lin 2004, eqs. B5–B6, which use `dm` where FV3 uses
+   the unlimited differences): where `|3(b_L + b_R)| > |b_L − b_R|`, each edge
+   offset `b = q_edge − χ_i` is clamped between 0 and two bounds built from the
+   differences of the five cells around the donor; a cell whose three `dm` sum
+   below `1e-25` in magnitude is flattened. This replaces the CW84
+   monotonicity conditions.
+3. Face flux: the mean of the donor parabola over the swept fraction, as for
+   `CW84Limiter` (CW84 eq. 1.12).
+
+The constraint keeps a non-negative tracer non-negative to rounding in
+one-dimensional uniform flow with Courant number up to 1, but is not strictly
+monotone (overshoots of order 1e-5 on a step). The stencil is the six cells of
+the other limiters, so halo widths do not change. Differences from FV3: AT reads
+neighbour cells across cubed-sphere seams from the halo, where FV3 replaces the
+edges of the two cells next to a panel edge by one-sided values; the
+`PPMScheme` sweeps are Strang split, where FV3's `fv_tp_2d` adds Lin–Rood cross
+terms (`LinRoodPPMScheme` has them); the Courant number is the mass fraction
+`F / m` of the donor cell. With `vertical = SameAsHorizontal()` the vertical
+sweep uses the same limiter; FV3 instead remaps tracers in the vertical
+(`FV3ScalarProfile`, `kord = 8`). No adjoint.
+"""
+struct Hord12Limiter <: AbstractLimiter end
 
 # ---- Concrete schemes ----------------------------------------------------
 
@@ -340,6 +388,8 @@ end
 SlopesScheme() = SlopesScheme(MonotoneLimiter())
 SlopesScheme(::CW84Limiter) = throw(ArgumentError(
     "CW84Limiter selects the complete Colella–Woodward PPM; use PPMScheme(CW84Limiter())."))
+SlopesScheme(::Hord12Limiter) = throw(ArgumentError(
+    "Hord12Limiter selects FV3's hord = 12 PPM; use PPMScheme(Hord12Limiter())."))
 
 # ---- Vertical reconstruction of the PPM scheme ---------------------------
 
@@ -410,10 +460,13 @@ slope; it is not monotone. With [`CW84Limiter`](@ref) the edges are van
 Leer-limited and the flux integrates the parabola over the swept fraction: the
 complete Colella–Woodward scheme, which keeps non-negative tracers
 non-negative in every sweep in which no cell exports more than its air mass.
+With [`Hord12Limiter`](@ref) it is FV3's `hord = 12` reconstruction (the same
+edges and swept-parabola flux, Huynh's constraint instead of the CW84 one).
 
 Implemented for structured latitude-longitude and cubed-sphere grids. The TOML
 runner selects the monotone variant with `scheme = "ppm"` and the complete
-CW84 scheme with `limiter = "cw84"`; it does not accept `ppm_order` for this
+CW84 scheme with `limiter = "cw84"`, FV3's `hord = 12` with
+`limiter = "hord12"`; it does not accept `ppm_order` for this
 scheme. Reduced-Gaussian face-indexed transport does not support PPM.
 
 Kernel tests and real-input V100 conservation/performance experiments cover
@@ -422,7 +475,8 @@ the complete cubed-sphere update: small negative column means have been observed
 
 # Fields
 - `limiter::L` — parabolic profile limiting policy (default: `MonotoneLimiter()`;
-  `CW84Limiter()` for the complete Colella–Woodward scheme)
+  `CW84Limiter()` for the complete Colella–Woodward scheme, `Hord12Limiter()`
+  for FV3's `hord = 12`)
 - `vertical::V` — vertical reconstruction: [`SameAsHorizontal`](@ref) (default)
   or [`FV3ScalarProfile`](@ref) (cubed sphere; TOML `vertical = "fv3_kord8"`, or
   `"fv3_kord8_signed"` for signed tracers)
@@ -431,6 +485,7 @@ the complete cubed-sphere update: small negative column means have been observed
 ```julia
 PPMScheme()                                    # monotone-limited PPM
 PPMScheme(CW84Limiter())                       # complete CW84 PPM
+PPMScheme(Hord12Limiter(); vertical = FV3ScalarProfile())   # GCHP's hord 12 / kord 8
 PPMScheme(NoLimiter())                         # unlimited (may oscillate)
 PPMScheme(; vertical = FV3ScalarProfile())     # FV3 kord = 8 vertical profile
 ```
@@ -515,7 +570,7 @@ paths.
 
 export AbstractAdvectionScheme
 export AbstractConstantScheme, AbstractLinearScheme, AbstractQuadraticScheme
-export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter
+export AbstractLimiter, NoLimiter, MonotoneLimiter, PositivityLimiter, CW84Limiter, Hord12Limiter
 export limited_slope, limited_moment, ppm_limit_profile
 export UpwindScheme, SlopesScheme, PPMScheme, LinRoodPPMScheme, NoAdvection
 export AbstractVerticalReconstruction, SameAsHorizontal, FV3ScalarProfile

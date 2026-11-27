@@ -23,7 +23,7 @@ using .AtmosTransport.State.Fields:
 using .AtmosTransport.Operators.Diffusion:
     WindowPBLKzField, LocalHoltslagBovilleKzField, uses_diffusive_surface_flux_boundary
 using .AtmosTransport.Operators: MonotoneLimiter, SameAsHorizontal, FV3ScalarProfile,
-    NoLimiter, CW84Limiter
+    NoLimiter, CW84Limiter, Hord12Limiter
 
 const CS_STYLE = CubedSphereRuntimeRecipeStyle()
 cs_advection(cfg) = build_runtime_advection(cfg, CS_STYLE)
@@ -216,6 +216,10 @@ AtmosTransport.Models.Physics._runtime_has_cmfmc(::StubStructuredReader) = false
         forward, inversion = ForwardAdvectionContext(), InversionAdvectionContext()
         @test advection_spec(Dict{String,Any}(), forward) isa UpwindAdvectionSpec
         @test advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84"), forward).limiter isa CW84Limiter
+        @test advection_spec(Dict("scheme" => "ppm", "limiter" => "hord12"), forward).limiter isa Hord12Limiter
+        # hord12 has no adjoint, so the inversion driver does not offer it.
+        @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "hord12"), inversion)
+        @test advection_spec(Dict("scheme" => "ppm", "limiter" => "cw84"), inversion).limiter isa CW84Limiter
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "none"), forward)
         # The inversion driver: same parser, `none` accepted, `scheme` required.

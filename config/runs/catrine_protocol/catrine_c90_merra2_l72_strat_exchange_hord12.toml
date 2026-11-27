@@ -1,0 +1,68 @@
+# Cross-tropopause exchange with FV3's hord = 12 limiter, MERRA-2 C90 L72,
+# 2021-12-01 to 2022-03-31.
+#
+# The binaries and physics of catrine_c90_merra2_l72_protocol.toml, with
+# `limiter = "hord12"`: horizontally FV3's hord = 12 PPM (GCHP's hord_tr), and
+# vertically FV3's kord = 8 profile (GCHP's kord_tr). Three passive pulses,
+# initialised as uniform mixing ratio in one pressure layer each (at 0.07 and
+# 0.2 of surface pressure and in the lowest layer), need no flux inputs; the
+# observable is the fraction of each above 100 hPa. Run it next to the same
+# file with the `limiter` line removed (the default monotone PPM) and with
+# `scheme = "linrood"`, `ppm_order = 7` to compare the horizontal
+# reconstructions (see "Choosing a PPM limiter" in docs/src/theory/advection_schemes.md).
+# Forward only: hord12 has no adjoint.
+
+[input]
+folder       = "~/data/AtmosTransport/met/merra2/c90/transport_binary_v4_l72_f32_physics_hm_gchp"
+start_date   = "2021-12-01"
+end_date     = "2022-03-31"
+file_pattern = "merra2_transport_{YYYYMMDD}_float32.bin"
+
+[architecture]
+use_gpu = true
+backend = "cuda"
+
+[numerics]
+float_type = "Float64"
+
+[advection]
+scheme   = "ppm"
+limiter  = "hord12"                  # FV3 hord = 12 (GCHP's tracer PPM)
+vertical = "fv3_kord8"               # FV3 scalar_profile, kord = 8 (GCHP's tracer profile)
+
+[tracers.strat70.init]
+kind = "pressure_layer"
+psurf_fraction = 0.07
+total_molecules = 1.0e42
+
+[tracers.ut200.init]
+kind = "pressure_layer"
+psurf_fraction = 0.2
+total_molecules = 1.0e42
+
+[tracers.sfc.init]
+kind = "pressure_layer"
+lowest_layer = true
+total_molecules = 1.0e42
+
+[diffusion]
+kind = "geoschem_nonlocal_vdiff"
+
+[convection]
+kind = "cmfmc"
+cloud_base = "dqrcu"
+
+[output]
+format = "netcdf"
+split = "daily"
+snapshot_interval_hours = 24
+path = "~/data/AtmosTransport/output/strat_exchange/hord12/c90_merra2_{YYYYMMDD}.nc"
+
+  [output.fields]
+  layers = "full"
+  column_mean = false
+  column_mass_per_area = false
+  air_mass = false
+  air_mass_layers = "full"
+  air_mass_per_area = true
+  column_air_mass_per_area = true

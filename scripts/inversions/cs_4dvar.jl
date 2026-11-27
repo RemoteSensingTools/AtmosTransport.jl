@@ -41,7 +41,7 @@
 #
 #     [advection]                 # required; same parser as run_transport.jl
 #     scheme = "ppm"              # upwind | slopes | ppm | linrood | none
-#     limiter = "none"            # ppm only: monotone (default) | cw84 | none
+#     limiter = "none"            # ppm only: monotone (default) | cw84 | none (no hord12: no adjoint)
 #     # vertical = "fv3_kord8"    # linrood: fv3_kord8 (default) | fv3_kord8_signed | upwind
 #     # ppm_order = 5             # linrood only: 5 or 7
 #     # The gradient is the adjoint of this scheme, so `scheme` has no

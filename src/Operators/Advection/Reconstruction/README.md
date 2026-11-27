@@ -16,10 +16,12 @@ This is a plain sub-folder of the Advection module; see the
 
 A limiter is a subtype of `AbstractLimiter` with methods for `limited_slope`,
 `limited_moment` and, for PPM, `ppm_limit_profile` (signatures in the
-`AbstractLimiter` docstring, with the limits of the interface). These three
-functions are exported from `Operators` and may be extended outside the
-package; `test/core/test_advection_kernels.jl` runs such a limiter through the
-sweep kernel. The FV3 vertical profile and Lin–Rood do not read the limiter,
+`AbstractLimiter` docstring, with the limits of the interface). Each function
+has a fallback on `AbstractLimiter` that behaves as `MonotoneLimiter`, so a
+limiter defines only what differs. These three functions are exported from
+`Operators` and may be extended outside the package;
+`test/core/test_advection_kernels.jl` runs such a limiter through the sweep
+kernel. The FV3 vertical profile and Lin–Rood do not read the limiter,
 and the adjoint kernels and the configuration parser support the built-in
 limiters only.
 
