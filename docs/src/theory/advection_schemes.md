@@ -13,7 +13,7 @@ appropriate transport path.
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `L = CW84Limiter` the flux integrates the limited parabola (the complete CW84 scheme). With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`, but the 1-D update over- and undershoots; with `CW84Limiter` monotone in uniform 1-D flow (Courant number ≤ 1) | signed; small negative column means observed in CS runs with `MonotoneLimiter`. `CW84Limiter` keeps a non-negative tracer non-negative in every sweep in which no cell exports more than its air mass. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
+| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `L = CW84Limiter` the flux integrates the limited parabola (the complete CW84 scheme); `L = FV3HuynhLimiter` is FV3's `hord = 12`, the same edges and flux with Huynh's constraint. With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`, but the 1-D update over- and undershoots; with `CW84Limiter` monotone in uniform 1-D flow (Courant number ≤ 1) | signed; small negative column means observed in CS runs with `MonotoneLimiter`. `CW84Limiter` keeps a non-negative tracer non-negative in every sweep in which no cell exports more than its air mass. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The accuracy column describes the **per-face
@@ -51,6 +51,8 @@ Choose the algorithm explicitly when comparing runs:
 | `scheme = "slopes"` | `SlopesScheme(MonotoneLimiter())` | slopes |
 | `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM-informed slopes, as horizontally |
 | `scheme = "ppm", limiter = "cw84"` | `PPMScheme(CW84Limiter())` | complete CW84 PPM, as horizontally |
+| `scheme = "ppm", limiter = "hord12"` | `PPMScheme(FV3HuynhLimiter())` | FV3 `hord = 12` reconstruction, as horizontally |
+| `scheme = "ppm", limiter = "hord12", vertical = "fv3_kord8"` | `PPMScheme(FV3HuynhLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`: GCHP's `hord_tr = 12`, `kord_tr = 8` pair |
 | `scheme = "ppm", vertical = "fv3_kord8"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`, positive definite |
 | `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
 | `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` (default) |
@@ -66,7 +68,8 @@ constructors `LinRoodAdvectionSpec(order)` and `LinRoodPPMScheme()` remain
 upwind. Setting `ppm_order` with `scheme = "ppm"`
 is an error: standard split PPM has no order selector. `vertical` is only
 accepted with `scheme = "ppm"` or `"linrood"`, and `limiter` (`"monotone"`, the
-default, or `"cw84"`) only with `scheme = "ppm"`. `NoLimiter` and
+default, `"cw84"` or `"hord12"`) only with `scheme = "ppm"`; the inversion
+driver does not accept `"hord12"`, which has no adjoint. `NoLimiter` and
 `PositivityLimiter` are selected through the Julia constructors.
 Packed tracer arrays, GPU workgroup sizes, and copy-back or ping-pong execution
 are implementation choices within a scheme, not additional algorithms.
@@ -208,6 +211,60 @@ cells; at 20 cells it is 29% higher, because the profile limiter flattens the
 sine's extrema. The cubed-sphere adjoint supports both the monotone and CW84
 limiters (`_ppm_face_coeffs`); the run log labels the option `PPM, CW84`.
 
+**FV3 `hord = 12` (`limiter = "hord12"`, `PPMScheme(FV3HuynhLimiter())`).** The
+horizontal tracer reconstruction of GEOS-Chem High Performance, whose FV3
+default is `hord_tr = 12` (`fv_arrays.F90:324` of
+`geoschem/GFDL_atmos_cubed_sphere`, branch `gchp/main`, commit `643f3c44`), as
+`xppm`/`yppm` in `tp_core.F90` of that fork compute it:
+
+1. Edges (`tp_core.F90:534-541`): `al_i = ½(χ_{i−1} + χ_i) + ⅓(dm_{i−1} − dm_i)`
+   (Lin 2004, eq. B2), with `dm_i = sign(xt) min(|xt|, max(χ_{i−1}, χ_i, χ_{i+1}) − χ_i,
+   χ_i − min(χ_{i−1}, χ_i, χ_{i+1}))`, `xt = ¼(χ_{i+1} − χ_{i−1})`. `dm` is half
+   the minmod slope `δχ` above, so these are the CW84 edges (to the rounding of
+   FV3's `r3 = 1/3`).
+2. Profile (`tp_core.F90:556-575`, the branch taken by every `hord ≥ 8` other
+   than 8 and 11; FV3 calls it "Lin's modification of Huynh 2nd constraint",
+   after Huynh 1996): with `b_L = χ^L − χ`, `b_R = χ^R − χ` and
+   `Δ_k = 2(χ_{k+1} − χ_k)`, a cell with `|dm_{i−1}| + |dm_i| + |dm_{i+1}| < 10⁻²⁵`
+   is flattened, and where `|3(b_L + b_R)| > |b_L − b_R|`
+   ```math
+   b_R \leftarrow \min\bigl(\max(0, p_2, l_2), \max(b_R, \min(0, p_2, l_2))\bigr),\quad
+   p_2 = Δ_{i-1},\ l_2 = p_2 - \tfrac34 Δ_{i-2},
+   ```
+   ```math
+   b_L \leftarrow \min\bigl(\max(0, p_1, l_1), \max(b_L, \min(0, p_1, l_1))\bigr),\quad
+   p_1 = -Δ_i,\ l_1 = p_1 + \tfrac34 Δ_{i+1}.
+   ```
+   It reads the five cells around the donor, which the six-cell stencil
+   already holds (the five-argument `ppm_limit_profile`). Lin (2004),
+   eqs. B5–B6, give a related constraint for the vertical remapping, with
+   `dm` where FV3 uses the unlimited differences `Δ`.
+3. Flux (`tp_core.F90:621-627`): the swept mean of the donor parabola,
+   `χ + (1 − α)(b_R − α(b_L + b_R))`, the CW84 flux above.
+
+In current NOAA-GFDL FV3 (`NOAA-GFDL/GFDL_atmos_cubed_sphere`, `main`) and GEOS
+FV3 (`GEOS-ESM/GFDL_atmos_cubed_sphere`, `geos/develop`) this branch is
+`hord = 10`, and `hord = 12` is the positive-definite constraint of Lin & Rood
+(1996) (`tp_core.F90:611` of NOAA-GFDL `main`, commit `1a4f031a`);
+`FV3HuynhLimiter` follows the GCHP fork. A loop transcription of the fork's
+`xppm` agrees with `PPMScheme(FV3HuynhLimiter())` to 1e-14 on random rows
+(`test/core/test_ppm_hord12_limiter.jl`).
+
+Differences from GCHP's transport with the same setting: the `PPMScheme` sweeps
+are Strang split, where FV3's `fv_tp_2d` adds the Lin–Rood cross terms;
+cubed-sphere seams read neighbour cells from the halo, where FV3 replaces the
+edges of the two cells next to a panel edge by one-sided values
+(`tp_core.F90:579-617`, Putman & Lin 2007); the Courant number is the mass
+fraction `F / m` of the donor cell. In the vertical, `SameAsHorizontal` applies
+the same limiter, while GCHP remaps with `kord_tr = 8`, which
+`vertical = "fv3_kord8"` selects.
+
+On the 100-cell ring the limiter keeps a step and a cosine bell non-negative to
+rounding at Courant numbers 0.3, 0.7, 1 and −0.45, but it is not strictly
+monotone: a step overshoots by up to 9e-6 over ten revolutions. For the sine
+above the L2 error falls by 4.6 from 80 to 160 cells. No adjoint; the run log
+labels the option `PPM, FV3 hord 12`.
+
 **Vertical reconstruction.** On the cubed sphere,
 `PPMScheme(; vertical = FV3ScalarProfile())` (TOML `vertical = "fv3_kord8"`)
 replaces the vertical face flux with the profile GEOS-Chem High Performance
@@ -313,7 +370,7 @@ small numerical noise that survives at the panel boundaries.
 
 ## Limiters
 
-Four selectable limiter types are declared in `schemes.jl`; their formulas
+Five selectable limiter types are declared in `schemes.jl`; their formulas
 live in `src/Operators/Advection/Reconstruction/limiters.jl` and, for the PPM edges and
 moments, `reconstruction.jl`:
 
@@ -321,6 +378,7 @@ moments, `reconstruction.jl`:
 |---|---|---|
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
 | `MonotoneLimiter()` (default) | van Leer minmod slope: `minmod(central, 2forward, 2backward)`, where `central = (forward + backward)/2`. Bounds the reconstructed profile relative to neighboring values and supports signed tracers. | production runs, including anomaly tracers |
+| `FV3HuynhLimiter()` (`PPMScheme` only) | FV3's `hord = 12` (GCHP fork): the CW84 edges and swept-parabola flux, with Lin's form of Huynh's second constraint on the profile. Neither monotone nor positive-definite: overshoots of order 1e-5 on a step, and a non-negative tracer can become negative (FV3's behaviour; GCHP adds a filter only for hord 9 and 13). Forward only. | runs compared with GCHP; the stratospheric age of air (see "Choosing a PPM limiter") |
 | `CW84Limiter()` (`PPMScheme` only) | the complete Colella–Woodward PPM: van Leer-limited edges, the monotone profile limiter, and the swept-parabola flux. Monotone in uniform 1-D flow; non-negative in every sweep in which no cell exports more than its air mass. | tracers that must stay non-negative under PPM (fossil and other emission tracers) |
 | `PositivityLimiter()` | keeps the sign of the centered slope and clips its magnitude to `\|s\| ≤ 2c`, so both face values `c ± s/2` stay non-negative (the moment form is the clamp `\|s_x\| ≤ r_m`). Rising and falling profiles are treated alike. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. Requires a non-negative tracer. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
@@ -332,6 +390,47 @@ on a local reconstructed profile do not establish positivity of the complete
 multidimensional CS update; monitor transported-field minima separately from
 mass totals. `PositivityLimiter` is a separate, explicitly zero-referenced
 policy and must not be used for anomaly tracers.
+
+## Choosing a PPM limiter
+
+The limiter changes the effective horizontal mixing, which the stratospheric
+age of air integrates over years. In an idealised C24 age-of-air experiment
+(AtmosTransport v0.7.0 operators, Float64 CPU, 1 h steps; 24 pressure layers
+from 0.5 to 1000 hPa; prescribed non-divergent zonal jets with two travelling
+planetary waves plus a divergent Brewer–Dobson overturning; a clock tracer
+reset below an idealised tropopause; two-year branches from a four-year
+spin-up with the `hord = 12` reconstruction), mean ages at day 720 were:
+
+| Horizontal | Vertical | 30–50°, 30–100 hPa | 0–20°, 30–100 hPa | 60–90°, 30–100 hPa | mean above 100 hPa |
+|---|---|---|---|---|---|
+| `ppm` (monotone) | `fv3_kord8` | 2.182 yr | 1.009 yr | 2.808 yr | 2.140 yr |
+| `ppm`, `hord12` | `fv3_kord8` | 2.115 yr | 0.939 yr | 2.828 yr | 2.099 yr |
+| `ppm`, `cw84` | `fv3_kord8` | 2.176 yr | 1.034 yr | 2.800 yr | 2.160 yr |
+| `ppm` (monotone) | `same_as_horizontal` | 2.197 yr | 1.026 yr | 2.813 yr | 2.149 yr |
+| `ppm`, `hord12` | monotone PPM | 2.130 yr | 0.955 yr | 2.834 yr | 2.107 yr |
+| `linrood`, ORD 7 | `fv3_kord8` | 2.062 yr | 0.895 yr | 2.792 yr | 2.062 yr |
+| `linrood`, ORD 5 | `fv3_kord8` | 2.105 yr | 0.895 yr | 2.862 yr | 2.061 yr |
+
+With either vertical scheme the default PPM is older than `hord12` by 24.5 d
+at mid-latitudes, 26 d in the tropics and 15 d above 100 hPa on average; the
+vertical scheme changes the age by 3–5 d. The `hord12` runs of this table
+replaced only the x and y face fluxes: their vertical sweep was the monotone
+PPM, where `limiter = "hord12"` with `same_as_horizontal` now also applies the
+limiter vertically (the `fv3_kord8` rows are the same configuration as
+`limiter = "hord12", vertical = "fv3_kord8"`). `cw84` mixes like the default.
+Lin–Rood ORD 7, which matches GCHP best above 100 hPa in the C90 MERRA-2
+comparison (`config/runs/catrine_protocol/catrine_c90_merra2_l72_protocol.toml`),
+is closest to `hord12`. The flow is idealised, so this ranks the limiters but
+does not size the effect in a real-met run.
+
+For runs compared with GCHP, `limiter = "hord12", vertical = "fv3_kord8"` is
+the split-sweep configuration closest to GCHP's tracer transport; `linrood`
+also has GCHP's cross terms. Tracers that must stay non-negative are served by
+`cw84` (positive in every sweep within the CFL budget). `hord12` is not
+positive-definite: on a periodic row with cell means `[0, 1, 1/8, 0, 1, 0]`
+and Courant number 0.5 the fourth cell becomes −7/96 after one sweep, so
+zero-background tracers (Rn-222, pulses, flux anomalies) can go negative.
+Inversions need a limiter with an adjoint: `monotone`, `cw84` or `none`.
 
 ## CFL handling and subcycling
 

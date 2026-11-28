@@ -131,7 +131,7 @@ unchanged. Lin–Rood forward ↔ fenced `linrood_adjoint_*.jl` plus
 
 `test_advection_kernels`, `test_cubed_sphere_advection` (including the independent
 scalar Z-sweep reference), `test_subcycle_composition`, `test_cs_halo_fill`,
-`test_cs_seam_exchange`, `test_fv3_vertical_profile`, `test_ppm_cw84_limiter`,
+`test_cs_seam_exchange`, `test_fv3_vertical_profile`, `test_ppm_cw84_limiter`, `test_ppm_hord12_limiter`,
 `test_cs_adjoint_production_parity` and `test_cs_adjoint_step_plan_parity` guard
 the forward and reverse contracts. GPU goldens and a warm performance A/B are
 required when reviewing host launch changes.

@@ -86,7 +86,7 @@ using ....State: StructuredFaceFluxState, FaceIndexedFluxState, AbstractMassBasi
                 CubedSphereState, total_air_mass, total_mass, tracer_names,
                 tracer_index, get_tracer
 using ....Grids: AtmosGrid, LatLonMesh, ReducedGaussianMesh, CubedSphereMesh, nlevels
-using ....Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
+using ....Operators: LinRoodPPMScheme, PPMScheme, CW84Limiter, FV3HuynhLimiter, FV3ScalarProfile, SlopesScheme, UpwindScheme,
                   ImplicitVerticalDiffusion, TimeVaryingSurfaceFluxSource,
                   total_emission_rate,
                   uses_diffusive_surface_flux_boundary,

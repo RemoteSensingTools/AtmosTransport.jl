@@ -206,9 +206,10 @@ The program that reads an `[advection]` table. Forward transport runs and the
 PPM limiters:
 
 - [`ForwardAdvectionContext`](@ref) (`scripts/run_transport.jl`): an omitted
-  `scheme` means upwind; `limiter` is `monotone` or `cw84`.
+  `scheme` means upwind; `limiter` is `monotone`, `cw84` or `hord12`.
 - [`InversionAdvectionContext`](@ref) (`scripts/inversions/cs_4dvar.jl`):
-  `scheme` is required, and `limiter` also accepts `none`.
+  `scheme` is required, and `limiter` is `monotone`, `cw84` or `none`:
+  `hord12` has no adjoint.
 """
 abstract type AbstractAdvectionContext end
 
@@ -260,11 +261,12 @@ _parse_vertical_reconstruction(section) =
     parse_choice(get(section, "vertical", "same_as_horizontal"),
                  _VERTICAL_RECONSTRUCTIONS, "[advection].vertical")
 
-# `[advection] limiter` selects the PPM limiter: the default monotone PPM, or
-# the complete Colella–Woodward scheme (`CW84Limiter`). The inversion driver
-# also accepts the unlimited PPM (see `InversionAdvectionContext`).
-const _PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter())
-const _INVERSION_PPM_LIMITERS = merge(_PPM_LIMITERS, (none = NoLimiter(),))
+# `[advection] limiter` selects the PPM limiter: the default monotone PPM, the
+# complete Colella–Woodward scheme (`CW84Limiter`), or FV3's hord = 12
+# (`FV3HuynhLimiter`). The inversion driver accepts the limiters with an adjoint
+# and the unlimited PPM (see `InversionAdvectionContext`).
+const _PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter(), hord12 = FV3HuynhLimiter())
+const _INVERSION_PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter(), none = NoLimiter())
 
 _ppm_limiters(::ForwardAdvectionContext) = _PPM_LIMITERS
 _ppm_limiters(::InversionAdvectionContext) = _INVERSION_PPM_LIMITERS
@@ -289,8 +291,8 @@ Parse an `[advection]` section into a typed spec. `ppm_order` is only meaningful
 for `scheme = "linrood"`; pairing it with `scheme = "ppm"` is rejected (the split
 PPM path takes no order knob). `vertical` applies to `scheme = "ppm"` (default
 `same_as_horizontal`) and `scheme = "linrood"` (default `fv3_kord8`). `limiter`
-applies to `scheme = "ppm"` only (`monotone`, the default, or `cw84`; the
-inversion driver also accepts `none`). In a forward run an omitted selector
+applies to `scheme = "ppm"` only (`monotone`, the default, `cw84` or `hord12`;
+the inversion driver accepts `monotone`, `cw84` and `none`). In a forward run an omitted selector
 defaults to upwind; the inversion driver requires it. An omitted Lin–Rood
 `ppm_order` defaults to `DEFAULT_LINROOD_PPM_ORDER` (5). `context` names the
 program reading the table; see [`AbstractAdvectionContext`](@ref).

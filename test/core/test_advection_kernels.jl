@@ -22,7 +22,7 @@ using AtmosTransport.Operators.StepPlans: transport_step!
 using AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
-using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter,
+using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter, FV3HuynhLimiter,
                                   strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: limited_moment, _xface_tracer_flux
 using .AtmosTransport.State: StructuredFaceFluxState
@@ -188,6 +188,44 @@ Operators.Advection.limited_moment(sx, rm_cell, ::ExternalSuperbeeLimiter) = sx
     @test maximum(abs.(superbee32 .- superbee)) < 1e-4
 end
 
+# A limiter with no methods of its own: no fallback to another limiter's rule,
+# so the interface functions are missing (a MethodError, not a silent default).
+struct ExternalBareLimiter <: Operators.AbstractLimiter end
+
+@testset "a limiter without methods has no silent fallback" begin
+    bare = ExternalBareLimiter()
+    @test_throws MethodError Operators.limited_slope(0.1, 0.5, 0.7, bare)
+    @test_throws MethodError limited_moment(-0.25, -1.0, bare)
+    @test_throws MethodError Operators.ppm_limit_profile(0.2, 0.5, 1.4, bare)
+    @test_throws MethodError Operators.ppm_limit_profile(0.2, 0.5, 1.4, (0.0, 0.1, 0.9, 1.0), bare)
+end
+
+# A PPM limiter that defines the five-cell profile method (and no clamp): it records the
+# neighbours it is given and flattens the parabola, so the face flux is upwind.
+struct ExternalWideLimiter <: Operators.AbstractLimiter end
+const _WIDE_SEEN = Ref{Any}(nothing)
+Operators.limited_moment(sx, _rm_cell, ::ExternalWideLimiter) = sx
+function Operators.ppm_limit_profile(q_L, c_bar, q_R, neighbours, ::ExternalWideLimiter)
+    _WIDE_SEEN[] = (neighbours[1], neighbours[2], c_bar, neighbours[3], neighbours[4])
+    return c_bar, c_bar
+end
+
+@testset "PPM face fluxes pass the five-cell stencil to the profile limiter" begin
+    N = 12
+    m = ones(N)
+    q = collect(1.0:N) .^ 2
+    for (shape, flux) in (((N, 1, 1), (f, rm, M, F, s) -> _xface_tracer_flux(Int32(f), 1, 1, rm, M, F, s, Int32(N))),
+                          ((1, N, 1), (f, rm, M, F, s) -> Operators.Advection._yface_tracer_flux(1, Int32(f), 1, rm, M, F, s, Int32(N))),
+                          ((1, 1, N), (f, rm, M, F, s) -> Operators.Advection._zface_tracer_flux(1, 1, Int32(f), rm, M, F, s, Int32(N))))
+        M, RM = reshape(m, shape), reshape(q, shape)
+        f = 6
+        F = 0.3
+        @test flux(f, RM, M, F, PPMScheme(ExternalWideLimiter())) ≈ F * q[f - 1]
+        @test _WIDE_SEEN[] == Tuple(q[f - 2:f + 2])        # right donor, the last call
+        @test flux(f, RM, M, -F, PPMScheme(ExternalWideLimiter())) ≈ -F * q[f]
+    end
+end
+
 @testset "default monotone moment is signed and offset-neutral" begin
     limiter = MonotoneLimiter()
     @test limited_moment(0.0, -1.0, limiter) == 0.0
@@ -239,7 +277,7 @@ end
 
     for scheme in (SlopesScheme(MonotoneLimiter()),
                    PPMScheme(MonotoneLimiter()),
-                   PPMScheme(CW84Limiter()))
+                   PPMScheme(CW84Limiter()), PPMScheme(FV3HuynhLimiter()))
         @testset "$(nameof(typeof(scheme)))" begin
             # A uniform negative VMR is a valid signed contribution and must
             # remain uniform while the carrier mass evolves.
@@ -339,7 +377,8 @@ end
 end
 
 @testset "Advection kernels: $(typeof(scheme))" for scheme in
-        (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()), PPMScheme(CW84Limiter()))
+        (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()), PPMScheme(CW84Limiter()),
+         PPMScheme(FV3HuynhLimiter()))
 
     for FT in (Float64, Float32)
         precision_tag = FT == Float64 ? "F64" : "F32"
@@ -504,6 +543,7 @@ end
             (SlopesScheme(MonotoneLimiter()), "Slopes"),
             (PPMScheme(MonotoneLimiter()), "PPM"),
             (PPMScheme(CW84Limiter()), "PPM-CW84"),
+            (PPMScheme(FV3HuynhLimiter()), "PPM-hord12"),
         )
             @testset "CPU $precision_tag $scheme_tag: MT ≡ per-tracer (4 steps)" begin
                 # Per-tracer path (reference)

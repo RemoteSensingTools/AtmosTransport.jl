@@ -146,6 +146,7 @@ files = [
     "core/test_cubed_sphere_advection.jl",
     "core/test_no_advection.jl",
     "core/test_ppm_cw84_limiter.jl",
+    "core/test_ppm_hord12_limiter.jl",
     "core/test_ppm_subgrid_distributions.jl",
     "core/test_slopes_tm5_reference.jl",
     "core/test_fv3_vertical_profile.jl",
