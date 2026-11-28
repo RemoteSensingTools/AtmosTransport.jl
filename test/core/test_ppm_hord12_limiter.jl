@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 #
-# `PPMScheme(Hord12Limiter())`: FV3's horizontal tracer PPM with hord = 12, as
+# `PPMScheme(FV3HuynhLimiter())`: FV3's horizontal tracer PPM with hord = 12, as
 # in `tp_core.F90` (`xppm`) of the GCHP fork of FV3
 # (geoschem/GFDL_atmos_cubed_sphere, gchp/main, 643f3c44): edges lines 534-541,
 # the profile constraint lines 556-575, the face value lines 621-627. The tests
@@ -12,20 +12,20 @@ using Test
 using Random
 using AtmosTransport
 using .AtmosTransport.Operators: PPMScheme, SlopesScheme, MonotoneLimiter, CW84Limiter,
-    Hord12Limiter, ppm_limit_profile
+    FV3HuynhLimiter, ppm_limit_profile
 using .AtmosTransport.Operators.Advection: _xface_tracer_flux, _yface_tracer_flux,
     _zface_tracer_flux, _ppm_edge_value
 using .AtmosTransport.Operators: FV3ScalarProfile
 using .AtmosTransport.Models: advection_spec, materialize, LatLonRuntimeRecipeStyle,
     CubedSphereRuntimeRecipeStyle
 
-const HORD12 = PPMScheme(Hord12Limiter())
+const HORD12 = PPMScheme(FV3HuynhLimiter())
 
 # The limited edges (q_L, q_R) of the middle cell of five cell means.
 function hord12_profile(c)
-    q_L = _ppm_edge_value(c[1], c[2], c[3], c[4], Hord12Limiter())
-    q_R = _ppm_edge_value(c[2], c[3], c[4], c[5], Hord12Limiter())
-    return ppm_limit_profile(q_L, c[3], q_R, (c[1], c[2], c[4], c[5]), Hord12Limiter())
+    q_L = _ppm_edge_value(c[1], c[2], c[3], c[4], FV3HuynhLimiter())
+    q_R = _ppm_edge_value(c[2], c[3], c[4], c[5], FV3HuynhLimiter())
+    return ppm_limit_profile(q_L, c[3], q_R, (c[1], c[2], c[4], c[5]), FV3HuynhLimiter())
 end
 
 # Independent transcription of FV3 `xppm`, hord = 12, on a periodic row: loop
@@ -91,7 +91,7 @@ function sine_error(scheme, Nx; courant = 0.4)
     return sqrt(sum(abs2, vec(rm) .- exact) / Nx)
 end
 
-@testset "PPMScheme(Hord12Limiter())" begin
+@testset "PPMScheme(FV3HuynhLimiter())" begin
     @testset "hand-computed FV3 hord = 12 profiles" begin
         # q = (0, 2, 3, 0, 0), cell 3. dm = (3/4, 0, 0): cell 3 is a maximum,
         # cell 4 a minimum. al_i = 5/2 + (3/4 - 0)/3 = 11/4, al_{i+1} = 3/2, so
@@ -152,6 +152,17 @@ end
         @test minimum(rm) < -0.05
     end
 
+    @testset "not positive-definite, as FV3 ($FT)" for FT in (Float64, Float32)
+        # Cell means [0, 1, 1/8, 0, 1, 0], Courant 0.5: the third cell exports
+        # -1/96 and the fourth 1/16, so the fourth goes from 0 to -7/96.
+        rm = reshape(FT[0, 1, 1 // 8, 0, 1, 0], 6, 1, 1)
+        advect_ring!(rm, ones(FT, 6, 1, 1), FT(0.5), 1, HORD12)
+        @test rm[4, 1, 1] ≈ FT(-7 / 96) rtol = 8eps(FT)
+        rm = reshape(FT[0, 1, 1 // 8, 0, 1, 0], 6, 1, 1)
+        advect_ring!(rm, ones(FT, 6, 1, 1), FT(0.5), 1, PPMScheme(CW84Limiter()))
+        @test minimum(rm) >= -4eps(FT)
+    end
+
     @testset "smooth profile converges at second order or better" begin
         e80, e160 = sine_error(HORD12, 80), sine_error(HORD12, 160)
         @test e80 / e160 > 3.8
@@ -190,17 +201,19 @@ end
         @test materialize(spec, CubedSphereRuntimeRecipeStyle()) == HORD12
         gchp = advection_spec(Dict("scheme" => "ppm", "limiter" => "hord12", "vertical" => "fv3_kord8"))
         @test materialize(gchp, CubedSphereRuntimeRecipeStyle()) ==
-              PPMScheme(Hord12Limiter(); vertical = FV3ScalarProfile())
+              PPMScheme(FV3HuynhLimiter(); vertical = FV3ScalarProfile())
         @test_throws ArgumentError materialize(gchp, LatLonRuntimeRecipeStyle())
         @test_throws ArgumentError advection_spec(Dict("scheme" => "slopes", "limiter" => "hord12"))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "linrood", "limiter" => "hord12"))
         @test_throws ArgumentError advection_spec(Dict("scheme" => "ppm", "limiter" => "hord_12"))
         @test AtmosTransport.Models.DrivenRunner._advection_label(HORD12) == "PPM, FV3 hord 12"
-        @test AtmosTransport.Models.Physics._physics_limiter(Hord12Limiter()) == "hord12"
+        @test AtmosTransport.Models.Physics._physics_limiter(FV3HuynhLimiter()) == "hord12"
     end
 
     @testset "constructors" begin
-        @test_throws ArgumentError SlopesScheme(Hord12Limiter())
+        @test_throws ArgumentError SlopesScheme(FV3HuynhLimiter())
+        # The constraint needs the neighbours: no silent three-value fallback.
+        @test_throws ArgumentError ppm_limit_profile(2.75, 3.0, 1.5, FV3HuynhLimiter())
         @test !(HORD12 isa AtmosTransport.Adjoints.CSAdjointSupportedScheme)
         @test_throws ArgumentError AtmosTransport.Adjoints.require_adjoint_support(HORD12)
     end

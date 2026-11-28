@@ -109,16 +109,6 @@ prognostic moment and only clamps it to ``|r_{xm}| \\le r_m``.
 end
 
 """
-    limited_slope(c_left, c_center, c_right, ::AbstractLimiter)
-
-Fallback for a limiter without its own slope rule: the van Leer slope of
-`MonotoneLimiter`. A limiter then defines only the functions in which it
-differs from the monotone one (see `AbstractLimiter`).
-"""
-@inline limited_slope(c_left, c_center, c_right, ::AbstractLimiter) =
-    limited_slope(c_left, c_center, c_right, MonotoneLimiter())
-
-"""
     limited_slope(c_left, c_center, c_right, ::NoLimiter)
 
 Unlimited centered slope: ``s = (c_{i+1} - c_{i-1}) / 2``.
@@ -163,14 +153,6 @@ end
 # neighbouring values. A second bound relative to tracer zero breaks signed
 # tracers and constant-offset invariance, so only the explicit
 # `PositivityLimiter` applies a zero-referenced moment clamp.
-
-"""
-    limited_moment(sx, rm_cell, ::AbstractLimiter)
-
-Fallback for a limiter without its own moment rule: no clamp, as for
-`MonotoneLimiter`.
-"""
-@inline limited_moment(sx, _rm_cell, ::AbstractLimiter) = sx
 
 """
     limited_moment(sx, rm_cell, ::MonotoneLimiter)

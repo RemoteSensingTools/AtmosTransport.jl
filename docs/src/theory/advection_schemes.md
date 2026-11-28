@@ -13,7 +13,7 @@ appropriate transport path.
 |---|---|---|---|---|---|---|
 | `UpwindScheme` | 1st order (donor cell) | yes (trivially) | preserves a non-negative input under its CFL contract; also supports signed tracers | yes | yes | **yes — RG's only option today** |
 | `SlopesScheme{L}` | 2nd order in smooth regions (van Leer / Russell-Lerner) | yes if `L = MonotoneLimiter` (default) | no zero clamp in the default signed path; `PositivityLimiter` is explicit opt-in | yes | yes | no (the face-indexed Strang path restricts to `AbstractConstantScheme`) |
-| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `L = CW84Limiter` the flux integrates the limited parabola (the complete CW84 scheme); `L = Hord12Limiter` is FV3's `hord = 12`, the same edges and flux with Huynh's constraint. With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`, but the 1-D update over- and undershoots; with `CW84Limiter` monotone in uniform 1-D flow (Courant number ≤ 1) | signed; small negative column means observed in CS runs with `MonotoneLimiter`. `CW84Limiter` keeps a non-negative tracer non-negative in every sweep in which no cell exports more than its air mass. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
+| `PPMScheme{L,V}` | 2nd order: limited Colella–Woodward (1984) edges set a Russell–Lerner slope. With `L = CW84Limiter` the flux integrates the limited parabola (the complete CW84 scheme); `L = FV3HuynhLimiter` is FV3's `hord = 12`, the same edges and flux with Huynh's constraint. With `V = FV3ScalarProfile` the vertical sweep integrates FV3's `kord = 8` parabola (3rd order or better in smooth regions) | profile-limited with `MonotoneLimiter`, but the 1-D update over- and undershoots; with `CW84Limiter` monotone in uniform 1-D flow (Courant number ≤ 1) | signed; small negative column means observed in CS runs with `MonotoneLimiter`. `CW84Limiter` keeps a non-negative tracer non-negative in every sweep in which no cell exports more than its air mass. The FV3 vertical profile is positive definite | yes (default vertical only) | yes — covered by `test/core/test_cubed_sphere_advection.jl` and `test/core/test_fv3_vertical_profile.jl` | no (same rejection) |
 | `LinRoodPPMScheme{ORD}` | piecewise-parabolic; `ORD ∈ {5, 7}` selects the boundary stencil | profile-limited, but the full split update can undershoot | signed; not positivity-preserving | n/a | yes — uses FV3 cross-term advection (`fv_tp_2d_cs!`) | n/a |
 
 The accuracy column describes the **per-face
@@ -51,8 +51,8 @@ Choose the algorithm explicitly when comparing runs:
 | `scheme = "slopes"` | `SlopesScheme(MonotoneLimiter())` | slopes |
 | `scheme = "ppm"` | `PPMScheme(MonotoneLimiter())` | PPM-informed slopes, as horizontally |
 | `scheme = "ppm", limiter = "cw84"` | `PPMScheme(CW84Limiter())` | complete CW84 PPM, as horizontally |
-| `scheme = "ppm", limiter = "hord12"` | `PPMScheme(Hord12Limiter())` | FV3 `hord = 12` reconstruction, as horizontally |
-| `scheme = "ppm", limiter = "hord12", vertical = "fv3_kord8"` | `PPMScheme(Hord12Limiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`: GCHP's `hord_tr = 12`, `kord_tr = 8` pair |
+| `scheme = "ppm", limiter = "hord12"` | `PPMScheme(FV3HuynhLimiter())` | FV3 `hord = 12` reconstruction, as horizontally |
+| `scheme = "ppm", limiter = "hord12", vertical = "fv3_kord8"` | `PPMScheme(FV3HuynhLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`: GCHP's `hord_tr = 12`, `kord_tr = 8` pair |
 | `scheme = "ppm", vertical = "fv3_kord8"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile())` (CS only) | FV3 `scalar_profile`, `kord = 8`, positive definite |
 | `scheme = "ppm", vertical = "fv3_kord8_signed"` | `PPMScheme(MonotoneLimiter(), FV3ScalarProfile(; positive_definite = false))` (CS only) | FV3 `scalar_profile`, `kord = 8`, for signed tracers |
 | `scheme = "linrood", ppm_order = 5` | `LinRoodPPMScheme(5; vertical = PPMScheme(; vertical = FV3ScalarProfile()))` (CS only) | FV3 `scalar_profile`, `kord = 8` (default) |
@@ -211,7 +211,7 @@ cells; at 20 cells it is 29% higher, because the profile limiter flattens the
 sine's extrema. The cubed-sphere adjoint supports both the monotone and CW84
 limiters (`_ppm_face_coeffs`); the run log labels the option `PPM, CW84`.
 
-**FV3 `hord = 12` (`limiter = "hord12"`, `PPMScheme(Hord12Limiter())`).** The
+**FV3 `hord = 12` (`limiter = "hord12"`, `PPMScheme(FV3HuynhLimiter())`).** The
 horizontal tracer reconstruction of GEOS-Chem High Performance, whose FV3
 default is `hord_tr = 12` (`fv_arrays.F90:324` of
 `geoschem/GFDL_atmos_cubed_sphere`, branch `gchp/main`, commit `643f3c44`), as
@@ -246,8 +246,8 @@ In current NOAA-GFDL FV3 (`NOAA-GFDL/GFDL_atmos_cubed_sphere`, `main`) and GEOS
 FV3 (`GEOS-ESM/GFDL_atmos_cubed_sphere`, `geos/develop`) this branch is
 `hord = 10`, and `hord = 12` is the positive-definite constraint of Lin & Rood
 (1996) (`tp_core.F90:611` of NOAA-GFDL `main`, commit `1a4f031a`);
-`Hord12Limiter` follows the GCHP fork. A loop transcription of the fork's
-`xppm` agrees with `PPMScheme(Hord12Limiter())` to 1e-14 on random rows
+`FV3HuynhLimiter` follows the GCHP fork. A loop transcription of the fork's
+`xppm` agrees with `PPMScheme(FV3HuynhLimiter())` to 1e-14 on random rows
 (`test/core/test_ppm_hord12_limiter.jl`).
 
 Differences from GCHP's transport with the same setting: the `PPMScheme` sweeps
@@ -378,7 +378,7 @@ moments, `reconstruction.jl`:
 |---|---|---|
 | `NoLimiter()` | unlimited centered slope / parabola | smooth-flow benchmarks where you want the order-N error rate without limiter clipping |
 | `MonotoneLimiter()` (default) | van Leer minmod slope: `minmod(central, 2forward, 2backward)`, where `central = (forward + backward)/2`. Bounds the reconstructed profile relative to neighboring values and supports signed tracers. | production runs, including anomaly tracers |
-| `Hord12Limiter()` (`PPMScheme` only) | FV3's `hord = 12` (GCHP fork): the CW84 edges and swept-parabola flux, with Lin's form of Huynh's second constraint on the profile. Non-negative to rounding in uniform 1-D flow; overshoots of order 1e-5 on a step. Forward only. | runs compared with GCHP; the stratospheric age of air (see "Choosing a PPM limiter") |
+| `FV3HuynhLimiter()` (`PPMScheme` only) | FV3's `hord = 12` (GCHP fork): the CW84 edges and swept-parabola flux, with Lin's form of Huynh's second constraint on the profile. Neither monotone nor positive-definite: overshoots of order 1e-5 on a step, and a non-negative tracer can become negative (FV3's behaviour; GCHP adds a filter only for hord 9 and 13). Forward only. | runs compared with GCHP; the stratospheric age of air (see "Choosing a PPM limiter") |
 | `CW84Limiter()` (`PPMScheme` only) | the complete Colella–Woodward PPM: van Leer-limited edges, the monotone profile limiter, and the swept-parabola flux. Monotone in uniform 1-D flow; non-negative in every sweep in which no cell exports more than its air mass. | tracers that must stay non-negative under PPM (fossil and other emission tracers) |
 | `PositivityLimiter()` | keeps the sign of the centered slope and clips its magnitude to `\|s\| ≤ 2c`, so both face values `c ± s/2` stay non-negative (the moment form is the clamp `\|s_x\| ≤ r_m`). Rising and falling profiles are treated alike. **Weaker than `MonotoneLimiter`**: positivity-only, may still create new local maxima from large gradients. Requires a non-negative tracer. | tracers that must stay non-negative (mole fractions, water vapor, aerosol concentrations) AND tolerate occasional new maxima |
 
@@ -426,8 +426,10 @@ does not size the effect in a real-met run.
 For runs compared with GCHP, `limiter = "hord12", vertical = "fv3_kord8"` is
 the split-sweep configuration closest to GCHP's tracer transport; `linrood`
 also has GCHP's cross terms. Tracers that must stay non-negative are served by
-`cw84` (positive in every sweep within the CFL budget) or `hord12`
-(non-negative to rounding in 1-D tests, not proven for the split update).
+`cw84` (positive in every sweep within the CFL budget). `hord12` is not
+positive-definite: on a periodic row with cell means `[0, 1, 1/8, 0, 1, 0]`
+and Courant number 0.5 the fourth cell becomes −7/96 after one sweep, so
+zero-background tracers (Rn-222, pulses, flux anomalies) can go negative.
 Inversions need a limiter with an adjoint: `monotone`, `cw84` or `none`.
 
 ## CFL handling and subcycling

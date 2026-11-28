@@ -100,7 +100,7 @@ treatment and [Validation status](@ref) for measured scheme coverage.
 
 Limiter parameter `L` ranges over `NoLimiter`, `MonotoneLimiter`,
 `PositivityLimiter` and, for `PPMScheme` only, `CW84Limiter` (the complete
-Colella–Woodward PPM) and `Hord12Limiter` (FV3's `hord = 12`) — declared in
+Colella–Woodward PPM) and `FV3HuynhLimiter` (FV3's `hord = 12`) — declared in
 the same file. `PPMScheme()` defaults to `MonotoneLimiter()`. The monotone,
 CW84 and hord 12 limiters are signed and
 constant-offset equivariant; only `PositivityLimiter` uses tracer zero as a

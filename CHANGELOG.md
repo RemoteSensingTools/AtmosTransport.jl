@@ -23,7 +23,7 @@
   every value in the mask, named `<group>_<value>`). The tagged tracers sum to
   the flux over the selected values. A mask on another grid is an error. See
   the TOML schema page. Configs without `[tagged_fluxes]` are unchanged.
-- New PPM option `[advection] limiter = "hord12"` (`PPMScheme(Hord12Limiter())`):
+- New PPM option `[advection] limiter = "hord12"` (`PPMScheme(FV3HuynhLimiter())`):
   FV3's horizontal tracer PPM with `hord = 12`, GCHP's `hord_tr` default, as in
   `tp_core.F90` of the GCHP fork of FV3. It keeps the CW84 edges and
   swept-parabola flux and replaces the profile limiter by Lin's form of Huynh's
@@ -37,11 +37,12 @@
   a PPM limiter" in the advection manual. Example:
   `config/runs/catrine_protocol/catrine_c90_merra2_l72_strat_exchange_hord12.toml`.
   Other schemes and limiters are unchanged.
-- Each limiter extension point (`limited_slope`, `limited_moment`,
-  `ppm_limit_profile`) has a fallback on `AbstractLimiter` that behaves as
-  `MonotoneLimiter`, so a new limiter defines only the functions in which it
-  differs; before, a missing method was a `MethodError` inside the kernel.
-  Results of the built-in limiters are unchanged.
+  `hord12` is neither monotone nor positive-definite (as in FV3; GCHP adds a
+  filter only for hord 9 and 13): zero-background tracers can go negative, so
+  use `cw84` for tracers that must stay non-negative. `ppm_limit_profile` has a
+  five-argument form with the donor's neighbours for such five-cell limiters;
+  a limiter without it uses its three-value method. Missing limiter methods
+  remain a `MethodError` (no fallback to another limiter's rule).
 - Limiter extension points are public: `limited_slope`, `limited_moment` and
   `ppm_limit_profile` (formerly `_limited_slope`, `_limited_moment`,
   `_ppm_limit_profile`) are exported from `Operators`, and a limiter defined

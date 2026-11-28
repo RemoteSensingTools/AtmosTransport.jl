@@ -8,7 +8,7 @@ using ...Operators.StepPlans: _normalize_air_mass_reset_mode, _resolve_physics_c
 _physics_limiter(::NoLimiter) = "none"
 _physics_limiter(::MonotoneLimiter) = "monotone"
 _physics_limiter(::CW84Limiter) = "cw84"
-_physics_limiter(::Hord12Limiter) = "hord12"
+_physics_limiter(::FV3HuynhLimiter) = "hord12"
 
 _physics_vertical(::SameAsHorizontal) = "same_as_horizontal"
 _physics_vertical(::FV3ScalarProfile{true}) = "fv3_kord8"

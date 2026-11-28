@@ -263,9 +263,9 @@ _parse_vertical_reconstruction(section) =
 
 # `[advection] limiter` selects the PPM limiter: the default monotone PPM, the
 # complete Colella–Woodward scheme (`CW84Limiter`), or FV3's hord = 12
-# (`Hord12Limiter`). The inversion driver accepts the limiters with an adjoint
+# (`FV3HuynhLimiter`). The inversion driver accepts the limiters with an adjoint
 # and the unlimited PPM (see `InversionAdvectionContext`).
-const _PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter(), hord12 = Hord12Limiter())
+const _PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter(), hord12 = FV3HuynhLimiter())
 const _INVERSION_PPM_LIMITERS = (monotone = MonotoneLimiter(), cw84 = CW84Limiter(), none = NoLimiter())
 
 _ppm_limiters(::ForwardAdvectionContext) = _PPM_LIMITERS

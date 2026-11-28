@@ -605,7 +605,7 @@ end
 
 # Limiters whose PPM face flux integrates the limited parabola over the swept
 # fraction and whose edges use van Leer-limited slopes.
-const _SweptParabolaLimiter = Union{CW84Limiter, Hord12Limiter}
+const _SweptParabolaLimiter = Union{CW84Limiter, FV3HuynhLimiter}
 
 """
     _ppm_edge_value(c_ll, c_l, c_r, c_rr, limiter) → FT
@@ -619,7 +619,7 @@ e_{i+1/2} = \\frac{c_i + c_{i+1}}{2} - \\frac{δc_{i+1} - δc_i}{6},
 ```
 
 which lies between `c_l` and `c_r` and equals the fourth-order edge where
-neither slope is limited. `Hord12Limiter` uses the same edge: FV3's
+neither slope is limited. `FV3HuynhLimiter` uses the same edge: FV3's
 `al = (c_l + c_r)/2 + (dm_l − dm_r)/3` (`tp_core.F90`, `xppm`) with
 `dm = δc / 2`, the same value up to the rounding of FV3's `r3 = 1/3`.
 """
@@ -674,21 +674,14 @@ All conditions are evaluated branchlessly via `ifelse` for GPU safety.
 end
 
 """
-    ppm_limit_profile(q_L, c_bar, q_R, ::AbstractLimiter) → (q_L, q_R)
-
-Fallback for a limiter without its own profile rule: the monotonicity
-conditions of `MonotoneLimiter` (CW84 eq. 1.10).
-"""
-@inline ppm_limit_profile(q_L, c_bar, q_R, ::AbstractLimiter) =
-    ppm_limit_profile(q_L, c_bar, q_R, MonotoneLimiter())
-
-"""
     ppm_limit_profile(q_L, c_bar, q_R, neighbours, limiter) → (q_L, q_R)
 
 The profile limiter as the PPM face fluxes call it, with the means of the two
 cells on either side of the cell, `neighbours = (c_mm, c_m, c_p, c_pp)`, for a
-limiter whose constraints read five cells. The fallback ignores them and calls
-the three-value method `ppm_limit_profile(q_L, c_bar, q_R, limiter)`.
+limiter whose constraints read five cells. A limiter without a five-cell
+method uses its three-value method `ppm_limit_profile(q_L, c_bar, q_R, limiter)`;
+there is no fallback to another limiter's rule, so a limiter without either
+method fails with a `MethodError`.
 """
 @inline ppm_limit_profile(q_L, c_bar, q_R, _neighbours, limiter::AbstractLimiter) =
     ppm_limit_profile(q_L, c_bar, q_R, limiter)
@@ -721,7 +714,7 @@ The monotonicity conditions of `MonotoneLimiter` (CW84 eq. 1.10).
     ppm_limit_profile(q_L, c_bar, q_R, MonotoneLimiter())
 
 """
-    ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::Hord12Limiter) → (q_L, q_R)
+    ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::FV3HuynhLimiter) → (q_L, q_R)
 
 FV3's `hord = 12` profile constraint (`tp_core.F90`, `xppm`, GCHP fork; the
 `hord = 10` branch of current NOAA-GFDL FV3), "Lin's modification of Huynh 2nd
@@ -735,10 +728,10 @@ with mean `c̄ = c_bar` and neighbours `c_mm, c_m | c_p, c_pp`:
       b_R ← min(max(0, p₂, l₂), max(b_R, min(0, p₂, l₂))),   p₂ = Δ_{i-1}, l₂ = p₂ − ¾ Δ_{i-2},
       b_L ← min(max(0, p₁, l₁), max(b_L, min(0, p₁, l₁))),   p₁ = −Δ_i,    l₁ = p₁ + ¾ Δ_{i+1}.
 
-Branch-free. The three-value method has no neighbours and falls back to the
-CW84 conditions.
+Branch-free. The constraint needs the neighbours: the three-value method
+throws an `ArgumentError` instead of applying another rule.
 """
-@inline function ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::Hord12Limiter)
+@inline function ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), ::FV3HuynhLimiter)
     FT = typeof(c_bar)
     z = zero(FT)
     b_L = q_L - c_bar
@@ -760,6 +753,17 @@ CW84 conditions.
     return c_bar + b_L, c_bar + b_R
 end
 
+ppm_limit_profile(q_L, c_bar, q_R, ::FV3HuynhLimiter) = throw(ArgumentError(
+    "FV3HuynhLimiter reads the two cells on either side of the donor; call " *
+    "ppm_limit_profile(q_L, c_bar, q_R, (c_mm, c_m, c_p, c_pp), FV3HuynhLimiter())"))
+
+"""
+    limited_moment(sx, rm_cell, ::FV3HuynhLimiter)
+
+No clamp: FV3's profile constraint already bounds the moment.
+"""
+@inline limited_moment(sx, _rm_cell, ::FV3HuynhLimiter) = sx
+
 """
     _ppm_raw_moments(F, m_l, c_l, q_L_l, q_R_l, m_r, c_r, q_L_r, q_R_r, limiter) → (sx_l, sx_r)
 
@@ -776,7 +780,7 @@ the swept fraction `α` (clamped like in `_slopes_face_flux`),
     sx_l = m_l ((q_R_l − c_l) − α₊ b₀_l),   sx_r = m_r ((c_r − q_L_r) − α₋ b₀_r),
 
 so that `_slopes_face_flux` returns `F` times the mean of the donor parabola
-over the swept part of the cell (CW84 eq. 1.12). `Hord12Limiter` uses the same
+over the swept part of the cell (CW84 eq. 1.12). `FV3HuynhLimiter` uses the same
 moments: with `b_L = q_L − c`, `b_R = q_R − c` this is FV3's face value
 `c + (1 − α)(b_R − α(b_L + b_R))` (`tp_core.F90`, `xppm`).
 """

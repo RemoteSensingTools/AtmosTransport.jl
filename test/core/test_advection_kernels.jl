@@ -22,7 +22,7 @@ using AtmosTransport.Operators.StepPlans: transport_step!
 using AtmosTransport
 using .AtmosTransport: Operators, Grids
 using .AtmosTransport.Grids: cell_areas_by_latitude
-using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter, Hord12Limiter,
+using .AtmosTransport.Operators: MonotoneLimiter, PositivityLimiter, CW84Limiter, FV3HuynhLimiter,
                                   strang_split!, strang_split_mt!
 using .AtmosTransport.Operators.Advection: limited_moment, _xface_tracer_flux
 using .AtmosTransport.State: StructuredFaceFluxState
@@ -188,28 +188,23 @@ Operators.Advection.limited_moment(sx, rm_cell, ::ExternalSuperbeeLimiter) = sx
     @test maximum(abs.(superbee32 .- superbee)) < 1e-4
 end
 
-# A limiter with no methods of its own: every interface function falls back
-# to `MonotoneLimiter`.
+# A limiter with no methods of its own: no fallback to another limiter's rule,
+# so the interface functions are missing (a MethodError, not a silent default).
 struct ExternalBareLimiter <: Operators.AbstractLimiter end
 
-@testset "a limiter without methods behaves as MonotoneLimiter" begin
-    bare, mono = ExternalBareLimiter(), MonotoneLimiter()
-    @test Operators.limited_slope(0.1, 0.5, 0.7, bare) === Operators.limited_slope(0.1, 0.5, 0.7, mono)
-    @test limited_moment(-0.25, -1.0, bare) === -0.25
-    @test Operators.ppm_limit_profile(0.2, 0.5, 1.4, bare) === Operators.ppm_limit_profile(0.2, 0.5, 1.4, mono)
-    N = 12
-    m = reshape(1 .+ 0.1 .* sin.(1:N), N, 1, 1)
-    rm = m .* reshape(cos.(0.7 .* (1:N)) .+ ((1:N) .> 6), N, 1, 1)
-    for F in (0.3, -0.4), f in 4:N - 2, scheme in (SlopesScheme, PPMScheme)
-        @test _xface_tracer_flux(Int32(f), 1, 1, rm, m, F, scheme(bare), Int32(N)) ===
-              _xface_tracer_flux(Int32(f), 1, 1, rm, m, F, scheme(mono), Int32(N))
-    end
+@testset "a limiter without methods has no silent fallback" begin
+    bare = ExternalBareLimiter()
+    @test_throws MethodError Operators.limited_slope(0.1, 0.5, 0.7, bare)
+    @test_throws MethodError limited_moment(-0.25, -1.0, bare)
+    @test_throws MethodError Operators.ppm_limit_profile(0.2, 0.5, 1.4, bare)
+    @test_throws MethodError Operators.ppm_limit_profile(0.2, 0.5, 1.4, (0.0, 0.1, 0.9, 1.0), bare)
 end
 
-# A PPM limiter that defines only the five-cell profile method: it records the
+# A PPM limiter that defines the five-cell profile method (and no clamp): it records the
 # neighbours it is given and flattens the parabola, so the face flux is upwind.
 struct ExternalWideLimiter <: Operators.AbstractLimiter end
 const _WIDE_SEEN = Ref{Any}(nothing)
+Operators.limited_moment(sx, _rm_cell, ::ExternalWideLimiter) = sx
 function Operators.ppm_limit_profile(q_L, c_bar, q_R, neighbours, ::ExternalWideLimiter)
     _WIDE_SEEN[] = (neighbours[1], neighbours[2], c_bar, neighbours[3], neighbours[4])
     return c_bar, c_bar
@@ -282,7 +277,7 @@ end
 
     for scheme in (SlopesScheme(MonotoneLimiter()),
                    PPMScheme(MonotoneLimiter()),
-                   PPMScheme(CW84Limiter()), PPMScheme(Hord12Limiter()))
+                   PPMScheme(CW84Limiter()), PPMScheme(FV3HuynhLimiter()))
         @testset "$(nameof(typeof(scheme)))" begin
             # A uniform negative VMR is a valid signed contribution and must
             # remain uniform while the carrier mass evolves.
@@ -383,7 +378,7 @@ end
 
 @testset "Advection kernels: $(typeof(scheme))" for scheme in
         (UpwindScheme(), SlopesScheme(MonotoneLimiter()), PPMScheme(MonotoneLimiter()), PPMScheme(CW84Limiter()),
-         PPMScheme(Hord12Limiter()))
+         PPMScheme(FV3HuynhLimiter()))
 
     for FT in (Float64, Float32)
         precision_tag = FT == Float64 ? "F64" : "F32"
@@ -548,7 +543,7 @@ end
             (SlopesScheme(MonotoneLimiter()), "Slopes"),
             (PPMScheme(MonotoneLimiter()), "PPM"),
             (PPMScheme(CW84Limiter()), "PPM-CW84"),
-            (PPMScheme(Hord12Limiter()), "PPM-hord12"),
+            (PPMScheme(FV3HuynhLimiter()), "PPM-hord12"),
         )
             @testset "CPU $precision_tag $scheme_tag: MT ≡ per-tracer (4 steps)" begin
                 # Per-tracer path (reference)
